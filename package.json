@@ -16,7 +16,8 @@
     "history": "node src/index.js history",
     "dialogs": "node src/index.js dialogs",
     "setup": "node src/setup.js",
-    "help": "node src/index.js --help"
+    "help": "node src/index.js --help",
+    "web": "node src/web/server.js"
   },
   "keywords": [
     "telegram",
@@ -33,7 +34,9 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "telegram": "^2.19.0"
+    "express": "^4.18.2",
+    "telegram": "^2.19.0",
+    "ws": "^8.14.2"
   },
   "engines": {
     "node": ">=18.0.0"

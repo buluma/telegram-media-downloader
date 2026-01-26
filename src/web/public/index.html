@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="th">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Telegram Downloader - Config</title>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        tg: {
+                            blue: '#2AABEE',
+                            darkBlue: '#229ED9',
+                            bg: '#17212B',
+                            sidebar: '#0E1621',
+                            panel: '#242F3D',
+                            hover: '#2B5278',
+                            border: '#0D1117',
+                            text: '#F5F5F5',
+                            textSecondary: '#8B9BAA',
+                            green: '#4FAE4E',
+                            red: '#E53935',
+                            orange: '#FF9800',
+                            lightBg: '#182533'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <link href="https://cdn.jsdelivr.net/npm/remixicon@4.0.0/fonts/remixicon.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+
+    <style>
+        * {
+            font-family: 'Roboto', -apple-system, sans-serif;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            background: #17212B;
+            color: #F5F5F5;
+            overscroll-behavior: none;
+        }
+
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #3A4A5C;
+            border-radius: 3px;
+        }
+
+        .chat-item {
+            transition: background 0.15s ease;
+        }
+
+        .chat-item:hover,
+        .chat-item.active {
+            background: #2B5278;
+        }
+
+        /* Telegram Avatar Gradients */
+        .tg-avatar {
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: 500;
+        }
+
+        .tg-avatar-1 {
+            background: linear-gradient(135deg, #FF845E 0%, #FF516A 100%);
+        }
+
+        .tg-avatar-2 {
+            background: linear-gradient(135deg, #FFD95A 0%, #F5A623 100%);
+        }
+
+        .tg-avatar-3 {
+            background: linear-gradient(135deg, #A695E7 0%, #7B68EE 100%);
+        }
+
+        .tg-avatar-4 {
+            background: linear-gradient(135deg, #7FD6F5 0%, #5BC8EB 100%);
+        }
+
+        .tg-avatar-5 {
+            background: linear-gradient(135deg, #5BCAAF 0%, #3BA99C 100%);
+        }
+
+        .tg-avatar-6 {
+            background: linear-gradient(135deg, #F599C7 0%, #E573A8 100%);
+        }
+
+        .tg-avatar-7 {
+            background: linear-gradient(135deg, #6EC9CB 0%, #4EBFC2 100%);
+        }
+
+        .media-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+            gap: 4px;
+        }
+
+        @media (min-width: 640px) {
+            .media-grid {
+                grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            }
+        }
+
+        @media (min-width: 1024px) {
+            .media-grid {
+                grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+            }
+        }
+
+        .media-item {
+            position: relative;
+            aspect-ratio: 1;
+            overflow: hidden;
+            cursor: pointer;
+            background: #242F3D;
+        }
+
+        .media-item img,
+        .media-item video {
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .media-item img.loaded,
+        .media-item video.loaded {
+            opacity: 1;
+        }
+
+        .media-item:hover .media-overlay {
+            opacity: 1;
+        }
+
+        .media-overlay {
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.4);
+            opacity: 0;
+            transition: opacity 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .skeleton {
+            background: linear-gradient(90deg, #242F3D 25%, #2B3A4A 50%, #242F3D 75%);
+            background-size: 200% 100%;
+            animation: shimmer 1.5s infinite;
+        }
+
+        @keyframes shimmer {
+            0% {
+                background-position: 200% 0;
+            }
+
+            100% {
+                background-position: -200% 0;
+            }
+        }
+
+        .tg-btn {
+            background: #2AABEE;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        .tg-btn:hover {
+            background: #229ED9;
+        }
+
+        .tg-btn:active {
+            transform: scale(0.98);
+        }
+
+        .tg-toggle {
+            width: 36px;
+            height: 20px;
+            background: #3A4A5C;
+            border-radius: 10px;
+            position: relative;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .tg-toggle.active {
+            background: #2AABEE;
+        }
+
+        .tg-toggle::after {
+            content: '';
+            position: absolute;
+            width: 16px;
+            height: 16px;
+            background: white;
+            border-radius: 50%;
+            top: 2px;
+            left: 2px;
+            transition: transform 0.2s;
+        }
+
+        .tg-toggle.active::after {
+            transform: translateX(16px);
+        }
+
+        .tg-input {
+            background: #242F3D;
+            border: none;
+            border-radius: 8px;
+            padding: 12px 16px;
+            color: #F5F5F5;
+            width: 100%;
+            outline: none;
+        }
+
+        .tg-input:focus {
+            box-shadow: 0 0 0 2px #2AABEE;
+        }
+
+        .modal-backdrop {
+            background: rgba(0, 0, 0, 0.92);
+        }
+
+        .tab-item {
+            padding: 12px 16px;
+            color: #8B9BAA;
+            cursor: pointer;
+            position: relative;
+            transition: color 0.2s;
+            white-space: nowrap;
+        }
+
+        .tab-item:hover {
+            color: #F5F5F5;
+        }
+
+        .tab-item.active {
+            color: #2AABEE;
+        }
+
+        .tab-item.active::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: #2AABEE;
+            border-radius: 3px 3px 0 0;
+        }
+
+        .sidebar-mobile {
+            transform: translateX(-100%);
+            transition: transform 0.3s ease;
+        }
+
+        .sidebar-mobile.open {
+            transform: translateX(0);
+        }
+    </style>
+</head>
+
+<body class="h-screen overflow-hidden">
+
+    <div class="flex h-full">
+        <!-- Mobile Overlay -->
+        <div id="sidebar-overlay" class="fixed inset-0 bg-black/50 z-40 hidden lg:hidden" onclick="closeSidebar()">
+        </div>
+
+        <!-- Left Sidebar -->
+        <aside id="sidebar"
+            class="fixed lg:relative w-72 sm:w-80 bg-tg-sidebar border-r border-tg-border flex flex-col h-full z-50 sidebar-mobile lg:transform-none">
+
+            <!-- Header -->
+            <div class="p-3 flex items-center gap-3 border-b border-tg-border">
+                <button id="sidebar-close"
+                    class="lg:hidden w-10 h-10 flex items-center justify-center rounded-full hover:bg-tg-hover">
+                    <i class="ri-arrow-left-line text-xl text-tg-textSecondary"></i>
+                </button>
+                <div class="flex-1 relative">
+                    <input type="text" id="search-input" placeholder="Search" class="tg-input pl-10 py-2 text-sm">
+                    <i class="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-tg-textSecondary"></i>
+                </div>
+            </div>
+
+            <!-- Navigation -->
+            <nav class="border-b border-tg-border">
+                <div class="nav-item flex items-center gap-3 p-3 cursor-pointer hover:bg-tg-hover active"
+                    data-page="viewer" onclick="navigateTo('viewer')">
+                    <i class="ri-gallery-line text-xl text-tg-blue"></i>
+                    <span class="text-tg-text">Viewer</span>
+                </div>
+                <div class="nav-item flex items-center gap-3 p-3 cursor-pointer hover:bg-tg-hover" data-page="groups"
+                    onclick="navigateTo('groups')">
+                    <i class="ri-group-line text-xl text-tg-textSecondary"></i>
+                    <span class="text-tg-text">Groups</span>
+                </div>
+                <div class="nav-item flex items-center gap-3 p-3 cursor-pointer hover:bg-tg-hover" data-page="settings"
+                    onclick="navigateTo('settings')">
+                    <i class="ri-settings-3-line text-xl text-tg-textSecondary"></i>
+                    <span class="text-tg-text">Settings</span>
+                </div>
+            </nav>
+
+            <!-- All Media Button -->
+            <div class="p-2 border-b border-tg-border">
+                <div class="flex items-center gap-3 p-3 rounded-xl cursor-pointer hover:bg-tg-hover transition-colors"
+                    onclick="showAllMedia()">
+                    <div class="tg-avatar tg-avatar-4 w-12 h-12 text-xl flex-shrink-0">
+                        <i class="ri-gallery-fill"></i>
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <h3 class="font-medium text-tg-text text-[15px]">All Media</h3>
+                        <p id="all-media-count" class="text-[13px] text-tg-textSecondary">View all files</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Groups List -->
+            <div class="flex-1 overflow-y-auto overscroll-contain">
+                <div class="p-2 text-xs text-tg-textSecondary uppercase tracking-wide">Downloaded Groups</div>
+                <div id="groups-list"></div>
+            </div>
+
+            <!-- Footer Stats -->
+            <div class="p-4 border-t border-tg-border bg-tg-bg">
+                <div class="flex items-center justify-between text-sm">
+                    <span class="text-tg-textSecondary">Disk</span>
+                    <span id="disk-usage" class="text-tg-text">--</span>
+                </div>
+                <div class="flex items-center justify-between text-sm mt-2">
+                    <span class="text-tg-textSecondary">Files</span>
+                    <span id="total-files" class="text-tg-text">--</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Group Settings Modal -->
+        <div id="group-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 modal-backdrop hidden">
+            <div
+                class="bg-tg-sidebar w-full max-w-md rounded-xl overflow-hidden shadow-2xl transform scale-100 transition-all">
+                <!-- Header -->
+                <div class="bg-tg-panel p-4 flex items-center justify-between border-b border-tg-border">
+                    <h3 class="text-white font-medium text-lg">Group Settings</h3>
+                    <button onclick="closeGroupSettings()"
+                        class="w-8 h-8 rounded-full hover:bg-tg-hover flex items-center justify-center transition-colors">
+                        <i class="ri-close-line text-tg-textSecondary text-xl"></i>
+                    </button>
+                </div>
+
+                <!-- Tabs -->
+                <div class="flex border-b border-tg-border">
+                    <div class="tab-item active flex-1 text-center" onclick="switchSettingsTab('media')" id="tab-media">
+                        Media Filters
+                    </div>
+                    <div class="tab-item flex-1 text-center" onclick="switchSettingsTab('forward')" id="tab-forward">
+                        Auto Forward
+                    </div>
+                </div>
+
+                <!-- Content -->
+                <div class="p-4 max-h-[70vh] overflow-y-auto custom-scrollbar">
+
+                    <!-- Media Filters Tab -->
+                    <div id="content-media">
+                        <div class="mb-4">
+                            <label
+                                class="flex items-center justify-between p-3 bg-tg-panel rounded-lg cursor-pointer hover:bg-tg-hover transition-colors">
+                                <span class="text-white font-medium">Enable Monitoring</span>
+                                <div class="tg-toggle" id="group-enable-toggle" onclick="toggleGroupEnabled(event)">
+                                </div>
+                            </label>
+                        </div>
+
+                        <div class="space-y-1">
+                            <p class="text-tg-textSecondary text-sm px-3 mb-2 uppercase font-medium tracking-wide">
+                                Allowed Media Types</p>
+
+                            <div class="grid grid-cols-1 gap-1" id="filter-options">
+                                <!-- Filters injected by JS -->
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Auto Forward Tab -->
+                    <div id="content-forward" class="hidden space-y-4">
+                        <div class="p-4 bg-tg-panel rounded-lg border border-tg-border/50">
+                            <div class="flex items-center justify-between mb-3">
+                                <div>
+                                    <h4 class="text-white font-medium">Auto Forward</h4>
+                                    <p class="text-xs text-tg-textSecondary">Forward media to another channel</p>
+                                </div>
+                                <div class="tg-toggle" id="fwd-enable-toggle" onclick="toggleFwdEnabled(event)"></div>
+                            </div>
+                        </div>
+
+                        <div class="space-y-3" id="fwd-settings">
+                            <div>
+                                <label class="block text-tg-textSecondary text-sm mb-2">Destination</label>
+                                <div class="relative">
+                                    <input type="text" id="fwd-destination" class="tg-input pr-10"
+                                        placeholder="Use 'Select' button or type ID">
+                                    <button onclick="openDestinationPicker()"
+                                        class="absolute right-2 top-1/2 transform -translate-y-1/2 text-tg-textSecondary hover:text-white p-1 rounded hover:bg-white/10 transition-colors"
+                                        title="Select from list">
+                                        <i class="ri-list-check-2 text-lg"></i>
+                                    </button>
+                                </div>
+                                <p class="text-xs text-tg-textSecondary mt-1.5 opacity-70">
+                                    Leave empty to use "Telegram Downloader Storage".
+                                </p>
+                            </div>
+
+                            <label
+                                class="flex items-center justify-between p-3 bg-tg-panel rounded-lg cursor-pointer hover:bg-tg-hover transition-colors">
+                                <div>
+                                    <span class="text-white text-sm">Delete after forward</span>
+                                    <p class="text-xs text-tg-textSecondary mt-0.5">Remove local file after successful
+                                        upload</p>
+                                </div>
+                                <div class="tg-toggle" id="fwd-delete-toggle" onclick="toggleFwdDelete(event)"></div>
+                            </label>
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- Footer -->
+                <div class="p-4 border-t border-tg-border flex justify-end gap-3 bg-tg-sidebar">
+                    <button onclick="closeGroupSettings()"
+                        class="px-4 py-2 rounded-lg text-tg-textButton hover:bg-tg-hover transition-colors">Cancel</button>
+                    <button onclick="saveGroupSettings()"
+                        class="px-6 py-2 rounded-lg bg-tg-blue text-white font-medium hover:bg-opacity-90 transition-all shadow-lg shadow-tg-blue/20">Save
+                        Changes</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <main class="flex-1 flex flex-col h-full overflow-hidden">
+
+            <!-- Header -->
+            <header id="content-header" class="h-14 bg-tg-bg border-b border-tg-border flex items-center px-3 sm:px-4">
+                <button id="menu-btn"
+                    class="lg:hidden w-10 h-10 flex items-center justify-center rounded-full hover:bg-tg-hover mr-2">
+                    <i class="ri-menu-line text-xl text-tg-textSecondary"></i>
+                </button>
+
+                <div class="flex items-center gap-3 flex-1 min-w-0">
+                    <div id="header-avatar" class="tg-avatar tg-avatar-1 w-10 h-10 text-lg flex-shrink-0">
+                        <i class="ri-gallery-line"></i>
+                    </div>
+                    <div class="min-w-0">
+                        <h1 id="page-title" class="font-medium text-tg-text truncate">Viewer</h1>
+                        <p id="page-subtitle" class="text-xs text-tg-textSecondary">View downloaded files</p>
+                    </div>
+                </div>
+
+                <div class="flex items-center gap-1">
+                    <button id="view-mode-btn"
+                        class="w-10 h-10 rounded-full hover:bg-tg-hover flex items-center justify-center">
+                        <i class="ri-layout-grid-line text-xl text-tg-textSecondary"></i>
+                    </button>
+                    <button id="refresh-btn"
+                        class="w-10 h-10 rounded-full hover:bg-tg-hover flex items-center justify-center"
+                        onclick="refreshCurrentPage()">
+                        <i class="ri-refresh-line text-xl text-tg-textSecondary"></i>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Media Tabs -->
+            <div id="media-tabs" class="flex border-b border-tg-border bg-tg-bg px-2 overflow-x-auto">
+                <div class="tab-item active" data-type="all">All</div>
+                <div class="tab-item" data-type="images">Photos</div>
+                <div class="tab-item" data-type="videos">Videos</div>
+                <div class="tab-item" data-type="documents">Files</div>
+                <div class="tab-item" data-type="audio">Audio</div>
+            </div>
+
+            <!-- Content Area -->
+            <div id="content-area" class="flex-1 overflow-y-auto overscroll-contain p-2 sm:p-4 bg-tg-lightBg">
+
+                <!-- Viewer Page -->
+                <div id="page-viewer">
+                    <div id="media-grid" class="media-grid"></div>
+                    <div id="empty-state"
+                        class="hidden flex flex-col items-center justify-center h-64 text-center px-4">
+                        <i class="ri-image-line text-5xl text-tg-textSecondary mb-4"></i>
+                        <p class="text-tg-textSecondary">No media files</p>
+                    </div>
+                    <div id="loading" class="hidden flex justify-center py-8">
+                        <div class="w-8 h-8 border-2 border-tg-blue border-t-transparent rounded-full animate-spin">
+                        </div>
+                    </div>
+                    <div id="load-more-sentinel" class="h-10"></div>
+                </div>
+
+                <!-- Groups Config Page -->
+                <div id="page-groups" class="hidden max-w-2xl mx-auto">
+                    <div id="groups-config-list" class="space-y-3"></div>
+                </div>
+
+                <!-- Settings Page -->
+                <div id="page-settings" class="hidden max-w-xl mx-auto">
+                    <!-- Download Settings -->
+                    <div class="bg-tg-panel rounded-xl p-4 mb-4">
+                        <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
+                            <i class="ri-download-line text-tg-blue"></i> Download
+                        </h3>
+                        <div class="space-y-4">
+                            <div class="flex items-center justify-between">
+                                <label class="text-tg-textSecondary">Concurrent</label>
+                                <input type="number" id="setting-concurrent" class="tg-input w-20 text-center" min="1"
+                                    max="10">
+                            </div>
+                            <div class="flex items-center justify-between">
+                                <label class="text-tg-textSecondary">Retries</label>
+                                <input type="number" id="setting-retries" class="tg-input w-20 text-center" min="1"
+                                    max="10">
+                            </div>
+                            <div>
+                                <label class="text-tg-textSecondary block mb-2">Download Path</label>
+                                <input type="text" id="setting-path" class="tg-input text-sm">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Rate Limits -->
+                    <div class="bg-tg-panel rounded-xl p-4 mb-4">
+                        <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
+                            <i class="ri-speed-line text-tg-orange"></i> Rate Limits
+                        </h3>
+                        <div class="space-y-4">
+                            <div class="flex items-center justify-between">
+                                <label class="text-tg-textSecondary">Requests/Minute</label>
+                                <input type="number" id="setting-rpm" class="tg-input w-20 text-center" min="1"
+                                    max="60">
+                            </div>
+                            <div class="flex items-center justify-between">
+                                <label class="text-tg-textSecondary">Polling Interval (sec)</label>
+                                <input type="number" id="setting-polling" class="tg-input w-20 text-center" min="5"
+                                    max="60">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Disk Management -->
+                    <div class="bg-tg-panel rounded-xl p-4 mb-4">
+                        <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
+                            <i class="ri-hard-drive-2-line text-tg-green"></i> Disk Management
+                        </h3>
+                        <div class="space-y-4">
+                            <div>
+                                <label class="text-tg-textSecondary block mb-2">Max Total Size (e.g. 50GB)</label>
+                                <input type="text" id="setting-max-disk" class="tg-input">
+                            </div>
+                            <div>
+                                <label class="text-tg-textSecondary block mb-2">Max Video Size (e.g. 500MB)</label>
+                                <input type="text" id="setting-max-video" class="tg-input">
+                            </div>
+                            <div>
+                                <label class="text-tg-textSecondary block mb-2">Max Image Size (e.g. 50MB)</label>
+                                <input type="text" id="setting-max-image" class="tg-input">
+                            </div>
+                        </div>
+                    </div>
+
+                    <button id="save-settings" class="tg-btn w-full">
+                        <i class="ri-save-line mr-2"></i>Save Settings
+                    </button>
+                </div>
+
+            </div>
+        </main>
+    </div>
+
+    <!-- Media Modal -->
+    <div id="media-modal" class="fixed inset-0 z-50 hidden modal-backdrop flex flex-col">
+        <!-- Top Toolbar -->
+        <div class="absolute top-0 left-0 right-0 p-4 flex justify-between items-center z-30 transition-opacity duration-300"
+            id="modal-top-bar">
+            <div id="modal-counter" class="bg-black/50 px-3 py-1 rounded-full text-sm text-white">1 / 10</div>
+            <div class="flex gap-2">
+                <button id="modal-fullscreen-btn"
+                    class="w-10 h-10 rounded-full bg-black/50 hover:bg-black/70 flex items-center justify-center text-white transition">
+                    <i class="ri-fullscreen-line text-xl"></i>
+                </button>
+                <button id="modal-close"
+                    class="w-10 h-10 rounded-full bg-black/50 hover:bg-black/70 flex items-center justify-center text-white transition">
+                    <i class="ri-close-line text-2xl"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Navigation Buttons -->
+        <button id="modal-prev"
+            class="absolute left-4 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-black/50 hover:bg-black/70 flex items-center justify-center z-30 transition-opacity duration-300">
+            <i class="ri-arrow-left-s-line text-3xl text-white"></i>
+        </button>
+        <button id="modal-next"
+            class="absolute right-4 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-black/50 hover:bg-black/70 flex items-center justify-center z-30 transition-opacity duration-300">
+            <i class="ri-arrow-right-s-line text-3xl text-white"></i>
+        </button>
+
+        <!-- Main Content Area (Auto-resize) -->
+        <div id="modal-swipe"
+            class="flex-1 flex items-center justify-center relative overflow-hidden p-0 w-full h-full transition-all duration-300 bg-black/90">
+            <!-- Zoom Container for Image -->
+            <div id="image-container"
+                class="relative w-full h-full flex items-center justify-center overflow-hidden hidden">
+                <img id="modal-image"
+                    class="max-w-full max-h-full object-contain transition-transform duration-75 origin-center cursor-move"
+                    draggable="false">
+            </div>
+
+            <!-- Custom Video Player Container -->
+            <div id="video-container"
+                class="relative w-full h-full flex items-center justify-center bg-black hidden group">
+                <video id="modal-video" class="max-w-full max-h-full object-contain w-full h-full" playsinline></video>
+
+                <!-- Speed Menu -->
+                <div id="video-speed-menu"
+                    class="absolute bottom-14 right-2 bg-[#212121]/95 backdrop-blur text-white rounded-lg overflow-hidden hidden z-50 shadow-xl w-32 py-1">
+                    <button
+                        class="speed-opt flex items-center justify-between px-3 py-1.5 hover:bg-white/10 text-sm w-full"
+                        data-speed="0.5"><span>0.5x</span></button>
+                    <button
+                        class="speed-opt flex items-center justify-between px-3 py-1.5 hover:bg-white/10 text-sm w-full text-tg-blue"
+                        data-speed="1.0"><span>1x</span><i class="ri-check-line"></i></button>
+                    <button
+                        class="speed-opt flex items-center justify-between px-3 py-1.5 hover:bg-white/10 text-sm w-full"
+                        data-speed="1.2"><span>1.2x</span></button>
+                    <button
+                        class="speed-opt flex items-center justify-between px-3 py-1.5 hover:bg-white/10 text-sm w-full"
+                        data-speed="1.5"><span>1.5x</span></button>
+                    <button
+                        class="speed-opt flex items-center justify-between px-3 py-1.5 hover:bg-white/10 text-sm w-full"
+                        data-speed="1.7"><span>1.7x</span></button>
+                    <button
+                        class="speed-opt flex items-center justify-between px-3 py-1.5 hover:bg-white/10 text-sm w-full"
+                        data-speed="2.0"><span>2x</span></button>
+                </div>
+
+                <!-- Compact Controls Bar (Telegram Style) -->
+                <div id="video-controls"
+                    class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-40">
+                    <!-- Progress Bar (Full Width) -->
+                    <div class="px-3 pt-6">
+                        <div class="relative w-full h-1 bg-white/30 rounded-full cursor-pointer group/progress"
+                            id="video-progress-container">
+                            <div id="video-progress-fill" class="h-full bg-white rounded-full transition-all"
+                                style="width: 0%">
+                                <div
+                                    class="absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 bg-white rounded-full opacity-0 group-hover/progress:opacity-100 transition-opacity">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Controls Row -->
+                    <div class="flex items-center justify-between px-3 py-2">
+                        <!-- Left: Volume + Time -->
+                        <div class="flex items-center gap-3">
+                            <button id="video-mute-btn"
+                                class="text-white/90 hover:text-white w-6 h-6 flex items-center justify-center"><i
+                                    class="ri-volume-up-line text-lg"></i></button>
+                            <input type="range" id="video-volume" min="0" max="1" step="0.05" value="1"
+                                class="w-16 h-0.5 bg-white/30 rounded-full appearance-none cursor-pointer accent-white">
+                            <span class="text-xs text-white/80 font-mono tabular-nums"><span
+                                    id="video-current-time">00:00</span> <span class="text-white/50">/</span> <span
+                                    id="video-duration">00:00</span></span>
+                        </div>
+
+                        <!-- Center: Play -->
+                        <button id="video-play-btn"
+                            class="w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition"><i
+                                class="ri-play-fill text-2xl"></i></button>
+
+                        <!-- Right: Speed, PiP, Fullscreen -->
+                        <div class="flex items-center gap-2">
+                            <button id="video-settings-btn"
+                                class="text-white/80 hover:text-white w-7 h-7 flex items-center justify-center text-sm font-medium"
+                                title="Speed">1x</button>
+                            <button id="video-pip-btn"
+                                class="text-white/80 hover:text-white w-7 h-7 flex items-center justify-center"
+                                title="PiP"><i class="ri-picture-in-picture-2-line text-lg"></i></button>
+                            <button id="video-fullscreen-btn"
+                                class="text-white/80 hover:text-white w-7 h-7 flex items-center justify-center"
+                                title="Fullscreen"><i class="ri-fullscreen-line text-lg"></i></button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Bottom Controls Container (Always Visible) -->
+        <div id="modal-bottom-controls"
+            class="w-full flex-shrink-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent transition-transform duration-300 z-40 pointer-events-auto">
+
+            <!-- Preview Strip -->
+            <div id="preview-strip-container"
+                class="w-full overflow-x-auto py-2 px-4 scrollbar-hide flex justify-center min-h-[72px]">
+                <div id="preview-strip" class="flex gap-2 mx-auto items-center"></div>
+            </div>
+
+            <!-- Info Bar -->
+            <div id="modal-info-bar" class="w-full p-4 border-t border-white/10 bg-black/40 backdrop-blur-sm">
+                <div class="max-w-4xl mx-auto flex items-center justify-between gap-4">
+                    <div class="min-w-0 flex-1">
+                        <h4 id="modal-filename" class="text-white font-medium truncate text-base"></h4>
+                        <p id="modal-meta" class="text-sm text-gray-300"></p>
+                    </div>
+                    <a id="modal-download" href="#" download
+                        class="px-4 py-2 bg-tg-blue hover:bg-tg-darkBlue rounded-lg text-sm text-white flex items-center font-medium transition">
+                        <i class="ri-download-line mr-2"></i>Download
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Group Modal -->
+    <div id="group-modal"
+        class="fixed inset-0 z-50 hidden modal-backdrop flex items-end sm:items-center justify-center">
+        <div
+            class="bg-tg-panel rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md sm:mx-4 overflow-hidden max-h-[80vh] flex flex-col">
+            <div class="p-4 border-b border-tg-border flex items-center justify-between flex-shrink-0">
+                <h3 id="group-modal-title" class="text-lg font-medium text-tg-text truncate">Group Settings</h3>
+                <button id="group-modal-close"
+                    class="w-8 h-8 rounded-full hover:bg-tg-hover flex items-center justify-center">
+                    <i class="ri-close-line text-xl text-tg-textSecondary"></i>
+                </button>
+            </div>
+            <div id="group-modal-content" class="p-4 overflow-y-auto flex-1"></div>
+            <div class="p-4 border-t border-tg-border flex-shrink-0">
+                <button id="group-modal-save" class="tg-btn w-full">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div id="toast" class="fixed bottom-20 sm:bottom-4 left-1/2 -translate-x-1/2 z-50 hidden">
+        <div class="bg-tg-panel border border-tg-border rounded-lg px-4 py-3 flex items-center gap-3 shadow-xl">
+            <i id="toast-icon" class="ri-check-line text-tg-green"></i>
+            <span id="toast-message" class="text-tg-text text-sm"></span>
+        </div>
+    </div>
+
+    <script src="/js/app.js"></script>
+</body>
+
+</html>
