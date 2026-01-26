@@ -18,6 +18,7 @@ import { resilience } from './core/resilience.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SESSION_PATH = path.join(__dirname, '../data/session.enc');
+const CONFIG_PATH = path.join(__dirname, '../data/config.json');
 const SESSION_PASSWORD = 'telegram-dl-2026'; // ควรให้ user ตั้งเอง
 
 // Transient Readline Interface
@@ -97,6 +98,8 @@ async function main() {
                 },
                 info: (msg) => {
                     if (msg?.includes('Connecting to')) return; // Too verbose
+                    if (msg?.includes('Disconnecting')) return; // Ignore
+                    if (msg?.includes('connection closed')) return; // Ignore
                     if (msg?.includes('Running gramJS')) return;
                     console.log(colorize(`ℹ️  ${msg}`, 'dim'));
                 },
@@ -556,37 +559,72 @@ async function configureGroups(client, config) {
         if (editingFiltersFor >= 0) {
             // Render Filter Menu
             const item = selection[editingFiltersFor];
-            console.log(colorize(`⚙️  FILTERS: ${item.name}`, 'cyan', 'bold'));
-            console.log(colorize('Toggle Allowed Media Types', 'yellow'));
-            console.log('─'.repeat(40));
+            const isFwdMode = editingFiltersFor.mode === 'fwd';
             
-            const filters = [
-                { key: 'photos', label: '📷 Photos' },
-                { key: 'videos', label: '🎬 Videos' },
-                { key: 'files', label: '📁 Files' },
-                { key: 'links', label: '🔗 Links' },
-                { key: 'voice', label: '🎤 Voice' },
-                { key: 'gifs', label: '🎞️ GIFs' },
-                { key: 'stickers', label: '😊 Stickers' } // New Option
-            ];
+            if (isFwdMode) {
+                // AUTO FORWARD MENU
+                const af = item.autoForward || {};
+                console.log(colorize(`➡️  AUTO FORWARD: ${item.name}`, 'cyan', 'bold'));
+                console.log(colorize('Example: Forward to Saved Messages or Channel', 'dim'));
+                console.log('─'.repeat(40));
+                
+                const opts = [
+                    { key: 'enabled', label: 'Enable Auto Forward', val: af.enabled },
+                    { key: 'dest', label: 'Destination', val: af.destination ? (af.destination === 'me' ? 'Saved Messages' : `ID: ${af.destination}`) : 'Auto Storage Channel' },
+                    { key: 'delete', label: 'Delete after forward', val: af.deleteAfterForward }
+                ];
+                
+                opts.forEach((opt, i) => {
+                    const isSelected = i === cursor;
+                    const cursorChar = isSelected ? colorize('>', 'cyan', 'bold') : ' ';
+                    
+                    let valDisplay = '';
+                    if (typeof opt.val === 'boolean') {
+                        valDisplay = opt.val ? colorize('[ON]', 'green') : colorize('[OFF]', 'dim');
+                    } else {
+                        valDisplay = colorize(opt.val, 'yellow');
+                    }
+                    
+                    console.log(`${cursorChar} ${opt.label.padEnd(25)} ${valDisplay}`);
+                });
+                
+                console.log('─'.repeat(40));
+                console.log(colorize('[Enter] Toggle/Edit  [Esc] Back', 'dim'));
+                
+            } else {
+                // FILTERS MENU
+                console.log(colorize(`⚙️  FILTERS: ${item.name}`, 'cyan', 'bold'));
+                console.log(colorize('Toggle Allowed Media Types', 'yellow'));
+                console.log('─'.repeat(40));
+                
+                const filters = [
+                    { key: 'photos', label: '📷 Photos' },
+                    { key: 'videos', label: '🎬 Videos' },
+                    { key: 'files', label: '📁 Files' },
+                    { key: 'links', label: '🔗 Links' },
+                    { key: 'voice', label: '🎤 Voice' },
+                    { key: 'gifs', label: '🎞️ GIFs' },
+                    { key: 'stickers', label: '😊 Stickers' }
+                ];
 
-            filters.forEach((f, i) => {
-                const isSelected = i === cursor;
-                const isEnabled = item.filters[f.key] !== false;
-                const cursorChar = isSelected ? colorize('>', 'cyan', 'bold') : ' ';
-                const checkChar = isEnabled ? colorize('[✓]', 'green') : colorize('[ ]', 'dim');
-                const label = isSelected ? colorize(f.label, 'white', 'bold') : f.label;
-                console.log(`${cursorChar} ${checkChar} ${label}`);
-            });
+                filters.forEach((f, i) => {
+                    const isSelected = i === cursor;
+                    const isEnabled = item.filters[f.key] !== false;
+                    const cursorChar = isSelected ? colorize('>', 'cyan', 'bold') : ' ';
+                    const checkChar = isEnabled ? colorize('[✓]', 'green') : colorize('[ ]', 'dim');
+                    const label = isSelected ? colorize(f.label, 'white', 'bold') : f.label;
+                    console.log(`${cursorChar} ${checkChar} ${label}`);
+                });
 
-            console.log('─'.repeat(40));
-            console.log(colorize('ENTER to Done', 'dim'));
+                console.log('─'.repeat(40));
+                console.log(colorize('ENTER to Done', 'dim'));
+            }
             return;
         }
 
         // Render Group List
         console.log(colorize('⚙️  CONFIGURE MONITOR GROUPS', 'cyan', 'bold'));
-        console.log(colorize('Use ↑/↓ move, SPACE toggle, RIGHT edit filters, enter save', 'yellow'));
+        console.log(colorize('Use ↑/↓ move, SPACE: Toggle, F: Forward Settings, Enter: Save', 'yellow'));
         console.log(colorize('Shortcuts: [A] Select All  [U] Unselect All', 'cyan'));
         console.log('─'.repeat(60));
 
@@ -599,20 +637,24 @@ async function configureGroups(client, config) {
             
             const cursorChar = isSelected ? colorize('>', 'cyan', 'bold') : ' ';
             const checkChar = item.enabled ? colorize('[✓]', 'green') : colorize('[ ]', 'dim');
-            const name = isSelected ? colorize(item.name.slice(0, 40), 'white', 'bold') : item.name.slice(0, 40);
+            const name = isSelected ? colorize(item.name.slice(0, 30), 'white', 'bold') : item.name.slice(0, 30);
             
-            // Show brief filters if enabled
-            let info = '';
+            // Show config tags
+            let tags = '';
             if (item.enabled) {
+                // Filters check
                 const f = item.filters;
                 const active = [];
                 if (f.photos !== false) active.push('📷');
                 if (f.videos !== false) active.push('🎬');
-                if (f.files !== false) active.push('📁');
-                info = colorize(`  ${active.join(' ')}...`, 'dim');
+                
+                // Auto Forward check
+                if (item.autoForward?.enabled) active.push(colorize('➡️ FWD', 'green'));
+                
+                tags = colorize(`  ${active.join(' ')}`, 'dim');
             }
 
-            console.log(`${cursorChar} ${checkChar} ${item.type} ${name}${info}`);
+            console.log(`${cursorChar} ${checkChar} ${item.type} ${name.padEnd(30)}${tags}`);
         }
         
         console.log('─'.repeat(60));
@@ -622,8 +664,58 @@ async function configureGroups(client, config) {
 
     // Main loop
     await new Promise(resolve => {
-        const onKeypress = (str, key) => {
-            if (editingFiltersFor >= 0) {
+        const onKeypress = async (str, key) => {
+            if (!key) return;
+            
+            // === AUTO FORWARD MENU HANDLING ===
+            if (editingFiltersFor >= 0 && editingFiltersFor.mode === 'fwd') {
+                const item = selection[editingFiltersFor];
+                // Ensure struct exists
+                if (!item.autoForward) item.autoForward = { enabled: false, destination: null, deleteAfterForward: false };
+
+                if (key.name === 'up') {
+                    cursor = Math.max(0, cursor - 1);
+                } else if (key.name === 'down') {
+                    cursor = Math.min(2, cursor + 1); // 3 items
+                } else if (key.name === 'escape' || key.name === 'left') {
+                    // Back
+                    editingFiltersFor = -1;
+                    cursor = 0;
+                } else if (key.name === 'return' || key.name === 'space') {
+                    // Toggle / Edit
+                    if (cursor === 0) {
+                        // Toggle Enabled
+                        item.autoForward.enabled = !item.autoForward.enabled;
+                    } else if (cursor === 1) {
+                        // Edit Destination
+                        cleanup(); // Pause raw mode for input
+                        
+                        console.log();
+                        console.log(colorize('Select Destination:', 'cyan'));
+                        console.log('1. Saved Messages (Me)');
+                        console.log('2. Auto Storage Channel (Default)');
+                        console.log('3. Custom ID / Username');
+                        
+                        const ans = await question(colorize('Choice (1-3): ', 'yellow'));
+                        if (ans === '1') item.autoForward.destination = 'me';
+                        else if (ans === '2') item.autoForward.destination = null;
+                        else if (ans === '3') {
+                            const id = await question('Enter ID/Username: ');
+                            if (id.trim()) item.autoForward.destination = id.trim();
+                        }
+                        
+                        resume(); // Resume raw mode
+                    } else if (cursor === 2) {
+                        // Toggle Delete
+                        item.autoForward.deleteAfterForward = !item.autoForward.deleteAfterForward;
+                    }
+                }
+                render();
+                return;
+            }
+
+            // ... Existing Filter Menu Logic ...
+            if (editingFiltersFor >= 0 && !editingFiltersFor.mode) {
                 // Filter Menu Handling
                 const filterKeys = ['photos', 'videos', 'files', 'links', 'voice', 'gifs'];
                 if (key.name === 'up') {
@@ -634,36 +726,58 @@ async function configureGroups(client, config) {
                     const fKey = filterKeys[cursor];
                     const item = selection[editingFiltersFor];
                     item.filters[fKey] = !item.filters[fKey];
-                } else if (key.name === 'return' || key.name === 'left') {
+                } else if (key.name === 'return' || key.name === 'left' || key.name === 'escape') {
                     editingFiltersFor = -1;
                     cursor = 0;
                 }
-            } else {
-                // Main Menu Handling
-                if (key.name === 'up') {
-                    cursor = Math.max(0, cursor - 1);
-                } else if (key.name === 'down') {
-                    cursor = Math.min(groups.length - 1, cursor + 1);
-                } else if (key.name === 'space') {
-                    selection[cursor].enabled = !selection[cursor].enabled;
-                } else if (key.name === 'right') {
-                    editingFiltersFor = cursor;
-                    cursor = 0;
-                } else if (key.name === 'a') {
-                    selection.forEach(s => s.enabled = true);
-                } else if (key.name === 'u' || key.name === 'n') {
-                    selection.forEach(s => s.enabled = false);
-                } else if (key.name === 'return') {
-                    process.stdin.removeListener('keypress', onKeypress);
-                    if (process.stdin.isTTY) process.stdin.setRawMode(false);
-                    resolve();
-                    return;
-                }
+                render();
+                return;
+            }
+
+            // Main Menu Handling
+            if (key.name === 'up') {
+                cursor = Math.max(0, cursor - 1);
+            } else if (key.name === 'down') {
+                cursor = Math.min(groups.length - 1, cursor + 1);
+            } else if (key.name === 'space') {
+                selection[cursor].enabled = !selection[cursor].enabled;
+            } else if (key.name === 'right') {
+                // Edit Filters
+                editingFiltersFor = cursor;
+                cursor = 0;
+            } else if (key.name === 'f') {
+                // [NEW] Edit Auto Forward
+                editingFiltersFor = Object.assign(new Number(cursor), { mode: 'fwd' }); // Hacky way to store mode or just use object?
+                // Let's us simpler way: store index and mode in separate var or object
+                // But `editingFiltersFor` was index. Let's change it to be index, and add `editMode` var?
+                // For minimal change, let's use object wrapper or just handle it carefully.
+                // JS Number object can hold properties
+                cursor = 0;
+            } else if (key.name === 'a') {
+                selection.forEach(s => s.enabled = true);
+            } else if (key.name === 'u' || key.name === 'n') {
+                selection.forEach(s => s.enabled = false);
+            } else if (key.name === 'return') {
+                process.stdin.removeListener('keypress', onKeypress);
+                if (process.stdin.isTTY) process.stdin.setRawMode(false);
+                resolve();
+                return;
             }
             
             if (key.ctrl && key.name === 'c') {
                 process.exit(0);
             }
+            render();
+        };
+
+        const cleanup = () => {
+            if (process.stdin.isTTY) process.stdin.setRawMode(false);
+            process.stdin.pause();
+        };
+        
+        const resume = () => {
+            process.stdin.resume();
+            if (process.stdin.isTTY) process.stdin.setRawMode(true);
             render();
         };
 
@@ -680,6 +794,10 @@ async function configureGroups(client, config) {
             // Update existing
             config.groups[configIndex].enabled = item.enabled;
             config.groups[configIndex].filters = item.filters;
+            // Update Auto Forward
+            if (item.autoForward) {
+                config.groups[configIndex].autoForward = item.autoForward;
+            }
             toggledCount++;
         } else if (item.enabled) {
             // Add new enabled group
@@ -688,6 +806,7 @@ async function configureGroups(client, config) {
                 name: item.name,
                 enabled: true,
                 filters: item.filters,
+                autoForward: item.autoForward, // Save Auto Forward
                 trackUsers: { enabled: false, users: [] },
                 topics: { enabled: false, ids: [] }
             });
@@ -721,6 +840,8 @@ async function startHistory(client, config, connManager) {
     // Import dynamically
     const { DownloadManager } = await import('./core/downloader.js');
     const { HistoryDownloader } = await import('./core/history.js');
+    const { RateLimiter } = await import('./core/security.js'); // Import missing dep
+    const { AutoForwarder } = await import('./core/forwarder.js'); // Import Forwarder
     
     // Get dialogs
     console.log(colorize('Fetching dialogs...', 'dim'));
@@ -1230,6 +1351,7 @@ async function startMonitor(client, config) {
     // Import modules dynamically
     const { DownloadManager } = await import('./core/downloader.js');
     const { RealtimeMonitor } = await import('./core/monitor.js');
+    const { AutoForwarder } = await import('./core/forwarder.js'); // Import Forwarder
 
     // Create rate limiter
     const rateLimiter = new RateLimiter(config.rateLimits);
@@ -1238,8 +1360,81 @@ async function startMonitor(client, config) {
     const downloader = new DownloadManager(client, config, rateLimiter);
     await downloader.init();
 
-    // Create monitor
+    // Start systems
     const monitor = new RealtimeMonitor(client, downloader, config);
+    const forwarder = new AutoForwarder(client, config); // Init Forwarder
+
+    // === AUTO FORWARD HOOK ===
+    downloader.on('complete', async (job) => {
+        // Forward to AutoForwarder
+        await forwarder.process({
+            filePath: job.filePath,
+            groupId: job.groupId, // Needed for config lookup
+            groupName: job.groupName,
+            message: job.message  // Needed for caption extraction
+        });
+    });
+    // =========================
+    
+    // [NEW] Real-time Config Watcher
+    fs.watchFile(CONFIG_PATH, async (curr, prev) => {
+        if (curr.mtime !== prev.mtime) {
+            try {
+                const newConfigBody = await fs.promises.readFile(CONFIG_PATH, 'utf8');
+                const newConfig = JSON.parse(newConfigBody);
+                
+                // Detect and log changes for user awareness
+                const changes = [];
+                if (config.groups && newConfig.groups) {
+                    newConfig.groups.forEach(newG => {
+                        const oldG = config.groups.find(g => g.id === newG.id);
+                        if (!oldG) return; // New group added
+
+                        // 1. Check Enabled Status
+                        if (oldG.enabled !== newG.enabled) {
+                            changes.push(`${newG.name}: ${newG.enabled ? 'Enabled ✅' : 'Disabled ⛔'}`);
+                        }
+
+                        // 2. Check Auto Forward
+                        const oldAF = oldG.autoForward || {};
+                        const newAF = newG.autoForward || {};
+                        if (oldAF.enabled !== newAF.enabled) {
+                            changes.push(`${newG.name} AutoForward: ${newAF.enabled ? 'On 🟢' : 'Off 🔴'}`);
+                        }
+                        if (newAF.enabled && oldAF.destination !== newAF.destination) {
+                            const friendlyDest = newAF.destination || 'Auto-Storage (Default) 📦';
+                            changes.push(`${newG.name} Forward Dest: ${friendlyDest}`);
+                        }
+
+                        // 3. Check Media Filters
+                        if (JSON.stringify(oldG.filters) !== JSON.stringify(newG.filters)) {
+                            // Simple check if any filter changed
+                            changes.push(`${newG.name} Filters Updated ⚡`);
+                        }
+                    });
+                }
+                
+                // Update monitor config dynamically
+                monitor.config = newConfig;
+                if (forwarder) forwarder.config = newConfig; // Update forwarder too
+                
+                // Also update global config reference
+                Object.assign(config, newConfig);
+                
+                console.log(colorize('\n🔄 Configuration Updated:', 'cyan'));
+                if (changes.length > 0) {
+                    changes.forEach(c => console.log(colorize(`   👉 ${c}`, 'yellow')));
+                } else {
+                    console.log(colorize('   (No active settings changed)', 'gray'));
+                }
+            } catch (e) {
+                console.error(colorize('\n❌ Config reload failed: ' + e.message, 'red'));
+            }
+        }
+    });
+
+    console.log(colorize('🚀 Starting Monitor...', 'green'));
+    await monitor.start();
 
     // Event listeners
     downloader.on('queued', (job) => {
@@ -1265,6 +1460,11 @@ async function startMonitor(client, config) {
     monitor.on('urls', ({ group, count }) => {
         console.log(colorize(`🔗 URLs: `, 'yellow') + `${count} saved from ${group}`);
     });
+
+    // Start systems
+    downloader.start();
+    await monitor.start();
+    // forwarder.start() is not needed as it hooks into downloader events
 
     // Start monitoring
     console.log(colorize('╔════════════════════════════════════════╗', 'red'));

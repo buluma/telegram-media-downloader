@@ -423,6 +423,9 @@ export class DownloadManager extends EventEmitter {
             size: size,
             date: Date.now()
         };
+
+        // Emit completion event for listeners (AutoForwarder, CLI logs)
+        this.emit('complete', { ...job, filePath, size });
     }
 
     async download(job, attempt = 1) {
@@ -560,6 +563,17 @@ export class DownloadManager extends EventEmitter {
 
         // SMART COUNTER: Update usage immediately
         this.incrementDiskUsage(size);
+        
+        // Notify listeners (Auto Forwarder will listen to this)
+        this.emit('download_complete', {
+            filePath,
+            fileName: path.basename(filePath),
+            size,
+            groupId,
+            groupName: job.groupName,
+            message: job.message,
+            mediaType: job.mediaType
+        });
 
         return filePath;
     }

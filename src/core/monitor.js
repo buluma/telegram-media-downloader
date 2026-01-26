@@ -142,7 +142,7 @@ export class RealtimeMonitor extends EventEmitter {
         // DEBUG: Log EVERY event that has a message to see if we are receiving them
         if (message) {
              const peerId = message.peerId?.channelId?.toString() || message.peerId?.chatId?.toString() || message.peerId?.userId?.toString();
-             console.log(`📨 RAW EVENT: Peer=${peerId} ID=${message.id} Text=${(message.message || '').slice(0, 20)}...`);
+             // console.log(`📨 RAW EVENT: Peer=${peerId} ID=${message.id} Text=${(message.message || '').slice(0, 20)}...`);
         }
 
         try {
@@ -185,7 +185,7 @@ export class RealtimeMonitor extends EventEmitter {
                 // Only log once per group per session to avoid spam
                 if (!this._unknownGroups) this._unknownGroups = new Set();
                 if (!this._unknownGroups.has(chatId)) {
-                    console.log(`⚠️  Ignored message from Group ID: ${chatId} (Not enabled in Config)`);
+                    // console.log(`⚠️  Ignored message from Group ID: ${chatId} (Not enabled in Config)`);
                     this._unknownGroups.add(chatId);
                 }
                 return;
@@ -193,23 +193,23 @@ export class RealtimeMonitor extends EventEmitter {
 
             // DEBUG: Matched Group
             const hasMedia = this.hasMedia(message);
-            console.log(`🎯 DEBUG: Group [${group.name}] MsgID: ${message.id} | Media: ${hasMedia ? this.getMediaType(message) : 'None'}`);
+            // console.log(`🎯 DEBUG: Group [${group.name}] MsgID: ${message.id} | Media: ${hasMedia ? this.getMediaType(message) : 'None'}`);
 
             if (!hasMedia && message.media) {
-                 console.log('❓ DEBUG: Msg has .media property but hasMedia() returned false.');
-                 console.log('   Media Class:', message.media.className);
+                 // console.log('❓ DEBUG: Msg has .media property but hasMedia() returned false.');
+                 // console.log('   Media Class:', message.media.className);
             }
 
             // User tracking filter
             if (!this.passUserFilter(message, group)) {
-                console.log(`⛔ Skipped: User Filter rejected sender ${message.senderId || 'unknown'}`);
+                // console.log(`⛔ Skipped: User Filter rejected sender ${message.senderId || 'unknown'}`);
                 this.stats.skipped++;
                 return;
             }
 
             // Topic filter (for forum groups)
             if (!this.passTopicFilter(message, group)) {
-                console.log(`⛔ Skipped: Topic Filter rejected topic ${message.replyTo?.replyToMsgId || 'none'}`);
+                // console.log(`⛔ Skipped: Topic Filter rejected topic ${message.replyTo?.replyToMsgId || 'none'}`);
                 this.stats.skipped++;
                 return;
             }
@@ -409,8 +409,13 @@ export class RealtimeMonitor extends EventEmitter {
 
             const group = this.config.groups.find(g => g.id === groupId);
             const groupName = group ? group.name : groupId;
-            // Use simple string replacement for sanitization if method missing
-            const safeName = groupName.replace(/[<>:"/\\|?*]/g, '_').slice(0, 80);
+            // Use unified sanitization (Matches Downloader)
+            const safeName = groupName
+                .replace(/[<>:"/\\|?*]/g, '_')
+                .replace(/\s+/g, '_') // Replace spaces with underscores
+                .replace(/_+/g, '_')  // Collapse multiple underscores
+                .slice(0, 80);
+                
             const groupDir = path.join(basePath, safeName);
 
             try {
@@ -432,7 +437,11 @@ export class RealtimeMonitor extends EventEmitter {
 
     // Restored sanitize method just in case
     sanitize(name) {
-        return name.replace(/[<>:"/\\|?*]/g, '_').slice(0, 80);
+        return name
+            .replace(/[<>:"/\\|?*]/g, '_')
+            .replace(/\s+/g, '_')
+            .replace(/_+/g, '_')
+            .slice(0, 80);
     }
 
     getStats() {
