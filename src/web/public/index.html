@@ -531,6 +531,16 @@
                             Monitored Only
                         </button>
                     </div>
+                    <!-- Search Box -->
+                    <div id="groups-search-box" class="mb-4">
+                        <div class="relative">
+                            <i
+                                class="ri-search-line absolute left-3 top-1/2 transform -translate-y-1/2 text-tg-textSecondary"></i>
+                            <input type="text" id="groups-search"
+                                class="w-full bg-tg-panel border border-tg-border rounded-lg pl-10 pr-4 py-2 text-tg-text focus:ring-1 focus:ring-tg-blue focus:border-tg-blue outline-none"
+                                placeholder="Search groups/channels..." oninput="filterDialogs(this.value)">
+                        </div>
+                    </div>
                     <div id="groups-config-list" class="space-y-3"></div>
                 </div>
 
