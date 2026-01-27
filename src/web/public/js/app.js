@@ -1397,18 +1397,25 @@ function switchGroupsTab(mode) {
     // Update tab UI
     const allTab = document.getElementById('groups-tab-all');
     const monitoredTab = document.getElementById('groups-tab-monitored');
+    const searchBox = document.getElementById('groups-search-box');
+    const searchInput = document.getElementById('groups-search');
+    
+    // Clear search when switching tabs
+    if (searchInput) searchInput.value = '';
     
     if (mode === 'all') {
         allTab.classList.add('border-tg-blue', 'text-tg-blue');
         allTab.classList.remove('border-transparent', 'text-tg-textSecondary');
         monitoredTab.classList.remove('border-tg-blue', 'text-tg-blue');
         monitoredTab.classList.add('border-transparent', 'text-tg-textSecondary');
+        if (searchBox) searchBox.classList.remove('hidden');
         loadAllDialogs();
     } else {
         monitoredTab.classList.add('border-tg-blue', 'text-tg-blue');
         monitoredTab.classList.remove('border-transparent', 'text-tg-textSecondary');
         allTab.classList.remove('border-tg-blue', 'text-tg-blue');
         allTab.classList.add('border-transparent', 'text-tg-textSecondary');
+        if (searchBox) searchBox.classList.add('hidden');
         loadGroupsConfig();
     }
 }
@@ -1428,6 +1435,22 @@ async function loadAllDialogs() {
     } catch (e) {
         container.innerHTML = `<div class="text-center text-red-400 py-8"><i class="ri-error-warning-line text-3xl mb-2"></i><p>Failed to load dialogs</p><p class="text-sm opacity-70">${e.message}</p></div>`;
     }
+}
+
+function filterDialogs(query) {
+    if (!allDialogsCache.length) return;
+    
+    const q = query.toLowerCase().trim();
+    if (!q) {
+        renderAllDialogs(allDialogsCache);
+        return;
+    }
+    
+    const filtered = allDialogsCache.filter(d => 
+        d.name.toLowerCase().includes(q) || 
+        (d.username && d.username.toLowerCase().includes(q))
+    );
+    renderAllDialogs(filtered);
 }
 
 function renderAllDialogs(dialogs) {
