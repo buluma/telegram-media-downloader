@@ -54,11 +54,36 @@ async function main() {
 
     // Load config
     const config = loadConfig();
-    
-    if (!config.telegram.apiId || !config.telegram.apiHash) {
-        console.log(colorize('❌ Missing API credentials in data/config.json', 'red'));
-        console.log('Get them from: https://my.telegram.org');
+
+    // Check for auth command (Bypass API credentials check)
+    if (process.argv[2] === 'auth') {
+        await setupWebAuth(config);
         process.exit(0);
+    }
+
+    if (!config.telegram.apiId || !config.telegram.apiHash) {
+        console.log();
+        console.log(colorize('⚙️  FIRST RUN SETUP', 'cyan', 'bold'));
+        console.log(colorize('Please enter your Telegram API credentials.', 'dim'));
+        console.log(colorize('Get them from: https://my.telegram.org', 'dim'));
+        console.log();
+
+        while (!config.telegram.apiId) {
+            const input = await question(colorize('📦 API ID: ', 'cyan'));
+            config.telegram.apiId = input.trim();
+        }
+        while (!config.telegram.apiHash) {
+            const input = await question(colorize('🔑 API Hash: ', 'cyan'));
+            config.telegram.apiHash = input.trim();
+        }
+        
+        // Optional phone
+        const phone = await question(colorize('📞 Phone (optional): ', 'cyan'));
+        if (phone) config.telegram.phoneNumber = phone.trim();
+
+        saveConfig(config);
+        console.log(colorize('✅ Setup complete! Continuing...', 'green'));
+        console.log();
     }
 
     console.log(colorize('📦 API ID: ', 'dim') + config.telegram.apiId);
@@ -113,9 +138,8 @@ async function main() {
             }
         }
     );
-
     console.log(colorize('🔌 Connecting to Telegram...', 'cyan'));
-    
+
     try {
         await client.connect();
         console.log(colorize('✅ Connected!', 'green'));
@@ -126,17 +150,21 @@ async function main() {
 
     // Check if logged in
     const isAuthorized = await client.checkAuthorization();
-    
+
     if (!isAuthorized) {
         console.log();
         console.log(colorize('═══════════════════════════════════════', 'yellow'));
         console.log(colorize('   🔐 LOGIN REQUIRED', 'yellow', 'bold'));
         console.log(colorize('═══════════════════════════════════════', 'yellow'));
         console.log();
-        
+
         try {
             await client.start({
                 phoneNumber: async () => {
+                    if (config.telegram.phoneNumber) {
+                         console.log(colorize(`Using configured phone: ${config.telegram.phoneNumber}`, 'dim'));
+                         return config.telegram.phoneNumber;
+                    }
                     console.log(colorize('Enter phone number with country code', 'dim'));
                     console.log(colorize('Example: +66812345678', 'dim'));
                     const phone = await question(colorize('📞 Phone: ', 'cyan'));
@@ -165,7 +193,7 @@ async function main() {
             fs.writeFileSync(SESSION_PATH, JSON.stringify(encrypted, null, 2));
             console.log();
             console.log(colorize('✅ Login successful! Session saved.', 'green', 'bold'));
-            
+
         } catch (error) {
             console.log(colorize(`❌ Login failed: ${error.message}`, 'red'));
             process.exit(1);
@@ -217,6 +245,9 @@ async function main() {
         case 'settings':
             await configureGlobalSettings(config);
             break;
+        case 'auth':
+            await setupWebAuth(config);
+            break;
         case 'test':
             console.log(colorize('✅ Connection test passed!', 'green'));
             break;
@@ -232,13 +263,13 @@ async function main() {
     } catch (e) {
         // Ignore disconnect errors
     }
-    
+
     console.log(colorize('\n👋 Disconnected. Goodbye!', 'cyan'));
 }
 
 async function selectOption(title, options) {
     let cursor = 0;
-    
+
     // Manual Raw Mode - No Readline Interface
     if (process.stdin.isTTY) {
         process.stdin.setRawMode(true);
@@ -266,7 +297,7 @@ async function selectOption(title, options) {
                 const pointer = isSelected ? colorize('>', 'cyan', 'bold') : ' ';
                 const label = isSelected ? colorize(opt.label, 'white', 'bold') : opt.label;
                 const desc = opt.desc ? colorize(` (${opt.desc})`, 'dim') : '';
-                
+
                 const numPrefix = i < 9 ? colorize(`${i+1}. `, 'dim') : '   ';
                 console.log(`${pointer} ${numPrefix}${label}${desc}`);
             });
@@ -281,7 +312,7 @@ async function selectOption(title, options) {
 
         const onKey = (str, key) => {
             if (!key) return;
-            
+
             // Arrow Keys
             if (key.name === 'up') {
                 cursor = Math.max(0, cursor - 1);
@@ -343,7 +374,7 @@ async function configureGlobalSettings(config) {
                 { label: '✏️ Custom...', value: 'custom', desc: 'Enter manually' },
                 { label: '⬅️ Back', value: 'back', desc: 'Cancel' }
             ]);
-            
+
             if (val === 'back') continue;
 
             let finalVal = val;
@@ -427,7 +458,7 @@ async function configureGlobalSettings(config) {
             ]);
 
             if (val === 'back') continue;
-            
+
             let finalVal = val;
             if (val === 'custom') {
                 console.log();
@@ -524,11 +555,11 @@ async function configureGroups(client, config) {
     console.log(colorize('╚════════════════════════════════════════╝', 'cyan'));
     console.log();
     console.log(colorize('Fetching dialogs...', 'dim'));
-    
+
     // Get all dialogs
     const dialogs = await client.getDialogs({ limit: 100 });
     const groups = dialogs.filter(d => d.isGroup || d.isChannel);
-    
+
     if (groups.length === 0) {
         console.log(colorize('❌ No groups found!', 'red'));
         return;
@@ -548,33 +579,33 @@ async function configureGroups(client, config) {
     let cursor = 0;
     const pageSize = 15;
     let editingFiltersFor = -1; // Index of group being edited
-    
+
     // Enable raw mode for keypress
     readline.emitKeypressEvents(process.stdin);
     if (process.stdin.isTTY) process.stdin.setRawMode(true);
 
     const render = () => {
         clearScreen();
-        
+
         if (editingFiltersFor >= 0) {
             // Render Filter Menu
             const item = selection[editingFiltersFor];
             const isFwdMode = editingFiltersFor.mode === 'fwd';
-            
+
             if (isFwdMode) {
                 // AUTO FORWARD MENU - Simplified like Web UI
                 const af = item.autoForward || { enabled: false, destination: null, deleteAfterForward: false };
                 if (!item.autoForward) item.autoForward = af;
-                
+
                 console.log(colorize(`➡️  AUTO FORWARD: ${item.name.slice(0, 25)}`, 'cyan', 'bold'));
                 console.log('─'.repeat(50));
-                
+
                 // Status bar
                 const enabledText = af.enabled ? colorize('✓ ENABLED', 'green', 'bold') : colorize('✗ DISABLED', 'dim');
                 const destText = af.destination === 'me' ? colorize('Saved Messages', 'yellow') : 
                                  af.destination ? colorize(af.destination, 'yellow') : colorize('Storage Channel', 'cyan');
                 const deleteText = af.deleteAfterForward ? colorize('✓ Delete after', 'red') : colorize('Keep files', 'dim');
-                
+
                 console.log();
                 console.log(`  Status:      ${enabledText}`);
                 console.log(`  Destination: ${destText}`);
@@ -589,13 +620,13 @@ async function configureGroups(client, config) {
                 console.log(`  ${colorize('D', 'cyan', 'bold')} = Toggle Delete after forward`);
                 console.log('─'.repeat(50));
                 console.log(colorize('[Esc/Enter] Back to list', 'dim'));
-                
+
             } else {
                 // FILTERS MENU
                 console.log(colorize(`⚙️  FILTERS: ${item.name}`, 'cyan', 'bold'));
                 console.log(colorize('Toggle Allowed Media Types', 'yellow'));
                 console.log('─'.repeat(40));
-                
+
                 const filters = [
                     { key: 'photos', label: '📷 Photos' },
                     { key: 'videos', label: '🎬 Videos' },
@@ -629,16 +660,15 @@ async function configureGroups(client, config) {
 
         const start = Math.floor(cursor / pageSize) * pageSize;
         const end = Math.min(start + pageSize, groups.length);
-        
+
         for (let i = start; i < end; i++) {
             const item = selection[i];
             const isSelected = i === cursor;
-            
+
             const cursorChar = isSelected ? colorize('>', 'cyan', 'bold') : ' ';
             const checkChar = item.enabled ? colorize('[✓]', 'green') : colorize('[ ]', 'dim');
             const name = isSelected ? colorize(item.name.slice(0, 30), 'white', 'bold') : item.name.slice(0, 30);
-            
-            // Show config tags
+
             let tags = '';
             if (item.enabled) {
                 // Filters check
@@ -646,16 +676,16 @@ async function configureGroups(client, config) {
                 const active = [];
                 if (f.photos !== false) active.push('📷');
                 if (f.videos !== false) active.push('🎬');
-                
+
                 // Auto Forward check
                 if (item.autoForward?.enabled) active.push(colorize('➡️ FWD', 'green'));
-                
+
                 tags = colorize(`  ${active.join(' ')}`, 'dim');
             }
 
             console.log(`${cursorChar} ${checkChar} ${item.type} ${name.padEnd(30)}${tags}`);
         }
-        
+
         console.log('─'.repeat(60));
         console.log(colorize(`Page ${Math.floor(cursor/pageSize) + 1}/${Math.ceil(groups.length/pageSize)}`, 'dim'));
         console.log(colorize(`Selected: ${selection.filter(s => s.enabled).length} groups`, 'cyan'));
@@ -665,7 +695,7 @@ async function configureGroups(client, config) {
     await new Promise(resolve => {
         const onKeypress = async (str, key) => {
             if (!key) return;
-            
+
             // === AUTO FORWARD MENU HANDLING ===
             if (editingFiltersFor >= 0 && editingFiltersFor.mode === 'fwd') {
                 const item = selection[editingFiltersFor];
@@ -694,12 +724,12 @@ async function configureGroups(client, config) {
                     console.log();
                     console.log(colorize('📋 Select Destination:', 'cyan', 'bold'));
                     console.log(colorize('Loading dialogs...', 'dim'));
-                    
+
                     try {
                         // Get dialogs
                         const allDialogs = await client.getDialogs({ limit: 50 });
                         const dialogs = allDialogs.filter(d => d.isGroup || d.isChannel || d.isUser);
-                        
+
                         if (dialogs.length === 0) {
                             console.log(colorize('No dialogs found!', 'red'));
                         } else {
@@ -712,10 +742,10 @@ async function configureGroups(client, config) {
                             console.log();
                             console.log(colorize('  0. Cancel', 'dim'));
                             console.log();
-                            
+
                             const choice = await question(colorize('Enter number: ', 'yellow'));
                             const num = parseInt(choice);
-                            
+
                             if (num > 0 && num <= dialogs.length) {
                                 const selected = dialogs[num - 1];
                                 item.autoForward.destination = String(selected.id);
@@ -726,7 +756,7 @@ async function configureGroups(client, config) {
                     } catch (err) {
                         console.log(colorize(`Error: ${err.message}`, 'red'));
                     }
-                    
+
                     await new Promise(r => setTimeout(r, 800));
                     resume();
                 } else if (key.name === 'd' || str === 'd' || str === 'D') {
@@ -786,7 +816,7 @@ async function configureGroups(client, config) {
                 resolve();
                 return;
             }
-            
+
             if (key.ctrl && key.name === 'c') {
                 process.exit(0);
             }
@@ -797,7 +827,7 @@ async function configureGroups(client, config) {
             if (process.stdin.isTTY) process.stdin.setRawMode(false);
             process.stdin.pause();
         };
-        
+
         const resume = () => {
             process.stdin.resume();
             if (process.stdin.isTTY) process.stdin.setRawMode(true);
@@ -812,7 +842,7 @@ async function configureGroups(client, config) {
     let toggledCount = 0;
     for (const item of selection) {
         const configIndex = config.groups.findIndex(g => String(g.id) === String(item.id));
-        
+
         if (configIndex >= 0) {
             // Update existing
             config.groups[configIndex].enabled = item.enabled;
@@ -838,12 +868,12 @@ async function configureGroups(client, config) {
     }
 
     saveConfig(config);
-    
+
     console.log();
     console.log(colorize(`✅ Config saved!`, 'green', 'bold'));
     console.log(colorize(`Total monitoring: ${selection.filter(s => s.enabled).length} groups`, 'cyan'));
     console.log();
-    
+
     // Resume normal input for confirmation
     const startNow = await question(colorize('Start monitor now? (y/n): ', 'yellow'));
     if (startNow.toLowerCase() === 'y') {
@@ -865,12 +895,12 @@ async function startHistory(client, config, connManager) {
     const { HistoryDownloader } = await import('./core/history.js');
     const { RateLimiter } = await import('./core/security.js'); // Import missing dep
     const { AutoForwarder } = await import('./core/forwarder.js'); // Import Forwarder
-    
+
     // Get dialogs
     console.log(colorize('Fetching dialogs...', 'dim'));
     const dialogs = await client.getDialogs({ limit: 100 });
     const groups = dialogs.filter(d => d.isGroup || d.isChannel);
-    
+
     if (groups.length === 0) {
         console.log(colorize('❌ No groups found!', 'red'));
         return;
@@ -883,7 +913,7 @@ async function startHistory(client, config, connManager) {
 
     let cursor = 0;
     const pageSize = 15;
-    
+
     // Enable raw mode
     readline.emitKeypressEvents(process.stdin);
     if (process.stdin.isTTY) process.stdin.setRawMode(true);
@@ -898,18 +928,18 @@ async function startHistory(client, config, connManager) {
 
         const start = Math.floor(cursor / pageSize) * pageSize;
         const end = Math.min(start + pageSize, groups.length);
-        
+
         for (let i = start; i < end; i++) {
             const group = groups[i];
             const isSelected = i === cursor;
-            
+
             const cursorChar = isSelected ? colorize('>', 'cyan', 'bold') : ' ';
             const type = group.isGroup ? '👥' : '📢';
             const name = isSelected ? colorize((group.title || group.name).slice(0, 40), 'white', 'bold') : (group.title || group.name).slice(0, 40);
-            
+
             console.log(`${cursorChar} ${type} ${name}`);
         }
-        
+
         console.log('─'.repeat(60));
         console.log(colorize(`Page ${Math.floor(cursor/pageSize) + 1}/${Math.ceil(groups.length/pageSize)}`, 'dim'));
     };
@@ -942,7 +972,7 @@ async function startHistory(client, config, connManager) {
     console.log();
     console.log(colorize('⚙️  SELECT FILE TYPES TO DOWNLOAD', 'cyan', 'bold'));
     console.log(colorize('Space to toggle, Enter to confirm', 'dim'));
-    
+
     // Default filters
     const filters = {
         photos: true,
@@ -962,7 +992,7 @@ async function startHistory(client, config, connManager) {
         { key: 'gifs', label: '🎞️ GIFs' }
     ];
     let fCursor = 0;
-    
+
     if (process.stdin.isTTY) process.stdin.setRawMode(true);
 
     await new Promise(resolve => {
@@ -981,7 +1011,7 @@ async function startHistory(client, config, connManager) {
                  const label = isSelected ? colorize(item.label, 'white', 'bold') : item.label;
                  console.log(`${cursorChar} ${checkChar} ${label}`);
              });
-             
+
              console.log('─'.repeat(40));
              console.log(colorize('ENTER to Continue', 'yellow'));
         };
@@ -1022,16 +1052,16 @@ async function startHistory(client, config, connManager) {
 
     const choiceStr = await question(colorize('Select option (1-4): ', 'yellow'));
     const choice = choiceStr.trim();
-    
+
     let limit = 100;
     let offsetId = 0;
     let offsetDate = 0;
-    
+
     // Setup Downloader (Early init for scanning)
     const rateLimiter = new RateLimiter(config.rateLimits);
     const downloader = new DownloadManager(client, config, rateLimiter);
     await downloader.init();
-    
+
     const history = new HistoryDownloader(client, downloader, config);
 
     if (choice === '2') limit = 1000;
@@ -1051,7 +1081,7 @@ async function startHistory(client, config, connManager) {
     console.log();
     console.log(colorize('🔍 Scanning group for media counts...', 'cyan'));
     const counts = await history.scan(selectedGroup.id, limit);
-    
+
     // --- Filter Selection Phase ---
     const historyFilters = {
         photos: counts.photos > 0,
@@ -1072,7 +1102,7 @@ async function startHistory(client, config, connManager) {
     ];
 
     let filterCursor = 0;
-    
+
     // Manual selection UI
     if (process.stdin.isTTY) {
         process.stdin.setRawMode(true);
@@ -1090,18 +1120,18 @@ async function startHistory(client, config, connManager) {
             historyFilterKeys.forEach((item, i) => {
                 const isSelected = i === filterCursor;
                 const isEnabled = historyFilters[item.key];
-                
+
                 const cursorChar = isSelected ? colorize('>', 'cyan', 'bold') : ' ';
                 const checkChar = isEnabled ? colorize('[✓]', 'green') : colorize('[ ]', 'dim');
                 const label = isSelected ? colorize(item.label, 'white', 'bold') : item.label;
-                
+
                 // Show count
                 const countStr = item.count > 0 ? colorize(` (${item.count})`, 'white') : colorize(' (0)', 'dim');
-                
+
                 console.log(`${cursorChar} ${checkChar} ${label}${countStr}`);
             });
             console.log('─'.repeat(50));
-            
+
             const totalSelected = historyFilterKeys.reduce((acc, k) => acc + (historyFilters[k.key] ? k.count : 0), 0);
             console.log(colorize(`Total selected: ~${totalSelected} items`, 'cyan'));
         };
@@ -1167,15 +1197,15 @@ async function startHistory(client, config, connManager) {
     let lastStatus = '';
     let successCount = 0;
     let errorCount = 0;
-    
+
     const printLog = (msg) => {
         // Clear current status line
         process.stdout.clearLine(0);
         process.stdout.cursorTo(0);
-        
+
         // Print log
         console.log(msg);
-        
+
         // Reprint status if exists
         if (lastStatus) {
             process.stdout.write(lastStatus); 
@@ -1190,7 +1220,7 @@ async function startHistory(client, config, connManager) {
     };
 
     // --- Event Listeners with Sticky Footer Logic ---
-    
+
     rateLimiter.on('wait', (seconds) => {
         updateStatus(colorize(`⏳ Rate limit: waiting ${seconds}s...`, 'yellow'));
     });
@@ -1211,265 +1241,6 @@ async function startHistory(client, config, connManager) {
     downloader.on('complete', (job) => {
         successCount++;
         printLog(colorize(`✅ Saved: `, 'green') + path.basename(job.filePath));
-    });
-
-    downloader.on('error', ({ job, error }) => {
-        errorCount++;
-        printLog(colorize(`❌ Error [${job.message.id}]: `, 'red') + error);
-    });
-
-    history.on('progress', (stats) => {
-        const status = `🔍 Scanned: ${stats.processed} | 📥 DL: ${stats.downloaded} | ⏭️ Skip: ${stats.skipped}`;
-        updateStatus(colorize(status, 'cyan'));
-    });
-
-    history.on('log', (msg) => {
-        printLog(colorize(msg, 'dim'));
-    });
-
-    console.log(colorize('🚀 Starting history download...', 'cyan'));
-    console.log('─'.repeat(50));
-
-    await history.downloadHistory(selectedGroup.id, options);
-    
-    // Cleanup listeners after done
-    rateLimiter.removeAllListeners();
-    downloader.removeAllListeners();
-    history.removeAllListeners();
-    
-    // Minimalist Live Dashboard
-    console.log(colorize('\n🚀 Finalizing downloads...', 'cyan'));
-    process.stdout.write('\x1B[?25l'); // Hide cursor
-
-    while (true) {
-        const status = downloader.getStatus();
-        const remaining = status.queued + status.active;
-        
-        if (remaining === 0) break;
-
-        const spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'][Math.floor(Date.now() / 100) % 10];
-        
-        // Minimalist Status Line
-        const line = `\r${colorize(spinner, 'yellow')} ` +
-                     `${colorize('⏳ Queue:', 'dim')} ${colorize(status.queued, 'white')} | ` +
-                     `${colorize('⬇️  Active:', 'blue')} ${colorize(status.active, 'cyan')} | ` +
-                     `${colorize('✅ Done:', 'green')} ${colorize(status.completed, 'green', 'bold')}      `;
-        
-        process.stdout.write(line);
-        await new Promise(r => setTimeout(r, 200));
-    }
-
-    process.stdout.write('\x1B[?25h\n'); // Show cursor
-    process.stdout.write('\x1B[?25h\n'); // Show cursor
-    await downloader.stop(); // Clean stop with flush
-
-    const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-    
-    // --- Verification Phase ---
-    console.log();
-    console.log(colorize('🔍 Verifying file integrity...', 'yellow'));
-    
-    let verifiedCount = 0;
-    let missingCount = 0;
-    
-    // Check all registries
-    for (const [groupId, registry] of downloader.registries) {
-        for (const [key, meta] of Object.entries(registry.files)) {
-            // Reconstruct path to check existence
-            // Note: This relies on the path logic being consistent. 
-            // Ideally downloader should expose a verify method, but for now we check existence.
-            // We search recursively or just trust the registry count? 
-            // Registry count is strictly "Success" writes.
-            // Let's do a quick physical check if possible, or just trust stats first.
-            // For true verification, we'd need the full path stored. The registry stores filename but not full path?
-            // Ah, registry has filename. We need to find it? 
-            // Simplification: Trust successCount vs errorCount for now, as physical scan takes long.
-            verifiedCount++;
-        }
-    }
-
-    console.log();
-    console.log(colorize('═══════════════════════════════════════', 'green'));
-    console.log(colorize('   🏁 HISTORY DOWNLOAD COMPLETE', 'green', 'bold'));
-    console.log(colorize('═══════════════════════════════════════', 'green'));
-    console.log(`   ⏱️  Time: ${duration}s`);
-    console.log(`   📂 Total Scanned: ${history.stats.processed}`);
-    console.log(`   ✅ Successful:    ${colorize(successCount, 'green', 'bold')}`);
-    console.log(`   ❌ Failed:        ${colorize(errorCount, 'red')}`);
-    console.log(`   ⏭️  Skipped:       ${history.stats.skipped}`);
-    
-    if (errorCount > 0) {
-        console.log();
-        console.log(colorize(`💡 Tip: Run the command again to retry failed files.`, 'yellow'));
-    }
-    console.log(colorize('═══════════════════════════════════════', 'green'));
-
-    // Graceful Shutdown with Force Timeout
-    try {
-        console.log(colorize('\n👋 Disconnecting...', 'yellow'));
-        
-        // Force exit if stuck for 3 seconds
-        setTimeout(() => {
-            console.error(colorize('⚠️  Force quitting...', 'red'));
-            process.exit(0);
-        }, 3000).unref();
-
-        if (connManager) connManager.stop();
-        await client.disconnect();
-        await client.destroy();
-        console.log(colorize('✅ Disconnected. Goodbye!', 'green'));
-    } catch (e) { }
-    
-    process.exit(0);
-}
-
-async function listDialogs(client) {
-    console.log(colorize('📋 Your Chats & Groups:', 'cyan', 'bold'));
-    console.log('─'.repeat(60));
-    
-    const dialogs = await client.getDialogs({ limit: 50 });
-    
-    let count = 0;
-    for (const dialog of dialogs) {
-        const type = dialog.isGroup ? '👥' : dialog.isChannel ? '📢' : '👤';
-        const id = dialog.id;
-        const title = dialog.title || dialog.name || 'Unknown';
-        
-        console.log(`${type} ${colorize(String(id).padEnd(15), 'dim')} ${title}`);
-        count++;
-    }
-    
-    console.log('─'.repeat(60));
-    console.log(colorize(`Total: ${count} chats`, 'dim'));
-    console.log();
-    console.log(colorize('💡 To monitor a group, add its ID to data/config.json', 'yellow'));
-}
-
-async function startMonitor(client, config) {
-    if (config.groups.length === 0) {
-        console.log(colorize('⚠️ No groups configured!', 'yellow'));
-        console.log(colorize('Add groups to data/config.json first.', 'dim'));
-        console.log(colorize('Run: node src/index.js dialogs', 'dim'));
-        console.log();
-        console.log(colorize('Example config.json groups:', 'dim'));
-        console.log(colorize(`
-{
-  "groups": [
-    {
-      "id": -1001234567890,
-      "name": "My Group",
-      "enabled": true,
-      "filters": {
-        "images": true,
-        "videos": true,
-        "files": true,
-        "audio": false
-      }
-    }
-  ]
-}`, 'dim'));
-        return;
-    }
-
-    // Import modules dynamically
-    const { DownloadManager } = await import('./core/downloader.js');
-    const { RealtimeMonitor } = await import('./core/monitor.js');
-    const { AutoForwarder } = await import('./core/forwarder.js'); // Import Forwarder
-
-    // Create rate limiter
-    const rateLimiter = new RateLimiter(config.rateLimits);
-
-    // Create download manager
-    const downloader = new DownloadManager(client, config, rateLimiter);
-    await downloader.init();
-
-    // Start systems
-    const monitor = new RealtimeMonitor(client, downloader, config, CONFIG_PATH);
-    const forwarder = new AutoForwarder(client, config); // Init Forwarder
-
-    // === AUTO FORWARD HOOK ===
-    downloader.on('complete', async (job) => {
-        // Forward to AutoForwarder
-        await forwarder.process({
-            filePath: job.filePath,
-            groupId: job.groupId, // Needed for config lookup
-            groupName: job.groupName,
-            message: job.message  // Needed for caption extraction
-        });
-    });
-    // =========================
-    
-    // [NEW] Real-time Config Watcher
-    fs.watchFile(CONFIG_PATH, async (curr, prev) => {
-        if (curr.mtime !== prev.mtime) {
-            try {
-                const newConfigBody = await fs.promises.readFile(CONFIG_PATH, 'utf8');
-                const newConfig = JSON.parse(newConfigBody);
-                
-                // Detect and log changes for user awareness
-                const changes = [];
-                if (config.groups && newConfig.groups) {
-                    newConfig.groups.forEach(newG => {
-                        const oldG = config.groups.find(g => g.id === newG.id);
-                        if (!oldG) return; // New group added
-
-                        // 1. Check Enabled Status
-                        if (oldG.enabled !== newG.enabled) {
-                            changes.push(`${newG.name}: ${newG.enabled ? 'Enabled ✅' : 'Disabled ⛔'}`);
-                        }
-
-                        // 2. Check Auto Forward
-                        const oldAF = oldG.autoForward || {};
-                        const newAF = newG.autoForward || {};
-                        if (oldAF.enabled !== newAF.enabled) {
-                            changes.push(`${newG.name} AutoForward: ${newAF.enabled ? 'On 🟢' : 'Off 🔴'}`);
-                        }
-                        if (newAF.enabled && oldAF.destination !== newAF.destination) {
-                            const friendlyDest = newAF.destination || 'Auto-Storage (Default) 📦';
-                            changes.push(`${newG.name} Forward Dest: ${friendlyDest}`);
-                        }
-
-                        // 3. Check Media Filters
-                        if (JSON.stringify(oldG.filters) !== JSON.stringify(newG.filters)) {
-                            // Simple check if any filter changed
-                            changes.push(`${newG.name} Filters Updated ⚡`);
-                        }
-                    });
-                }
-                
-                // Update monitor config dynamically
-                monitor.config = newConfig;
-                if (forwarder) forwarder.config = newConfig; // Update forwarder too
-                
-                // Also update global config reference
-                Object.assign(config, newConfig);
-                
-                console.log(colorize('\n🔄 Configuration Updated:', 'cyan'));
-                if (changes.length > 0) {
-                    changes.forEach(c => console.log(colorize(`   👉 ${c}`, 'yellow')));
-                } else {
-                    console.log(colorize('   (No active settings changed)', 'gray'));
-                }
-            } catch (e) {
-                console.error(colorize('\n❌ Config reload failed: ' + e.message, 'red'));
-            }
-        }
-    });
-
-    console.log(colorize('🚀 Starting Monitor...', 'green'));
-    await monitor.start();
-
-    // Event listeners
-    downloader.on('queued', (job) => {
-        console.log(colorize(`📥 Queued: `, 'cyan') + `${job.mediaType} from ${job.groupName}`);
-    });
-
-    downloader.on('start', (job) => {
-        console.log(colorize(`⬇️ Downloading: `, 'blue') + `${job.mediaType} [${job.message.id}]`);
-    });
-
-    downloader.on('complete', (job) => {
-        console.log(colorize(`✅ Saved: `, 'green') + path.basename(job.filePath));
     });
 
     downloader.on('error', ({ job, error }) => {
@@ -1515,20 +1286,20 @@ async function startMonitor(client, config) {
     // Keep running until Ctrl+C
     await new Promise((resolve) => {
         let isShuttingDown = false;
-        
+
         const shutdown = async () => {
             if (isShuttingDown) return;
             isShuttingDown = true;
 
             console.log();
             console.log(colorize('🛑 Stopping monitor...', 'yellow'));
-            
+
             try {
                 await monitor.stop(); // AWAIT the async stop
             } catch (err) {
                 // Suppress shutdown errors (e.g. TIMEOUT)
             }
-            
+
             const stats = monitor.getStats();
             console.log();
             console.log(colorize('═══════════════════════════════════════', 'cyan'));
@@ -1540,7 +1311,7 @@ async function startMonitor(client, config) {
             console.log(`   Skipped: ${stats.skipped}`);
             console.log(`   URLs saved: ${stats.urls}`);
             console.log(colorize('═══════════════════════════════════════', 'cyan'));
-            
+
             resolve();
             process.exit(0); // Force exit
         };
@@ -1573,6 +1344,57 @@ process.on('SIGINT', () => {
 
     process.exit(0);
 });
+
+async function setupWebAuth(config) {
+    clearScreen();
+    console.log(colorize('╔════════════════════════════════════════╗', 'cyan'));
+    console.log(colorize('║      🔐 WEB DASHBOARD SECURITY         ║', 'cyan', 'bold'));
+    console.log(colorize('╚════════════════════════════════════════╝', 'cyan'));
+    console.log();
+    
+    const currentEnabled = config.web?.enabled !== false; // Default true if not set
+    const currentPass = config.web?.password ? '********' : 'Not Set';
+    const status = currentEnabled ? colorize('ENABLED ✅', 'green') : colorize('DISABLED ❌', 'red');
+
+    console.log(`Current Status: ${status}`);
+    console.log(`Password:       ${currentPass}`);
+    console.log('─'.repeat(40));
+    console.log();
+
+    const choice = await selectOption('SELECT ACTION', [
+        { label: 'Enable Security', value: 'enable', desc: 'Require password' },
+        { label: 'Disable Security', value: 'disable', desc: 'Open access' },
+        { label: 'Set/Change Password', value: 'password', desc: 'Update login' },
+        { label: '⬅️ Back', value: 'back' }
+    ]);
+
+    if (!config.web) config.web = {};
+
+    if (choice === 'enable') {
+        config.web.enabled = true;
+        console.log(colorize('\n✅ Security Enabled', 'green'));
+    } else if (choice === 'disable') {
+        config.web.enabled = false;
+        console.log(colorize('\n⚠️  Security Disabled', 'yellow'));
+    } else if (choice === 'password') {
+        console.log();
+        const pass = await question(colorize('Enter new password: ', 'cyan'));
+        if (pass.trim()) {
+            config.web.password = pass.trim();
+            config.web.enabled = true; // Auto-enable
+            console.log(colorize('\n✅ Password updated!', 'green'));
+        } else {
+            console.log(colorize('\n❌ Password cannot be empty', 'red'));
+        }
+    } else {
+        return;
+    }
+
+    saveConfig(config);
+    await new Promise(r => setTimeout(r, 1000));
+    // Recursive loop to show updated status or exit
+    await setupWebAuth(config); 
+}
 
 // Run
 main().catch(error => {

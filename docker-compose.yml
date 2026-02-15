@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  telegram-downloader:
+    build: .
+    image: telegram-media-downloader
+    container_name: telegram-downloader
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - TZ=Asia/Bangkok
+    stdin_open: true # Required for interactive login if running via docker attach (first run)
+    tty: true
+
+# Usage:
+# 1. Build & Run: docker-compose up -d
+# 2. First Run (Login): docker-compose exec telegram-downloader npm start
+#    (Or just run 'docker-compose run telegram-downloader npm start' for interactive setup)
