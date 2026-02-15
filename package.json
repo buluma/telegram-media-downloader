@@ -17,7 +17,9 @@
     "dialogs": "node src/index.js dialogs",
     "setup": "node src/setup.js",
     "help": "node src/index.js --help",
-    "web": "node src/web/server.js"
+    "web": "node src/web/server.js",
+    "migrate": "node scripts/migrate_json_to_sqlite.js",
+    "auth": "node src/index.js auth"
   },
   "keywords": [
     "telegram",
@@ -34,6 +36,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "better-sqlite3": "^12.6.2",
     "express": "^4.18.2",
     "telegram": "^2.19.0",
     "ws": "^8.14.2"

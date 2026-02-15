@@ -1,191 +1,157 @@
-# 📥 Telegram Media Downloader & Manager (Web UI + CLI)
+# 📱 Telegram Media Downloader
 
-<div align="center">
+**A robust, self-hosted tool to monitor, download, and backup media from Telegram channels and groups.**
+Features a modern Web Dashboard, Docker support, and automatic security handling.
 
-![Version](https://img.shields.io/badge/version-2.0.0-blue.svg?style=for-the-badge)
-![Node](https://img.shields.io/badge/node-%3E%3D18-success.svg?style=for-the-badge&logo=node.js)
-![License](https://img.shields.io/badge/license-MIT-orange.svg?style=for-the-badge)
-![Telegram](https://img.shields.io/badge/Telegram-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white)
-![Web](https://img.shields.io/badge/Web%20Interface-Enabled-blueviolet.svg?style=for-the-badge&logo=google-chrome&logoColor=white)
-![Platform](https://img.shields.io/badge/platform-win%20|%20linux%20|%20mac-lightgrey.svg?style=for-the-badge)
-
-**The Ultimate Tool to Auto-Download, Back Up, and Forward Telegram Media**
-*Featuring a Real-time Web Dashboard, Auto Forwarder, and Hybrid Monitoring Engine.*
-
-[Report Bug](https://github.com/botnick/telegram-media-downloader/issues) · [Request Feature](https://github.com/botnick/telegram-media-downloader/issues)
-
-</div>
+**Version**: 2.1.0
 
 ---
 
-## 📋 Table of Contents
-- [✨ Why Use This Tool?](#-why-use-this-tool)
-- [🚀 Key Features](#-key-features)
-- [💻 Web Dashboard (New)](#-web-dashboard-new)
-- [⚙️ Installation & Setup](#%EF%B8%8F-installation--setup)
-- [📖 Usage Guide](#-usage-guide)
-- [🔄 Auto Forwarding](#-auto-forwarding)
-- [🔧 Advanced Configuration](#-advanced-configuration)
-- [❓ Troubleshooting & FAQ](#-troubleshooting--faq)
-- [⚠️ Disclaimer](#%EF%B8%8F-disclaimer)
+## ✨ Key Features
+
+### 🛡️ Core & Security
+*   **Auto-Download**: Monitors channels in real-time and downloads new media (Photos, Videos, Files, Audio).
+*   **Secure by Design**: Automatically generates and manages secure session secrets. No hardcoded passwords.
+*   **Resumable Downloads**: Smartly skips existing files to prevent duplicates and save bandwidth.
+*   **Resilience**: Auto-reconnects on network loss and handles Telegram's FloodWait limits gracefully.
+*   **Docker Ready**: Deploy instantly on any VPS or local machine using Docker Compose.
+
+### 💻 Web Dashboard
+*   **Modern UI**: Responsive interface built with efficient ES Modules.
+*   **Media Gallery**: Grid/List view with lazy loading for thousands of files.
+*   **Video Resume**: Automatically remembers playback position for all videos.
+*   **Group Management**: Toggle monitoring, configure filters, and set download paths per group.
+*   **Auto-Forward**: Forward downloaded media to another channel or "Saved Messages" automatically.
 
 ---
 
-## ✨ Why Use This Tool?
+## 🚀 Installation & Setup
 
-Are you looking for a **Telegram Channel Scraper** or a reliable **Telegram Backup Tool**?
-Most existing solutions are command-line only, hard to use, or miss messages.
+### Option A: Docker (Recommended)
+The easiest way to run the application. Requires Docker and Docker Compose.
 
-**Telegram Media Downloader 2.0** solves this with:
-1.  **Zero-Loss Monitoring:** Our **Hybrid Engine** (Real-time Events + Active Polling) ensures you never miss a single photo or video, even in fast-moving groups.
-2.  **Visual Management:** No more editing JSON files manually. Use our **Web UI** to manage everything.
-3.  **Automated Mirroring:** Automatically **Auto Forward** media from source channels to your own private cloud or group instantly.
-4.  **Privacy Focus:** All data is stored locally on your machine. No external servers.
+1.  **Clone the repository:**
+    ```bash
+    git clone https://github.com/botnick/telegram-media-downloader.git
+    cd telegram-media-downloader
+    ```
+
+2.  **Start the application:**
+    ```bash
+    docker-compose up -d
+    ```
+    *This will start the Web UI on port `3000`.*
+
+3.  **First Run (Login):**
+    To log in to Telegram, you need to attach to the container:
+    ```bash
+    docker-compose run telegram-downloader npm start
+    ```
+    *Follow the prompts to enter your API ID, API Hash, and Phone Number. Once logged in, you can exit/stop this temporary container.*
+
+4.  **Access Dashboard:**
+    Open `http://localhost:3000` in your browser.
+
+### Option B: Manual Installation (Node.js)
+Requires Node.js v18 or higher.
+
+1.  **Install dependencies:**
+    ```bash
+    npm install
+    ```
+
+2.  **Setup & Login:**
+    ```bash
+    npm start
+    ```
+    *Follow the interactive login prompts.*
+
+3.  **Run Web Dashboard:**
+    ```bash
+    npm run web
+    ```
+    *Access at `http://localhost:3000`*
 
 ---
 
-## 🚀 Key Features
+## 📖 CLI Command Reference
 
-### 🤖 Core Automation
--   **Real-time Monitoring:** Instantly downloads new media as soon as it's posted.
--   **Smart Resume:** Automatically skips files that exist on your disk.
--   **Duplicate Detection:** Uses intelligent hashing/naming to prevent duplicates.
--   **Auto-Reconnect:** Resilience against network drops and Telegram's "FloodWait" limits.
+This tool provides a comprehensive CLI for managing all aspects of the downloader.
 
-### 🎥 Media Support
--   **All Types:** Photos, Videos, Documents, Audio, Voice Notes, and **Stickers**.
--   **Premium Quality:** Downloads original uncompressed files.
--   **Large Files:** Supports files up to 2GB (or 4GB with Premium).
+### 🟢 Usage: `npm run [command]`
 
-### 🔄 Auto Forwarder (Mirroring)
--   **Instant Forwarding:** Send downloaded media to another **Channel**, **Group**, or **Saved Messages**.
--   **Source Linking:** Automatically appends a direct link (e.g., `t.me/c/xxx/123`) to the original message.
--   **Filter Control:** Choose to forward only Photos, only Videos, or specific keywords.
-
----
-
-## 💻 Web Dashboard (New!)
-
-Manage your downloads from any browser with our modern, responsive UI.
-
-| Feature | Description |
+| Command | Description |
 | :--- | :--- |
-| **Media Gallery** | View, zoom, swipe through photos/videos with EXIF info. Delete files directly! |
-| **Group Manager** | Search & Add new groups/channels. Configure filters and Auto Forward. |
-| **Real-time Config** | Toggle settings and see results instantly in CLI. |
-| **File Management** | Delete unwanted files from the gallery with confirmation. |
+| `start` | **Main Menu**. Interactive dashboard to access all features. |
+| `monitor` | **Headless Mode**. Starts background monitoring (ideal for servers/cron). |
+| `history` | **History Downloader**. Download past messages from a group (with date/limit options). |
+| `dialogs` | **List Chats**. Shows all available groups/channels and their IDs. |
+| `config` | **Group Config**. Interactive menu to enable/disable groups and set filters. |
+| `settings` | **System Settings**. Configure download speed, disk limits, and concurrency. |
+| `viewer` | **Stats Viewer**. View download statistics (file counts, sizes) by group. |
+| `auth` | **Security Manager**. Enable/Disable password protection for the Web Dashboard. |
+| `migrate` | **Database Migration**. Import legacy JSON logs to the new SQLite database. |
 
-> **Pro Tip:** The Web UI works on **localhost:3000** by default, allowing you to run the bot on a VPS and manage it from your phone!
+### 💡 Examples
 
----
-
-## ⚙️ Installation & Setup
-
-### Prerequisites
--   **Node.js v18** or higher ([Download Here](https://nodejs.org/)).
--   **Telegram API ID & Hash** (Get it for free at [my.telegram.org](https://my.telegram.org)).
-
-### Fast Install
-```bash
-# 1. Clone the repository
-git clone https://github.com/botnick/telegram-media-downloader.git
-cd telegram-media-downloader
-
-# 2. Install dependencies
-npm install
-
-# 3. First Run (Interactive Setup)
-npm start
-```
-*Follow the on-screen prompts to enter your API ID, Hash, and Phone Number.*
-
----
-
-## 📖 Usage Guide
-
-### 1️⃣ Start the Web Dashboard (Recommended)
-This runs the background monitor AND the web interface.
-```bash
-npm run web
-```
--   Open **http://localhost:3000** in your browser.
--   Use the UI to add groups and view files.
--   The terminal will show detailed download logs.
-
-### 2️⃣ Run CLI Monitor Only
-If you are on a server without a display:
-```bash
-npm run monitor
-```
-
-### 3️⃣ Download History (Backlog)
-To download old files from the past:
+**1. Download History from a Channel:**
 ```bash
 npm run history
+# Select group -> Select media types -> Choose "Last 1000 messages" or "Custom Date"
 ```
--   Select a group.
--   Choose "Scan Last N Messages" or "Date Range".
+
+**2. Configure Download Speed Limit:**
+```bash
+npm run settings
+# Select "Max Download Speed" -> Enter "5 MB/s"
+```
+
+**3. Secure the Web Dashboard:**
+```bash
+npm run auth
+# Choose "Enable Security" -> Set a password
+```
 
 ---
 
-## � Auto Forwarding
+## ⚙️ Configuration
 
-Want to mirror a channel to your own private group?
+Settings are stored in `data/config.json`. You can modify them via the **Web UI (Settings page)**, the **CLI (`npm run settings`)**, or by editing the file manually.
 
-1.  Open **Web Dashboard**.
-2.  Go to **Groups** in the sidebar.
-3.  Click the **Forward Icon (➜)** on the desired source group.
-4.  **Enable Auto Forward**.
-5.  **Destination:**
-    -   Select **"Saved Messages"** for personal backup.
-    -   Select **"Auto-Storage"** (Default) to create a private storage channel automatically.
-    -   Or select any Group/Channel you are an admin of.
-6.  **Done!** New media will now be forwarded instantly.
+### Key Configuration Options
 
----
-
-## � Advanced Configuration
-
-You can fine-tune performance in `data/config.json` or via the **Settings** page in Web UI.
-
-| Setting | Default | Description |
+| Key | Description | Default |
 | :--- | :--- | :--- |
-| `concurrent` | `3` | Number of simultaneous downloads. (Max 5 recommended). |
-| `pollingInterval` | `10` | Seconds between checking for updates in Active Polling mode. |
-| `retries` | `5` | How many times to retry a failed download. |
-| `requestsPerMinute` | `15` | Rate limit protection (API Safety). |
-| `maxTotalSize` | `null` | Stop downloading if disk usage exceeds this limit (e.g., "50GB"). |
+| `concurrent` | Simultaneous downloads. Higher = faster but more CPU/RAM. | `3` |
+| `requestsPerMinute` | API Rate limit. Keep below 20 to avoid FloodWait. | `15` |
+| `maxSpeed` | Limit bandwidth usage (bytes/sec). `0` = Unlimited. | `0` |
+| `maxTotalSize` | Global disk usage limit (e.g., "50GB"). Stops downloading when reached. | `Unlimited` |
+| `groups` | Array of monitored groups with their specific filters. | `[]` |
+
+**Security Note:**
+The application generates a `data/secret.key` file on first launch. This key generates the session encryption password. **Keep this file safe** if you back up your data.
 
 ---
 
-## ❓ Troubleshooting & FAQ
+## �️ Troubleshooting
 
-### Q: Why does it say "FloodWait"?
-**A:** This is Telegram's server-side rate limit. If you download too fast, Telegram pauses you. The bot detects this and will **automatically pause and resume** when safe. Do not restart the bot manually; just let it wait.
+*   **Request failed (403/401)**:
+    *   **Cause**: Session expired or invalid.
+    *   **Fix**: Run `npm start` again to re-login. If using Docker, use the "First Run" command.
 
-### Q: Can I run this on a VPS (Ubuntu/Debian)?
-**A:** Yes! It is fully compatible with Linux. Use `npm run monitor` for headless mode, or use `pm2` to keep it running 24/7.
+*   **FloodWait Errors**:
+    *   **Cause**: Telegram is rate-limiting you for sending too many requests.
+    *   **Fix**: The app handles this automatically by pausing. **Do not restart** repeatedly; just wait. Lower your `concurrent` or `requestsPerMinute` settings if it happens often.
 
-### Q: My "All Media" count is wrong in the Web UI.
-**A:** We recently updated the engine to support **Unlimited Files**. Please refresh the page; the count is now exact.
+*   **Docker Permission Issues**:
+    *   **Cause**: Docker container cannot write to `data/`.
+    *   **Fix**: Ensure your local `data` folder is writable by the user running Docker (`chown -R 1000:1000 data` on Linux).
 
-### Q: "Forward Dest" says `null` in CLI?
-**A:** This means you haven't selected a specific destination, so the bot uses the **Default Storage Channel**. It will auto-create a private channel named "Telegram Downloader Storage" for you.
-
----
-
-## ⚠️ Disclaimer
-
-This tool is intended for **personal data ownership** and **educational purposes**.
--   Do not use this tool to infringe on copyrights.
--   Do not use this tool for spamming or harassment.
--   The developers are not responsible for any bans or penalties imposed by Telegram.
+*   **Database Locked**:
+    *   **Cause**: Multiple instances running.
+    *   **Fix**: Ensure only **one** instance (CLI or Web) is writing to the database at a time.
 
 ---
 
-<div align="center">
-
-**Enjoying the tool?**
-Don't forget to ⭐ **Star the Repository**!
-
-</div>
+## 📜 Disclaimer
+This tool is for personal use and educational purposes. Please respect copyright laws and Telegram's Terms of Service.
