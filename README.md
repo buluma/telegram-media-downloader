@@ -48,6 +48,7 @@ Built with [GramJS](https://github.com/nickspaargaren/gramjs) (Telegram MTProto 
 Telegram channels and groups often contain valuable media -- photos, videos, documents, and audio files -- that you may want to archive or back up locally. This tool solves that problem by:
 
 - **Monitoring channels in real-time** and downloading new media as it appears.
+- **Intelligent Multi-Account Routing** – Add unlimited accounts. The engine automatically discovers which account can access which group, eliminating permissions headaches.
 - **Batch downloading history** from channels with thousands of past messages.
 - **Organizing files automatically** into folders by group name and media type.
 - **Preventing duplicates** using a SQLite database to track every download.
@@ -58,6 +59,12 @@ Unlike Telegram bots, this tool uses the Telegram User API (MTProto) via GramJS,
 ---
 
 ## Key Features
+
+### 🚀 Advanced Multi-Account System
+- **Unlimited Login Sessions:** Authenticate as many Telegram accounts/phone numbers as you need.
+- **Smart Auto-Discovery:** When monitoring starts, the engine tests all available accounts against your target groups. It automatically maps the correct account to each group without manual configuration.
+- **Per-Group Accounts:** Dedicate specific accounts for downloading from high-volume groups, and a completely different account for auto-forwarding files to avoid rate limits.
+- **Encrypted Storage:** All sessions are securely encrypted via AES-256 before being saved to disk.
 
 ### Download Engine
 - **Real-time Monitoring** -- Watches configured channels and groups for new media and downloads automatically.
