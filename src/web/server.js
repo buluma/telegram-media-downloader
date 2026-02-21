@@ -16,7 +16,8 @@ import { StringSession } from 'telegram/sessions/index.js';
 import crypto from 'crypto';
 
 import { getOrGenerateSecret } from '../core/secret.js';
-import { getDb, getDownloads, getStats as getDbStats } from '../core/db.js';
+import { getDb, getDownloads, getStats as getDbStats, deleteGroupDownloads, deleteAllDownloads, backfillGroupNames } from '../core/db.js';
+import { sanitizeName } from '../core/downloader.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, '../../data');
@@ -40,10 +41,8 @@ if (!fsSync.existsSync(PHOTOS_DIR)) {
     fsSync.mkdirSync(PHOTOS_DIR, { recursive: true });
 }
 
-// Middleware
+// Body parsing middleware
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
-app.use('/photos', express.static(PHOTOS_DIR));
 
 // ============ AUTHENTICATION ============
 
@@ -135,7 +134,47 @@ app.get('/api/auth_check', async (req, res) => {
 // Apply Auth Globally
 app.use(checkAuth);
 
+// Serve static files AFTER auth
+app.use(express.static(path.join(__dirname, 'public')));
+app.use('/photos', express.static(PHOTOS_DIR));
+
 // ============ API ENDPOINTS ============
+
+// 0. Accounts API — List saved accounts with metadata
+app.get('/api/accounts', async (req, res) => {
+    try {
+        const sessionsDir = path.join(DATA_DIR, 'sessions');
+        if (!existsSync(sessionsDir)) {
+            return res.json([]);
+        }
+        const files = fsSync.readdirSync(sessionsDir)
+            .filter(f => f.endsWith('.enc'))
+            .sort((a, b) => {
+                const statA = fsSync.statSync(path.join(sessionsDir, a));
+                const statB = fsSync.statSync(path.join(sessionsDir, b));
+                return statA.mtimeMs - statB.mtimeMs;
+            });
+
+        // Try to load metadata from config
+        const config = JSON.parse(await fs.readFile(CONFIG_PATH, 'utf8'));
+        const configAccounts = config.accounts || [];
+
+        const accounts = files.map((f, index) => {
+            const id = path.basename(f, '.enc');
+            const meta = configAccounts.find(a => a.id === id) || {};
+            return {
+                id,
+                name: meta.name || id,
+                username: meta.username || '',
+                phone: meta.phone || '',
+                isDefault: index === 0
+            };
+        });
+        res.json(accounts);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
 
 // 1. Stats API (SQLite)
 app.get('/api/stats', async (req, res) => {
@@ -232,17 +271,17 @@ app.get('/api/downloads', async (req, res) => {
         const configGroups = config.groups || [];
         const db = getDb();
 
-        // Query DB for aggregation
+        // Query DB for aggregation with group_name (MAX ignores NULLs)
         const rows = db.prepare(`
-            SELECT group_id, COUNT(*) as count, SUM(file_size) as size 
+            SELECT group_id, MAX(group_name) as group_name, COUNT(*) as count, SUM(file_size) as size
             FROM downloads 
             GROUP BY group_id
         `).all();
         
         const results = rows.map(r => {
-            // Find name in config
             const cfg = configGroups.find(g => String(g.id) === r.group_id);
-            const name = cfg ? cfg.name : `Group ${r.group_id}`;
+            const name = cfg?.name || r.group_name;
+            if (!name) return null; // Skip groups without a resolved name
             const hasPhoto = existsSync(path.join(PHOTOS_DIR, `${r.group_id}.jpg`));
             
             return {
@@ -253,7 +292,7 @@ app.get('/api/downloads', async (req, res) => {
                 photoUrl: hasPhoto ? `/photos/${r.group_id}.jpg` : null,
                 enabled: cfg ? cfg.enabled : false
             };
-        });
+        }).filter(Boolean);
 
         res.json(results);
     } catch (error) {
@@ -270,19 +309,37 @@ app.get('/api/downloads/:groupId', async (req, res) => {
         const type = req.query.type || 'all';
         const offset = (page - 1) * limit;
 
+        // Find group name from config or DB to build correct folder path
+        const config = JSON.parse(await fs.readFile(CONFIG_PATH, 'utf8'));
+        const configGroup = (config.groups || []).find(g => String(g.id) === String(groupId));
+        const dbRow = getDb().prepare('SELECT group_name FROM downloads WHERE group_id = ? AND group_name IS NOT NULL LIMIT 1').get(String(groupId));
+        const groupFolder = sanitizeName(configGroup?.name || dbRow?.group_name || 'unknown');
+
         const result = getDownloads(groupId, limit, offset, type);
 
-        // Map fields for frontend
-        const files = result.files.map(row => ({
-            name: row.file_name,
-            path: row.file_path, // Relative
-            fullPath: `${groupId}/${row.file_path}`, // web accessible path construction
-            size: row.file_size,
-            sizeFormatted: formatBytes(row.file_size),
-            type: row.file_type === 'photo' ? 'images' : (row.file_type === 'video' ? 'videos' : 'documents'),
-            extension: path.extname(row.file_name),
-            modified: row.created_at
-        }));
+        // DB file_path stores bare filename only.
+        // Actual path on disk: sanitizedGroupName/typeFolder/filename
+        const files = result.files.map(row => {
+            // Map DB file_type to folder name
+            const typeFolder = row.file_type === 'photo' ? 'images' 
+                : row.file_type === 'video' ? 'videos' 
+                : row.file_type === 'audio' ? 'audio' 
+                : row.file_type === 'sticker' ? 'stickers'
+                : 'documents';
+            
+            const fullPath = `${groupFolder}/${typeFolder}/${row.file_name}`;
+            
+            return {
+                name: row.file_name,
+                path: row.file_path,
+                fullPath,
+                size: row.file_size,
+                sizeFormatted: formatBytes(row.file_size),
+                type: typeFolder,
+                extension: path.extname(row.file_name),
+                modified: row.created_at
+            };
+        });
 
         res.json({
             files,
@@ -326,7 +383,121 @@ app.delete('/api/file', async (req, res) => {
     }
 });
 
-// 7. Config Update
+// 6b. Purge Group (Files + DB + Config + Photo — No Trace)
+app.delete('/api/groups/:id/purge', async (req, res) => {
+    try {
+        const groupId = req.params.id;
+        const config = JSON.parse(await fs.readFile(CONFIG_PATH, 'utf8'));
+        const configGroup = (config.groups || []).find(g => String(g.id) === String(groupId));
+        const dbRow = getDb().prepare('SELECT group_name FROM downloads WHERE group_id = ? AND group_name IS NOT NULL LIMIT 1').get(String(groupId));
+        const groupName = configGroup?.name || dbRow?.group_name || 'unknown';
+        const folderName = sanitizeName(groupName);
+
+        // 1. Delete files on disk
+        const folderPath = path.join(DOWNLOADS_DIR, folderName);
+        let filesDeleted = 0;
+        if (existsSync(folderPath)) {
+            // Count files before deleting
+            const countFiles = (dir) => {
+                let count = 0;
+                const items = fsSync.readdirSync(dir, { withFileTypes: true });
+                for (const item of items) {
+                    if (item.isDirectory()) count += countFiles(path.join(dir, item.name));
+                    else count++;
+                }
+                return count;
+            };
+            filesDeleted = countFiles(folderPath);
+            await fs.rm(folderPath, { recursive: true, force: true });
+        }
+
+        // 2. Delete DB records
+        const dbResult = deleteGroupDownloads(groupId);
+
+        // 3. Remove from config
+        config.groups = (config.groups || []).filter(g => String(g.id) !== String(groupId));
+        await fs.writeFile(CONFIG_PATH, JSON.stringify(config, null, 4));
+
+        // 4. Delete profile photo
+        const photoPath = path.join(PHOTOS_DIR, `${groupId}.jpg`);
+        if (existsSync(photoPath)) await fs.unlink(photoPath);
+
+        console.log(`🗑️ PURGED: ${groupName} — ${filesDeleted} files, ${dbResult.deletedDownloads} DB records`);
+        broadcast({ type: 'group_purged', groupId });
+        res.json({
+            success: true,
+            deleted: {
+                files: filesDeleted,
+                dbRecords: dbResult.deletedDownloads,
+                queueRecords: dbResult.deletedQueue,
+                group: groupName
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// 6c. Purge ALL (Everything — Factory Reset)
+app.delete('/api/purge/all', async (req, res) => {
+    try {
+        // 1. Delete all download folders
+        let totalFiles = 0;
+        if (existsSync(DOWNLOADS_DIR)) {
+            const dirs = fsSync.readdirSync(DOWNLOADS_DIR, { withFileTypes: true });
+            for (const dir of dirs) {
+                if (dir.isDirectory()) {
+                    const dirPath = path.join(DOWNLOADS_DIR, dir.name);
+                    totalFiles += fsSync.readdirSync(dirPath, { recursive: true }).length;
+                    await fs.rm(dirPath, { recursive: true, force: true });
+                }
+            }
+        }
+
+        // 2. Delete all DB records
+        const dbResult = deleteAllDownloads();
+
+        // 3. Clear groups from config
+        const config = JSON.parse(await fs.readFile(CONFIG_PATH, 'utf8'));
+        config.groups = [];
+        await fs.writeFile(CONFIG_PATH, JSON.stringify(config, null, 4));
+
+        // 4. Delete all profile photos
+        if (existsSync(PHOTOS_DIR)) {
+            const photos = fsSync.readdirSync(PHOTOS_DIR);
+            for (const photo of photos) {
+                await fs.unlink(path.join(PHOTOS_DIR, photo));
+            }
+        }
+
+        console.log(`🗑️ PURGE ALL: ${totalFiles} files, ${dbResult.deletedDownloads} DB records`);
+        broadcast({ type: 'purge_all' });
+        res.json({
+            success: true,
+            deleted: {
+                files: totalFiles,
+                dbRecords: dbResult.deletedDownloads,
+                queueRecords: dbResult.deletedQueue
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/config', async (req, res) => {
+    try {
+        const config = JSON.parse(await fs.readFile(CONFIG_PATH, 'utf8'));
+        // Strip sensitive fields
+        const safe = { ...config };
+        if (safe.web) safe.web = { ...safe.web, password: undefined };
+        res.json(safe);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// 7b. Config Update
 app.post('/api/config', async (req, res) => {
     try {
         // Read existing first to preserve structure
@@ -355,21 +526,48 @@ app.put('/api/groups/:id', async (req, res) => {
         
         if (groupIndex === -1) {
             // Create new
+            // Resolve real name from Telegram if not provided or generic
+            let groupName = req.body.name;
+            if (!groupName || groupName.startsWith('Group ')) {
+                try {
+                    if (telegramClient && isConnected) {
+                        const entity = await telegramClient.getEntity(BigInt(groupId));
+                        groupName = entity?.title || entity?.firstName || entity?.username || groupName;
+                    }
+                } catch { /* keep whatever name we have */ }
+            }
             const newGroup = {
                 id: groupId.startsWith('-') ? parseInt(groupId) : groupId,
-                name: req.body.name || `Group ${groupId}`,
-                enabled: false,
-                filters: { photos: true, videos: true, files: true, links: true },
-                autoForward: { enabled: false }
+                name: groupName || `Unknown`,
+                enabled: req.body.enabled ?? false,
+                filters: { photos: true, videos: true, files: true, links: true, voice: false, gifs: false, stickers: false },
+                autoForward: { enabled: false, destination: null, deleteAfterForward: false },
+                trackUsers: { enabled: false, users: [] },
+                topics: { enabled: false, ids: [] }
             };
             config.groups.push(newGroup);
             groupIndex = config.groups.length - 1;
         }
         
         // Update fields
-        config.groups[groupIndex] = { ...config.groups[groupIndex], ...req.body };
+        const group = config.groups[groupIndex];
+        if (req.body.enabled !== undefined) group.enabled = req.body.enabled;
+        if (req.body.name) group.name = req.body.name;
         if (req.body.filters) {
-            config.groups[groupIndex].filters = { ...config.groups[groupIndex].filters, ...req.body.filters };
+            group.filters = { ...group.filters, ...req.body.filters };
+        }
+        if (req.body.autoForward) {
+            group.autoForward = { ...group.autoForward, ...req.body.autoForward };
+        }
+        
+        // Multi-Account assignments
+        if (req.body.monitorAccount !== undefined) {
+            if (!req.body.monitorAccount) delete group.monitorAccount;
+            else group.monitorAccount = req.body.monitorAccount;
+        }
+        if (req.body.forwardAccount !== undefined) {
+            if (!req.body.forwardAccount) delete group.forwardAccount;
+            else group.forwardAccount = req.body.forwardAccount;
         }
         
         await fs.writeFile(CONFIG_PATH, JSON.stringify(config, null, 4));
@@ -545,6 +743,13 @@ wss.on('connection', (ws) => {
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, async () => {
+    // Backfill group names for existing records
+    try {
+        const config = JSON.parse(fsSync.readFileSync(CONFIG_PATH, 'utf8'));
+        const updated = backfillGroupNames(config.groups || []);
+        if (updated > 0) console.log(`📝 Backfilled group names for ${updated} records`);
+    } catch (e) { /* config not ready yet */ }
+
     console.log(`
 ╔════════════════════════════════════════════════════════════╗
 ║   🌐 Telegram Downloader - SQLite Edition                 ║
@@ -552,6 +757,128 @@ server.listen(PORT, async () => {
 ╚════════════════════════════════════════════════════════════╝
 `);
     await connectTelegram();
+
+    // Resolve group names from Telegram for any DB records still unnamed
+    await resolveGroupNamesFromTelegram();
 });
+
+/**
+ * Resolve group names from Telegram API for DB records with NULL or default group_name.
+ * Strategy: 1) fetch dialogs and match by normalized ID, 2) fallback to getEntity for unmatched.
+ * Also fixes config.json entries with generic names.
+ */
+async function resolveGroupNamesFromTelegram() {
+    if (!telegramClient || !isConnected) return;
+    try {
+        // Collect all IDs that need fixing (from config)
+        let config;
+        try {
+            config = JSON.parse(await fs.readFile(CONFIG_PATH, 'utf8'));
+        } catch {
+            config = { groups: [] };
+        }
+        const configUnknowns = (config.groups || []).filter(g => !g.name || g.name.startsWith('Group '));
+
+        // Also check DB
+        const db = getDb();
+        const dbUnknowns = db.prepare(`SELECT DISTINCT group_id FROM downloads WHERE group_name IS NULL OR group_name LIKE 'Group %'`).all();
+
+        if (dbUnknowns.length === 0 && configUnknowns.length === 0) return;
+
+        // Collect all unique IDs that need resolution
+        const needIds = new Set();
+        configUnknowns.forEach(g => needIds.add(String(g.id)));
+        dbUnknowns.forEach(r => needIds.add(r.group_id));
+
+        console.log(`🔍 Resolving names for ${needIds.size} groups: ${[...needIds].join(', ')}`);
+
+        // Strategy 1: Fetch dialogs and build lookup
+        const resolvedNames = new Map(); // raw ID string -> resolved name
+        try {
+            const dialogs = await telegramClient.getDialogs({ limit: 500 });
+            const normalize = (id) => String(id).replace(/^-100/, '').replace(/^-/, '');
+            
+            for (const rawId of needIds) {
+                const nid = normalize(rawId);
+                for (const d of dialogs) {
+                    const dnid = normalize(d.id);
+                    if (dnid === nid) {
+                        const title = d.title || d.name;
+                        if (title) {
+                            resolvedNames.set(rawId, title);
+                            console.log(`  📌 Dialog match: ${rawId} → "${title}"`);
+                        }
+                        break;
+                    }
+                }
+            }
+        } catch (e) {
+            console.log(`  ⚠️ getDialogs failed: ${e.message}`);
+        }
+
+        // Strategy 2: For unresolved, try getEntity directly
+        for (const rawId of needIds) {
+            if (resolvedNames.has(rawId)) continue;
+            
+            // Try multiple ID formats
+            const candidates = [
+                Number(rawId),
+                BigInt(rawId),
+            ];
+            // If it starts with -, also try -100 prefix variant
+            if (rawId.startsWith('-') && !rawId.startsWith('-100')) {
+                candidates.push(Number('-100' + rawId.slice(1)));
+                candidates.push(BigInt('-100' + rawId.slice(1)));
+            }
+
+            for (const tryId of candidates) {
+                try {
+                    const entity = await telegramClient.getEntity(tryId);
+                    if (entity) {
+                        const title = entity.title || entity.firstName || entity.username;
+                        if (title) {
+                            resolvedNames.set(rawId, title);
+                            console.log(`  📌 Entity match: ${rawId} → "${title}"`);
+                            break;
+                        }
+                    }
+                } catch { /* try next format */ }
+            }
+        }
+
+        // Apply fixes to DB
+        let dbResolved = 0;
+        const stmt = db.prepare(`UPDATE downloads SET group_name = ? WHERE group_id = ? AND (group_name IS NULL OR group_name LIKE 'Group %')`);
+        for (const row of dbUnknowns) {
+            const name = resolvedNames.get(row.group_id);
+            if (name) {
+                stmt.run(name, row.group_id);
+                dbResolved++;
+            }
+        }
+
+        // Apply fixes to config
+        let configChanged = false;
+        let configResolved = 0;
+        for (const g of configUnknowns) {
+            const name = resolvedNames.get(String(g.id));
+            if (name) {
+                g.name = name;
+                configChanged = true;
+                configResolved++;
+            }
+        }
+        if (configChanged) {
+            await fs.writeFile(CONFIG_PATH, JSON.stringify(config, null, 4));
+        }
+
+        const total = resolvedNames.size;
+        const failed = needIds.size - total;
+        if (total > 0) console.log(`✅ Resolved ${total} group names (${dbResolved} DB, ${configResolved} config)`);
+        if (failed > 0) console.log(`⚠️  ${failed} groups could not be resolved (may have left the group)`);
+    } catch (e) {
+        console.log('⚠️ Could not resolve group names:', e.message);
+    }
+}
 
 export { broadcast };

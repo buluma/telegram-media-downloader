@@ -24,6 +24,18 @@ export function escapeHtml(text) {
         .replace(/'/g, "&#039;");
 }
 
+export function getFileIcon(ext) {
+    const map = {
+        mp4: 'ri-video-line', mkv: 'ri-video-line', avi: 'ri-video-line', mov: 'ri-video-line', webm: 'ri-video-line',
+        mp3: 'ri-music-line', flac: 'ri-music-line', wav: 'ri-music-line', ogg: 'ri-music-line', aac: 'ri-music-line',
+        jpg: 'ri-image-line', jpeg: 'ri-image-line', png: 'ri-image-line', gif: 'ri-image-line', webp: 'ri-image-line', bmp: 'ri-image-line',
+        pdf: 'ri-file-pdf-line', doc: 'ri-file-word-line', docx: 'ri-file-word-line',
+        zip: 'ri-file-zip-line', rar: 'ri-file-zip-line', '7z': 'ri-file-zip-line',
+        txt: 'ri-file-text-line', json: 'ri-file-code-line', js: 'ri-file-code-line',
+    };
+    return map[(ext || '').toLowerCase().replace('.', '')] || 'ri-file-line';
+}
+
 export function getGroupType(id) {
     const idStr = String(id);
     if (!idStr.startsWith('-')) return 'Private Chat';

@@ -33,6 +33,7 @@ function initSchema() {
         CREATE TABLE IF NOT EXISTS downloads (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             group_id TEXT NOT NULL,
+            group_name TEXT,
             message_id INTEGER NOT NULL,
             file_name TEXT,
             file_size INTEGER,
@@ -46,7 +47,14 @@ function initSchema() {
         CREATE INDEX IF NOT EXISTS idx_created_at ON downloads(created_at);
     `);
 
-    // Queue/Pending Table (Optional, for now we focus on history)
+    // Migration: add group_name column to existing databases
+    try {
+        db.exec('ALTER TABLE downloads ADD COLUMN group_name TEXT');
+    } catch (e) {
+        // Column already exists -- safe to ignore
+    }
+
+    // Queue/Pending Table
     db.exec(`
         CREATE TABLE IF NOT EXISTS queue (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -62,15 +70,15 @@ function initSchema() {
 
 export function insertDownload(data) {
     const stmt = getDb().prepare(`
-        INSERT OR IGNORE INTO downloads (group_id, message_id, file_name, file_size, file_type, file_path)
-        VALUES (@groupId, @messageId, @fileName, @fileSize, @fileType, @filePath)
+        INSERT OR IGNORE INTO downloads (group_id, group_name, message_id, file_name, file_size, file_type, file_path)
+        VALUES (@groupId, @groupName, @messageId, @fileName, @fileSize, @fileType, @filePath)
     `);
     return stmt.run(data);
 }
 
 export function isDownloaded(groupId, messageId) {
     const stmt = getDb().prepare('SELECT 1 FROM downloads WHERE group_id = ? AND message_id = ? LIMIT 1');
-    return !!stmt.get(groupId, messageId);
+    return !!stmt.get(String(groupId), Number(messageId));
 }
 
 export function getDownloads(groupId, limit = 50, offset = 0, type = 'all') {
@@ -118,4 +126,50 @@ export function getStats() {
     const totalFiles = db.prepare('SELECT COUNT(*) as count FROM downloads').get().count;
     const totalSize = db.prepare('SELECT SUM(file_size) as size FROM downloads').get().size || 0;
     return { totalFiles, totalSize };
+}
+
+/**
+ * Delete all download records for a specific group
+ * @param {string} groupId - Telegram group ID
+ * @returns {{ deletedDownloads: number, deletedQueue: number }}
+ */
+export function deleteGroupDownloads(groupId) {
+    const db = getDb();
+    const del1 = db.prepare('DELETE FROM downloads WHERE group_id = ?').run(String(groupId));
+    const del2 = db.prepare('DELETE FROM queue WHERE group_id = ?').run(String(groupId));
+    return { deletedDownloads: del1.changes, deletedQueue: del2.changes };
+}
+
+/**
+ * Delete ALL download and queue records
+ * @returns {{ deletedDownloads: number, deletedQueue: number }}
+ */
+export function deleteAllDownloads() {
+    const db = getDb();
+    const del1 = db.prepare('DELETE FROM downloads').run();
+    const del2 = db.prepare('DELETE FROM queue').run();
+    return { deletedDownloads: del1.changes, deletedQueue: del2.changes };
+}
+
+/**
+ * Backfill group_name for existing records using config groups.
+ * Call once on startup after config is loaded.
+ * @param {Array<{id: string|number, name: string}>} groups - Config groups
+ * @returns {number} Number of records updated
+ */
+export function backfillGroupNames(groups) {
+    if (!groups || groups.length === 0) return 0;
+    const db = getDb();
+    const stmt = db.prepare('UPDATE downloads SET group_name = ? WHERE group_id = ? AND group_name IS NULL');
+    let updated = 0;
+    const tx = db.transaction(() => {
+        for (const g of groups) {
+            if (g.name) {
+                const result = stmt.run(g.name, String(g.id));
+                updated += result.changes;
+            }
+        }
+    });
+    tx();
+    return updated;
 }

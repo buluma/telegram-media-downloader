@@ -10,17 +10,18 @@ const DEFAULT_CONFIG = {
         apiId: '',
         apiHash: ''
     },
+    accounts: [],
     pollingInterval: 10,
     groups: [],
     download: {
         path: './data/downloads',
-        concurrent: 3,
+        concurrent: 10,
         retries: 5,
         maxSpeed: 0 // 0 = unlimited
     },
     rateLimits: {
-        requestsPerMinute: 15,
-        delayMs: { min: 500, max: 2000 }
+        requestsPerMinute: 60,
+        delayMs: { min: 100, max: 300 }
     },
     diskManagement: {
         maxTotalSize: '50GB',
@@ -29,9 +30,11 @@ const DEFAULT_CONFIG = {
 };
 
 const DEFAULT_FILTERS = {
-    images: true,
+    photos: true,
     videos: true,
     files: true,
+    links: true,
+    voice: false,
     audio: false,
     gifs: false,
     stickers: false, // Default false for stickers

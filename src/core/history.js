@@ -14,7 +14,6 @@ export class HistoryDownloader extends EventEmitter {
         this.client = client;
         this.downloader = downloader;
         this.config = config;
-        this.running = false;
         this.stats = {
             processed: 0,
             downloaded: 0,
@@ -70,7 +69,6 @@ export class HistoryDownloader extends EventEmitter {
     }
 
     async downloadHistory(groupId, options = {}) {
-        this.running = true;
         this.stats = { processed: 0, downloaded: 0, skipped: 0, urls: 0 };
         
         const limit = options.limit || 100;
@@ -142,14 +140,12 @@ export class HistoryDownloader extends EventEmitter {
         } catch (error) {
             this.emit('error', error);
         } finally {
-            this.running = false;
+
             this.emit('complete', { ...this.stats, lastMessageId: lastId });
         }
     }
 
-    stop() {
-        this.running = false;
-    }
+
 
     async processMessage(message, group) {
         // User tracking filter
@@ -236,7 +232,8 @@ export class HistoryDownloader extends EventEmitter {
 
     hasMedia(message) {
         return !!(message.photo || message.video || message.document || 
-                  message.audio || message.voice || message.videoNote || message.gif);
+                  message.audio || message.voice || message.sticker ||
+                  message.videoNote || message.gif);
     }
 
     sleep(ms) {

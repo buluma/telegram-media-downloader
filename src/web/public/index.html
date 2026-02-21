@@ -72,6 +72,11 @@
             background: #2B5278;
         }
 
+        /* Show delete button on group hover */
+        .group-item:hover .purge-btn {
+            opacity: 1 !important;
+        }
+
         /* Telegram Avatar Gradients */
         .tg-avatar {
             border-radius: 50%;
@@ -378,6 +383,9 @@
                     <div class="tab-item flex-1 text-center" onclick="switchSettingsTab('forward')" id="tab-forward">
                         Auto Forward
                     </div>
+                    <div class="tab-item flex-1 text-center" onclick="switchSettingsTab('accounts')" id="tab-accounts">
+                        Accounts
+                    </div>
                 </div>
 
                 <!-- Content -->
@@ -442,6 +450,47 @@
                                 </div>
                                 <div class="tg-toggle" id="fwd-delete-toggle"></div>
                             </div>
+                        </div>
+                    </div>
+
+                    <!-- Accounts Tab -->
+                    <div id="content-accounts" class="hidden space-y-4">
+                        <div class="p-4 bg-tg-panel rounded-lg border border-tg-border/50">
+                            <h4 class="text-white font-medium mb-1">Account Assignment</h4>
+                            <p class="text-xs text-tg-textSecondary mb-4">Choose which Telegram account handles each
+                                role for this group</p>
+
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block text-tg-textSecondary text-sm mb-2">
+                                        <i class="ri-download-line mr-1"></i> Monitor Account
+                                    </label>
+                                    <select id="monitor-account" class="tg-input w-full">
+                                        <option value="">(Default Account)</option>
+                                    </select>
+                                    <p class="text-xs text-tg-textSecondary mt-1.5 opacity-70">This account will watch
+                                        and download media from this group</p>
+                                </div>
+
+                                <div>
+                                    <label class="block text-tg-textSecondary text-sm mb-2">
+                                        <i class="ri-share-forward-line mr-1"></i> Forward Account
+                                    </label>
+                                    <select id="forward-account" class="tg-input w-full">
+                                        <option value="">(Default Account)</option>
+                                    </select>
+                                    <p class="text-xs text-tg-textSecondary mt-1.5 opacity-70">This account will
+                                        re-upload forwarded media (Auto Forward)</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="p-3 bg-yellow-500/10 rounded-lg border border-yellow-500/20">
+                            <p class="text-xs text-yellow-400">
+                                <i class="ri-information-line mr-1"></i>
+                                Accounts are managed via CLI: <code
+                                    class="bg-black/30 px-1.5 py-0.5 rounded">node src/index.js accounts</code>
+                            </p>
                         </div>
                     </div>
 
@@ -558,11 +607,12 @@
                                     <span id="concurrent-value" class="text-tg-blue font-medium">3</span>
                                 </div>
                                 <input type="range" id="setting-concurrent" class="w-full accent-tg-blue" min="1"
-                                    max="5" value="3"
+                                    max="20" value="3"
                                     oninput="document.getElementById('concurrent-value').textContent = this.value">
                                 <div class="flex justify-between text-xs text-tg-textSecondary mt-1">
-                                    <span>1 (Slow)</span>
-                                    <span>5 (Fast)</span>
+                                    <span>1 (Safe)</span>
+                                    <span>10</span>
+                                    <span>20 (Max)</span>
                                 </div>
                             </div>
                             <div>
@@ -584,6 +634,21 @@
                                 </div>
                                 <p class="text-xs text-tg-textSecondary mt-1">Change via CLI: Edit config.json</p>
                             </div>
+                            <div>
+                                <div class="flex items-center justify-between mb-2">
+                                    <label class="text-tg-text text-sm">Max Download Speed</label>
+                                    <span id="speed-value" class="text-tg-blue font-medium text-sm">Unlimited</span>
+                                </div>
+                                <select id="setting-max-speed" class="tg-input w-full text-sm"
+                                    onchange="document.getElementById('speed-value').textContent = this.options[this.selectedIndex].text">
+                                    <option value="0">Unlimited</option>
+                                    <option value="1048576">1 MB/s</option>
+                                    <option value="5242880">5 MB/s</option>
+                                    <option value="10485760">10 MB/s</option>
+                                    <option value="20971520">20 MB/s</option>
+                                </select>
+                                <p class="text-xs text-tg-textSecondary mt-1">Limit bandwidth usage per worker</p>
+                            </div>
                         </div>
                     </div>
 
@@ -600,11 +665,12 @@
                                     <label class="text-tg-text text-sm">Requests/Minute</label>
                                     <span id="rpm-value" class="text-tg-orange font-medium">15</span>
                                 </div>
-                                <input type="range" id="setting-rpm" class="w-full accent-tg-orange" min="5" max="30"
+                                <input type="range" id="setting-rpm" class="w-full accent-tg-orange" min="5" max="60"
                                     value="15" oninput="document.getElementById('rpm-value').textContent = this.value">
                                 <div class="flex justify-between text-xs text-tg-textSecondary mt-1">
                                     <span>5 (Safe)</span>
-                                    <span>30 (Risky)</span>
+                                    <span>30</span>
+                                    <span>60 (Fast)</span>
                                 </div>
                             </div>
                             <div>
@@ -635,6 +701,7 @@
                                         <option value="50GB">50 GB</option>
                                         <option value="100GB">100 GB</option>
                                         <option value="500GB">500 GB</option>
+                                        <option value="1TB">1 TB</option>
                                     </select>
                                 </div>
                                 <div>
@@ -686,6 +753,19 @@
                     <button id="save-settings" class="tg-btn w-full">
                         <i class="ri-save-line mr-2"></i>Save Settings
                     </button>
+
+                    <!-- Danger Zone -->
+                    <div class="mt-6 bg-red-500/5 border border-red-500/20 rounded-xl p-4">
+                        <h3 class="text-red-400 font-medium mb-2 flex items-center gap-2">
+                            <i class="ri-error-warning-line"></i> Danger Zone
+                        </h3>
+                        <p class="text-xs text-tg-textSecondary mb-4">These actions are irreversible. All files,
+                            database records, and group configurations will be permanently deleted.</p>
+                        <button onclick="purgeAll()"
+                            class="w-full py-2.5 rounded-lg bg-red-500/10 text-red-400 border border-red-500/30 hover:bg-red-500/20 font-medium text-sm transition-colors flex items-center justify-center gap-2">
+                            <i class="ri-delete-bin-line"></i> Purge All Data
+                        </button>
+                    </div>
                 </div>
 
             </div>
@@ -844,25 +924,6 @@
         </div>
     </div>
 
-    <!-- Group Modal -->
-    <div id="group-modal"
-        class="fixed inset-0 z-50 hidden modal-backdrop flex items-end sm:items-center justify-center">
-        <div
-            class="bg-tg-panel rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md sm:mx-4 overflow-hidden max-h-[80vh] flex flex-col">
-            <div class="p-4 border-b border-tg-border flex items-center justify-between flex-shrink-0">
-                <h3 id="group-modal-title" class="text-lg font-medium text-tg-text truncate">Group Settings</h3>
-                <button id="group-modal-close"
-                    class="w-8 h-8 rounded-full hover:bg-tg-hover flex items-center justify-center">
-                    <i class="ri-close-line text-xl text-tg-textSecondary"></i>
-                </button>
-            </div>
-            <div id="group-modal-content" class="p-4 overflow-y-auto flex-1"></div>
-            <div class="p-4 border-t border-tg-border flex-shrink-0">
-                <button id="group-modal-save" class="tg-btn w-full">Save</button>
-            </div>
-        </div>
-    </div>
-
     <!-- Toast -->
     <div id="toast" class="fixed bottom-20 sm:bottom-4 left-1/2 -translate-x-1/2 z-50 hidden">
         <div class="bg-tg-panel border border-tg-border rounded-lg px-4 py-3 flex items-center gap-3 shadow-xl">
@@ -871,8 +932,8 @@
         </div>
     </div>
 
-    <script src="/js/app.js"></script>
     <!-- Scripts -->
-    <script type="module" src="js/app.js"></script>
+    <script type="module" src="/js/app.js"></script>
 </body>
+
 </html>
