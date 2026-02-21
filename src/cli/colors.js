@@ -16,12 +16,7 @@ export const colorize = (text, ...styles) =>
 export const clearScreen = () => 
     process.stdout.write('\x1b[2J\x1b[H');
 
-export function progressBar(current, total, width = 30) {
-    const percent = Math.round((current / total) * 100);
-    const filled = Math.round((current / total) * width);
-    const empty = width - filled;
-    return `[${'█'.repeat(filled)}${'░'.repeat(empty)}] ${percent}%`;
-}
+
 
 export function formatBytes(bytes) {
     if (bytes === 0) return '0 B';

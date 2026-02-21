@@ -29,6 +29,16 @@ export async function loadSettings() {
         bind('setting-polling', config.pollingInterval);
         document.getElementById('polling-value').textContent = (config.pollingInterval || 10) + 's';
 
+        // Max Speed
+        const speedEl = document.getElementById('setting-max-speed');
+        if (speedEl) {
+            speedEl.value = dl.maxSpeed || 0;
+            const speedLabel = document.getElementById('speed-value');
+            if (speedLabel) {
+                speedLabel.textContent = dl.maxSpeed ? (dl.maxSpeed / 1024 / 1024).toFixed(0) + ' MB/s' : 'Unlimited';
+            }
+        }
+
         bind('setting-max-disk', dm.maxTotalSize || '');
         bind('setting-max-video', dm.maxVideoSize || '');
         bind('setting-max-image', dm.maxImageSize || '');
@@ -45,7 +55,7 @@ export async function saveSettings() {
         download: {
             concurrent: parseInt(get('setting-concurrent')),
             retries: parseInt(get('setting-retries')),
-            // path is readonly usually
+            maxSpeed: parseInt(get('setting-max-speed')) || 0,
         },
         rateLimits: {
             requestsPerMinute: parseInt(get('setting-rpm'))

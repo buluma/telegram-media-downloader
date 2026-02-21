@@ -1,6 +1,6 @@
 /**
  * Telegram Auto-Downloader CLI
- * Easy Login: Phone + OTP
+ * Multi-Account Support
  */
 
 import { TelegramClient } from 'telegram';
@@ -13,13 +13,21 @@ import { fileURLToPath } from 'url';
 import { loadConfig, saveConfig, addGroup } from './config/manager.js';
 import { RateLimiter, SecureSession } from './core/security.js';
 import { ConnectionManager } from './core/connection.js';
+import { AccountManager } from './core/accounts.js';
 import { colorize, clearScreen, formatBytes } from './cli/colors.js';
 import { resilience } from './core/resilience.js';
+import { getOrGenerateSecret } from './core/secret.js';
+import { getDb, getStats as getDbStats, deleteGroupDownloads, deleteAllDownloads, backfillGroupNames } from './core/db.js';
+import { sanitizeName, migrateFolders } from './core/downloader.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SESSION_PATH = path.join(__dirname, '../data/session.enc');
 const CONFIG_PATH = path.join(__dirname, '../data/config.json');
-const SESSION_PASSWORD = 'telegram-dl-2026'; // ควรให้ user ตั้งเอง
+
+// Suppress gramJS internal TIMEOUT errors (update loop noise)
+process.on('unhandledRejection', (reason) => {
+    if (reason?.message === 'TIMEOUT') return; // gramJS update loop - safe to ignore
+    console.error('Unhandled rejection:', reason);
+});
 
 // Transient Readline Interface
 function question(query) {
@@ -55,6 +63,12 @@ async function main() {
     // Load config
     const config = loadConfig();
 
+    // Backfill group_name for existing DB records
+    try {
+        const updated = backfillGroupNames(config.groups || []);
+        if (updated > 0) console.log(colorize(`\u{1f4dd} Backfilled group names for ${updated} records`, 'dim'));
+    } catch (e) { /* ignore */ }
+
     // Check for auth command (Bypass API credentials check)
     if (process.argv[2] === 'auth') {
         await setupWebAuth(config);
@@ -76,10 +90,6 @@ async function main() {
             const input = await question(colorize('🔑 API Hash: ', 'cyan'));
             config.telegram.apiHash = input.trim();
         }
-        
-        // Optional phone
-        const phone = await question(colorize('📞 Phone (optional): ', 'cyan'));
-        if (phone) config.telegram.phoneNumber = phone.trim();
 
         saveConfig(config);
         console.log(colorize('✅ Setup complete! Continuing...', 'green'));
@@ -89,132 +99,44 @@ async function main() {
     console.log(colorize('📦 API ID: ', 'dim') + config.telegram.apiId);
     console.log();
 
-    // Load or create session
-    const secure = new SecureSession(SESSION_PASSWORD);
-    let sessionString = '';
+    // ============ MULTI-ACCOUNT SYSTEM ============
+    const accountManager = new AccountManager(config);
 
-    if (fs.existsSync(SESSION_PATH)) {
-        try {
-            const encrypted = JSON.parse(fs.readFileSync(SESSION_PATH, 'utf8'));
-            sessionString = secure.decrypt(encrypted);
-            console.log(colorize('🔐 Loaded encrypted session', 'green'));
-        } catch (e) {
-            console.log(colorize('⚠️ Could not load session, will create new', 'yellow'));
-        }
-    }
+    console.log(colorize('🔌 Loading accounts...', 'cyan'));
+    const loaded = await accountManager.loadAll();
 
-    // Create client
-    const client = new TelegramClient(
-        new StringSession(sessionString),
-        parseInt(config.telegram.apiId),
-        config.telegram.apiHash,
-        {
-            connectionRetries: 100,
-            deviceModel: 'EIEI CLI',
-            systemVersion: 'Windows 10',
-            appVersion: '1.0.0',
-            useWSS: false, // Force TCP
-            // Custom Logger to filter noise
-            baseLogger: {
-                canSend: (lvl) => true,
-                warn: (msg) => {
-                    if (msg?.includes('Disconnecting') || msg?.includes('Connection closed')) return;
-                    console.log(colorize(`⚠️  ${msg}`, 'yellow'));
-                },
-                info: (msg) => {
-                    if (msg?.includes('Connecting to')) return; // Too verbose
-                    if (msg?.includes('Disconnecting')) return; // Ignore
-                    if (msg?.includes('connection closed')) return; // Ignore
-                    if (msg?.includes('Running gramJS')) return;
-                    console.log(colorize(`ℹ️  ${msg}`, 'dim'));
-                },
-                debug: () => {},
-                error: (msg) => {
-                    if (msg?.includes('WebSocket connection failed')) return;
-                    if (typeof msg === 'object' && msg.message?.includes('Not connected')) return; // Suppress Not Connected stack
-                    console.error(colorize(`❌ ${msg}`, 'red'));
-                },
-                setLevel: (lvl) => {} // Dummy method to satisfy GramJS
-            }
-        }
-    );
-    console.log(colorize('🔌 Connecting to Telegram...', 'cyan'));
-
-    try {
-        await client.connect();
-        console.log(colorize('✅ Connected!', 'green'));
-    } catch (error) {
-        console.log(colorize(`❌ Connection failed: ${error.message}`, 'red'));
-        process.exit(1);
-    }
-
-    // Check if logged in
-    const isAuthorized = await client.checkAuthorization();
-
-    if (!isAuthorized) {
+    // If no accounts, prompt to add one
+    if (loaded === 0) {
         console.log();
         console.log(colorize('═══════════════════════════════════════', 'yellow'));
-        console.log(colorize('   🔐 LOGIN REQUIRED', 'yellow', 'bold'));
+        console.log(colorize('   🔐 NO ACCOUNTS FOUND', 'yellow', 'bold'));
+        console.log(colorize('   Please add your first Telegram account', 'yellow'));
         console.log(colorize('═══════════════════════════════════════', 'yellow'));
-        console.log();
 
-        try {
-            await client.start({
-                phoneNumber: async () => {
-                    if (config.telegram.phoneNumber) {
-                         console.log(colorize(`Using configured phone: ${config.telegram.phoneNumber}`, 'dim'));
-                         return config.telegram.phoneNumber;
-                    }
-                    console.log(colorize('Enter phone number with country code', 'dim'));
-                    console.log(colorize('Example: +66812345678', 'dim'));
-                    const phone = await question(colorize('📞 Phone: ', 'cyan'));
-                    return phone.trim();
-                },
-                phoneCode: async () => {
-                    console.log();
-                    console.log(colorize('Check your Telegram app for the code', 'dim'));
-                    const code = await question(colorize('📝 OTP Code: ', 'cyan'));
-                    return code.trim();
-                },
-                password: async () => {
-                    console.log();
-                    console.log(colorize('2FA Password (leave empty if not set)', 'dim'));
-                    const pass = await question(colorize('🔑 Password: ', 'cyan'));
-                    return pass.trim();
-                },
-                onError: (err) => {
-                    console.log(colorize(`❌ Error: ${err.message}`, 'red'));
-                }
-            });
-
-            // Save encrypted session
-            const newSession = client.session.save();
-            const encrypted = secure.encrypt(newSession);
-            fs.writeFileSync(SESSION_PATH, JSON.stringify(encrypted, null, 2));
-            console.log();
-            console.log(colorize('✅ Login successful! Session saved.', 'green', 'bold'));
-
-        } catch (error) {
-            console.log(colorize(`❌ Login failed: ${error.message}`, 'red'));
+        const added = await accountManager.addAccount(question);
+        if (!added) {
+            console.log(colorize('❌ Cannot continue without an account', 'red'));
             process.exit(1);
-            return;
         }
     }
 
-    // Get user info
-    const me = await client.getMe();
+    // Show loaded accounts summary
+    const accounts = accountManager.getList();
+    const defaultId = accountManager.getDefaultId();
     console.log();
     console.log(colorize('═══════════════════════════════════════', 'green'));
-    console.log(colorize(`   👤 Logged in as: ${me.firstName || ''} ${me.lastName || ''}`, 'green', 'bold'));
-    if (me.username) {
-        console.log(colorize(`   📌 Username: @${me.username}`, 'green'));
-    }
-    console.log(colorize(`   🆔 User ID: ${me.id}`, 'green'));
+    console.log(colorize(`   👥 ${accounts.length} Account(s) Ready`, 'green', 'bold'));
+    accounts.forEach(acc => {
+        const star = acc.id === defaultId ? ' ⭐' : '';
+        console.log(colorize(`   • ${acc.id}: ${acc.name} @${acc.username || 'N/A'}${star}`, 'green'));
+    });
     console.log(colorize('═══════════════════════════════════════', 'green'));
     console.log();
 
+    // Use default client for backward compatibility
+    const client = accountManager.getDefaultClient();
 
-    // Start Connection Manager
+    // Start Connection Manager on default client
     const connManager = new ConnectionManager(client);
     connManager.start();
 
@@ -227,17 +149,16 @@ async function main() {
             await listDialogs(client);
             break;
         case 'monitor':
-            await startMonitor(client, config);
+            await startMonitor(accountManager, config);
             break;
         case 'test':
             console.log(colorize('✅ Connection test passed!', 'green'));
             break;
         case 'config':
-            await configureGroups(client, config);
+            await configureGroups(accountManager, config);
             break;
         case 'history':
-            // Pass connManager to allow stopping it on exit
-            await startHistory(client, config, connManager);
+            await startHistory(accountManager, config, connManager);
             break;
         case 'viewer':
             await viewDownloads();
@@ -248,26 +169,54 @@ async function main() {
         case 'auth':
             await setupWebAuth(config);
             break;
-        case 'test':
-            console.log(colorize('✅ Connection test passed!', 'green'));
+        case 'accounts':
+            await manageAccounts(accountManager, config);
+            break;
+        case 'web':
+            await import('./web/server.js');
+            await new Promise(() => {}); // Keep alive
+            break;
+        case 'purge':
+            await purgeData(client, config);
             break;
         default:
             showMenu();
     }
 
-
-    // Graceful disconnect (suppress timeout errors)
-    try {
-        client.setLogLevel('none'); // Suppress logs during disconnect
-        await client.disconnect();
-    } catch (e) {
-        // Ignore disconnect errors
-    }
+    // Graceful disconnect all accounts
+    await accountManager.disconnectAll();
 
     console.log(colorize('\n👋 Disconnected. Goodbye!', 'cyan'));
 }
 
-async function selectOption(title, options) {
+
+async function listDialogs(client) {
+    clearScreen();
+    console.log(colorize('╔════════════════════════════════════════╗', 'cyan'));
+    console.log(colorize('║    📋 ALL DIALOGS                      ║', 'cyan', 'bold'));
+    console.log(colorize('╚════════════════════════════════════════╝', 'cyan'));
+    console.log();
+    console.log(colorize('Fetching dialogs...', 'dim'));
+
+    const dialogs = await client.getDialogs({ limit: 200 });
+
+    console.log(colorize(`\n${'Type'.padEnd(10)} | ${'ID'.padEnd(20)} | ${'Name'.padEnd(35)} | Members`, 'white', 'bold'));
+    console.log('─'.repeat(85));
+
+    for (const d of dialogs) {
+        const type = d.isChannel ? 'Channel' : d.isGroup ? 'Group' : d.isUser ? 'User' : 'Other';
+        const id = String(d.id).padEnd(20);
+        const name = (d.title || d.name || 'Unknown').slice(0, 35).padEnd(35);
+        const members = d.entity?.participantsCount || '';
+        const color = d.isChannel || d.isGroup ? 'green' : 'dim';
+        console.log(colorize(`${type.padEnd(10)} | ${id} | ${name} | ${members}`, color));
+    }
+
+    console.log('─'.repeat(85));
+    console.log(colorize(`Total: ${dialogs.length} dialogs`, 'cyan', 'bold'));
+}
+
+async function selectOption(title, options, headerOutput = '') {
     let cursor = 0;
 
     // Manual Raw Mode - No Readline Interface
@@ -286,9 +235,15 @@ async function selectOption(title, options) {
     return new Promise(resolve => {
         const render = () => {
             clearScreen();
-            console.log(colorize('╔════════════════════════════════════════╗', 'cyan'));
-            console.log(colorize(`║ ${title.padEnd(38)} ║`, 'cyan', 'bold'));
-            console.log(colorize('╚════════════════════════════════════════╝', 'cyan'));
+            
+            if (headerOutput) {
+                console.log(headerOutput);
+            } else {
+                console.log(colorize('╔════════════════════════════════════════╗', 'cyan'));
+                console.log(colorize(`║ ${title.padEnd(38)} ║`, 'cyan', 'bold'));
+                console.log(colorize('╚════════════════════════════════════════╝', 'cyan'));
+            }
+            
             console.log(colorize('Use Arrow Keys or Numbers (1-9), Enter to confirm', 'dim'));
             console.log('─'.repeat(40));
 
@@ -483,72 +438,46 @@ async function configureGlobalSettings(config) {
 async function viewDownloads() {
     clearScreen();
     console.log(colorize('╔════════════════════════════════════════╗', 'green'));
-    console.log(colorize('║      📊 DOWNLOAD STATS                 ║', 'green', 'bold'));
+    console.log(colorize('║      📊 DOWNLOAD STATS (SQLite)        ║', 'green', 'bold'));
     console.log(colorize('╚════════════════════════════════════════╝', 'green'));
     console.log();
 
-    const logDir = './data/logs';
-    if (!fs.existsSync(logDir)) {
-        console.log(colorize('No history data found (no log files).', 'yellow'));
-        return;
-    }
+    try {
+        const db = getDb();
+        const dbStats = getDbStats();
 
-    const files = fs.readdirSync(logDir).filter(f => f.endsWith('.json'));
-    let totalSize = 0;
-    let totalFiles = 0;
+        // Per-group breakdown
+        const rows = db.prepare(`
+            SELECT group_id, COUNT(*) as count, SUM(file_size) as size
+            FROM downloads GROUP BY group_id ORDER BY size DESC
+        `).all();
 
-    const stats = [];
+        const config = loadConfig();
 
-    for (const file of files) {
-        try {
-            const data = JSON.parse(fs.readFileSync(path.join(logDir, file), 'utf8'));
-            const fileKeys = Object.keys(data.files || {});
-            const count = fileKeys.length;
-            let size = 0;
-            let groupName = 'Unknown';
-
-            for (const key of fileKeys) {
-                const item = data.files[key];
-                size += (item.size || 0);
-                if (item.groupName) groupName = item.groupName;
-            }
-
-            totalFiles += count;
-            totalSize += size;
-
-            if (count > 0) {
-                stats.push({
-                    name: groupName,
-                    count,
-                    sizeRaw: size,
-                    size: (size / 1024 / 1024).toFixed(2) + ' MB'
-                });
-            }
-        } catch (e) {
-            // Ignore corrupt logs
+        if (rows.length === 0) {
+            console.log(colorize('No downloads recorded yet.', 'yellow'));
+            return;
         }
+
+        console.log(colorize(`${'Group Name'.padEnd(40)} | ${'Files'.padEnd(10)} | ${'Size'.padEnd(15)}`, 'white', 'bold'));
+        console.log('─'.repeat(70));
+
+        for (const row of rows) {
+            const cfg = config.groups.find(g => String(g.id) === row.group_id);
+            const name = cfg ? cfg.name : `Group ${row.group_id}`;
+            const sizeStr = formatBytes(row.size || 0);
+            console.log(`${name.slice(0, 40).padEnd(40)} | ${String(row.count).padEnd(10)} | ${sizeStr.padEnd(15)}`);
+        }
+
+        console.log('─'.repeat(70));
+        console.log(colorize(`TOTAL: ${dbStats.totalFiles} files | ${formatBytes(dbStats.totalSize)}`, 'green', 'bold'));
+    } catch (e) {
+        console.log(colorize(`Error reading database: ${e.message}`, 'red'));
     }
-
-    // Sort by size desc
-    stats.sort((a, b) => b.sizeRaw - a.sizeRaw);
-
-    if (stats.length === 0) {
-        console.log(colorize('No downloads recorded yet.', 'yellow'));
-        return;
-    }
-
-    console.log(colorize(`${'Group Name'.padEnd(40)} | ${'Files'.padEnd(10)} | ${'Size'.padEnd(15)}`, 'white', 'bold'));
-    console.log('─'.repeat(70));
-
-    for (const stat of stats) {
-        console.log(`${stat.name.slice(0, 40).padEnd(40)} | ${String(stat.count).padEnd(10)} | ${stat.size.padEnd(15)}`);
-    }
-
-    console.log('─'.repeat(70));
-    console.log(colorize(`TOTAL: ${totalFiles} files | ${(totalSize / 1024 / 1024 / 1024).toFixed(2)} GB`, 'green', 'bold'));
 }
 
-async function configureGroups(client, config) {
+async function configureGroups(accountManager, config) {
+    const client = accountManager.getDefaultClient();
     clearScreen();
     console.log(colorize('╔════════════════════════════════════════╗', 'cyan'));
     console.log(colorize('║    📋 GROUP CONFIG                     ║', 'cyan', 'bold'));
@@ -578,7 +507,7 @@ async function configureGroups(client, config) {
 
     let cursor = 0;
     const pageSize = 15;
-    let editingFiltersFor = -1; // Index of group being edited
+    let editingFiltersFor = null; // { index, mode: 'filters' | 'fwd' } or null
 
     // Enable raw mode for keypress
     readline.emitKeypressEvents(process.stdin);
@@ -587,9 +516,9 @@ async function configureGroups(client, config) {
     const render = () => {
         clearScreen();
 
-        if (editingFiltersFor >= 0) {
+        if (editingFiltersFor !== null) {
             // Render Filter Menu
-            const item = selection[editingFiltersFor];
+            const item = selection[editingFiltersFor.index];
             const isFwdMode = editingFiltersFor.mode === 'fwd';
 
             if (isFwdMode) {
@@ -697,15 +626,15 @@ async function configureGroups(client, config) {
             if (!key) return;
 
             // === AUTO FORWARD MENU HANDLING ===
-            if (editingFiltersFor >= 0 && editingFiltersFor.mode === 'fwd') {
-                const item = selection[editingFiltersFor];
+            if (editingFiltersFor !== null && editingFiltersFor.mode === 'fwd') {
+                const item = selection[editingFiltersFor.index];
                 // Ensure struct exists
                 if (!item.autoForward) item.autoForward = { enabled: false, destination: null, deleteAfterForward: false };
 
                 // Quick Actions - No navigation needed, just press key!
                 if (key.name === 'escape' || key.name === 'return' || key.name === 'left') {
                     // Back to list
-                    editingFiltersFor = -1;
+                    editingFiltersFor = null;
                     cursor = 0;
                 } else if (str === '1') {
                     // Toggle ON/OFF
@@ -768,19 +697,19 @@ async function configureGroups(client, config) {
             }
 
             // ... Existing Filter Menu Logic ...
-            if (editingFiltersFor >= 0 && !editingFiltersFor.mode) {
+            if (editingFiltersFor !== null && editingFiltersFor.mode === 'filters') {
                 // Filter Menu Handling
-                const filterKeys = ['photos', 'videos', 'files', 'links', 'voice', 'gifs'];
+                const filterKeys = ['photos', 'videos', 'files', 'links', 'voice', 'gifs', 'stickers'];
                 if (key.name === 'up') {
                     cursor = Math.max(0, cursor - 1);
                 } else if (key.name === 'down') {
                     cursor = Math.min(filterKeys.length - 1, cursor + 1);
                 } else if (key.name === 'space') {
                     const fKey = filterKeys[cursor];
-                    const item = selection[editingFiltersFor];
+                    const item = selection[editingFiltersFor.index];
                     item.filters[fKey] = !item.filters[fKey];
                 } else if (key.name === 'return' || key.name === 'left' || key.name === 'escape') {
-                    editingFiltersFor = -1;
+                    editingFiltersFor = null;
                     cursor = 0;
                 }
                 render();
@@ -796,15 +725,11 @@ async function configureGroups(client, config) {
                 selection[cursor].enabled = !selection[cursor].enabled;
             } else if (key.name === 'right') {
                 // Edit Filters
-                editingFiltersFor = cursor;
+                editingFiltersFor = { index: cursor, mode: 'filters' };
                 cursor = 0;
             } else if (key.name === 'f') {
-                // [NEW] Edit Auto Forward
-                editingFiltersFor = Object.assign(new Number(cursor), { mode: 'fwd' }); // Hacky way to store mode or just use object?
-                // Let's us simpler way: store index and mode in separate var or object
-                // But `editingFiltersFor` was index. Let's change it to be index, and add `editMode` var?
-                // For minimal change, let's use object wrapper or just handle it carefully.
-                // JS Number object can hold properties
+                // Edit Auto Forward
+                editingFiltersFor = { index: cursor, mode: 'fwd' };
                 cursor = 0;
             } else if (key.name === 'a') {
                 selection.forEach(s => s.enabled = true);
@@ -878,11 +803,126 @@ async function configureGroups(client, config) {
     const startNow = await question(colorize('Start monitor now? (y/n): ', 'yellow'));
     if (startNow.toLowerCase() === 'y') {
         console.log();
-        await startMonitor(client, config);
+        await startMonitor(accountManager, config);
     }
 }
 
-async function startHistory(client, config, connManager) {
+async function startMonitor(accountManager, config) {
+    const client = accountManager.getDefaultClient();
+    client.setLogLevel('none');
+    clearScreen();
+    console.log(colorize('╔════════════════════════════════════════╗', 'cyan'));
+    console.log(colorize('║    📡 REAL-TIME MONITOR                ║', 'cyan', 'bold'));
+    console.log(colorize('╚════════════════════════════════════════╝', 'cyan'));
+    console.log();
+
+    const { DownloadManager } = await import('./core/downloader.js');
+    const { RealtimeMonitor } = await import('./core/monitor.js');
+    const { RateLimiter } = await import('./core/security.js');
+    const { AutoForwarder } = await import('./core/forwarder.js');
+
+    // Migrate old folder names
+    await migrateFolders(config.download?.path);
+
+    const rateLimiter = new RateLimiter(config.rateLimits);
+    const downloader = new DownloadManager(client, config, rateLimiter);
+    const forwarder = new AutoForwarder(client, config, accountManager);
+    const monitor = new RealtimeMonitor(client, downloader, config, path.join(__dirname, '../data/config.json'), accountManager);
+
+    // --- Event Listeners ---
+    rateLimiter.on('wait', (seconds) => {
+        process.stdout.clearLine(0);
+        process.stdout.cursorTo(0);
+        process.stdout.write(colorize(`⏳ Rate limit: waiting ${seconds}s...`, 'yellow'));
+    });
+
+    rateLimiter.on('flood', (seconds) => {
+        console.log(colorize(`🛑 FloodWait: pausing ${seconds}s...`, 'red'));
+    });
+
+    downloader.on('start', (job) => {
+        console.log(colorize(`⬇️  Downloading: `, 'blue') + `${job.mediaType} [${job.message.id}]`);
+    });
+
+    downloader.on('complete', (job) => {
+        console.log(colorize(`✅ Saved: `, 'green') + path.basename(job.filePath));
+    });
+
+    // Auto-Forward after download completes
+    downloader.on('download_complete', async (info) => {
+        try {
+            await forwarder.process(info);
+        } catch (e) {
+            console.log(colorize(`⚠️ Forward error: ${e.message}`, 'yellow'));
+        }
+    });
+
+    downloader.on('error', ({ job, error }) => {
+        console.log(colorize(`❌ Error: `, 'red') + error);
+    });
+
+    // Sync forwarder config when monitor reloads config from disk
+    monitor.on('configReloaded', (newConfig) => {
+        forwarder.config = newConfig;
+    });
+
+    downloader.on('scale', ({ direction, workers, queue, reason }) => {
+        if (direction === 'up') {
+            console.log(colorize(`⚡ Scale UP: ${workers} workers (queue: ${queue})`, 'cyan'));
+        } else {
+            console.log(colorize(`🔽 Scale DOWN: ${workers} workers${reason ? ` (${reason})` : ''}`, 'yellow'));
+        }
+    });
+
+    monitor.on('started', ({ groupCount, groups }) => {
+        console.log(colorize(`📡 Monitoring ${groupCount} groups:`, 'green'));
+        groups.forEach(g => console.log(colorize(`   • ${g}`, 'dim')));
+        console.log();
+        console.log(colorize('Press Ctrl+C to stop', 'dim'));
+    });
+
+    monitor.on('download', ({ group, type, messageId }) => {
+        console.log(colorize(`📥 [${group}] `, 'magenta') + `${type} #${messageId}`);
+    });
+
+    monitor.on('urls', ({ group, count }) => {
+        console.log(colorize(`🔗 [${group}] `, 'blue') + `${count} URL(s) saved`);
+    });
+
+    monitor.on('error', ({ error }) => {
+        console.log(colorize(`⚠️ ${error}`, 'yellow'));
+    });
+
+    // Start
+    await monitor.start();
+
+    // Keep alive until Ctrl+C
+    await new Promise((resolve) => {
+        const shutdown = async () => {
+            console.log();
+            console.log(colorize('🛑 Stopping monitor...', 'yellow'));
+            await monitor.stop();
+            const s = monitor.stats;
+            console.log();
+            console.log(colorize('═══════════════════════════════════════', 'green'));
+            console.log(colorize('   📊 MONITOR SESSION STATS', 'green', 'bold'));
+            console.log(colorize('═══════════════════════════════════════', 'green'));
+            console.log(`   Messages seen: ${s.messages}`);
+            console.log(`   Media found:   ${s.media}`);
+            console.log(`   Downloaded:    ${s.downloaded}`);
+            console.log(`   Skipped:       ${s.skipped}`);
+            console.log(`   URLs saved:    ${s.urls}`);
+            console.log(colorize('═══════════════════════════════════════', 'green'));
+            resolve();
+        };
+
+        process.on('SIGINT', shutdown);
+        process.on('SIGTERM', shutdown);
+    });
+}
+
+async function startHistory(accountManager, config, connManager) {
+    const client = accountManager.getDefaultClient();
     client.setLogLevel('none'); // Suppress verbose download logs
     const startTime = Date.now(); // Defined at start of function
     clearScreen();
@@ -893,8 +933,11 @@ async function startHistory(client, config, connManager) {
     // Import dynamically
     const { DownloadManager } = await import('./core/downloader.js');
     const { HistoryDownloader } = await import('./core/history.js');
-    const { RateLimiter } = await import('./core/security.js'); // Import missing dep
-    const { AutoForwarder } = await import('./core/forwarder.js'); // Import Forwarder
+    const { RateLimiter } = await import('./core/security.js');
+    const { AutoForwarder } = await import('./core/forwarder.js');
+
+    // Migrate old folder names (space → underscore) before downloading
+    await migrateFolders(config.download?.path);
 
     // Get dialogs
     console.log(colorize('Fetching dialogs...', 'dim'));
@@ -1194,56 +1237,32 @@ async function startHistory(client, config, connManager) {
     if (offsetDate) options.offsetDate = offsetDate;
 
     // --- UI State ---
-    let lastStatus = '';
     let successCount = 0;
     let errorCount = 0;
 
-    const printLog = (msg) => {
-        // Clear current status line
-        process.stdout.clearLine(0);
-        process.stdout.cursorTo(0);
-
-        // Print log
-        console.log(msg);
-
-        // Reprint status if exists
-        if (lastStatus) {
-            process.stdout.write(lastStatus); 
-        }
-    };
-
-    const updateStatus = (text) => {
-        lastStatus = text;
-        process.stdout.clearLine(0);
-        process.stdout.cursorTo(0);
-        process.stdout.write(text);
-    };
-
-    // --- Event Listeners with Sticky Footer Logic ---
+    // --- Event Listeners ---
 
     rateLimiter.on('wait', (seconds) => {
-        updateStatus(colorize(`⏳ Rate limit: waiting ${seconds}s...`, 'yellow'));
+        process.stdout.clearLine(0);
+        process.stdout.cursorTo(0);
+        process.stdout.write(colorize(`⏳ Rate limit: waiting ${seconds}s...`, 'yellow'));
     });
 
     rateLimiter.on('flood', (seconds) => {
-        printLog(colorize(`🛑 FloodWait: pausing ${seconds}s...`, 'red'));
+        console.log(colorize(`🛑 FloodWait: pausing ${seconds}s...`, 'red'));
     });
 
     downloader.on('start', (job) => {
-        printLog(colorize(`⬇️  Downloading: `, 'blue') + `${job.mediaType} [${job.message.id}]`);
-    });
-
-    downloader.on('progress', ({ job, progress }) => {
-        // Optional: show individual file progress? 
-        // For now, let's keep the main log clean and rely on the summary status
+        console.log(colorize(`⬇️  Downloading: `, 'blue') + `${job.mediaType} [${job.message.id}]`);
     });
 
     downloader.on('complete', (job) => {
         successCount++;
-        printLog(colorize(`✅ Saved: `, 'green') + path.basename(job.filePath));
+        console.log(colorize(`✅ Saved: `, 'green') + path.basename(job.filePath));
     });
 
     downloader.on('error', ({ job, error }) => {
+        errorCount++;
         console.log(colorize(`❌ Error: `, 'red') + error);
     });
 
@@ -1251,74 +1270,63 @@ async function startHistory(client, config, connManager) {
         console.log(colorize(`⏭️ Skipped: `, 'dim') + `[${job.message.id}] ${reason}`);
     });
 
-    monitor.on('urls', ({ group, count }) => {
-        console.log(colorize(`🔗 URLs: `, 'yellow') + `${count} saved from ${group}`);
+    downloader.on('scale', ({ direction, workers, queue, reason }) => {
+        if (direction === 'up') {
+            console.log(colorize(`⚡ Scale UP: ${workers} workers (queue: ${queue})`, 'cyan'));
+        } else {
+            console.log(colorize(`🔽 Scale DOWN: ${workers} workers${reason ? ` (${reason})` : ''}`, 'yellow'));
+        }
     });
 
-    // Start systems
-    downloader.start();
-    await monitor.start();
-    // forwarder.start() is not needed as it hooks into downloader events
-
-    // Start monitoring
-    console.log(colorize('╔════════════════════════════════════════╗', 'red'));
-    console.log(colorize('║    🔴 REAL-TIME MONITOR                ║', 'red', 'bold'));
-    console.log(colorize('╚════════════════════════════════════════╝', 'red'));
-    console.log();
-
-    const enabledGroups = config.groups.filter(g => g.enabled);
-    console.log(colorize(`📡 Monitoring ${enabledGroups.length} groups:`, 'cyan'));
-    enabledGroups.forEach(g => {
-        console.log(colorize(`   • ${g.name}`, 'dim'));
+    history.on('progress', (stats) => {
+        process.stdout.clearLine(0);
+        process.stdout.cursorTo(0);
+        process.stdout.write(colorize(`📊 Progress: ${stats.processed} processed | ${stats.downloaded} queued | ${stats.skipped} skipped`, 'cyan'));
     });
+
+    history.on('log', (msg) => {
+        console.log(colorize(`\n${msg}`, 'yellow'));
+    });
+
+    // Start download
     console.log();
+    console.log(colorize('╔════════════════════════════════════════╗', 'magenta'));
+    console.log(colorize('║    📚 DOWNLOADING HISTORY...            ║', 'magenta', 'bold'));
+    console.log(colorize('╚════════════════════════════════════════╝', 'magenta'));
+    console.log(colorize(`Target: ${selectedGroup.title || selectedGroup.name}`, 'white'));
+    console.log(colorize(`Filters: ${Object.keys(historyFilters).filter(k => historyFilters[k]).join(', ')}`, 'dim'));
     console.log(colorize('Press Ctrl+C to stop', 'dim'));
     console.log('─'.repeat(50));
     console.log();
 
     try {
-        monitor.start();
+        await history.downloadHistory(selectedGroup.id, options);
     } catch (error) {
-        console.log(colorize(`❌ Monitor error: ${error.message}`, 'red'));
-        return;
+        console.log(colorize(`\n❌ History error: ${error.message}`, 'red'));
     }
 
-    // Keep running until Ctrl+C
-    await new Promise((resolve) => {
-        let isShuttingDown = false;
+    // Wait for remaining downloads to finish
+    console.log();
+    console.log(colorize('⏳ Waiting for remaining downloads to finish...', 'yellow'));
+    while (downloader.queue.length > 0 || downloader.active.size > 0) {
+        await new Promise(r => setTimeout(r, 1000));
+    }
+    await downloader.stop();
 
-        const shutdown = async () => {
-            if (isShuttingDown) return;
-            isShuttingDown = true;
-
-            console.log();
-            console.log(colorize('🛑 Stopping monitor...', 'yellow'));
-
-            try {
-                await monitor.stop(); // AWAIT the async stop
-            } catch (err) {
-                // Suppress shutdown errors (e.g. TIMEOUT)
-            }
-
-            const stats = monitor.getStats();
-            console.log();
-            console.log(colorize('═══════════════════════════════════════', 'cyan'));
-            console.log(colorize('   📊 SESSION STATS', 'cyan', 'bold'));
-            console.log(colorize('═══════════════════════════════════════', 'cyan'));
-            console.log(`   Messages: ${stats.messages}`);
-            console.log(`   Media detected: ${stats.media}`);
-            console.log(`   Downloaded: ${stats.downloaded}`);
-            console.log(`   Skipped: ${stats.skipped}`);
-            console.log(`   URLs saved: ${stats.urls}`);
-            console.log(colorize('═══════════════════════════════════════', 'cyan'));
-
-            resolve();
-            process.exit(0); // Force exit
-        };
-
-        process.removeAllListeners('SIGINT');
-        process.on('SIGINT', shutdown);
-    });
+    // Final Stats
+    const elapsed = Math.round((Date.now() - startTime) / 1000);
+    const historyStats = history.stats;
+    console.log();
+    console.log(colorize('═══════════════════════════════════════', 'green'));
+    console.log(colorize('   📊 HISTORY DOWNLOAD COMPLETE', 'green', 'bold'));
+    console.log(colorize('═══════════════════════════════════════', 'green'));
+    console.log(`   Messages scanned: ${historyStats.processed}`);
+    console.log(`   Downloaded:       ${successCount}`);
+    console.log(`   Skipped:          ${historyStats.skipped}`);
+    console.log(`   Errors:           ${errorCount}`);
+    console.log(`   URLs saved:       ${historyStats.urls}`);
+    console.log(`   Time elapsed:     ${Math.floor(elapsed / 60)}m ${elapsed % 60}s`);
+    console.log(colorize('═══════════════════════════════════════', 'green'));
 }
 
 function showMenu() {
@@ -1328,14 +1336,203 @@ function showMenu() {
     console.log('  ' + colorize('node src/index.js config', 'white') + '   - Configure groups (Enable/Disable, Filters)');
     console.log('  ' + colorize('node src/index.js dialogs', 'white') + '  - List all groups');
     console.log();
+    console.log(colorize('  --- Accounts ---', 'dim'));
+    console.log('  ' + colorize('node src/index.js accounts', 'white') + ' - Manage Telegram accounts');
+    console.log();
     console.log(colorize('  --- System ---', 'dim'));
     console.log('  ' + colorize('node src/index.js settings', 'white') + ' - System settings (Disk/Speed/Path)');  
     console.log('  ' + colorize('node src/index.js viewer', 'white') + '   - View download stats');
+    console.log('  ' + colorize('node src/index.js auth', 'white') + '     - Setup web password');
     console.log();
     console.log(colorize('  --- Download ---', 'dim'));
     console.log('  ' + colorize('node src/index.js monitor', 'white') + '  - Start real-time monitor');
     console.log('  ' + colorize('node src/index.js history', 'white') + '  - Download history');
+    console.log('  ' + colorize('node src/index.js web', 'white') + '      - Start web GUI (http://localhost:3000)');
     console.log();
+    console.log(colorize('  --- Data ---', 'dim'));
+    console.log('  ' + colorize('node src/index.js purge', 'white') + '    - Delete group data or all data');
+    console.log();
+}
+
+// ============ Manage Accounts ============
+async function manageAccounts(accountManager, config) {
+    while (true) {
+        
+        let headerStr = colorize('╭──────────────────────────────────────────────╮\n', 'cyan') +
+                        colorize('│', 'cyan') + colorize('            👥 MANAGE TELEGRAM ACCOUNTS          ', 'white', 'bold') + colorize('│\n', 'cyan') +
+                        colorize('╰──────────────────────────────────────────────╯\n\n', 'cyan');
+
+        // Display current accounts
+        const accounts = accountManager.getList();
+        if (accounts.length === 0) {
+            headerStr += colorize('   No accounts configured.\n', 'yellow');
+        } else {
+            headerStr += colorize(`   📱 ${accounts.length} Account(s):\n`, 'dim');
+            accounts.forEach((acc, i) => {
+                headerStr += colorize(`   ${i + 1}. `, 'white') + colorize(acc.id, 'cyan', 'bold') + colorize(` — ${acc.name} @${acc.username || 'N/A'}\n`, 'dim');
+            });
+        }
+        headerStr += '\n' + colorize('─'.repeat(48), 'dim') + '\n';
+
+        const choice = await selectOption('SELECT ACTION', [
+            { label: '➕ Add Account', value: 'add', desc: 'Login with a new phone number' },
+            { label: '❌ Remove Account', value: 'remove', desc: 'Delete a saved account' },
+            { label: '⬅️ Back to Main Menu', value: 'back' }
+        ], headerStr);
+
+        if (choice === 'add') {
+            await accountManager.addAccount(question);
+            await new Promise(r => setTimeout(r, 1500));
+        } else if (choice === 'remove') {
+            if (accounts.length === 0) {
+                console.log(colorize('\nNo accounts to remove.', 'yellow'));
+                await new Promise(r => setTimeout(r, 1000));
+                continue;
+            }
+            if (accounts.length === 1) {
+                console.log(colorize('\n⚠️  Cannot remove the last account!', 'red'));
+                await new Promise(r => setTimeout(r, 1000));
+                continue;
+            }
+
+            const removeChoice = await selectOption('SELECT ACCOUNT TO REMOVE', 
+                accounts.map(acc => ({ 
+                    label: `${acc.id} (${acc.name})`, 
+                    value: acc.id, 
+                    desc: `@${acc.username || 'N/A'}` 
+                })).concat([{ label: '⬅️ Cancel', value: 'cancel' }])
+            );
+
+            if (removeChoice !== 'cancel') {
+                const confirm = await question(colorize(`\n⚠️  Permanently remove "${removeChoice}"? (y/N): `, 'yellow'));
+                if (confirm.trim().toLowerCase() === 'y') {
+                    accountManager.removeAccount(removeChoice);
+                    // Also clean up any group assignments referencing this account
+                    for (const group of config.groups || []) {
+                        if (group.monitorAccount === removeChoice) delete group.monitorAccount;
+                        if (group.forwardAccount === removeChoice) delete group.forwardAccount;
+                    }
+                    saveConfig(config);
+                    console.log(colorize(`\n✅ Account "${removeChoice}" removed.`, 'green'));
+                } else {
+                    console.log(colorize('\nCancelled.', 'dim'));
+                }
+                await new Promise(r => setTimeout(r, 1000));
+            }
+        } else {
+            break;
+        }
+    }
+}
+
+// ============ Purge Data ============
+async function purgeData(client, config) {
+    const DOWNLOADS_DIR = path.join(__dirname, '../data/downloads');
+    const PHOTOS_DIR = path.join(__dirname, '../data/photos');
+
+    while (true) {
+        // Build options from configured groups + download folders
+        const groupOptions = (config.groups || []).map(g => ({
+            label: `${g.enabled ? '✅' : '⏸'} ${(g.name || 'Unknown').slice(0, 30)}`,
+            value: g.id,
+            desc: `ID: ${g.id}`
+        }));
+
+        const mainOptions = [
+            ...groupOptions,
+            { label: '─────────────────────', value: 'sep', desc: '' },
+            { label: '🗑️ DELETE ALL DATA', value: 'purge-all', desc: 'Factory reset' },
+            { label: '⬅️ Back', value: '0', desc: 'Exit' }
+        ];
+
+        const choice = await selectOption('    🗑️  PURGE DATA', mainOptions);
+
+        if (choice === '0' || choice === 'sep') break;
+
+        if (choice === 'purge-all') {
+            // Purge ALL
+            console.log();
+            const confirm = await question(colorize('\n⚠️  Delete ALL data? Type YES to confirm: ', 'red', 'bold'));
+            if (confirm.trim() !== 'YES') {
+                console.log(colorize('Cancelled.', 'dim'));
+                await new Promise(r => setTimeout(r, 1000));
+                continue;
+            }
+
+            console.log(colorize('\nDeleting all data...', 'yellow'));
+
+            // 1. Delete all download folders
+            let totalFiles = 0;
+            if (fs.existsSync(DOWNLOADS_DIR)) {
+                const dirs = fs.readdirSync(DOWNLOADS_DIR, { withFileTypes: true });
+                for (const dir of dirs) {
+                    if (dir.isDirectory()) {
+                        const dirPath = path.join(DOWNLOADS_DIR, dir.name);
+                        totalFiles += fs.readdirSync(dirPath, { recursive: true }).length;
+                        fs.rmSync(dirPath, { recursive: true, force: true });
+                    }
+                }
+            }
+
+            // 2. Delete all DB records
+            const dbResult = deleteAllDownloads();
+
+            // 3. Clear groups from config
+            config.groups = [];
+            saveConfig(config);
+
+            // 4. Delete all profile photos
+            if (fs.existsSync(PHOTOS_DIR)) {
+                const photos = fs.readdirSync(PHOTOS_DIR);
+                for (const photo of photos) {
+                    fs.unlinkSync(path.join(PHOTOS_DIR, photo));
+                }
+            }
+
+            console.log(colorize(`\n✅ Purged ALL: ${totalFiles} files, ${dbResult.deletedDownloads} DB records`, 'green', 'bold'));
+            await new Promise(r => setTimeout(r, 2000));
+            break;
+
+        } else {
+            // Purge specific group
+            const groupId = choice;
+            const configGroup = (config.groups || []).find(g => String(g.id) === String(groupId));
+            const groupName = configGroup?.name || `Group ${groupId}`;
+
+            console.log();
+            const confirm = await question(colorize(`\n⚠️  Delete all data for "${groupName}"? (y/N): `, 'yellow'));
+            if (confirm.trim().toLowerCase() !== 'y') {
+                console.log(colorize('Cancelled.', 'dim'));
+                await new Promise(r => setTimeout(r, 1000));
+                continue;
+            }
+
+            console.log(colorize(`\nDeleting ${groupName}...`, 'yellow'));
+
+            // 1. Delete folder
+            const folderName = sanitizeName(groupName);
+            const folderPath = path.join(DOWNLOADS_DIR, folderName);
+            let filesDeleted = 0;
+            if (fs.existsSync(folderPath)) {
+                filesDeleted = fs.readdirSync(folderPath, { recursive: true }).length;
+                fs.rmSync(folderPath, { recursive: true, force: true });
+            }
+
+            // 2. Delete DB records
+            const dbResult = deleteGroupDownloads(groupId);
+
+            // 3. Remove from config
+            config.groups = (config.groups || []).filter(g => String(g.id) !== String(groupId));
+            saveConfig(config);
+
+            // 4. Delete profile photo
+            const photoPath = path.join(PHOTOS_DIR, `${groupId}.jpg`);
+            if (fs.existsSync(photoPath)) fs.unlinkSync(photoPath);
+
+            console.log(colorize(`\n✅ Purged "${groupName}": ${filesDeleted} files, ${dbResult.deletedDownloads} DB records`, 'green', 'bold'));
+            await new Promise(r => setTimeout(r, 2000));
+        }
+    }
 }
 
 // Handle Ctrl+C
@@ -1346,53 +1543,67 @@ process.on('SIGINT', () => {
 });
 
 async function setupWebAuth(config) {
-    clearScreen();
-    console.log(colorize('╔════════════════════════════════════════╗', 'cyan'));
-    console.log(colorize('║      🔐 WEB DASHBOARD SECURITY         ║', 'cyan', 'bold'));
-    console.log(colorize('╚════════════════════════════════════════╝', 'cyan'));
-    console.log();
+    // Premium Header
+    let headerStr = colorize('╭──────────────────────────────────────────────╮\n', 'cyan') +
+                    colorize('│', 'cyan') + colorize('             🔐 WEB DASHBOARD SECURITY          ', 'white', 'bold') + colorize('│\n', 'cyan') +
+                    colorize('╰──────────────────────────────────────────────╯\n\n', 'cyan');
     
+    // Status Display
     const currentEnabled = config.web?.enabled !== false; // Default true if not set
     const currentPass = config.web?.password ? '********' : 'Not Set';
-    const status = currentEnabled ? colorize('ENABLED ✅', 'green') : colorize('DISABLED ❌', 'red');
+    
+    const statusText = currentEnabled 
+        ? colorize('🟢 ENABLED ', 'green', 'bold') 
+        : colorize('🔴 DISABLED', 'red', 'bold');
+        
+    const passText = config.web?.password
+        ? colorize('********', 'green')
+        : colorize('Not Set', 'yellow');
 
-    console.log(`Current Status: ${status}`);
-    console.log(`Password:       ${currentPass}`);
-    console.log('─'.repeat(40));
-    console.log();
+    headerStr += colorize('   System Status:  ', 'dim') + statusText + '\n';
+    headerStr += colorize('   Web Password:   ', 'dim') + passText + '\n\n';
+    headerStr += colorize('─'.repeat(48), 'dim') + '\n';
 
     const choice = await selectOption('SELECT ACTION', [
-        { label: 'Enable Security', value: 'enable', desc: 'Require password' },
-        { label: 'Disable Security', value: 'disable', desc: 'Open access' },
-        { label: 'Set/Change Password', value: 'password', desc: 'Update login' },
-        { label: '⬅️ Back', value: 'back' }
-    ]);
+        { label: 'Set / Change Password', value: 'password', desc: 'Update your dashboard login' },
+        { label: currentEnabled ? 'Disable Security' : 'Enable Security', value: 'toggle', desc: currentEnabled ? 'Open access to everyone' : 'Require password to view' },
+        { label: '⬅️ Back to Main Menu', value: 'back' }
+    ], headerStr);
 
     if (!config.web) config.web = {};
 
-    if (choice === 'enable') {
-        config.web.enabled = true;
-        console.log(colorize('\n✅ Security Enabled', 'green'));
-    } else if (choice === 'disable') {
-        config.web.enabled = false;
-        console.log(colorize('\n⚠️  Security Disabled', 'yellow'));
+    if (choice === 'toggle') {
+        config.web.enabled = !currentEnabled;
+        if (config.web.enabled) {
+            console.log(colorize('\n✅ Security has been ENABLED. A password is now required.', 'green'));
+            if (!config.web.password) {
+                console.log(colorize('⚠️  WARNING: No password is set! Please set one below.', 'yellow'));
+                await new Promise(r => setTimeout(r, 1500));
+                return setupWebAuth(config);
+            }
+        } else {
+            console.log(colorize('\n⚠️  Security has been DISABLED. Dashboard is open to anyone.', 'yellow'));
+        }
     } else if (choice === 'password') {
         console.log();
-        const pass = await question(colorize('Enter new password: ', 'cyan'));
+        console.log(colorize('🔑 Enter new password for the Web Dashboard', 'cyan'));
+        console.log(colorize('   (Leave blank to cancel)', 'dim'));
+        const pass = await question(colorize('\n> ', 'white', 'bold'));
         if (pass.trim()) {
             config.web.password = pass.trim();
-            config.web.enabled = true; // Auto-enable
-            console.log(colorize('\n✅ Password updated!', 'green'));
+            config.web.enabled = true; // Auto-enable when a password is set
+            console.log(colorize('\n✅ Password updated successfully! Security is ENABLED.', 'green'));
         } else {
-            console.log(colorize('\n❌ Password cannot be empty', 'red'));
+            console.log(colorize('\n❌ Cancelled. Password was not changed.', 'red'));
         }
     } else {
+        // Exit back to main menu or shell
         return;
     }
 
     saveConfig(config);
-    await new Promise(r => setTimeout(r, 1000));
-    // Recursive loop to show updated status or exit
+    await new Promise(r => setTimeout(r, 1500));
+    // Loop back to show updated status
     await setupWebAuth(config); 
 }
 

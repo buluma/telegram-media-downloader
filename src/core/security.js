@@ -1,8 +1,4 @@
 import crypto from 'crypto';
-
-/**
- * Rate Limiter - ป้องกัน Account Ban
- */
 import { EventEmitter } from 'events';
 
 /**

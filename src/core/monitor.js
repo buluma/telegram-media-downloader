@@ -6,19 +6,22 @@
 import { NewMessage } from 'telegram/events/index.js';
 import { EventEmitter } from 'events';
 import { colorize } from '../cli/colors.js';
+import { sanitizeName } from './downloader.js';
 import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
 
 export class RealtimeMonitor extends EventEmitter {
-    constructor(client, downloader, config, configPath = null) {
+    constructor(client, downloader, config, configPath = null, accountManager = null) {
         super();
         this.client = client;
         this.downloader = downloader;
         this.config = config;
         this.configPath = configPath;
+        this.accountManager = accountManager;
         this.running = false;
         this.handler = null;
+        this.handlerClients = [];  // Track all clients with registered handlers
         this.stats = {
             messages: 0,
             media: 0,
@@ -32,6 +35,57 @@ export class RealtimeMonitor extends EventEmitter {
         if (configPath && fsSync.existsSync(configPath)) {
             this.watchConfig();
         }
+    }
+
+    /**
+     * Get the correct client for a group — priority:
+     * 1. Explicit monitorAccount from config
+     * 2. Cached auto-discovered client
+     * 3. Default client as last resort
+     */
+    getClientForGroup(group) {
+        // 1. Explicit config setting
+        if (this.accountManager && group.monitorAccount) {
+            const client = this.accountManager.getClient(group.monitorAccount);
+            if (client) return client;
+        }
+        // 2. Auto-discovered & cached
+        if (this.groupClientCache && this.groupClientCache.has(group.id)) {
+            return this.groupClientCache.get(group.id);
+        }
+        // 3. Fallback
+        return this.client;
+    }
+
+    /**
+     * Try every available client to find one that can access a group
+     * @returns {{ client: TelegramClient, lastId: number }|null}
+     */
+    async discoverClientForGroup(group) {
+        if (!this.accountManager) {
+            try {
+                const history = await this.client.getMessages(group.id, { limit: 1 });
+                const lastId = (history && history.length > 0) ? history[0].id : 0;
+                this.groupClientCache.set(group.id, this.client);
+                return { client: this.client, lastId };
+            } catch (e) {
+                return null;
+            }
+        }
+
+        for (const [id, acctClient] of this.accountManager.clients) {
+            try {
+                const history = await acctClient.getMessages(group.id, { limit: 1 });
+                if (history) {
+                    const lastId = history.length > 0 ? history[0].id : 0;
+                    this.groupClientCache.set(group.id, acctClient);
+                    return { client: acctClient, lastId };
+                }
+            } catch (e) {
+                // This client can't access the group, try next
+            }
+        }
+        return null; // No client can access
     }
     
     watchConfig() {
@@ -80,6 +134,11 @@ export class RealtimeMonitor extends EventEmitter {
         this.running = true;
         this.stats = { messages: 0, media: 0, downloaded: 0, skipped: 0, urls: 0 };
         this.urlBuffer = new Map();
+        this.groupClientCache = new Map(); // groupId -> TelegramClient
+
+        // Migrate old unsanitized folder names (space → underscore)
+        const { migrateFolders } = await import('./downloader.js');
+        await migrateFolders(this.config.download?.path);
         
         // Start URL Batch Writer
         this.urlFlushInterval = setInterval(() => this.flushUrls(), 5000);
@@ -93,24 +152,55 @@ export class RealtimeMonitor extends EventEmitter {
             console.log('⚠️  Warning: No groups enabled in config. Monitor will be idle.');
         }
         
+        // Suppress Telegram library's internal RPCError logging for invalid channels
+        this._origConsoleError = console.error;
+        console.error = (...args) => {
+            const msg = args.map(a => String(a)).join(' ');
+            if (msg.includes('CHANNEL_INVALID')) return;
+            this._origConsoleError.apply(console, args);
+        };
+
+        // Auto-discover which client works for each group
         for (const group of enabledGroups) {
             try {
-                const history = await this.client.getMessages(group.id, { limit: 1 });
-                if (history && history.length > 0) {
-                    this.lastIds.set(group.id, history[0].id);
+                const result = await this.discoverClientForGroup(group);
+                if (!result) {
+                    console.log(colorize(`⚠️ Skipping "${group.name}" — no account has access`, 'yellow'));
+                    group.enabled = false;
+                    continue;
                 }
-            } catch (e) {}
+                if (result.lastId) {
+                    this.lastIds.set(group.id, result.lastId);
+                }
+            } catch (e) {
+                if (e.errorMessage === 'CHANNEL_INVALID') {
+                    console.log(colorize(`⚠️ Skipping "${group.name}" — channel invalid`, 'yellow'));
+                    group.enabled = false;
+                }
+            }
         }
 
         // Start Polling Loop (Smart Recursive Mode)
-        // Prevents overlap and adapts to network speed
         this.startPollingLoop();
 
         // Create handler (Hybrid Mode)
         this.handler = async (event) => {
             if (this.running) await this.handleEvent(event);
         };
-        this.client.addEventHandler(this.handler, new NewMessage({}));
+
+        // Register handler on ALL available clients (multi-account)
+        this.handlerClients = [];
+        if (this.accountManager && this.accountManager.count > 1) {
+            for (const [id, acctClient] of this.accountManager.clients) {
+                try {
+                    acctClient.addEventHandler(this.handler, new NewMessage({}));
+                    this.handlerClients.push(acctClient);
+                } catch (e) { /* skip failed clients */ }
+            }
+        } else {
+            this.client.addEventHandler(this.handler, new NewMessage({}));
+            this.handlerClients.push(this.client);
+        }
 
         // Start download workers
         this.downloader.start();
@@ -146,9 +236,10 @@ export class RealtimeMonitor extends EventEmitter {
             
             try {
                 const lastId = this.lastIds.get(group.id) || 0;
+                const pollClient = this.getClientForGroup(group);
                 
                 // Fetch messages NEWER than lastId
-                const messages = await this.client.getMessages(group.id, { 
+                const messages = await pollClient.getMessages(group.id, { 
                     minId: lastId, 
                     limit: 10 
                 });
@@ -171,6 +262,10 @@ export class RealtimeMonitor extends EventEmitter {
 
     async stop() {
         this.running = false;
+        // Restore console.error
+        if (this._origConsoleError) {
+            console.error = this._origConsoleError;
+        }
         if (this.urlFlushInterval) {
             clearInterval(this.urlFlushInterval);
             await this.flushUrls(); // Final sync (awaited)
@@ -178,6 +273,13 @@ export class RealtimeMonitor extends EventEmitter {
         if (this.pollTimeout) {
             clearTimeout(this.pollTimeout); // Stop Hybrid Polling
             this.pollTimeout = null;
+        }
+        // Remove event handlers from ALL registered clients
+        if (this.handler && this.handlerClients.length > 0) {
+            for (const c of this.handlerClients) {
+                try { c.removeEventHandler(this.handler, new NewMessage({})); } catch (e) { /* ignore */ }
+            }
+            this.handlerClients = [];
         }
         await this.downloader.stop();
         this.emit('stopped', this.stats);
@@ -456,13 +558,7 @@ export class RealtimeMonitor extends EventEmitter {
 
             const group = this.config.groups.find(g => g.id === groupId);
             const groupName = group ? group.name : groupId;
-            // Use unified sanitization (Matches Downloader)
-            const safeName = groupName
-                .replace(/[<>:"/\\|?*]/g, '_')
-                .replace(/\s+/g, '_') // Replace spaces with underscores
-                .replace(/_+/g, '_')  // Collapse multiple underscores
-                .slice(0, 80);
-                
+            const safeName = sanitizeName(groupName);
             const groupDir = path.join(basePath, safeName);
 
             try {
@@ -482,18 +578,7 @@ export class RealtimeMonitor extends EventEmitter {
         }
     }
 
-    // Restored sanitize method just in case
-    sanitize(name) {
-        return name
-            .replace(/[<>:"/\\|?*]/g, '_')
-            .replace(/\s+/g, '_')
-            .replace(/_+/g, '_')
-            .slice(0, 80);
-    }
 
-    getStats() {
-        return { ...this.stats };
-    }
 }
 
 /**

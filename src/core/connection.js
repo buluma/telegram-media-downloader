@@ -22,10 +22,7 @@ export class ConnectionManager {
         console.log(colorize('💓 Connection health check started', 'dim'));
     }
 
-    stop() {
-        this.running = false;
-        if (this.timer) clearInterval(this.timer);
-    }
+
 
     async check() {
         if (!this.running) return;

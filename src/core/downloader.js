@@ -16,6 +16,80 @@ const DATA_DIR = path.join(__dirname, '../../data');
 const DOWNLOADS_DIR = path.join(DATA_DIR, 'downloads');
 const LOGS_DIR = path.join(DATA_DIR, 'logs');
 
+/**
+ * Shared folder name sanitizer — use everywhere to prevent duplicate folders
+ */
+export function sanitizeName(name) {
+    return name
+        .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
+        .replace(/\s+/g, '_')
+        .replace(/_+/g, '_')
+        .slice(0, 80);
+}
+
+/**
+ * Migrate old unsanitized folder names into sanitized ones (one-time startup)
+ */
+export async function migrateFolders(downloadPath) {
+    const basePath = downloadPath || DOWNLOADS_DIR;
+    try {
+        if (!existsSync(basePath)) return;
+        const entries = await fs.readdir(basePath, { withFileTypes: true });
+        const dirs = entries.filter(e => e.isDirectory());
+
+        for (const dir of dirs) {
+            const sanitized = sanitizeName(dir.name);
+            if (sanitized === dir.name) continue; // Already clean
+
+            const oldPath = path.join(basePath, dir.name);
+            const newPath = path.join(basePath, sanitized);
+
+            // Merge into sanitized folder
+            await fs.mkdir(newPath, { recursive: true });
+            const children = await fs.readdir(oldPath, { withFileTypes: true });
+
+            for (const child of children) {
+                const src = path.join(oldPath, child.name);
+                const dst = path.join(newPath, child.name);
+
+                if (child.isDirectory()) {
+                    // Merge subdirectory
+                    await fs.mkdir(dst, { recursive: true });
+                    const subFiles = await fs.readdir(src);
+                    for (const f of subFiles) {
+                        const sf = path.join(src, f);
+                        const df = path.join(dst, f);
+                        if (!existsSync(df)) await fs.rename(sf, df);
+                    }
+                    // Remove old subdir if empty
+                    const remaining = await fs.readdir(src);
+                    if (remaining.length === 0) await fs.rmdir(src);
+                } else {
+                    // Merge file (append for .txt, skip-if-exists for others)
+                    if (child.name.endsWith('.txt') && existsSync(dst)) {
+                        const content = await fs.readFile(src, 'utf8');
+                        await fs.appendFile(dst, content);
+                        await fs.unlink(src);
+                    } else if (!existsSync(dst)) {
+                        await fs.rename(src, dst);
+                    }
+                }
+            }
+
+            // Remove old folder if empty
+            try {
+                const leftovers = await fs.readdir(oldPath);
+                if (leftovers.length === 0) await fs.rmdir(oldPath);
+            } catch (e) {}
+        }
+    } catch (e) {
+        // Non-critical, silently skip
+    }
+}
+
+const MIN_CONCURRENCY = 3;
+const MAX_CONCURRENCY = 20;
+
 export class DownloadManager extends EventEmitter {
     constructor(client, config, rateLimiter) {
         super();
@@ -24,9 +98,13 @@ export class DownloadManager extends EventEmitter {
         this.rateLimiter = rateLimiter;
         this.queue = [];
         this.active = new Map(); // Key -> Promise/Status
-        this.concurrency = config.download?.concurrent || 3;
+        this.concurrency = config.download?.concurrent || 10;
         this.running = false;
         this.workers = [];
+        this.workerCount = 0;
+        this.LOG_DIR = LOGS_DIR;
+        this._scalerInterval = null;
+        this._consecutiveSuccess = 0; // Track success streak for scaling up
         
         // Ensure directories
         fs.mkdir(DOWNLOADS_DIR, { recursive: true }).catch(() => {});
@@ -96,14 +174,53 @@ export class DownloadManager extends EventEmitter {
     start() {
         if (this.running) return;
         this.running = true;
+        this.workerCount = this.concurrency;
         for (let i = 0; i < this.concurrency; i++) {
             this.workers.push(this.runWorker(i));
         }
         this.emit('started', { workers: this.concurrency });
+        
+        // Dynamic scaler — check every 5s
+        this._scalerInterval = setInterval(() => this._autoScale(), 5000);
+    }
+
+    _autoScale() {
+        if (!this.running) return;
+        const queueLen = this.queue.length;
+        const activeLen = this.active.size;
+
+        // Scale UP: queue is building up, add more workers
+        if (queueLen > this.workerCount * 2 && this.workerCount < MAX_CONCURRENCY) {
+            const add = Math.min(3, MAX_CONCURRENCY - this.workerCount);
+            for (let i = 0; i < add; i++) {
+                const id = this.workerCount + i;
+                this.workers.push(this.runWorker(id));
+            }
+            this.workerCount += add;
+            this.concurrency = this.workerCount;
+            this.emit('scale', { direction: 'up', workers: this.workerCount, queue: queueLen });
+        }
+        
+        // Scale DOWN: queue is empty and few active, reduce target
+        if (queueLen === 0 && activeLen < MIN_CONCURRENCY && this.workerCount > MIN_CONCURRENCY) {
+            this.workerCount = Math.max(MIN_CONCURRENCY, activeLen + 1);
+            this.concurrency = this.workerCount;
+        }
+    }
+
+    /**
+     * Called by FloodWait handler to throttle concurrency
+     */
+    throttle() {
+        this.workerCount = MIN_CONCURRENCY;
+        this.concurrency = MIN_CONCURRENCY;
+        this._consecutiveSuccess = 0;
+        this.emit('scale', { direction: 'down', workers: MIN_CONCURRENCY, reason: 'flood' });
     }
 
     async stop() {
         this.running = false;
+        if (this._scalerInterval) clearInterval(this._scalerInterval);
         
         // Flush pending disk usage save
         if (this._saveTimeout) {
@@ -286,6 +403,7 @@ export class DownloadManager extends EventEmitter {
         } catch (error) {
             if (error.errorMessage === 'FLOOD_WAIT' || error.message?.includes('FLOOD_WAIT')) {
                 const seconds = error.seconds || 60;
+                this.throttle(); // Dynamic: reduce concurrency on flood
                 if (this.rateLimiter) await this.rateLimiter.pauseForFloodWait(seconds);
                 else await this.sleep(seconds * 1000);
                 return this.download(job, attempt);
@@ -329,6 +447,7 @@ export class DownloadManager extends EventEmitter {
 
             insertDownload({
                 groupId: String(groupId),
+                groupName: job.groupName || null,
                 messageId: msgId,
                 fileName: path.basename(filePath),
                 fileSize: size,
@@ -500,11 +619,7 @@ export class DownloadManager extends EventEmitter {
     }
 
     sanitize(name) {
-        return name
-            .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
-            .replace(/\s+/g, '_')
-            .replace(/_+/g, '_')
-            .slice(0, 80);
+        return sanitizeName(name);
     }
 
     getStatus() {
