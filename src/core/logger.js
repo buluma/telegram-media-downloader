@@ -48,7 +48,7 @@ export class DebugLogger {
 //
 // Instead, we classify: "noisy" messages still go through, but at the debug
 // level (always written to data/logs/network.log, only echoed to stderr when
-// CLAUDE_DEBUG / TGDL_DEBUG / DEBUG is set). Anything else is logged normally.
+// TGDL_DEBUG / DEBUG is set). Anything else is logged normally.
 
 const NOISE_PATTERNS = [
     /\bNot connected\b/,
@@ -70,7 +70,7 @@ function isNoise(msg) {
     return false;
 }
 
-const debugMode = !!(process.env.CLAUDE_DEBUG || process.env.TGDL_DEBUG || process.env.DEBUG);
+const debugMode = !!(process.env.TGDL_DEBUG || process.env.DEBUG);
 
 /**
  * Returns true if the caller should suppress the message from stderr.
