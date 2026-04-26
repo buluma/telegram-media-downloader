@@ -88,21 +88,33 @@ export function createAvatar(id, name, type) {
     `;
 }
 
-export function showToast(message, type = 'info') {
-    const toast = document.createElement('div');
+function ensureToastStack() {
+    let stack = document.getElementById('toast-stack');
+    if (stack) return stack;
+    stack = document.createElement('div');
+    stack.id = 'toast-stack';
+    stack.className = 'fixed bottom-12 left-1/2 -translate-x-1/2 z-[100] flex flex-col items-center gap-2 pointer-events-none';
+    document.body.appendChild(stack);
+    return stack;
+}
+
+export function showToast(message, type = 'info', durationMs = 3000) {
+    const stack = ensureToastStack();
     const colorByType = {
         error: 'bg-tg-red text-white',
         success: 'bg-tg-green text-white',
         warning: 'bg-tg-orange text-white',
         info: 'bg-tg-blue text-white',
     };
-    toast.className = `fixed bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg shadow-lg z-[100] transition-opacity duration-300 ${colorByType[type] || colorByType.info}`;
+    const toast = document.createElement('div');
+    toast.className = `pointer-events-auto px-4 py-2 rounded-lg shadow-lg transition-opacity duration-300 ${colorByType[type] || colorByType.info}`;
     toast.textContent = message;
     toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
-    document.body.appendChild(toast);
-
+    stack.appendChild(toast);
+    // Cap visible toasts so a flood doesn't push the screen content offscreen.
+    while (stack.children.length > 6) stack.firstChild.remove();
     setTimeout(() => {
         toast.style.opacity = '0';
         setTimeout(() => toast.remove(), 300);
-    }, 3000);
+    }, durationMs);
 }

@@ -14,6 +14,7 @@ import { initTheme, getTheme, setTheme } from './theme.js';
 import { initStatusBar } from './statusbar.js';
 import * as Notifications from './notifications.js';
 import { initOnboarding, refreshOnboarding } from './onboarding.js';
+import { initShortcuts } from './shortcuts.js';
 
 // ============ Initialization ============
 async function init() {
@@ -42,6 +43,9 @@ async function init() {
     initOnboarding();
     ws.on('config_updated', refreshOnboarding);
     ws.on('monitor_state', refreshOnboarding);
+
+    // Global keyboard shortcuts (press ? for the cheatsheet).
+    initShortcuts();
 
     await loadGroups();
     await loadStats();
