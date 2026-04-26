@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Add Telegram account</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background-color: #0F172A; color: #E2E8F0; }
+        .step { transition: opacity 0.15s; }
+    </style>
+</head>
+<body class="flex items-center justify-center min-h-screen p-6">
+    <div class="bg-gray-800 p-8 rounded-lg shadow-lg w-full max-w-md">
+        <div class="flex items-center justify-between mb-6">
+            <h1 class="text-xl font-bold text-blue-400">Add Telegram account</h1>
+            <a href="/" class="text-gray-400 text-sm hover:text-white">← Back</a>
+        </div>
+
+        <ol class="flex justify-between mb-6 text-xs text-gray-400">
+            <li id="dot-label" class="flex-1 text-center">1. Label</li>
+            <li id="dot-phone" class="flex-1 text-center">2. Phone</li>
+            <li id="dot-code" class="flex-1 text-center">3. Code</li>
+            <li id="dot-2fa" class="flex-1 text-center">4. 2FA</li>
+        </ol>
+
+        <!-- Step 1: label -->
+        <form id="form-label" class="step space-y-4">
+            <p class="text-sm text-gray-400">Give this account a short label (optional). Examples: <code>main</code>, <code>bot2</code>, <code>viewer</code>.</p>
+            <input id="label" placeholder="Leave blank to auto-name from username" autocomplete="off"
+                class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded focus:outline-none focus:border-blue-500 text-white placeholder-gray-500">
+            <button type="submit" class="w-full py-2 px-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded transition">Continue</button>
+        </form>
+
+        <!-- Step 2: phone -->
+        <form id="form-phone" class="step space-y-4 hidden">
+            <p class="text-sm text-gray-400">Enter your phone number with the country code, e.g. <code>+66812345678</code>.</p>
+            <input id="phone" type="tel" placeholder="+66812345678" autocomplete="off" required
+                class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded focus:outline-none focus:border-blue-500 text-white placeholder-gray-500">
+            <button type="submit" class="w-full py-2 px-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded transition">Send code</button>
+        </form>
+
+        <!-- Step 3: OTP -->
+        <form id="form-code" class="step space-y-4 hidden">
+            <p class="text-sm text-gray-400">Telegram has sent you a login code in the app. Enter it below.</p>
+            <input id="code" inputmode="numeric" pattern="[0-9]*" placeholder="12345" autocomplete="one-time-code" required
+                class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded focus:outline-none focus:border-blue-500 text-white placeholder-gray-500 tracking-[0.4em] text-center text-lg">
+            <button type="submit" class="w-full py-2 px-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded transition">Verify</button>
+        </form>
+
+        <!-- Step 4: 2FA -->
+        <form id="form-2fa" class="step space-y-4 hidden">
+            <p class="text-sm text-gray-400">Two-factor authentication is enabled on this account. Enter your cloud password.</p>
+            <input id="twofa" type="password" placeholder="Cloud password" autocomplete="current-password" required
+                class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded focus:outline-none focus:border-blue-500 text-white placeholder-gray-500">
+            <button type="submit" class="w-full py-2 px-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded transition">Sign in</button>
+        </form>
+
+        <!-- Done -->
+        <div id="done-panel" class="step hidden text-center space-y-4">
+            <div class="text-5xl">✅</div>
+            <p class="text-lg font-semibold text-green-400">Account added</p>
+            <p id="done-id" class="text-gray-400 text-sm"></p>
+            <a href="/" class="inline-block py-2 px-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded transition">Open dashboard</a>
+        </div>
+
+        <p id="error" class="text-red-400 text-sm text-center mt-4 hidden"></p>
+        <p id="hint" class="text-gray-500 text-xs text-center mt-3"></p>
+    </div>
+
+    <script>
+    (() => {
+        const steps = ['label', 'phone', 'code', '2fa', 'done'];
+        const dots = {
+            label: document.getElementById('dot-label'),
+            phone: document.getElementById('dot-phone'),
+            code: document.getElementById('dot-code'),
+            '2fa': document.getElementById('dot-2fa'),
+        };
+        const forms = {
+            label: document.getElementById('form-label'),
+            phone: document.getElementById('form-phone'),
+            code: document.getElementById('form-code'),
+            '2fa': document.getElementById('form-2fa'),
+            done: document.getElementById('done-panel'),
+        };
+        const errorEl = document.getElementById('error');
+        const hintEl = document.getElementById('hint');
+        let sessionId = null;
+
+        function show(step) {
+            for (const k of steps) forms[k].classList.add('hidden');
+            forms[step].classList.remove('hidden');
+            for (const k of Object.keys(dots)) {
+                dots[k].classList.remove('text-blue-400', 'font-semibold');
+            }
+            if (dots[step]) dots[step].classList.add('text-blue-400', 'font-semibold');
+        }
+
+        function showError(msg) {
+            errorEl.textContent = msg;
+            errorEl.classList.remove('hidden');
+        }
+        function clearError() {
+            errorEl.classList.add('hidden');
+            errorEl.textContent = '';
+        }
+        function setHint(msg) {
+            hintEl.textContent = msg || '';
+        }
+
+        async function api(path, body) {
+            const res = await fetch(path, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: body ? JSON.stringify(body) : undefined,
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+            return data;
+        }
+
+        function transition(state, extra = {}) {
+            if (state === 'phone') show('phone');
+            else if (state === 'code') {
+                show('code');
+                setHint('Tip: open Telegram → look for the message from the official Telegram account.');
+            } else if (state === 'password') {
+                show('2fa');
+                setHint('You enabled 2FA earlier — enter your cloud password to finish.');
+            } else if (state === 'done') {
+                show('done');
+                if (extra.accountId) {
+                    document.getElementById('done-id').textContent = `Saved as "${extra.accountId}"`;
+                }
+            } else if (state === 'error') {
+                showError(extra.error || 'Something went wrong');
+            }
+        }
+
+        forms.label.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            clearError();
+            const label = document.getElementById('label').value.trim();
+            try {
+                const r = await api('/api/accounts/auth/begin', { label });
+                sessionId = r.sessionId;
+                transition(r.state || 'phone');
+            } catch (err) {
+                showError(err.message);
+            }
+        });
+
+        forms.phone.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            clearError();
+            const phone = document.getElementById('phone').value.trim();
+            try {
+                const r = await api('/api/accounts/auth/phone', { sessionId, phone });
+                if (r.error) return showError(r.error);
+                transition(r.state, r);
+            } catch (err) { showError(err.message); }
+        });
+
+        forms.code.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            clearError();
+            const code = document.getElementById('code').value.trim();
+            try {
+                const r = await api('/api/accounts/auth/code', { sessionId, code });
+                if (r.error && r.state !== 'done') return showError(r.error);
+                transition(r.state, r);
+            } catch (err) { showError(err.message); }
+        });
+
+        forms['2fa'].addEventListener('submit', async (e) => {
+            e.preventDefault();
+            clearError();
+            const password = document.getElementById('twofa').value;
+            try {
+                const r = await api('/api/accounts/auth/2fa', { sessionId, password });
+                if (r.error && r.state !== 'done') return showError(r.error);
+                transition(r.state, r);
+            } catch (err) { showError(err.message); }
+        });
+
+        // Cancel on tab close — best-effort
+        window.addEventListener('beforeunload', () => {
+            if (!sessionId) return;
+            navigator.sendBeacon('/api/accounts/auth/cancel',
+                new Blob([JSON.stringify({ sessionId })], { type: 'application/json' }));
+        });
+
+        show('label');
+    })();
+    </script>
+</body>
+</html>
