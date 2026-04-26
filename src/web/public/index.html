@@ -596,6 +596,25 @@
                 <!-- Settings Page -->
                 <div id="page-settings" class="hidden max-w-xl mx-auto">
 
+                    <!-- Engine / monitor -->
+                    <div class="bg-tg-panel rounded-xl p-4 mb-4">
+                        <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
+                            <i class="ri-broadcast-line text-tg-green"></i> Engine
+                            <span id="engine-pill" class="ml-auto text-xs px-2 py-0.5 rounded-full bg-gray-700 text-gray-300">Stopped</span>
+                        </h3>
+                        <div class="grid grid-cols-2 gap-3 text-sm mb-3">
+                            <div class="bg-tg-bg/40 rounded p-2"><div class="text-tg-textSecondary text-xs">Queue</div><div id="engine-queue" class="text-tg-text font-medium">0</div></div>
+                            <div class="bg-tg-bg/40 rounded p-2"><div class="text-tg-textSecondary text-xs">Active</div><div id="engine-active" class="text-tg-text font-medium">0</div></div>
+                            <div class="bg-tg-bg/40 rounded p-2"><div class="text-tg-textSecondary text-xs">Downloaded</div><div id="engine-downloaded" class="text-tg-text font-medium">0</div></div>
+                            <div class="bg-tg-bg/40 rounded p-2"><div class="text-tg-textSecondary text-xs">Uptime</div><div id="engine-uptime" class="text-tg-text font-medium">—</div></div>
+                        </div>
+                        <div class="flex gap-2">
+                            <button id="engine-start" class="tg-btn flex-1"><i class="ri-play-line mr-2"></i>Start monitor</button>
+                            <button id="engine-stop" class="tg-btn-secondary flex-1 hidden"><i class="ri-stop-line mr-2"></i>Stop</button>
+                        </div>
+                        <p id="engine-error" class="text-red-400 text-xs mt-2 hidden"></p>
+                    </div>
+
                     <!-- Telegram Accounts -->
                     <div class="bg-tg-panel rounded-xl p-4 mb-4">
                         <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
