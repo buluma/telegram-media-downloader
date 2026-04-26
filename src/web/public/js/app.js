@@ -457,17 +457,23 @@ function renderMediaGrid() {
     }
     if (empty) empty.classList.add('hidden');
 
-    const filtered = state.currentFilter === 'all'
-        ? state.files
-        : state.files.filter(f => f.type === state.currentFilter);
+    // Walk state.files once, keep each file's index in the unfiltered
+    // list as `originalIndex`. The viewer uses state.files[index] so the
+    // tile must hand it the index in *that* list — using the filtered
+    // index would jump to the wrong file once any filter is applied.
+    const filteredWithIndex = [];
+    state.files.forEach((file, originalIndex) => {
+        if (state.currentFilter === 'all' || file.type === state.currentFilter) {
+            filteredWithIndex.push({ file, originalIndex });
+        }
+    });
 
     if (!state.selected) state.selected = new Set();
 
     // Time-group the items into Today / Yesterday / This week / Older.
     // Headers are rendered as grid-column: 1 / -1 children so the existing
     // CSS Grid layout keeps each section as a row of full-width tiles.
-    const sections = groupFilesByTime(filtered);
-    const tilesByIndex = filtered;
+    const sections = groupFilesByTime(filteredWithIndex);
 
     const html = sections.map(([label, items]) => {
         const headerHtml = label
@@ -538,18 +544,20 @@ function updateSelectionBar() {
     if (bar) bar.classList.toggle('hidden', count === 0);
 }
 
-// Group files into Telegram-style time sections. Returns an array of
-// [label, [{file, originalIndex}, ...]] entries in display order. The
-// `originalIndex` is preserved from the supplied list so the click handler
-// can still pass it to openMediaViewer().
-function groupFilesByTime(files) {
+// Group files into Telegram-style time sections. Accepts an array of
+// {file, originalIndex} entries — the index is the position in the
+// caller's unfiltered backing list (state.files), preserved so the
+// click handler can pass it directly to openMediaViewer() without the
+// filtered-vs-unfiltered mismatch that previously opened the wrong
+// file when a media-type filter was active.
+function groupFilesByTime(items) {
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
     const startOfYesterday = startOfToday - 24 * 60 * 60 * 1000;
     const startOfWeek = startOfToday - 6 * 24 * 60 * 60 * 1000;
     const buckets = { today: [], yesterday: [], week: [], older: [] };
 
-    files.forEach((file, originalIndex) => {
+    items.forEach(({ file, originalIndex }) => {
         const t = file.modified ? Date.parse(file.modified) : NaN;
         if (!Number.isFinite(t)) { buckets.older.push({ file, originalIndex }); return; }
         if (t >= startOfToday) buckets.today.push({ file, originalIndex });
