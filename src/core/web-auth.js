@@ -14,7 +14,6 @@
 
 import crypto from 'crypto';
 import fs from 'fs';
-import fsp from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 

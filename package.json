@@ -1,13 +1,25 @@
 {
   "name": "telegram-media-downloader",
-  "version": "1.0.0",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/botnick/telegram-media-downloader.git"
-  },
-  "description": "Telegram Media Downloader CLI",
+  "version": "2.0.0",
+  "description": "Self-hosted Telegram media downloader — CLI + Web dashboard. MIT, no quotas.",
   "type": "module",
   "main": "src/index.js",
+  "bin": {
+    "telegram-downloader": "src/index.js"
+  },
+  "files": [
+    "src",
+    "scripts",
+    "runner.js",
+    "watchdog.ps1",
+    "Dockerfile",
+    "docker-compose.yml",
+    "config.example.json",
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md",
+    "SECURITY.md"
+  ],
   "scripts": {
     "start": "node src/index.js",
     "safe": "node runner.js",
@@ -15,25 +27,38 @@
     "monitor": "node src/index.js monitor",
     "history": "node src/index.js history",
     "dialogs": "node src/index.js dialogs",
-    "setup": "node src/setup.js",
-    "help": "node src/index.js --help",
     "web": "node src/web/server.js",
+    "dev": "node --watch src/web/server.js",
     "migrate": "node scripts/migrate_json_to_sqlite.js",
-    "auth": "node src/index.js auth"
+    "auth": "node src/index.js auth",
+    "lint": "eslint .",
+    "format": "prettier --write \"src/**/*.{js,html,css}\" \"*.{md,json}\"",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepare": "husky || true"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/botnick/telegram-media-downloader.git"
+  },
+  "homepage": "https://github.com/botnick/telegram-media-downloader#readme",
+  "bugs": {
+    "url": "https://github.com/botnick/telegram-media-downloader/issues"
   },
   "keywords": [
     "telegram",
     "downloader",
     "media-downloader",
-    "telegram-bot",
+    "telegram-stories",
     "scraper",
     "backup",
     "channel-backup",
     "gramjs",
+    "self-hosted",
     "automation",
     "telegram-api"
   ],
-  "author": "",
+  "author": "botnick",
   "license": "MIT",
   "dependencies": {
     "better-sqlite3": "^12.6.2",
@@ -43,7 +68,24 @@
     "telegram": "^2.19.0",
     "ws": "^8.14.2"
   },
+  "devDependencies": {
+    "eslint": "^9.13.0",
+    "globals": "^15.11.0",
+    "husky": "^9.1.6",
+    "lint-staged": "^15.2.10",
+    "prettier": "^3.3.3",
+    "vitest": "^2.1.4"
+  },
+  "lint-staged": {
+    "*.{js,mjs,cjs}": [
+      "prettier --write",
+      "eslint --fix"
+    ],
+    "*.{html,css,md,json,yml,yaml}": [
+      "prettier --write"
+    ]
+  },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   }
 }

@@ -1,0 +1,30 @@
+name: Feature request
+description: Suggest a new feature or improvement
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What's the problem you're trying to solve?
+      placeholder: I want to download X but the current Y doesn't cover it.
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: What would the solution look like?
+      placeholder: A new "Z" page in the dashboard that shows...
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you've considered
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where would the feature live?
+      options:
+        - Web dashboard
+        - CLI
+        - Engine / downloader
+        - Configuration / deployment
+        - Documentation

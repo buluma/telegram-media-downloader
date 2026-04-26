@@ -496,13 +496,11 @@ export class RealtimeMonitor extends EventEmitter {
     }
 
     getMediaType(message) {
-        // Resolve actual media object
+        // Resolve actual media object — message.media may itself wrap a
+        // photo/document, but the inner shape is already what we want.
         let m = message;
         if (message.media && !message.photo && !message.document && !message.sticker) {
             m = message.media;
-            // Handle wrapper classes
-            if (m.photo) m = m; // It has photo
-            else if (m.document) m = m; // It has document
         }
 
         // 1. Check for Sticker
