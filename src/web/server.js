@@ -7,6 +7,7 @@
 import express from 'express';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import net from 'net';
 import { WebSocketServer } from 'ws';
 import { createServer } from 'http';
 import fs from 'fs/promises';
@@ -624,6 +625,36 @@ app.get('/api/history/:jobId', (req, res) => {
 
 app.get('/api/history', (req, res) => {
     res.json(Array.from(_historyJobs.values()));
+});
+
+// ====== Proxy test =========================================================
+//
+// Briefly opens a TCP connection to host:port to confirm the proxy is
+// reachable. We don't speak SOCKS/MTProto here — that's the job of gramJS at
+// the next monitor start — but a TCP open is enough to catch typos and DNS
+// misconfiguration without needing a full Telegram round-trip.
+
+app.post('/api/proxy/test', async (req, res) => {
+    const { host, port } = req.body || {};
+    if (!host || !port) return res.status(400).json({ error: 'host and port required' });
+    const p = parseInt(port, 10);
+    if (!Number.isFinite(p) || p < 1 || p > 65535) {
+        return res.status(400).json({ error: 'port must be 1-65535' });
+    }
+    const start = Date.now();
+    const sock = new net.Socket();
+    let done = false;
+    const finish = (ok, error) => {
+        if (done) return; done = true;
+        try { sock.destroy(); } catch {}
+        if (ok) return res.json({ ok: true, ms: Date.now() - start });
+        return res.json({ ok: false, error });
+    };
+    sock.setTimeout(5000);
+    sock.once('connect', () => finish(true));
+    sock.once('error', (e) => finish(false, e.message));
+    sock.once('timeout', () => finish(false, 'timeout'));
+    sock.connect(p, host);
 });
 
 // ====== Download-by-Link (Xinomo parity) ===================================
