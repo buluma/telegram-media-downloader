@@ -8,15 +8,25 @@ import { api } from './api.js';
 import { createAvatar, escapeHtml, getFileIcon, showToast, formatBytes } from './utils.js';
 import * as Settings from './settings.js';
 import * as Viewer from './viewer.js';
+import { initEngine, handleEngineWsMessage } from './engine.js';
+import { ws } from './ws.js';
 
 // ============ Initialization ============
 async function init() {
     setupEventListeners();
     setupLazyLoading();
     setupInfiniteScroll();
-    
+
     Viewer.setupViewerEvents();
-    
+
+    // Live updates from the server (engine state, downloads, purges).
+    ws.connect();
+    ws.on('*', handleEngineWsMessage);
+    ws.on('group_purged', () => loadGroups());
+    ws.on('purge_all', () => { loadGroups(); loadStats(); });
+    ws.on('file_deleted', () => { /* gallery refresh handled by store */ });
+    ws.on('config_updated', () => { if (state.currentPage === 'settings') Settings.loadSettings(); });
+
     await loadGroups();
     await loadStats();
     
@@ -72,6 +82,7 @@ function navigateTo(page) {
     
     if (page === 'settings') {
         Settings.loadSettings();
+        initEngine();
         document.getElementById('page-title').textContent = 'Settings';
         document.getElementById('page-subtitle').textContent = 'System Configuration';
     } else if (page === 'groups') {

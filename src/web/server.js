@@ -23,6 +23,7 @@ import { sanitizeName } from '../core/downloader.js';
 import { SecureSession } from '../core/security.js';
 import { AccountManager } from '../core/accounts.js';
 import { loadConfig } from '../config/manager.js';
+import { runtime } from '../core/runtime.js';
 import {
     hashPassword, loginVerify, isAuthConfigured,
     issueSession, validateSession, revokeSession, startSessionGc,
@@ -506,6 +507,44 @@ app.delete('/api/accounts/:id', async (req, res) => {
     } catch (e) {
         const { status, body } = tgAuthErrorBody(e);
         res.status(status).json(body);
+    }
+});
+
+// ====== Monitor / runtime control ==========================================
+//
+// Starts the realtime monitor inside the web process so users don't have to
+// keep a separate terminal open. Engine events are forwarded to all
+// authenticated WebSocket clients.
+
+runtime.on('state', (s) => broadcast({ type: 'monitor_state', state: s.state, error: s.error }));
+runtime.on('event', (e) => broadcast({ type: 'monitor_event', ...e }));
+
+app.get('/api/monitor/status', (req, res) => {
+    res.json(runtime.status());
+});
+
+app.post('/api/monitor/start', async (req, res) => {
+    try {
+        const am = await getAccountManager();
+        if (am.count === 0) {
+            return res.status(409).json({
+                error: 'No Telegram accounts loaded. Add one in Settings → Accounts first.',
+            });
+        }
+        await runtime.start({ config: loadConfig(), accountManager: am });
+        res.json({ success: true, status: runtime.status() });
+    } catch (e) {
+        const { status, body } = tgAuthErrorBody(e);
+        res.status(status === 400 ? 500 : status).json(body.error ? body : { error: e.message });
+    }
+});
+
+app.post('/api/monitor/stop', async (req, res) => {
+    try {
+        await runtime.stop();
+        res.json({ success: true, status: runtime.status() });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
     }
 });
 
