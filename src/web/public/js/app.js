@@ -768,8 +768,77 @@ function toggleFwdDelete(event) {
     if (toggle) toggle.classList.toggle('active');
 }
 
-function openDestinationPicker() {
-    showToast('Use group ID from the Dialogs list');
+async function openDestinationPicker() {
+    const target = document.getElementById('fwd-destination');
+    if (!target) return;
+
+    let modal = document.getElementById('dest-picker-modal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'dest-picker-modal';
+        modal.className = 'fixed inset-0 z-[110] flex items-center justify-center p-4 modal-backdrop';
+        modal.setAttribute('role', 'dialog');
+        modal.setAttribute('aria-modal', 'true');
+        modal.innerHTML = `
+            <div class="bg-tg-panel border border-tg-border rounded-xl w-full max-w-md max-h-[80vh] flex flex-col shadow-xl overflow-hidden">
+                <div class="p-3 border-b border-tg-border">
+                    <div class="flex items-center justify-between mb-2">
+                        <h3 class="text-tg-text font-semibold">Pick a destination</h3>
+                        <button id="dest-close" class="text-tg-textSecondary hover:text-tg-text"><i class="ri-close-line text-xl"></i></button>
+                    </div>
+                    <input id="dest-search" type="text" placeholder="Search by name…" class="tg-input w-full text-sm">
+                </div>
+                <div id="dest-list" class="flex-1 overflow-y-auto p-2 text-sm">
+                    <div class="text-tg-textSecondary p-2">Loading dialogs…</div>
+                </div>
+            </div>`;
+        document.body.appendChild(modal);
+        modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+        modal.querySelector('#dest-close').addEventListener('click', () => modal.remove());
+    }
+
+    const list = modal.querySelector('#dest-list');
+    const search = modal.querySelector('#dest-search');
+
+    let dialogs = [];
+    try {
+        const r = await api.get('/api/dialogs');
+        dialogs = r.dialogs || [];
+    } catch (e) {
+        list.innerHTML = `<div class="text-red-400 p-2">Failed to load dialogs: ${escapeHtml(e.message)}</div>`;
+        return;
+    }
+
+    const render = () => {
+        const q = search.value.trim().toLowerCase();
+        const filtered = dialogs.filter(d => !q || (d.name || '').toLowerCase().includes(q) || String(d.id).includes(q));
+        const presets = `
+            <button data-pick="me" class="w-full text-left px-3 py-2 rounded hover:bg-tg-hover text-tg-text">
+                <span class="text-tg-blue">📥 Saved Messages</span>
+                <div class="text-[11px] text-tg-textSecondary">value: <code>me</code></div>
+            </button>
+            <button data-pick="" class="w-full text-left px-3 py-2 rounded hover:bg-tg-hover text-tg-text">
+                Default storage channel
+                <div class="text-[11px] text-tg-textSecondary">leave the field empty</div>
+            </button>
+            <hr class="border-tg-border my-2">`;
+        list.innerHTML = presets + filtered.map(d => `
+            <button data-pick="${escapeHtml(String(d.id))}" class="w-full text-left px-3 py-2 rounded hover:bg-tg-hover text-tg-text">
+                <div class="truncate">${escapeHtml(d.name || d.id)}</div>
+                <div class="text-[11px] text-tg-textSecondary">${escapeHtml(d.type || 'chat')} · <code>${escapeHtml(String(d.id))}</code></div>
+            </button>
+        `).join('');
+        list.querySelectorAll('button[data-pick]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                target.value = btn.dataset.pick;
+                modal.remove();
+            });
+        });
+    };
+
+    render();
+    search.addEventListener('input', render);
+    setTimeout(() => search.focus(), 50);
 }
 
 // ============ Delete File ============
