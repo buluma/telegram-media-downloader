@@ -71,6 +71,7 @@ async function init() {
 
     // Paste-URL drawer
     setupPasteUrl();
+    setupMediaSearch();
 
     // Appearance toggle
     initTheme();
@@ -287,21 +288,28 @@ function renderMediaGrid() {
     const grid = document.getElementById('media-grid');
     const empty = document.getElementById('empty-state');
     if (!grid) return;
-    
+
     if (state.files.length === 0) {
         grid.innerHTML = '';
         if (empty) empty.classList.remove('hidden');
         return;
     }
     if (empty) empty.classList.add('hidden');
-    
-    // Filter by type
-    const filtered = state.currentFilter === 'all' 
-        ? state.files 
+
+    const filtered = state.currentFilter === 'all'
+        ? state.files
         : state.files.filter(f => f.type === state.currentFilter);
-    
-    grid.innerHTML = filtered.map((file, i) => `
-        <div class="media-item relative aspect-square bg-tg-panel rounded overflow-hidden cursor-pointer" data-index="${i}">
+
+    if (!state.selected) state.selected = new Set();
+
+    grid.innerHTML = filtered.map((file, i) => {
+        const checked = state.selected.has(file.fullPath);
+        const checkBadge = state.selectMode
+            ? `<div class="select-badge absolute top-1 left-1 w-5 h-5 rounded-full ${checked ? 'bg-tg-blue text-white' : 'bg-black/40 text-transparent'} flex items-center justify-center text-xs"><i class="ri-check-line"></i></div>`
+            : '';
+        const ringClass = checked ? 'ring-2 ring-tg-blue' : '';
+        return `
+        <div class="media-item relative aspect-square bg-tg-panel rounded overflow-hidden cursor-pointer ${ringClass}" data-index="${i}" data-path="${escapeHtml(file.fullPath)}">
             ${file.type === 'images' ?
                 `<img data-src="/files/${encodeURIComponent(file.fullPath)}?inline=1" class="w-full h-full object-cover" onerror="this.style.display='none'">` :
                 file.type === 'videos' ?
@@ -318,19 +326,118 @@ function renderMediaGrid() {
                     <span class="text-xs text-tg-textSecondary mt-1 truncate px-2 w-full text-center">${escapeHtml(file.name || '')}</span>
                 </div>`
             }
-        </div>
-    `).join('');
+            ${checkBadge}
+        </div>`;
+    }).join('');
 
-    // Event delegation for media clicks
     grid.querySelectorAll('.media-item[data-index]').forEach(el => {
-        el.addEventListener('click', () => openMediaViewer(parseInt(el.dataset.index)));
+        el.addEventListener('click', (ev) => {
+            const idx = parseInt(el.dataset.index, 10);
+            if (state.selectMode || ev.shiftKey) {
+                toggleSelection(el.dataset.path);
+                ev.preventDefault();
+                return;
+            }
+            openMediaViewer(idx);
+        });
     });
-    
-    // Trigger lazy load for images and video thumbnails
+
     if (state.imageObserver) {
         state.imageObserver.disconnect();
         grid.querySelectorAll('img[data-src], video[data-src]').forEach(el => state.imageObserver.observe(el));
     }
+}
+
+function toggleSelection(path) {
+    if (!state.selected) state.selected = new Set();
+    if (state.selected.has(path)) state.selected.delete(path);
+    else state.selected.add(path);
+    updateSelectionBar();
+    renderMediaGrid();
+}
+
+function updateSelectionBar() {
+    const bar = document.getElementById('selection-bar');
+    const count = state.selected ? state.selected.size : 0;
+    document.getElementById('selection-count').textContent = `${count} selected`;
+    if (bar) bar.classList.toggle('hidden', count === 0);
+}
+
+async function setupMediaSearch() {
+    const input = document.getElementById('media-search');
+    const clear = document.getElementById('media-search-clear');
+    const selectBtn = document.getElementById('select-mode-btn');
+    const selBar = document.getElementById('selection-bar');
+    const selDel = document.getElementById('selection-delete');
+    const selClear = document.getElementById('selection-clear');
+    if (!input) return;
+
+    let timer = null;
+    let lastQuery = '';
+
+    const runSearch = async (q) => {
+        if (!q) {
+            state.searchActive = false;
+            // Re-render whatever was loaded for the current group
+            if (state.savedFiles) state.files = state.savedFiles;
+            renderMediaGrid();
+            return;
+        }
+        try {
+            const r = await api.get(`/api/downloads/search?q=${encodeURIComponent(q)}&limit=200`);
+            // Keep a snapshot of pre-search files so clearing restores them
+            if (!state.searchActive) state.savedFiles = state.files;
+            state.searchActive = true;
+            state.files = r.files;
+            renderMediaGrid();
+        } catch (e) {
+            showToast(`Search failed: ${e.message}`, 'error');
+        }
+    };
+
+    input.addEventListener('input', (e) => {
+        const q = e.target.value.trim();
+        clear.classList.toggle('hidden', !q);
+        if (q === lastQuery) return;
+        lastQuery = q;
+        clearTimeout(timer);
+        timer = setTimeout(() => runSearch(q), 250);
+    });
+    clear?.addEventListener('click', () => { input.value = ''; lastQuery = ''; clear.classList.add('hidden'); runSearch(''); });
+
+    selectBtn?.addEventListener('click', () => {
+        state.selectMode = !state.selectMode;
+        selectBtn.classList.toggle('bg-tg-blue', state.selectMode);
+        selectBtn.classList.toggle('text-white', state.selectMode);
+        if (!state.selectMode && state.selected) state.selected.clear();
+        updateSelectionBar();
+        renderMediaGrid();
+    });
+
+    selClear?.addEventListener('click', () => {
+        if (state.selected) state.selected.clear();
+        updateSelectionBar();
+        renderMediaGrid();
+    });
+
+    selDel?.addEventListener('click', async () => {
+        if (!state.selected || !state.selected.size) return;
+        const paths = Array.from(state.selected);
+        if (!confirm(`Delete ${paths.length} file(s)? This cannot be undone.`)) return;
+        try {
+            const r = await api.post('/api/downloads/bulk-delete', { paths });
+            showToast(`Deleted ${r.unlinked} files`, 'success');
+            state.selected.clear();
+            // Drop deleted entries from the current view
+            const set = new Set(paths);
+            state.files = (state.files || []).filter(f => !set.has(f.fullPath));
+            if (state.savedFiles) state.savedFiles = state.savedFiles.filter(f => !set.has(f.fullPath));
+            updateSelectionBar();
+            renderMediaGrid();
+        } catch (e) {
+            showToast(`Delete failed: ${e.message}`, 'error');
+        }
+    });
 }
 
 // ============ Groups Config Page ============

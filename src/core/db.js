@@ -121,6 +121,48 @@ export function getDownloads(groupId, limit = 50, offset = 0, type = 'all') {
     return { files: rows, total };
 }
 
+/**
+ * Full-text-ish search over downloaded files. LIKE-based; cheap on the
+ * sub-100k row counts we expect.
+ *
+ * @param {string} query  user input
+ * @param {object} [opts]
+ * @param {number} [opts.limit=50]
+ * @param {number} [opts.offset=0]
+ * @param {string} [opts.groupId]  optional restrict to one group
+ */
+export function searchDownloads(query, opts = {}) {
+    const limit = Math.max(1, Math.min(500, parseInt(opts.limit, 10) || 50));
+    const offset = Math.max(0, parseInt(opts.offset, 10) || 0);
+    const q = `%${String(query || '').trim()}%`;
+    const params = [q, q];
+    let where = '(file_name LIKE ? OR group_name LIKE ?)';
+    if (opts.groupId) { where += ' AND group_id = ?'; params.push(String(opts.groupId)); }
+    const rows = getDb()
+        .prepare(`SELECT * FROM downloads WHERE ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`)
+        .all(...params, limit, offset);
+    const total = getDb()
+        .prepare(`SELECT COUNT(*) as c FROM downloads WHERE ${where}`)
+        .get(...params).c;
+    return { files: rows, total };
+}
+
+/** Bulk-delete by ids (preferred) or file_paths. Returns the number removed. */
+export function deleteDownloadsBy(opts) {
+    const db = getDb();
+    if (Array.isArray(opts?.ids) && opts.ids.length) {
+        const stmt = db.prepare('DELETE FROM downloads WHERE id = ?');
+        const tx = db.transaction(() => opts.ids.reduce((n, id) => n + stmt.run(id).changes, 0));
+        return tx();
+    }
+    if (Array.isArray(opts?.filePaths) && opts.filePaths.length) {
+        const stmt = db.prepare('DELETE FROM downloads WHERE file_path = ?');
+        const tx = db.transaction(() => opts.filePaths.reduce((n, p) => n + stmt.run(p).changes, 0));
+        return tx();
+    }
+    return 0;
+}
+
 export function getStats() {
     const db = getDb();
     const totalFiles = db.prepare('SELECT COUNT(*) as count FROM downloads').get().count;

@@ -620,6 +620,21 @@
 
                 <!-- Viewer Page -->
                 <div id="page-viewer">
+                    <!-- Media search + selection toolbar -->
+                    <div class="px-2 py-2 flex flex-wrap items-center gap-2 border-b border-tg-border bg-tg-bg">
+                        <div class="relative flex-1 min-w-[160px]">
+                            <i class="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-tg-textSecondary"></i>
+                            <input type="text" id="media-search"
+                                class="w-full bg-tg-panel border border-tg-border rounded-lg pl-9 pr-8 py-1.5 text-sm text-tg-text focus:ring-1 focus:ring-tg-blue focus:border-tg-blue outline-none"
+                                placeholder="Search files…">
+                            <button id="media-search-clear" class="absolute right-2 top-1/2 -translate-y-1/2 text-tg-textSecondary hover:text-tg-text hidden">
+                                <i class="ri-close-line"></i>
+                            </button>
+                        </div>
+                        <button id="select-mode-btn" class="px-3 py-1.5 rounded-lg bg-tg-panel hover:bg-tg-hover text-sm text-tg-text" title="Toggle selection mode">
+                            <i class="ri-checkbox-multiple-line"></i>
+                        </button>
+                    </div>
                     <div id="media-grid" class="media-grid"></div>
                     <div id="empty-state"
                         class="hidden flex flex-col items-center justify-center h-64 text-center px-4">
@@ -947,6 +962,15 @@
 
             </div>
         </main>
+    </div>
+
+    <!-- Selection footer (shown when items are selected) -->
+    <div id="selection-bar" class="hidden fixed bottom-8 left-1/2 -translate-x-1/2 bg-tg-panel border border-tg-border rounded-full px-4 py-2 shadow-xl z-40 flex items-center gap-3 text-sm">
+        <span id="selection-count" class="text-tg-text">0 selected</span>
+        <button id="selection-clear" class="text-tg-textSecondary hover:text-tg-text">Clear</button>
+        <button id="selection-delete" class="px-3 py-1 rounded bg-red-500/20 text-red-400 hover:bg-red-500/30">
+            <i class="ri-delete-bin-line"></i> Delete
+        </button>
     </div>
 
     <!-- Status bar -->
