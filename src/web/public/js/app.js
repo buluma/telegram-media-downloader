@@ -354,12 +354,22 @@ function renderDialogsList(dialogs) {
             btnClass = 'bg-tg-bg text-tg-textSecondary';
             btnLabel = '+ Add';
         }
+        const typeLabel = d.type === 'channel' ? 'Channel'
+            : d.type === 'group' ? 'Group'
+            : d.type === 'bot' ? 'Bot'
+            : d.type === 'user' ? 'DM' : 'Dialog';
+        const subParts = [typeLabel];
+        if (d.members) subParts.push(`${d.members} members`);
+        if (d.archived) subParts.push('📦 archived');
+        const badge = d.type === 'user'
+            ? '<span class="ml-2 text-[10px] text-amber-400 bg-amber-400/10 px-1.5 py-0.5 rounded">DM</span>'
+            : '';
         return `
         <div class="bg-tg-panel rounded-xl p-4 flex items-center gap-3 hover:bg-tg-hover transition-colors">
             ${createAvatar(d.id, d.name, d.type)}
             <div class="flex-1 min-w-0">
-                <h3 class="text-tg-text font-medium truncate">${escapeHtml(d.name)}</h3>
-                <p class="text-xs text-tg-textSecondary">${d.type || 'Channel'} • ${d.members || ''} members</p>
+                <h3 class="text-tg-text font-medium truncate">${escapeHtml(d.name)}${badge}</h3>
+                <p class="text-xs text-tg-textSecondary">${subParts.join(' • ')}</p>
             </div>
             <button data-dialog-id="${escapeHtml(String(d.id))}" data-dialog-name="${escapeHtml(d.name)}"
                 class="px-3 py-1.5 rounded-lg text-sm ${btnClass} hover:opacity-80 transition">

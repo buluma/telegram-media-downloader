@@ -42,6 +42,14 @@ export async function loadSettings() {
         bind('setting-max-video', dm.maxVideoSize || '');
         bind('setting-max-image', dm.maxImageSize || '');
 
+        const dmToggle = document.getElementById('setting-allow-dm');
+        if (dmToggle) {
+            dmToggle.classList.toggle('active', config.allowDmDownloads === true);
+            dmToggle.onclick = () => {
+                dmToggle.classList.toggle('active');
+            };
+        }
+
         // Telegram API: only the apiId is exposed; apiHash is server-only.
         const apiIdEl = document.getElementById('setting-api-id');
         if (apiIdEl) apiIdEl.value = tg.apiId || '';
@@ -61,6 +69,7 @@ export async function loadSettings() {
 export async function saveSettings() {
     const get = (id) => document.getElementById(id)?.value;
 
+    const dmActive = document.getElementById('setting-allow-dm')?.classList.contains('active') === true;
     const data = {
         download: {
             concurrent: parseInt(get('setting-concurrent')),
@@ -76,6 +85,7 @@ export async function saveSettings() {
             maxVideoSize: get('setting-max-video') || null,
             maxImageSize: get('setting-max-image') || null,
         },
+        allowDmDownloads: dmActive,
     };
 
     try {
