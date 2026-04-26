@@ -120,11 +120,18 @@ app.use(helmet({
                 'https://cdn.tailwindcss.com',
                 'https://cdn.jsdelivr.net',
             ],
+            // The SPA uses inline onclick / oninput handlers in index.html
+            // (toggle UI, range-slider value updaters, modal close-buttons).
+            // Helmet's defaults set script-src-attr to 'none' which would
+            // block them; allow inline here until the markup is migrated to
+            // addEventListener.
+            'script-src-attr': ["'unsafe-inline'"],
             'style-src': [
                 "'self'", "'unsafe-inline'",
                 'https://cdn.jsdelivr.net',
                 'https://fonts.googleapis.com',
             ],
+            'style-src-attr': ["'unsafe-inline'"],
             'font-src': ["'self'", 'data:', 'https://fonts.gstatic.com', 'https://cdn.jsdelivr.net'],
             'img-src': ["'self'", 'data:', 'blob:'],
             'media-src': ["'self'", 'blob:'],
