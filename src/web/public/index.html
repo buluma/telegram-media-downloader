@@ -881,6 +881,48 @@
                         <p class="text-xs text-tg-textSecondary mt-1">Get a system toast when downloads finish.</p>
                     </div>
 
+                    <!-- Proxy -->
+                    <div class="bg-tg-panel rounded-xl p-4 mb-4">
+                        <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
+                            <i class="ri-shield-flash-line text-tg-blue"></i> Proxy
+                        </h3>
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <div>
+                                <label class="text-tg-textSecondary text-xs block mb-1">Type</label>
+                                <select id="proxy-type" class="tg-input w-full text-sm">
+                                    <option value="">None</option>
+                                    <option value="socks5">SOCKS5</option>
+                                    <option value="socks4">SOCKS4</option>
+                                    <option value="mtproxy">MTProxy</option>
+                                </select>
+                            </div>
+                            <div class="sm:col-span-2">
+                                <label class="text-tg-textSecondary text-xs block mb-1">Host : Port</label>
+                                <div class="flex gap-2">
+                                    <input id="proxy-host" class="tg-input flex-1 text-sm" placeholder="proxy.example.com">
+                                    <input id="proxy-port" type="number" min="1" max="65535" class="tg-input w-24 text-sm" placeholder="1080">
+                                </div>
+                            </div>
+                            <div>
+                                <label class="text-tg-textSecondary text-xs block mb-1">Username (optional)</label>
+                                <input id="proxy-username" class="tg-input w-full text-sm" autocomplete="off">
+                            </div>
+                            <div>
+                                <label class="text-tg-textSecondary text-xs block mb-1">Password (optional)</label>
+                                <input id="proxy-password" type="password" class="tg-input w-full text-sm" autocomplete="off">
+                            </div>
+                            <div>
+                                <label class="text-tg-textSecondary text-xs block mb-1">MTProxy secret</label>
+                                <input id="proxy-secret" class="tg-input w-full text-sm" autocomplete="off" placeholder="(only for MTProxy)">
+                            </div>
+                        </div>
+                        <div class="flex gap-2 mt-3">
+                            <button id="proxy-save" class="tg-btn-secondary text-sm flex-1"><i class="ri-save-line mr-2"></i>Save</button>
+                            <button id="proxy-test" class="tg-btn-secondary text-sm flex-1"><i class="ri-flashlight-line mr-2"></i>Test</button>
+                        </div>
+                        <p id="proxy-status" class="text-xs mt-2"></p>
+                    </div>
+
                     <!-- Privacy / DM downloads -->
                     <div class="bg-tg-panel rounded-xl p-4 mb-4">
                         <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">

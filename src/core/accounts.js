@@ -13,6 +13,7 @@ import { SecureSession } from './security.js';
 import { getOrGenerateSecret } from './secret.js';
 import { colorize } from '../cli/colors.js';
 import { suppressNoise } from './logger.js';
+import { buildProxy } from './proxy.js';
 
 function deferred() {
     let resolve, reject;
@@ -169,18 +170,28 @@ export class AccountManager {
      * Create a new TelegramClient instance
      */
     async createClient(label, sessionString = '') {
+        const opts = {
+            // Capped + jittered retry policy. The previous 100 with no backoff
+            // hammered Telegram during outages.
+            connectionRetries: 5,
+            retryDelay: 2000,
+            deviceModel: `TG-DL [${label}]`,
+            systemVersion: 'Windows 10',
+            appVersion: '1.0.0',
+            useWSS: false,
+            baseLogger: createLogger(label),
+        };
+        try {
+            const proxy = buildProxy(this.config);
+            if (proxy) opts.proxy = proxy;
+        } catch (e) {
+            console.log(colorize(`⚠️  Proxy config invalid (${e.message}) — connecting direct`, 'yellow'));
+        }
         return new TelegramClient(
             new StringSession(sessionString),
             parseInt(this.config.telegram.apiId),
             this.config.telegram.apiHash,
-            {
-                connectionRetries: 100,
-                deviceModel: `TG-DL [${label}]`,
-                systemVersion: 'Windows 10',
-                appVersion: '1.0.0',
-                useWSS: false,
-                baseLogger: createLogger(label)
-            }
+            opts,
         );
     }
 

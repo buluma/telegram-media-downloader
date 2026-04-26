@@ -71,6 +71,17 @@ export async function loadSettings() {
         // Telegram API: only the apiId is exposed; apiHash is server-only.
         const apiIdEl = document.getElementById('setting-api-id');
         if (apiIdEl) apiIdEl.value = tg.apiId || '';
+
+        // Proxy
+        const proxy = config.proxy || {};
+        bind('proxy-type', proxy.type || '');
+        bind('proxy-host', proxy.host || '');
+        bind('proxy-port', proxy.port || '');
+        bind('proxy-username', proxy.username || '');
+        bind('proxy-secret', proxy.secret || '');
+        // password is intentionally never echoed back; placeholder hint:
+        const pw = document.getElementById('proxy-password');
+        if (pw) pw.placeholder = proxy.password ? '(saved — leave blank to keep)' : '';
         const apiHashEl = document.getElementById('setting-api-hash');
         if (apiHashEl) apiHashEl.placeholder = tg.apiHashSet
             ? '(saved — leave blank to keep)'
@@ -132,6 +143,57 @@ export function applyPreset(type) {
     document.getElementById('setting-concurrent').dispatchEvent(new Event('input'));
     document.getElementById('setting-rpm').dispatchEvent(new Event('input'));
     document.getElementById('setting-polling').dispatchEvent(new Event('input'));
+}
+
+// ====== Proxy ===============================================================
+
+export async function saveProxy() {
+    const get = (id) => document.getElementById(id)?.value.trim();
+    const type = get('proxy-type');
+    const host = get('proxy-host');
+    const port = get('proxy-port');
+    if (!type) {
+        // Clearing the proxy → send proxy:null and let the server overwrite.
+        await api.post('/api/config', { proxy: null });
+        showToast('Proxy disabled', 'info');
+        return;
+    }
+    if (!host || !port) { showToast('Host and port required', 'error'); return; }
+    const proxy = { type, host, port: parseInt(port, 10) };
+    const username = get('proxy-username'); if (username) proxy.username = username;
+    const password = get('proxy-password'); if (password) proxy.password = password;
+    const secret = get('proxy-secret'); if (secret) proxy.secret = secret;
+    try {
+        await api.post('/api/config', { proxy });
+        showToast('Proxy saved — restart the monitor for it to take effect', 'success');
+    } catch (e) {
+        showToast(`Save failed: ${e.message}`, 'error');
+    }
+}
+
+export async function testProxy() {
+    const get = (id) => document.getElementById(id)?.value.trim();
+    const host = get('proxy-host'); const port = get('proxy-port');
+    const status = document.getElementById('proxy-status');
+    if (!host || !port) { showToast('Host and port required', 'error'); return; }
+    if (status) { status.textContent = 'Connecting…'; status.className = 'text-xs text-tg-textSecondary mt-2'; }
+    try {
+        const r = await api.post('/api/proxy/test', { host, port: parseInt(port, 10) });
+        if (status) {
+            if (r.ok) {
+                status.textContent = `✓ Reachable (${r.ms}ms TCP) — protocol handshake happens at monitor start.`;
+                status.className = 'text-xs text-tg-green mt-2';
+            } else {
+                status.textContent = `✗ Failed: ${r.error}`;
+                status.className = 'text-xs text-red-400 mt-2';
+            }
+        }
+    } catch (e) {
+        if (status) {
+            status.textContent = `✗ ${e.message}`;
+            status.className = 'text-xs text-red-400 mt-2';
+        }
+    }
 }
 
 // ====== Telegram API credentials ============================================

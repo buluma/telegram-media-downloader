@@ -68,6 +68,8 @@ async function init() {
     document.getElementById('save-api-credentials')?.addEventListener('click', Settings.saveApiCredentials);
     document.getElementById('change-password-btn')?.addEventListener('click', Settings.changePassword);
     document.getElementById('logout-btn')?.addEventListener('click', Settings.signOut);
+    document.getElementById('proxy-save')?.addEventListener('click', Settings.saveProxy);
+    document.getElementById('proxy-test')?.addEventListener('click', Settings.testProxy);
 
     // Paste-URL drawer
     setupPasteUrl();
