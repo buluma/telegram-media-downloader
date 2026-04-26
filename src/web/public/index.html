@@ -59,6 +59,7 @@
             background: #17212B;
             color: #F5F5F5;
             overscroll-behavior: none;
+            padding-bottom: 32px; /* room for the sticky status bar */
         }
 
         /* ===== Light theme overrides =====
@@ -853,11 +854,16 @@
                         <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
                             <i class="ri-palette-line text-tg-blue"></i> Appearance
                         </h3>
-                        <div class="grid grid-cols-3 gap-2 text-sm">
+                        <div class="grid grid-cols-3 gap-2 text-sm mb-4">
                             <button data-theme-set="light" class="theme-btn py-2 px-3 rounded-lg bg-tg-bg/40 hover:bg-tg-hover transition flex items-center gap-2 justify-center"><i class="ri-sun-line"></i> Light</button>
                             <button data-theme-set="dark" class="theme-btn py-2 px-3 rounded-lg bg-tg-bg/40 hover:bg-tg-hover transition flex items-center gap-2 justify-center"><i class="ri-moon-line"></i> Dark</button>
                             <button data-theme-set="auto" class="theme-btn py-2 px-3 rounded-lg bg-tg-bg/40 hover:bg-tg-hover transition flex items-center gap-2 justify-center"><i class="ri-contrast-2-line"></i> Auto</button>
                         </div>
+                        <label class="flex items-center justify-between p-3 bg-tg-bg/40 rounded-lg cursor-pointer">
+                            <div class="text-tg-text text-sm">Browser notifications</div>
+                            <div id="setting-notifications" class="tg-toggle"></div>
+                        </label>
+                        <p class="text-xs text-tg-textSecondary mt-1">Get a system toast when downloads finish.</p>
                     </div>
 
                     <!-- Privacy / DM downloads -->
@@ -942,6 +948,20 @@
             </div>
         </main>
     </div>
+
+    <!-- Status bar -->
+    <footer id="status-bar" class="fixed bottom-0 left-0 right-0 bg-tg-sidebar border-t border-tg-border px-3 py-1.5 text-xs flex items-center gap-3 overflow-x-auto z-40">
+        <span class="flex items-center gap-1.5">
+            <span id="status-dot" class="w-2 h-2 rounded-full bg-gray-500"></span>
+            <span id="status-state" class="text-tg-textSecondary">Idle</span>
+        </span>
+        <span class="text-tg-textSecondary">·</span>
+        <span class="text-tg-textSecondary">Queue: <span id="status-queue" class="text-tg-text">0</span></span>
+        <span class="text-tg-textSecondary">Active: <span id="status-active" class="text-tg-text">0</span></span>
+        <span class="text-tg-textSecondary">Files: <span id="status-files" class="text-tg-text">0</span></span>
+        <span class="text-tg-textSecondary">Disk: <span id="status-disk" class="text-tg-text">0 B</span></span>
+        <span class="ml-auto text-tg-textSecondary"><span id="status-ws" class="inline-block w-2 h-2 rounded-full bg-gray-500 mr-1"></span>WS</span>
+    </footer>
 
     <!-- Media Modal -->
     <div id="media-modal" class="fixed inset-0 z-50 hidden modal-backdrop flex flex-col">
