@@ -47,12 +47,18 @@ function initSchema() {
         CREATE INDEX IF NOT EXISTS idx_created_at ON downloads(created_at);
     `);
 
-    // Migration: add group_name column to existing databases
-    try {
-        db.exec('ALTER TABLE downloads ADD COLUMN group_name TEXT');
-    } catch (e) {
-        // Column already exists -- safe to ignore
+    // Forward-compatible column migrations. Each ALTER is wrapped in its own
+    // try/catch so adding column N+1 doesn't get blocked by column N already
+    // existing.
+    const migrations = [
+        'ALTER TABLE downloads ADD COLUMN group_name TEXT',
+        'ALTER TABLE downloads ADD COLUMN ttl_seconds INTEGER',
+        'ALTER TABLE downloads ADD COLUMN file_hash TEXT',
+    ];
+    for (const sql of migrations) {
+        try { db.exec(sql); } catch { /* column already exists */ }
     }
+    try { db.exec('CREATE INDEX IF NOT EXISTS idx_filename_size ON downloads(group_id, file_name, file_size)'); } catch {}
 
     // Queue/Pending Table
     db.exec(`
@@ -69,11 +75,38 @@ function initSchema() {
 }
 
 export function insertDownload(data) {
+    const row = {
+        groupId: data.groupId,
+        groupName: data.groupName ?? null,
+        messageId: data.messageId,
+        fileName: data.fileName ?? null,
+        fileSize: data.fileSize ?? null,
+        fileType: data.fileType ?? null,
+        filePath: data.filePath ?? null,
+        ttlSeconds: data.ttlSeconds ?? null,
+        fileHash: data.fileHash ?? null,
+    };
     const stmt = getDb().prepare(`
-        INSERT OR IGNORE INTO downloads (group_id, group_name, message_id, file_name, file_size, file_type, file_path)
-        VALUES (@groupId, @groupName, @messageId, @fileName, @fileSize, @fileType, @filePath)
+        INSERT OR IGNORE INTO downloads (
+            group_id, group_name, message_id, file_name, file_size, file_type, file_path, ttl_seconds, file_hash
+        ) VALUES (
+            @groupId, @groupName, @messageId, @fileName, @fileSize, @fileType, @filePath, @ttlSeconds, @fileHash
+        )
     `);
-    return stmt.run(data);
+    return stmt.run(row);
+}
+
+/**
+ * Lightweight dedup that catches the same file re-uploaded under a new
+ * message_id. Returns true if (group_id, file_name, file_size) already
+ * exists. Cheap thanks to the (group_id, file_name, file_size) index.
+ */
+export function fileAlreadyStored(groupId, fileName, fileSize) {
+    if (!fileName || !fileSize) return false;
+    const r = getDb()
+        .prepare('SELECT 1 FROM downloads WHERE group_id = ? AND file_name = ? AND file_size = ? LIMIT 1')
+        .get(String(groupId), String(fileName), Number(fileSize));
+    return !!r;
 }
 
 export function isDownloaded(groupId, messageId) {
