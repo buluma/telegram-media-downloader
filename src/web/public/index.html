@@ -59,7 +59,14 @@
             background: #17212B;
             color: #F5F5F5;
             overscroll-behavior: none;
-            padding-bottom: 32px; /* room for the sticky status bar */
+        }
+        /* Reserve room for the status bar on desktop and for the bottom-nav
+           on mobile so fixed-position bars never cover content. */
+        @media (max-width: 767.98px) {
+            body { padding-bottom: calc(56px + env(safe-area-inset-bottom)); }
+        }
+        @media (min-width: 768px) {
+            body { padding-bottom: 32px; }
         }
 
         /* ===== Light theme overrides =====
@@ -316,6 +323,192 @@
         .sidebar-mobile.open {
             transform: translateX(0);
         }
+
+        /* ============================================================
+           Bottom navigation (mobile-only).
+           Visible below md (768px). 4 items + safe-area-inset-bottom.
+           ============================================================ */
+        @media (max-width: 767.98px) {
+            body.has-bottom-nav { padding-bottom: calc(56px + env(safe-area-inset-bottom)); }
+        }
+        .bottom-nav {
+            position: fixed;
+            left: 0; right: 0; bottom: 0;
+            height: 56px;
+            display: flex;
+            align-items: stretch;
+            justify-content: space-around;
+            background: var(--tg-sidebar, #0E1621);
+            border-top: 1px solid var(--tg-border, #0D1117);
+            z-index: 35;
+            padding-bottom: env(safe-area-inset-bottom);
+        }
+        @media (min-width: 768px) { .bottom-nav { display: none; } }
+        .bottom-nav-item {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 44px;
+            color: var(--tg-textSecondary, #8B9BAA);
+            text-decoration: none;
+            font-size: 11px;
+            line-height: 1;
+            gap: 3px;
+            cursor: pointer;
+            position: relative;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .bottom-nav-item.active { color: var(--tg-blue, #2AABEE); }
+        .bottom-nav-item i { font-size: 22px; }
+        .bottom-nav-item .nav-badge {
+            position: absolute;
+            top: 8px;
+            right: calc(50% - 18px);
+            min-width: 16px;
+            height: 16px;
+            padding: 0 4px;
+            border-radius: 8px;
+            font-size: 10px;
+            line-height: 16px;
+            text-align: center;
+            background: var(--tg-blue, #2AABEE);
+            color: #fff;
+            font-weight: 600;
+        }
+        .bottom-nav-item .nav-badge.error { background: var(--tg-red, #E53935); }
+        .bottom-nav-item .nav-badge.warning { background: var(--tg-orange, #FF9800); }
+
+        /* ============================================================
+           Floating Action Button (mobile only). Above the bottom nav.
+           ============================================================ */
+        .fab {
+            position: fixed;
+            right: 16px;
+            bottom: calc(72px + env(safe-area-inset-bottom));
+            width: 56px;
+            height: 56px;
+            border-radius: 28px;
+            background: var(--tg-blue, #2AABEE);
+            color: #fff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 6px 18px rgba(0, 0, 0, 0.30);
+            z-index: 36;
+            border: none;
+            cursor: pointer;
+            transition: transform 0.15s ease;
+        }
+        .fab:active { transform: scale(0.95); }
+        .fab i { font-size: 24px; }
+        @media (min-width: 768px) { .fab { display: none; } }
+
+        /* ============================================================
+           Sheet primitive — bottom-sheet on mobile, centered card on
+           desktop. Driven by sheet.js (openSheet / closeTopSheet).
+           ============================================================ */
+        .sheet-root {
+            position: fixed; inset: 0;
+            z-index: 100;
+            display: flex;
+            align-items: flex-end; justify-content: center;
+            pointer-events: none;
+        }
+        @media (min-width: 768px) {
+            .sheet-root { align-items: center; }
+        }
+        .sheet-backdrop {
+            position: absolute; inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            opacity: 0;
+            transition: opacity 200ms ease;
+            pointer-events: auto;
+        }
+        .sheet-card {
+            position: relative;
+            width: 100%;
+            background: var(--tg-panel, #242F3D);
+            color: var(--tg-text, #F5F5F5);
+            border-radius: 14px 14px 0 0;
+            padding: 0 0 12px;
+            transform: translateY(100%);
+            transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+            pointer-events: auto;
+            max-height: 85vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        @media (min-width: 768px) {
+            .sheet-card {
+                width: auto;
+                min-width: 380px;
+                max-width: min(720px, 92vw);
+                border-radius: 14px;
+                transform: translateY(8px) scale(0.97);
+                opacity: 0;
+                transition: transform 200ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 200ms;
+                margin: 0 16px;
+            }
+        }
+        .sheet-root.sheet-open .sheet-backdrop { opacity: 1; }
+        .sheet-root.sheet-open .sheet-card { transform: translateY(0); opacity: 1; }
+        .sheet-handle {
+            display: block;
+            width: 36px; height: 4px;
+            background: var(--tg-textSecondary, #8B9BAA);
+            opacity: 0.5;
+            border-radius: 2px;
+            margin: 8px auto 0;
+            cursor: grab;
+            touch-action: none;
+        }
+        @media (min-width: 768px) { .sheet-handle { display: none; } }
+        .sheet-header {
+            display: flex; align-items: center;
+            padding: 12px 16px 6px;
+            position: relative;
+        }
+        .sheet-header .sheet-handle { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); margin: 0; }
+        .sheet-title {
+            font-weight: 600;
+            font-size: 16px;
+            flex: 1;
+            margin-top: 16px;
+        }
+        @media (min-width: 768px) { .sheet-title { margin-top: 0; } }
+        .sheet-close {
+            background: transparent; border: none; color: var(--tg-textSecondary, #8B9BAA);
+            font-size: 28px; line-height: 1; cursor: pointer;
+            min-width: 32px; min-height: 32px;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .sheet-body {
+            padding: 8px 16px 16px;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            flex: 1;
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .sheet-card, .sheet-backdrop { transition: none !important; }
+            .sheet-root.sheet-open .sheet-card { transform: translateY(0) scale(1); }
+        }
+
+        /* ============================================================
+           Focus visibility — Telegram-style soft ring.
+           ============================================================ */
+        :focus-visible {
+            outline: 2px solid var(--tg-blue, #2AABEE);
+            outline-offset: 2px;
+            border-radius: 6px;
+        }
+        button:focus, input:focus, select:focus, textarea:focus { outline: none; }
+
+        /* Safe-area fillers for notched displays (mobile bottom-nav). */
+        .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+        .pt-safe { padding-top: env(safe-area-inset-top); }
     </style>
 </head>
 
@@ -323,17 +516,17 @@
 
     <div class="flex h-full">
         <!-- Mobile Overlay -->
-        <div id="sidebar-overlay" class="fixed inset-0 bg-black/50 z-40 hidden lg:hidden" onclick="closeSidebar()">
+        <div id="sidebar-overlay" class="fixed inset-0 bg-black/50 z-40 hidden md:hidden" onclick="closeSidebar()">
         </div>
 
         <!-- Left Sidebar -->
         <aside id="sidebar"
-            class="fixed lg:relative w-72 sm:w-80 bg-tg-sidebar border-r border-tg-border flex flex-col h-full z-50 sidebar-mobile lg:transform-none">
+            class="fixed md:relative w-72 sm:w-80 bg-tg-sidebar border-r border-tg-border flex flex-col h-full z-50 sidebar-mobile md:transform-none">
 
             <!-- Header -->
             <div class="p-3 flex items-center gap-3 border-b border-tg-border">
                 <button id="sidebar-close"
-                    class="lg:hidden w-10 h-10 flex items-center justify-center rounded-full hover:bg-tg-hover">
+                    class="md:hidden w-10 h-10 flex items-center justify-center rounded-full hover:bg-tg-hover">
                     <i class="ri-arrow-left-line text-xl text-tg-textSecondary"></i>
                 </button>
                 <div class="flex-1 relative">
@@ -576,7 +769,7 @@
             <!-- Header -->
             <header id="content-header" class="h-14 bg-tg-bg border-b border-tg-border flex items-center px-3 sm:px-4">
                 <button id="menu-btn"
-                    class="lg:hidden w-10 h-10 flex items-center justify-center rounded-full hover:bg-tg-hover mr-2">
+                    class="md:hidden w-10 h-10 flex items-center justify-center rounded-full hover:bg-tg-hover mr-2">
                     <i class="ri-menu-line text-xl text-tg-textSecondary"></i>
                 </button>
 
@@ -1055,7 +1248,7 @@
     </div>
 
     <!-- Status bar -->
-    <footer id="status-bar" class="fixed bottom-0 left-0 right-0 bg-tg-sidebar border-t border-tg-border px-3 py-1.5 text-xs flex items-center gap-3 overflow-x-auto z-40">
+    <footer id="status-bar" class="hidden md:flex fixed bottom-0 left-0 right-0 bg-tg-sidebar border-t border-tg-border px-3 py-1.5 text-xs items-center gap-3 overflow-x-auto z-40" role="status" aria-live="polite">
         <span class="flex items-center gap-1.5">
             <span id="status-dot" class="w-2 h-2 rounded-full bg-gray-500"></span>
             <span id="status-state" class="text-tg-textSecondary">Idle</span>
@@ -1227,6 +1420,32 @@
             <span id="toast-message" class="text-tg-text text-sm"></span>
         </div>
     </div>
+
+    <!-- Floating Action Button (mobile only) — opens an action sheet for
+         the most common workflows so the user never has to dig for them. -->
+    <button id="fab" class="fab" aria-label="Quick actions" type="button">
+        <i class="ri-add-line"></i>
+    </button>
+
+    <!-- Bottom navigation (mobile only) — replaces the drawer-only
+         navigation pattern. The Engine, Stories and other entries are
+         reachable via the FAB action sheet so we keep this row to the 4
+         most-frequented destinations. -->
+    <nav class="bottom-nav" aria-label="Primary">
+        <a class="bottom-nav-item" href="#/viewer" data-nav="viewer" aria-label="Library">
+            <i class="ri-gallery-line"></i><span>Library</span>
+        </a>
+        <a class="bottom-nav-item" href="#/groups" data-nav="groups" aria-label="Chats">
+            <i class="ri-chat-3-line"></i><span>Chats</span>
+        </a>
+        <a class="bottom-nav-item" href="#/engine" data-nav="engine" aria-label="Engine">
+            <i class="ri-broadcast-line"></i><span>Engine</span>
+            <span id="engine-nav-badge" class="nav-badge hidden"></span>
+        </a>
+        <a class="bottom-nav-item" href="#/settings" data-nav="settings" aria-label="Settings">
+            <i class="ri-settings-3-line"></i><span>Settings</span>
+        </a>
+    </nav>
 
     <!-- Scripts -->
     <script type="module" src="/js/app.js"></script>
