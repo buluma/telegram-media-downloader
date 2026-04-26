@@ -114,6 +114,18 @@ async function refresh() {
 }
 
 export function initEngine() {
+    // Idempotency guard — initEngine() runs every time the user navigates
+    // to the Settings page. Without this, each visit stacked another
+    // click listener on engine-start/stop, so after N visits a single
+    // click fired N concurrent POSTs to /api/monitor/start.
+    if (initEngine._wired) {
+        refresh();
+        if (pollHandle) clearInterval(pollHandle);
+        pollHandle = setInterval(refresh, 3000);
+        return;
+    }
+    initEngine._wired = true;
+
     $('engine-start')?.addEventListener('click', async () => {
         $('engine-start').disabled = true;
         try {
