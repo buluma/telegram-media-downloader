@@ -18,7 +18,7 @@ import { StringSession } from 'telegram/sessions/index.js';
 import crypto from 'crypto';
 
 import { getOrGenerateSecret } from '../core/secret.js';
-import { getDb, getDownloads, getStats as getDbStats, deleteGroupDownloads, deleteAllDownloads, backfillGroupNames } from '../core/db.js';
+import { getDb, getDownloads, getStats as getDbStats, deleteGroupDownloads, deleteAllDownloads, backfillGroupNames, searchDownloads, deleteDownloadsBy } from '../core/db.js';
 import { sanitizeName } from '../core/downloader.js';
 import { SecureSession } from '../core/security.js';
 import { AccountManager } from '../core/accounts.js';
@@ -956,6 +956,93 @@ async function safeResolveDownload(userPath) {
     if (!real.startsWith(rootReal + path.sep) && real !== rootReal) return null;
     return real;
 }
+
+// Search across all downloads (filename + group name).
+app.get('/api/downloads/search', async (req, res) => {
+    try {
+        const q = String(req.query.q || '').trim();
+        if (!q) return res.json({ files: [], total: 0, page: 1, totalPages: 0 });
+        const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+        const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
+        const groupId = req.query.groupId ? String(req.query.groupId) : undefined;
+        const r = searchDownloads(q, { limit, offset: (page - 1) * limit, groupId });
+
+        const config = JSON.parse(await fs.readFile(CONFIG_PATH, 'utf8'));
+        const groupFolderById = new Map();
+        for (const g of (config.groups || [])) groupFolderById.set(String(g.id), sanitizeName(g.name));
+
+        const files = r.files.map(row => {
+            const folder = groupFolderById.get(String(row.group_id)) || sanitizeName(row.group_name || 'unknown');
+            const typeFolder = row.file_type === 'photo' ? 'images'
+                : row.file_type === 'video' ? 'videos'
+                : row.file_type === 'audio' ? 'audio'
+                : row.file_type === 'sticker' ? 'stickers' : 'documents';
+            return {
+                id: row.id,
+                groupId: row.group_id,
+                groupName: row.group_name,
+                name: row.file_name,
+                fullPath: `${folder}/${typeFolder}/${row.file_name}`,
+                size: row.file_size,
+                sizeFormatted: formatBytes(row.file_size),
+                type: typeFolder,
+                modified: row.created_at,
+            };
+        });
+        res.json({ files, total: r.total, page, totalPages: Math.ceil(r.total / limit), q });
+    } catch (e) {
+        console.error('GET /api/downloads/search:', e);
+        res.status(500).json({ error: 'Internal error' });
+    }
+});
+
+// Bulk delete by id list or fullPath list.
+app.post('/api/downloads/bulk-delete', async (req, res) => {
+    try {
+        const { ids, paths } = req.body || {};
+        const idList = Array.isArray(ids) ? ids.map(Number).filter(Number.isFinite) : [];
+        const pathList = Array.isArray(paths) ? paths : [];
+        if (!idList.length && !pathList.length) {
+            return res.status(400).json({ error: 'ids or paths required' });
+        }
+
+        // Resolve every supplied path safely; ignore those that escape the root.
+        let unlinked = 0;
+        for (const p of pathList) {
+            const real = await safeResolveDownload(p);
+            if (real) {
+                try { await fs.unlink(real); unlinked++; } catch (e) { if (e.code !== 'ENOENT') throw e; }
+            }
+        }
+        // For id-based deletion we still need to find the on-disk path. The DB
+        // stores file_name only; resolve via the same group-folder mapping.
+        if (idList.length) {
+            const db = getDb();
+            const rows = db.prepare(`SELECT id, group_id, group_name, file_name, file_type FROM downloads WHERE id IN (${idList.map(() => '?').join(',')})`).all(...idList);
+            const config = JSON.parse(await fs.readFile(CONFIG_PATH, 'utf8'));
+            const folderById = new Map();
+            for (const g of (config.groups || [])) folderById.set(String(g.id), sanitizeName(g.name));
+            for (const row of rows) {
+                const folder = folderById.get(String(row.group_id)) || sanitizeName(row.group_name || 'unknown');
+                const typeFolder = row.file_type === 'photo' ? 'images'
+                    : row.file_type === 'video' ? 'videos'
+                    : row.file_type === 'audio' ? 'audio'
+                    : row.file_type === 'sticker' ? 'stickers' : 'documents';
+                const candidate = `${folder}/${typeFolder}/${row.file_name}`;
+                const real = await safeResolveDownload(candidate);
+                if (real) {
+                    try { await fs.unlink(real); unlinked++; } catch (e) { if (e.code !== 'ENOENT') throw e; }
+                }
+            }
+        }
+        const dbDeleted = deleteDownloadsBy({ ids: idList, filePaths: pathList });
+        broadcast({ type: 'bulk_delete', unlinked, dbDeleted });
+        res.json({ success: true, unlinked, dbDeleted });
+    } catch (e) {
+        console.error('POST /api/downloads/bulk-delete:', e);
+        res.status(500).json({ error: 'Internal error' });
+    }
+});
 
 // 6. Delete File (Physical + DB)
 app.delete('/api/file', async (req, res) => {
