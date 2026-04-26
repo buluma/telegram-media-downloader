@@ -124,6 +124,7 @@ async function init() {
     setupMediaSearch();
     setupStoriesPanel();
     setupGalleryGestures();
+    setupToggleA11y();
 
     // Initialise i18n + the language picker. The fall-through is English so
     // a missing-key during a translation roll-out still renders something.
@@ -241,16 +242,22 @@ function closeSidebar() {
 
 // ============ Groups Logic ============
 async function loadGroups() {
+    // Show 6 row skeletons while we wait for the network — better than a
+    // blank sidebar, especially on slow connections.
+    const list = document.getElementById('groups-list');
+    if (list && !list.children.length) list.innerHTML = renderRowSkeletons(6);
+
     try {
         const [groups, downloads] = await Promise.all([
             api.get('/api/groups'),
-            api.get('/api/downloads')
+            api.get('/api/downloads'),
         ]);
         state.groups = groups;
         state.downloads = downloads;
         renderGroupsList();
     } catch (e) {
         console.error('Failed to load groups:', e);
+        if (list) list.innerHTML = '';
     }
 }
 
@@ -292,22 +299,44 @@ function renderGroupsList() {
     }
 
     state.activeRings = state.activeRings || new Set();
+    let needsResolve = false;
     list.innerHTML = sorted.map(g => {
         const id = String(g.downloadId || g.id || g.name);
-        const subtitle = `${g.totalFiles || 0} files · ${g.sizeFormatted || '0 B'}`;
+        const rawName = g.name;
+        // Detect unresolved entries (added via paste-link before the engine
+        // could see the chat) and surface a friendly placeholder. We'll fire
+        // a one-shot refresh below.
+        const looksUnresolved = !rawName
+            || rawName === 'Unknown'
+            || rawName === id
+            || /^-?\d{6,}$/.test(rawName);
+        if (looksUnresolved) needsResolve = true;
+        const displayName = looksUnresolved ? 'Unknown chat' : rawName;
+        const subtitle = looksUnresolved
+            ? `Resolving… · ${g.totalFiles || 0} files`
+            : `${g.totalFiles || 0} files · ${g.sizeFormatted || '0 B'}`;
         const ring = state.activeRings.has(id) ? 'downloading' : null;
         return renderChatRow({
             id,
-            name: g.name,
+            name: displayName,
             subtitle,
             avatarType: g.type,
             avatarRing: ring,
             avatarDot: ring ? 'monitor' : null,
             time: g.lastDownloadAt ? formatRelativeTime(g.lastDownloadAt) : '',
             selected: state.currentGroupId === id,
-            data: { groupName: g.name },
+            data: { groupName: rawName },
         });
     }).join('');
+
+    // Fire a one-shot resolve in the background. We dedupe with an in-flight
+    // flag so a flurry of WS-driven re-renders doesn't hammer the endpoint.
+    if (needsResolve && !state._resolvingGroups) {
+        state._resolvingGroups = true;
+        api.post('/api/groups/refresh-info').then(r => {
+            if (r?.updated > 0) loadGroups();
+        }).catch(() => {}).finally(() => { state._resolvingGroups = false; });
+    }
 
     // Event delegation — click opens the group viewer; right-click / long-press
     // shows a context menu (handled by gestures.js / future addition).
@@ -430,33 +459,47 @@ function renderMediaGrid() {
 
     if (!state.selected) state.selected = new Set();
 
-    grid.innerHTML = filtered.map((file, i) => {
-        const checked = state.selected.has(file.fullPath);
-        const checkBadge = state.selectMode
-            ? `<div class="select-badge absolute top-1 left-1 w-5 h-5 rounded-full ${checked ? 'bg-tg-blue text-white' : 'bg-black/40 text-transparent'} flex items-center justify-center text-xs"><i class="ri-check-line"></i></div>`
+    // Time-group the items into Today / Yesterday / This week / Older.
+    // Headers are rendered as grid-column: 1 / -1 children so the existing
+    // CSS Grid layout keeps each section as a row of full-width tiles.
+    const sections = groupFilesByTime(filtered);
+    const tilesByIndex = filtered;
+
+    const html = sections.map(([label, items]) => {
+        const headerHtml = label
+            ? `<h4 class="grid-section-header" style="grid-column: 1 / -1; padding: 12px 4px 6px; color: var(--tg-textSecondary, #8B9BAA); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; position: sticky; top: 0; background: var(--tg-bg, #17212B); z-index: 1;">${escapeHtml(label)}</h4>`
             : '';
-        const ringClass = checked ? 'ring-2 ring-tg-blue' : '';
-        return `
-        <div class="media-item relative aspect-square bg-tg-panel rounded overflow-hidden cursor-pointer ${ringClass}" data-index="${i}" data-path="${escapeHtml(file.fullPath)}">
-            ${file.type === 'images' ?
-                `<img data-src="/files/${encodeURIComponent(file.fullPath)}?inline=1" class="w-full h-full object-cover" onerror="this.style.display='none'">` :
-                file.type === 'videos' ?
-                `<div class="relative w-full h-full bg-black">
-                    <video data-src="/files/${encodeURIComponent(file.fullPath)}?inline=1" class="w-full h-full object-cover" preload="none" muted></video>
-                    <div class="absolute inset-0 flex items-center justify-center">
-                        <div class="w-10 h-10 rounded-full bg-black/60 flex items-center justify-center">
-                            <i class="ri-play-fill text-white text-xl ml-0.5"></i>
+        const tiles = items.map(({ file, originalIndex }) => {
+            const checked = state.selected.has(file.fullPath);
+            const checkBadge = state.selectMode
+                ? `<div class="select-badge absolute top-1 left-1 w-6 h-6 rounded-full ${checked ? 'bg-tg-blue text-white' : 'bg-black/40 text-transparent'} flex items-center justify-center text-sm"><i class="ri-check-line"></i></div>`
+                : '';
+            const ringClass = checked ? 'ring-2 ring-tg-blue' : '';
+            return `
+            <div class="media-item relative aspect-square bg-tg-panel rounded overflow-hidden cursor-pointer ${ringClass}" data-index="${originalIndex}" data-path="${escapeHtml(file.fullPath)}">
+                ${file.type === 'images' ?
+                    `<img data-src="/files/${encodeURIComponent(file.fullPath)}?inline=1" class="w-full h-full object-cover" onerror="this.style.display='none'" alt="">` :
+                    file.type === 'videos' ?
+                    `<div class="relative w-full h-full bg-black">
+                        <video data-src="/files/${encodeURIComponent(file.fullPath)}?inline=1" class="w-full h-full object-cover" preload="none" muted></video>
+                        <div class="absolute inset-0 flex items-center justify-center">
+                            <div class="w-10 h-10 rounded-full bg-black/60 flex items-center justify-center">
+                                <i class="ri-play-fill text-white text-xl ml-0.5"></i>
+                            </div>
                         </div>
-                    </div>
-                </div>` :
-                `<div class="w-full h-full flex flex-col items-center justify-center">
-                    <i class="${getFileIcon(file.extension)} text-3xl text-tg-textSecondary"></i>
-                    <span class="text-xs text-tg-textSecondary mt-1 truncate px-2 w-full text-center">${escapeHtml(file.name || '')}</span>
-                </div>`
-            }
-            ${checkBadge}
-        </div>`;
+                    </div>` :
+                    `<div class="w-full h-full flex flex-col items-center justify-center">
+                        <i class="${getFileIcon(file.extension)} text-3xl text-tg-textSecondary"></i>
+                        <span class="text-xs text-tg-textSecondary mt-1 truncate px-2 w-full text-center">${escapeHtml(file.name || '')}</span>
+                    </div>`
+                }
+                ${checkBadge}
+            </div>`;
+        }).join('');
+        return headerHtml + tiles;
     }).join('');
+
+    grid.innerHTML = html;
 
     grid.querySelectorAll('.media-item[data-index]').forEach(el => {
         el.addEventListener('click', (ev) => {
@@ -489,6 +532,71 @@ function updateSelectionBar() {
     const count = state.selected ? state.selected.size : 0;
     document.getElementById('selection-count').textContent = `${count} selected`;
     if (bar) bar.classList.toggle('hidden', count === 0);
+}
+
+// Group files into Telegram-style time sections. Returns an array of
+// [label, [{file, originalIndex}, ...]] entries in display order. The
+// `originalIndex` is preserved from the supplied list so the click handler
+// can still pass it to openMediaViewer().
+function groupFilesByTime(files) {
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const startOfYesterday = startOfToday - 24 * 60 * 60 * 1000;
+    const startOfWeek = startOfToday - 6 * 24 * 60 * 60 * 1000;
+    const buckets = { today: [], yesterday: [], week: [], older: [] };
+
+    files.forEach((file, originalIndex) => {
+        const t = file.modified ? Date.parse(file.modified) : NaN;
+        if (!Number.isFinite(t)) { buckets.older.push({ file, originalIndex }); return; }
+        if (t >= startOfToday) buckets.today.push({ file, originalIndex });
+        else if (t >= startOfYesterday) buckets.yesterday.push({ file, originalIndex });
+        else if (t >= startOfWeek) buckets.week.push({ file, originalIndex });
+        else buckets.older.push({ file, originalIndex });
+    });
+
+    const out = [];
+    if (buckets.today.length) out.push(['Today', buckets.today]);
+    if (buckets.yesterday.length) out.push(['Yesterday', buckets.yesterday]);
+    if (buckets.week.length) out.push(['Earlier this week', buckets.week]);
+    if (buckets.older.length) out.push(['Older', buckets.older]);
+    // If we ended up with a single section, drop the header so a small group
+    // doesn't get an awkward "Older" label above one row.
+    if (out.length === 1) out[0][0] = '';
+    return out;
+}
+
+// Promote every .tg-toggle div to a keyboard-accessible switch. The visual
+// markup stays the same (Tailwind-styled pill via the existing CSS) but the
+// element gets role="switch" + aria-checked + tabindex so screen readers
+// announce it correctly and Space/Enter toggle it. A MutationObserver
+// mirrors the .active class into aria-checked when JS toggles the class.
+function setupToggleA11y() {
+    const observe = (el) => {
+        if (el.dataset.a11yToggle) return;
+        el.dataset.a11yToggle = '1';
+        if (!el.hasAttribute('role')) el.setAttribute('role', 'switch');
+        if (!el.hasAttribute('tabindex')) el.tabIndex = 0;
+        const sync = () => el.setAttribute('aria-checked', el.classList.contains('active') ? 'true' : 'false');
+        sync();
+        new MutationObserver(sync).observe(el, { attributes: true, attributeFilter: ['class'] });
+        el.addEventListener('keydown', (e) => {
+            if (e.key === ' ' || e.key === 'Enter') {
+                e.preventDefault();
+                el.click();
+            }
+        });
+    };
+    document.querySelectorAll('.tg-toggle').forEach(observe);
+    // Watch for newly-added toggles (the group-settings modal builds them dynamically).
+    new MutationObserver((records) => {
+        for (const rec of records) {
+            for (const node of rec.addedNodes) {
+                if (!(node instanceof Element)) continue;
+                if (node.classList?.contains('tg-toggle')) observe(node);
+                node.querySelectorAll?.('.tg-toggle').forEach(observe);
+            }
+        }
+    }).observe(document.body, { childList: true, subtree: true });
 }
 
 function setupGalleryGestures() {
