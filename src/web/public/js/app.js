@@ -11,6 +11,8 @@ import * as Viewer from './viewer.js';
 import { initEngine, handleEngineWsMessage } from './engine.js';
 import { ws } from './ws.js';
 import { initTheme, getTheme, setTheme } from './theme.js';
+import { initStatusBar } from './statusbar.js';
+import * as Notifications from './notifications.js';
 
 // ============ Initialization ============
 async function init() {
@@ -27,6 +29,12 @@ async function init() {
     ws.on('purge_all', () => { loadGroups(); loadStats(); });
     ws.on('file_deleted', () => { /* gallery refresh handled by store */ });
     ws.on('config_updated', () => { if (state.currentPage === 'settings') Settings.loadSettings(); });
+    ws.on('monitor_event', (m) => {
+        if (m.type === 'download_complete') Notifications.notifyDownloadComplete(m.payload || {});
+    });
+
+    // Sticky status bar (engine state + counters + WS link)
+    initStatusBar();
 
     await loadGroups();
     await loadStats();

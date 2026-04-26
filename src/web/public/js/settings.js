@@ -1,5 +1,6 @@
 import { api } from './api.js';
 import { showToast, escapeHtml } from './utils.js';
+import * as Notifications from './notifications.js';
 
 export async function loadSettings() {
     try {
@@ -47,6 +48,23 @@ export async function loadSettings() {
             dmToggle.classList.toggle('active', config.allowDmDownloads === true);
             dmToggle.onclick = () => {
                 dmToggle.classList.toggle('active');
+            };
+        }
+
+        const notifyToggle = document.getElementById('setting-notifications');
+        if (notifyToggle) {
+            const refresh = () => notifyToggle.classList.toggle('active', Notifications.isEnabled());
+            refresh();
+            notifyToggle.onclick = async (e) => {
+                e.preventDefault();
+                if (Notifications.isEnabled()) {
+                    Notifications.disable();
+                    showToast('Notifications disabled', 'info');
+                } else {
+                    const ok = await Notifications.requestEnable();
+                    showToast(ok ? 'Notifications enabled' : 'Permission denied', ok ? 'success' : 'error');
+                }
+                refresh();
             };
         }
 
