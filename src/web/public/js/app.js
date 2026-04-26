@@ -10,6 +10,7 @@ import * as Settings from './settings.js';
 import * as Viewer from './viewer.js';
 import { initEngine, handleEngineWsMessage } from './engine.js';
 import { ws } from './ws.js';
+import { initTheme, getTheme, setTheme } from './theme.js';
 
 // ============ Initialization ============
 async function init() {
@@ -62,6 +63,16 @@ async function init() {
 
     // Paste-URL drawer
     setupPasteUrl();
+
+    // Appearance toggle
+    initTheme();
+    document.querySelectorAll('[data-theme-set]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            setTheme(btn.dataset.themeSet);
+            highlightThemeButtons();
+        });
+    });
+    highlightThemeButtons();
 
     navigateTo('viewer');
 }
@@ -680,6 +691,16 @@ function setupEventListeners() {
     
     // Media tabs
     setupMediaTabs();
+}
+
+function highlightThemeButtons() {
+    const cur = getTheme();
+    document.querySelectorAll('[data-theme-set]').forEach(b => {
+        const active = b.dataset.themeSet === cur;
+        b.classList.toggle('ring-2', active);
+        b.classList.toggle('ring-tg-blue', active);
+        b.classList.toggle('text-tg-blue', active);
+    });
 }
 
 function setupPasteUrl() {

@@ -4,16 +4,24 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="dark light">
     <title>Login - Telegram Downloader</title>
-    <!-- Tailwind CSS (via CDN for simplicity) -->
+    <script>
+        (() => {
+            const t = localStorage.getItem('tgdl-theme') || 'auto';
+            const dark = t === 'dark' || (t === 'auto' && !window.matchMedia('(prefers-color-scheme: light)').matches);
+            document.documentElement.classList.add(dark ? 'theme-dark' : 'theme-light');
+        })();
+    </script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        body {
-            background-color: #0F172A;
-            /* Slate 900 */
-            color: #E2E8F0;
-            /* Slate 200 */
-        }
+        html.theme-dark body { background-color: #0F172A; color: #E2E8F0; }
+        html.theme-light body { background-color: #F4F4F5; color: #1F2937; }
+        html.theme-light .bg-gray-800 { background-color: #FFFFFF !important; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+        html.theme-light .bg-gray-700, html.theme-light .bg-gray-900 { background-color: #F0F4F7 !important; }
+        html.theme-light .text-white { color: #1F2937 !important; }
+        html.theme-light .text-gray-400, html.theme-light .text-gray-500 { color: #65737E !important; }
+        html.theme-light .border-gray-600 { border-color: #E1E5EA !important; }
     </style>
 </head>
 
