@@ -28,7 +28,11 @@ COPY scripts ./scripts
 COPY runner.js config.example.json package.json LICENSE README.md SECURITY.md ./
 
 # Persistent state (sessions, config, downloads) — mount this as a volume.
+# `chmod a+rX` guarantees files end up readable + dirs traversable even when
+# BuildKit lays down mode 0 (seen on Windows hosts and some gha-cache hits),
+# which previously surfaced as `Cannot find module '/app/src/web/server.js'`.
 RUN mkdir -p /app/data /app/data/downloads /app/data/logs /app/data/sessions \
+    && chmod -R a+rX /app \
     && chown -R node:node /app
 
 USER node
