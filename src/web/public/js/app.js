@@ -46,6 +46,9 @@ async function init() {
     // Settings globals
     window.applyPreset = Settings.applyPreset;
     document.getElementById('save-settings')?.addEventListener('click', Settings.saveSettings);
+    document.getElementById('save-api-credentials')?.addEventListener('click', Settings.saveApiCredentials);
+    document.getElementById('change-password-btn')?.addEventListener('click', Settings.changePassword);
+    document.getElementById('logout-btn')?.addEventListener('click', Settings.signOut);
 
     navigateTo('viewer');
 }

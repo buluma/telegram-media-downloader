@@ -834,10 +834,13 @@ app.get('/api/config', async (req, res) => {
     try {
         const config = JSON.parse(await fs.readFile(CONFIG_PATH, 'utf8'));
         const safe = JSON.parse(JSON.stringify(config));
-        // Strip secrets — never let the API expose credentials or hashes.
+        // The Telegram apiId is essentially public (it identifies the
+        // application registration, not a user) so we surface it to the SPA
+        // for editing. apiHash IS sensitive — replace with a presence flag.
         if (safe.telegram) {
+            const hashSet = !!safe.telegram.apiHash;
             delete safe.telegram.apiHash;
-            delete safe.telegram.apiId;
+            safe.telegram.apiHashSet = hashSet;
         }
         if (safe.web) {
             delete safe.web.password;
@@ -868,20 +871,64 @@ app.get('/api/config', async (req, res) => {
 // 7b. Config Update
 app.post('/api/config', async (req, res) => {
     try {
-        // Read existing first to preserve structure
+        // Reject anything that smells like an attempt to inject auth state
+        // through the config endpoint. Web auth lives in dedicated routes.
+        if (req.body?.web?.password || req.body?.web?.passwordHash) {
+            return res.status(400).json({
+                error: 'Use /api/auth/setup or /api/auth/change-password to manage dashboard auth.',
+            });
+        }
+
         const currentConfig = JSON.parse(await fs.readFile(CONFIG_PATH, 'utf8'));
         const newConfig = { ...currentConfig, ...req.body };
-        
-        // Deep merge for specific sections
+
+        // Deep-merge sub-sections so a partial PATCH (e.g., only telegram.apiId)
+        // doesn't blow away the rest of that section (e.g., telegram.apiHash).
+        if (req.body.telegram) newConfig.telegram = { ...currentConfig.telegram, ...req.body.telegram };
         if (req.body.download) newConfig.download = { ...currentConfig.download, ...req.body.download };
         if (req.body.rateLimits) newConfig.rateLimits = { ...currentConfig.rateLimits, ...req.body.rateLimits };
         if (req.body.diskManagement) newConfig.diskManagement = { ...currentConfig.diskManagement, ...req.body.diskManagement };
-        
-        await fs.writeFile(CONFIG_PATH, JSON.stringify(newConfig, null, 4));
-        broadcast({ type: 'config_updated', config: newConfig });
+        if (req.body.proxy !== undefined) newConfig.proxy = req.body.proxy; // full replace; null clears
+        if (req.body.web) {
+            // Allow toggling enabled flag, but never let the route alter
+            // password/passwordHash regardless of source.
+            const safeWeb = { ...currentConfig.web, ...req.body.web };
+            delete safeWeb.password;
+            if (!currentConfig.web?.passwordHash) delete safeWeb.passwordHash;
+            else safeWeb.passwordHash = currentConfig.web.passwordHash;
+            newConfig.web = safeWeb;
+        }
+
+        // Range / type sanity for the most-abused fields
+        const dl = newConfig.download || {};
+        if (dl.concurrent != null && (dl.concurrent < 1 || dl.concurrent > 50)) {
+            return res.status(400).json({ error: 'download.concurrent must be 1-50' });
+        }
+        if (dl.retries != null && (dl.retries < 0 || dl.retries > 50)) {
+            return res.status(400).json({ error: 'download.retries must be 0-50' });
+        }
+        if (newConfig.pollingInterval != null && newConfig.pollingInterval < 1) {
+            return res.status(400).json({ error: 'pollingInterval must be >= 1 (seconds)' });
+        }
+
+        // Atomic write — write to a temp file then rename so a crash mid-write
+        // can't leave config.json half-flushed.
+        const tmpPath = CONFIG_PATH + '.tmp';
+        await fs.writeFile(tmpPath, JSON.stringify(newConfig, null, 4));
+        await fs.rename(tmpPath, CONFIG_PATH);
+
+        // Reset the lazy AccountManager singleton if Telegram credentials
+        // changed — a stale instance would still be wired to the old apiId.
+        if (req.body.telegram && _accountManager) {
+            try { await _accountManager.disconnectAll(); } catch {}
+            _accountManager = null;
+        }
+
+        broadcast({ type: 'config_updated' });
         res.json({ success: true });
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        console.error('POST /api/config:', error);
+        res.status(500).json({ error: 'Internal error' });
     }
 });
 

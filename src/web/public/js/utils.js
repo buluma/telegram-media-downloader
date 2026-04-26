@@ -89,14 +89,18 @@ export function createAvatar(id, name, type) {
 }
 
 export function showToast(message, type = 'info') {
-    // Basic toast implementation
     const toast = document.createElement('div');
-    toast.className = `fixed bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg shadow-lg z-[100] transition-opacity duration-300 ${
-        type === 'error' ? 'bg-tg-red text-white' : 'bg-tg-blue text-white'
-    }`;
+    const colorByType = {
+        error: 'bg-tg-red text-white',
+        success: 'bg-tg-green text-white',
+        warning: 'bg-tg-orange text-white',
+        info: 'bg-tg-blue text-white',
+    };
+    toast.className = `fixed bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg shadow-lg z-[100] transition-opacity duration-300 ${colorByType[type] || colorByType.info}`;
     toast.textContent = message;
+    toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
     document.body.appendChild(toast);
-    
+
     setTimeout(() => {
         toast.style.opacity = '0';
         setTimeout(() => toast.remove(), 300);
