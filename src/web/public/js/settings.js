@@ -1,11 +1,10 @@
 import { api } from './api.js';
-import { showToast } from './utils.js';
+import { showToast, escapeHtml } from './utils.js';
 
 export async function loadSettings() {
     try {
         const config = await api.get('/api/config');
-        
-        // Populate inputs
+
         const bind = (id, val) => {
             const el = document.getElementById(id);
             if (el) el.value = val !== undefined ? val : '';
@@ -14,13 +13,14 @@ export async function loadSettings() {
         const dl = config.download || {};
         const rl = config.rateLimits || {};
         const dm = config.diskManagement || {};
+        const tg = config.telegram || {};
 
         bind('setting-concurrent', dl.concurrent);
         document.getElementById('concurrent-value').textContent = dl.concurrent || 3;
 
         bind('setting-retries', dl.retries);
         document.getElementById('retries-value').textContent = dl.retries || 5;
-        
+
         bind('setting-path', dl.path || './data/downloads');
 
         bind('setting-rpm', rl.requestsPerMinute);
@@ -29,7 +29,6 @@ export async function loadSettings() {
         bind('setting-polling', config.pollingInterval);
         document.getElementById('polling-value').textContent = (config.pollingInterval || 10) + 's';
 
-        // Max Speed
         const speedEl = document.getElementById('setting-max-speed');
         if (speedEl) {
             speedEl.value = dl.maxSpeed || 0;
@@ -42,6 +41,17 @@ export async function loadSettings() {
         bind('setting-max-disk', dm.maxTotalSize || '');
         bind('setting-max-video', dm.maxVideoSize || '');
         bind('setting-max-image', dm.maxImageSize || '');
+
+        // Telegram API: only the apiId is exposed; apiHash is server-only.
+        const apiIdEl = document.getElementById('setting-api-id');
+        if (apiIdEl) apiIdEl.value = tg.apiId || '';
+        const apiHashEl = document.getElementById('setting-api-hash');
+        if (apiHashEl) apiHashEl.placeholder = tg.apiHashSet
+            ? '(saved — leave blank to keep)'
+            : 'From my.telegram.org';
+
+        // Accounts list rendered async (independent from main settings load)
+        loadAccounts().catch(() => {});
 
     } catch (e) {
         console.error('Failed to load settings', e);
@@ -58,21 +68,21 @@ export async function saveSettings() {
             maxSpeed: parseInt(get('setting-max-speed')) || 0,
         },
         rateLimits: {
-            requestsPerMinute: parseInt(get('setting-rpm'))
+            requestsPerMinute: parseInt(get('setting-rpm')),
         },
         pollingInterval: parseInt(get('setting-polling')),
         diskManagement: {
             maxTotalSize: get('setting-max-disk') || null,
             maxVideoSize: get('setting-max-video') || null,
-            maxImageSize: get('setting-max-image') || null
-        }
+            maxImageSize: get('setting-max-image') || null,
+        },
     };
 
     try {
         await api.post('/api/config', data);
         showToast('Settings saved!', 'success');
     } catch (e) {
-        showToast('Failed to save settings', 'error');
+        showToast(`Failed to save settings: ${e.message}`, 'error');
     }
 }
 
@@ -90,9 +100,97 @@ export function applyPreset(type) {
         document.getElementById('setting-rpm').value = 30;
         document.getElementById('setting-polling').value = 5;
     }
-    
-    // Trigger updates
+
     document.getElementById('setting-concurrent').dispatchEvent(new Event('input'));
     document.getElementById('setting-rpm').dispatchEvent(new Event('input'));
     document.getElementById('setting-polling').dispatchEvent(new Event('input'));
+}
+
+// ====== Telegram API credentials ============================================
+
+export async function saveApiCredentials() {
+    const apiId = document.getElementById('setting-api-id')?.value.trim();
+    const apiHash = document.getElementById('setting-api-hash')?.value.trim();
+    if (!apiId) {
+        showToast('API ID required', 'error');
+        return;
+    }
+    const body = { telegram: { apiId } };
+    if (apiHash) body.telegram.apiHash = apiHash;
+    try {
+        await api.post('/api/config', body);
+        showToast('Credentials saved', 'success');
+        document.getElementById('setting-api-hash').value = '';
+        loadSettings();
+    } catch (e) {
+        showToast(`Failed: ${e.message}`, 'error');
+    }
+}
+
+// ====== Accounts ============================================================
+
+export async function loadAccounts() {
+    const container = document.getElementById('accounts-list');
+    if (!container) return;
+    try {
+        const accounts = await api.get('/api/accounts');
+        if (!accounts.length) {
+            container.innerHTML = `<p class="text-tg-textSecondary text-sm">No Telegram accounts yet. Click <strong>Add account</strong> above to get started.</p>`;
+            return;
+        }
+        container.innerHTML = accounts.map(a => {
+            const star = a.isDefault ? '<span class="text-tg-blue text-xs">★ default</span>' : '';
+            const sub = [a.username && `@${a.username}`, a.phone].filter(Boolean).join(' • ');
+            return `
+            <div class="flex items-center justify-between bg-tg-bg/40 rounded-lg p-3" data-account="${escapeHtml(a.id)}">
+                <div class="min-w-0">
+                    <div class="text-tg-text text-sm font-medium truncate">${escapeHtml(a.name || a.id)} ${star}</div>
+                    <div class="text-tg-textSecondary text-xs truncate">${escapeHtml(sub || a.id)}</div>
+                </div>
+                <button class="tg-btn-secondary text-xs px-3 py-1 text-red-400 hover:bg-red-500/10" data-action="remove-account" data-id="${escapeHtml(a.id)}">
+                    Remove
+                </button>
+            </div>`;
+        }).join('');
+        container.querySelectorAll('[data-action="remove-account"]').forEach(btn => {
+            btn.addEventListener('click', () => removeAccount(btn.dataset.id));
+        });
+    } catch (e) {
+        container.innerHTML = `<p class="text-red-400 text-sm">Failed to load accounts: ${escapeHtml(e.message)}</p>`;
+    }
+}
+
+async function removeAccount(id) {
+    if (!confirm(`Remove account "${id}"? The encrypted session file will be deleted.`)) return;
+    try {
+        await api.delete(`/api/accounts/${encodeURIComponent(id)}`);
+        showToast('Account removed', 'success');
+        loadAccounts();
+    } catch (e) {
+        showToast(`Remove failed: ${e.message}`, 'error');
+    }
+}
+
+// ====== Dashboard security =================================================
+
+export async function changePassword() {
+    const cur = document.getElementById('sec-current')?.value;
+    const next = document.getElementById('sec-new')?.value;
+    if (!cur || !next) { showToast('Both fields required', 'error'); return; }
+    if (next.length < 8) { showToast('New password must be at least 8 characters', 'error'); return; }
+    try {
+        await api.post('/api/auth/change-password', { currentPassword: cur, newPassword: next });
+        document.getElementById('sec-current').value = '';
+        document.getElementById('sec-new').value = '';
+        showToast('Password changed', 'success');
+    } catch (e) {
+        showToast(`Change failed: ${e.message}`, 'error');
+    }
+}
+
+export async function signOut() {
+    try {
+        await api.post('/api/logout');
+    } catch { /* ignore — we're leaving anyway */ }
+    window.location.href = '/login.html';
 }
