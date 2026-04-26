@@ -78,6 +78,20 @@ jobs:
           for i in $(seq 1 30); do
             if docker exec smoke node scripts/healthcheck.js >/dev/null 2>&1; then
               echo "OK: healthcheck passed after ${i}s"
+
+              # Entrypoint must drop from root → node (uid 1000). If it
+              # didn't, the data volume chown trick won't apply but worse
+              # — the app would run as root, defeating the whole non-root
+              # posture of the image.
+              APP_UID=$(docker exec smoke sh -c 'ps -o user= -p $(pgrep -f "node src/web/server.js")' | head -n1 | tr -d ' ')
+              if [ "$APP_UID" != "node" ]; then
+                echo "FAIL: app process is not running as node (got: '$APP_UID')"
+                docker logs smoke
+                docker stop smoke >/dev/null
+                exit 1
+              fi
+              echo "OK: app running as $APP_UID"
+
               docker stop smoke >/dev/null
               exit 0
             fi

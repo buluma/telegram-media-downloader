@@ -18,8 +18,10 @@ FROM node:20.20.2-alpine AS runtime
 ENV NODE_ENV=production \
     PORT=3000
 
-# Add libstdc++ for the prebuilt better-sqlite3 binary.
-RUN apk add --no-cache tini libstdc++
+# tini      — proper PID 1 (signal handling + zombie reaping)
+# libstdc++ — needed by better-sqlite3's prebuilt binary
+# su-exec   — drop from root → node after the entrypoint fixes /app/data perms
+RUN apk add --no-cache tini libstdc++ su-exec
 
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
@@ -33,13 +35,16 @@ COPY runner.js config.example.json package.json LICENSE README.md SECURITY.md ./
 # which previously surfaced as `Cannot find module '/app/src/web/server.js'`.
 RUN mkdir -p /app/data /app/data/downloads /app/data/logs /app/data/sessions \
     && chmod -R a+rX /app \
+    && chmod +x /app/scripts/docker-entrypoint.sh \
     && chown -R node:node /app
 
-USER node
+# We deliberately run the entrypoint as root so it can chown the bind-mounted
+# /app/data volume on first boot — su-exec drops to `node` before exec'ing
+# CMD, so the actual app process is still non-root.
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD node scripts/healthcheck.js || exit 1
 
-ENTRYPOINT ["/sbin/tini", "--"]
+ENTRYPOINT ["/sbin/tini", "--", "/app/scripts/docker-entrypoint.sh"]
 CMD ["node", "src/web/server.js"]
