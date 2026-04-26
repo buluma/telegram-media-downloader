@@ -82,15 +82,23 @@ jobs:
               # Entrypoint must drop from root → node (uid 1000). If it
               # didn't, the data volume chown trick won't apply but worse
               # — the app would run as root, defeating the whole non-root
-              # posture of the image.
-              APP_UID=$(docker exec smoke sh -c 'ps -o user= -p $(pgrep -f "node src/web/server.js")' | head -n1 | tr -d ' ')
-              if [ "$APP_UID" != "node" ]; then
-                echo "FAIL: app process is not running as node (got: '$APP_UID')"
+              # posture of the image. BusyBox `ps` doesn't take `-p PID`,
+              # so we read /proc/$pid/status directly.
+              PID=$(docker exec smoke pgrep -f 'node src/web/server.js' | head -n1)
+              if [ -z "$PID" ]; then
+                echo "FAIL: server.js process not found"
                 docker logs smoke
                 docker stop smoke >/dev/null
                 exit 1
               fi
-              echo "OK: app running as $APP_UID"
+              APP_UID=$(docker exec smoke sh -c "awk '/^Uid:/ {print \$2}' /proc/$PID/status")
+              if [ "$APP_UID" != "1000" ]; then
+                echo "FAIL: app running as uid '$APP_UID', expected 1000 (node)"
+                docker logs smoke
+                docker stop smoke >/dev/null
+                exit 1
+              fi
+              echo "OK: app running as uid $APP_UID (node)"
 
               docker stop smoke >/dev/null
               exit 0
