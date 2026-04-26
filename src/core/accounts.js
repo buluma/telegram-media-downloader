@@ -8,10 +8,17 @@ import { StringSession } from 'telegram/sessions/index.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import crypto from 'crypto';
 import { SecureSession } from './security.js';
 import { getOrGenerateSecret } from './secret.js';
 import { colorize } from '../cli/colors.js';
 import { suppressNoise } from './logger.js';
+
+function deferred() {
+    let resolve, reject;
+    const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+    return { promise, resolve, reject };
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SESSIONS_DIR = path.join(__dirname, '../../data/sessions');
@@ -56,6 +63,7 @@ export class AccountManager {
         this.secure = new SecureSession(SESSION_PASSWORD);
         this.clients = new Map();   // accountId -> TelegramClient
         this.metadata = new Map();  // accountId -> { id, name, phone, userId }
+        this._authFlows = new Map(); // sessionId -> PhoneAuthFlow (for web wizard)
     }
 
     /**
@@ -383,5 +391,190 @@ export class AccountManager {
         }
         this.clients.clear();
         this.metadata.clear();
+    }
+
+    // ====== Web phone-auth wizard ===========================================
+    //
+    // The CLI's addAccount() drives client.start() with synchronous-feeling
+    // questionFn callbacks. The web flow needs the same end result but split
+    // across HTTP round-trips (phone → OTP → 2FA). We park gramJS's callbacks
+    // on deferred Promises and resolve them as each HTTP call arrives.
+    //
+    // Flow:
+    //   beginPhoneAuth(label?)         → { sessionId, state: 'phone' }
+    //   submitPhone(sessionId, phone)   → { state: 'code' | 'error' }
+    //   submitCode(sessionId, code)     → { state: 'password' | 'done' | 'error' }
+    //   submit2fa(sessionId, password)  → { state: 'done' | 'error', accountId }
+    //   cancelAuth(sessionId)           → { ok: true }
+    //   getAuthStatus(sessionId)        → { state, error, accountId }
+
+    async beginPhoneAuth(label) {
+        if (!this.config.telegram?.apiId || !this.config.telegram?.apiHash) {
+            throw new Error('Telegram API credentials not configured. Set telegram.apiId and telegram.apiHash in config first.');
+        }
+        const requestedLabel = (label || '').trim().replace(/\s+/g, '_').toLowerCase();
+        const isTempId = !requestedLabel;
+        const accountId = isTempId ? `temp_${Date.now()}` : requestedLabel;
+        if (!isTempId && this.clients.has(accountId)) {
+            throw new Error(`Account "${accountId}" already exists`);
+        }
+
+        const sessionId = crypto.randomBytes(8).toString('hex');
+        const flow = {
+            sessionId,
+            requestedLabel: isTempId ? null : accountId,
+            isTempId,
+            state: 'phone', // phone | code | password | done | error | cancelled
+            error: null,
+            accountId: null,
+            phoneDeferred: deferred(),
+            codeDeferred: deferred(),
+            passwordDeferred: deferred(),
+            stateWaiters: new Set(),
+            createdAt: Date.now(),
+        };
+        this._authFlows.set(sessionId, flow);
+
+        // Build the client and start the login in the background. Each
+        // gramJS callback parks on its corresponding deferred until the
+        // matching HTTP submit*() resolves it. State transitions notify any
+        // pending stateWaiters so the HTTP handler can return promptly.
+        const client = await this.createClient(isTempId ? 'New Account' : accountId);
+        flow.client = client;
+        await client.connect();
+
+        const setState = (s) => {
+            flow.state = s;
+            for (const fn of flow.stateWaiters) try { fn(s); } catch {}
+        };
+
+        client.start({
+            phoneNumber: () => {
+                setState('phone');
+                return flow.phoneDeferred.promise;
+            },
+            phoneCode: () => {
+                setState('code');
+                return flow.codeDeferred.promise;
+            },
+            password: () => {
+                setState('password');
+                return flow.passwordDeferred.promise;
+            },
+            onError: (err) => {
+                flow.error = err?.message || String(err);
+            },
+        }).then(async () => {
+            // Login succeeded — promote the temp client to a saved session.
+            try {
+                const me = await client.getMe();
+                let finalId = isTempId
+                    ? (me.username || `acc_${me.phone || Date.now()}`).toLowerCase()
+                    : accountId;
+                let base = finalId, n = 1;
+                while (this.clients.has(finalId)) finalId = `${base}_${n++}`;
+
+                const sessionStr = client.session.save();
+                const encrypted = this.secure.encrypt(sessionStr);
+                fs.writeFileSync(
+                    path.join(SESSIONS_DIR, `${finalId}.enc`),
+                    JSON.stringify(encrypted, null, 2),
+                );
+                this.clients.set(finalId, client);
+                this.metadata.set(finalId, {
+                    id: finalId,
+                    name: `${me.firstName || ''} ${me.lastName || ''}`.trim(),
+                    phone: me.phone || '',
+                    userId: String(me.id),
+                    username: me.username || '',
+                });
+                await this.syncToConfig().catch(() => {});
+                flow.accountId = finalId;
+                setState('done');
+            } catch (e) {
+                flow.error = e?.message || String(e);
+                setState('error');
+            }
+            // Auth flows are short-lived; clean up after a grace period so the
+            // SPA can poll one last time and read the final state.
+            setTimeout(() => this._authFlows.delete(sessionId), 60000);
+        }).catch((err) => {
+            flow.error = err?.message || String(err);
+            setState('error');
+            try { client.disconnect().catch(() => {}); } catch {}
+            setTimeout(() => this._authFlows.delete(sessionId), 60000);
+        });
+
+        return { sessionId, state: 'phone' };
+    }
+
+    /** Wait for the next state transition (or timeout). */
+    _waitNextState(flow, timeoutMs = 30000) {
+        const cur = flow.state;
+        return new Promise((resolve) => {
+            const t = setTimeout(() => {
+                flow.stateWaiters.delete(notify);
+                resolve(flow.state);
+            }, timeoutMs);
+            const notify = (s) => {
+                if (s === cur) return;
+                clearTimeout(t);
+                flow.stateWaiters.delete(notify);
+                resolve(s);
+            };
+            flow.stateWaiters.add(notify);
+        });
+    }
+
+    async submitPhone(sessionId, phone) {
+        const flow = this._authFlows.get(sessionId);
+        if (!flow) throw new Error('Auth session not found');
+        if (flow.state !== 'phone') throw new Error(`Wrong state: ${flow.state}`);
+        const trimmed = String(phone || '').trim();
+        if (!trimmed) throw new Error('Phone required');
+        flow.phoneDeferred.resolve(trimmed);
+        await this._waitNextState(flow);
+        return { state: flow.state, error: flow.error };
+    }
+
+    async submitCode(sessionId, code) {
+        const flow = this._authFlows.get(sessionId);
+        if (!flow) throw new Error('Auth session not found');
+        if (flow.state !== 'code') throw new Error(`Wrong state: ${flow.state}`);
+        const trimmed = String(code || '').trim();
+        if (!trimmed) throw new Error('Code required');
+        flow.codeDeferred.resolve(trimmed);
+        await this._waitNextState(flow);
+        return { state: flow.state, error: flow.error, accountId: flow.accountId };
+    }
+
+    async submit2fa(sessionId, password) {
+        const flow = this._authFlows.get(sessionId);
+        if (!flow) throw new Error('Auth session not found');
+        if (flow.state !== 'password') throw new Error(`Wrong state: ${flow.state}`);
+        flow.passwordDeferred.resolve(String(password || ''));
+        await this._waitNextState(flow);
+        return { state: flow.state, error: flow.error, accountId: flow.accountId };
+    }
+
+    async cancelAuth(sessionId) {
+        const flow = this._authFlows.get(sessionId);
+        if (!flow) return { ok: false, reason: 'not_found' };
+        flow.state = 'cancelled';
+        // Reject all deferreds to unblock client.start()
+        try { flow.phoneDeferred.reject(new Error('cancelled')); } catch {}
+        try { flow.codeDeferred.reject(new Error('cancelled')); } catch {}
+        try { flow.passwordDeferred.reject(new Error('cancelled')); } catch {}
+        if (flow.client) {
+            try { await flow.client.disconnect(); } catch {}
+        }
+        this._authFlows.delete(sessionId);
+        return { ok: true };
+    }
+
+    getAuthStatus(sessionId) {
+        const flow = this._authFlows.get(sessionId);
+        if (!flow) return null;
+        return { state: flow.state, error: flow.error, accountId: flow.accountId };
     }
 }
