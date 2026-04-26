@@ -1507,16 +1507,17 @@ app.put('/api/groups/:id', async (req, res) => {
         let groupIndex = config.groups.findIndex(g => String(g.id) === groupId);
         
         if (groupIndex === -1) {
-            // Create new
-            // Resolve real name from Telegram if not provided or generic
+            // Create new — resolve a real name from any loaded account.
             let groupName = req.body.name;
-            if (!groupName || groupName.startsWith('Group ')) {
-                try {
-                    if (telegramClient && isConnected) {
-                        const entity = await telegramClient.getEntity(BigInt(groupId));
-                        groupName = entity?.title || entity?.firstName || entity?.username || groupName;
-                    }
-                } catch { /* keep whatever name we have */ }
+            if (!groupName || groupName === 'Unknown' || groupName === groupId || groupName.startsWith('Group ')) {
+                const r = await resolveEntityAcrossAccounts(groupId);
+                if (r?.entity) {
+                    const e = r.entity;
+                    groupName = e.title
+                        || (e.firstName && (e.firstName + (e.lastName ? ' ' + e.lastName : '')))
+                        || e.username
+                        || groupName;
+                }
             }
             const newGroup = {
                 id: groupId.startsWith('-') ? parseInt(groupId) : groupId,
@@ -1580,6 +1581,53 @@ app.get('/api/groups/:id/photo', async (req, res) => {
     if (url && existsSync(photoPath)) return res.sendFile(photoPath);
     
     res.status(404).send('Not found');
+});
+
+// Walks every group (config-defined and DB-only) and tries to resolve a
+// human-readable name + cached profile photo. Used by the SPA when it
+// detects a row whose name is "Unknown" or just the numeric id.
+app.post('/api/groups/refresh-info', async (req, res) => {
+    try {
+        const config = JSON.parse(await fs.readFile(CONFIG_PATH, 'utf8'));
+        const ids = new Set((config.groups || []).map(g => String(g.id)));
+        // Add IDs that exist in DB but not in config (e.g. paste-link only).
+        try {
+            const rows = getDb().prepare('SELECT DISTINCT group_id, group_name FROM downloads').all();
+            for (const r of rows) ids.add(String(r.group_id));
+        } catch {}
+
+        let updated = 0;
+        let mutatedConfig = false;
+        for (const id of ids) {
+            const resolved = await resolveEntityAcrossAccounts(id);
+            if (!resolved) continue;
+            const { entity } = resolved;
+            const realName = entity?.title
+                || (entity?.firstName && (entity.firstName + (entity.lastName ? ' ' + entity.lastName : '')))
+                || entity?.username || null;
+            if (realName) {
+                // Update config entry name (if exists).
+                const cg = (config.groups || []).find(g => String(g.id) === id);
+                if (cg && (!cg.name || cg.name === 'Unknown' || cg.name === id || cg.name.startsWith('Group '))) {
+                    cg.name = realName;
+                    mutatedConfig = true;
+                }
+                // Update DB rows that still have the placeholder.
+                try {
+                    const stmt = getDb().prepare(`UPDATE downloads SET group_name = ? WHERE group_id = ? AND (group_name IS NULL OR group_name = '' OR group_name = 'Unknown' OR group_name = ?)`);
+                    stmt.run(realName, id, id);
+                } catch {}
+                updated++;
+            }
+            // Photo (best-effort)
+            await downloadProfilePhoto(id).catch(() => {});
+        }
+        if (mutatedConfig) await fs.writeFile(CONFIG_PATH, JSON.stringify(config, null, 4));
+        res.json({ success: true, updated, scanned: ids.size });
+    } catch (e) {
+        console.error('refresh-info:', e);
+        res.status(500).json({ error: e.message });
+    }
 });
 
 app.post('/api/groups/refresh-photos', async (req, res) => {
@@ -1670,31 +1718,46 @@ async function connectTelegram() {
 
 // Entity & Photo Helpers
 const entityCache = new Map();
+
+/** Walk every loaded account looking for one that can resolve `idStr`. */
+async function resolveEntityAcrossAccounts(idStr) {
+    if (entityCache.has(idStr)) return entityCache.get(idStr);
+
+    let am;
+    try { am = await getAccountManager(); } catch { am = null; }
+    const candidates = [];
+    if (am) for (const [, c] of am.clients) candidates.push(c);
+    // Legacy single-session client as last resort.
+    const legacy = await connectTelegram();
+    if (legacy && !candidates.includes(legacy)) candidates.push(legacy);
+
+    for (const c of candidates) {
+        try {
+            const e = await c.getEntity(idStr);
+            if (e) { entityCache.set(idStr, e); return { entity: e, client: c }; }
+        } catch {}
+        try {
+            const e = await c.getEntity(BigInt(idStr));
+            if (e) { entityCache.set(idStr, e); return { entity: e, client: c }; }
+        } catch {}
+    }
+    return null;
+}
+
 async function downloadProfilePhoto(groupId) {
     const idStr = String(groupId);
     const photoPath = path.join(PHOTOS_DIR, `${idStr}.jpg`);
     if (existsSync(photoPath)) return `/photos/${idStr}.jpg`;
 
-    const client = await connectTelegram();
-    if (!client) return null;
-
+    const resolved = await resolveEntityAcrossAccounts(idStr);
+    if (!resolved) return null;
+    const { entity, client } = resolved;
     try {
-        let entity = entityCache.get(idStr);
-        if (!entity) {
-            try { entity = await client.getEntity(idStr); } catch (e) {}
-            if (!entity) {
-                 try { entity = await client.getEntity(BigInt(idStr)); } catch (e) {}
-            }
-        }
-
-        if (entity) {
-            entityCache.set(idStr, entity);
-            if (entity.photo) {
-                const buffer = await client.downloadProfilePhoto(entity, { isBig: false });
-                if (buffer) {
-                    await fs.writeFile(photoPath, buffer);
-                    return `/photos/${idStr}.jpg`;
-                }
+        if (entity?.photo) {
+            const buffer = await client.downloadProfilePhoto(entity, { isBig: false });
+            if (buffer) {
+                await fs.writeFile(photoPath, buffer);
+                return `/photos/${idStr}.jpg`;
             }
         }
     } catch (e) {
