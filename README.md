@@ -12,6 +12,48 @@ Download photos, videos, documents, voice messages, GIFs, stickers, and Stories 
 
 > [Quick start](#quick-start) · [Architecture](docs/ARCHITECTURE.md) · [API](docs/API.md) · [Deploy](docs/DEPLOY.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [Audit](docs/AUDIT.md)
 
+### One-click deploy
+
+| Provider | Button |
+| --- | --- |
+| **Render** | [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/botnick/telegram-media-downloader) |
+| **Railway** | [![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/template/?template=https://github.com/botnick/telegram-media-downloader) |
+| **Fly.io / Docker** | `docker run --pull=always -p 3000:3000 -v "$(pwd)/data:/app/data" ghcr.io/botnick/telegram-media-downloader:latest` |
+
+After the container is up, open `:3000` and the in-browser setup wizard takes over (set password → enter API creds → add account → download).
+
+### Architecture at a glance
+
+```mermaid
+flowchart LR
+    user[Browser SPA]
+    server[web/server.js]
+    runtime[runtime.js]
+    monitor[monitor.js]
+    downloader[downloader.js]
+    forwarder[forwarder.js]
+    am[AccountManager]
+    db[(SQLite)]
+    fs[(data/downloads/)]
+    tg[(Telegram MTProto)]
+
+    user <-- REST + WebSocket --> server
+    server -- start/stop/status --> runtime
+    runtime --> monitor
+    runtime --> downloader
+    runtime --> forwarder
+    server --> am
+    monitor -- enqueue --> downloader
+    forwarder -- forward --> tg
+    am <-- login --> tg
+    monitor <-- events --> tg
+    downloader -- writes --> fs
+    downloader -- inserts --> db
+    db -- reads --> server
+```
+
+Detail in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
 ---
 
 ## What is Telegram Media Downloader?
