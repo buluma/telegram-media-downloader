@@ -1,10 +1,13 @@
 // Onboarding banner — drives the user through the 3 steps a fresh install
 // needs (API creds → add account → enable a group) by reading the `hint`
-// field that /api/monitor/status now returns. Polls every 4s; sticky at the
-// top of the dashboard until the hint becomes null.
+// field that /api/monitor/status now returns. Subscribes to the shared
+// monitor-status poller (3 s cadence) instead of running its own timer —
+// statusbar.js, engine.js and this module used to each poll independently
+// (5 s + 3 s + 4 s = three separate fetches every few seconds), now they
+// share one.
 
-import { api } from './api.js';
 import { t as i18nT } from './i18n.js';
+import { subscribe as subscribeMonitorStatus, refreshNow as refreshMonitorStatus } from './monitor-status.js';
 
 const HINTS_DEF = {
     'configure-api': {
@@ -48,7 +51,7 @@ function resolveHint(key) {
 }
 
 let host = null;
-let pollHandle = null;
+let unsubscribe = null;
 
 function ensureHost() {
     if (host) return host;
@@ -106,18 +109,13 @@ function render(hint) {
     });
 }
 
-async function refresh() {
-    try {
-        const status = await api.get('/api/monitor/status');
-        render(status?.hint || null);
-    } catch { /* ignore — keep last state */ }
+function applyStatus(status) {
+    render(status?.hint || null);
 }
 
 export function initOnboarding() {
-    refresh();
-    if (pollHandle) clearInterval(pollHandle);
-    // Poll every 4 s — cheap and responsive enough for a fresh-install flow.
-    pollHandle = setInterval(refresh, 4000);
+    if (unsubscribe) unsubscribe();
+    unsubscribe = subscribeMonitorStatus(applyStatus);
 }
 
-export function refreshOnboarding() { refresh(); }
+export function refreshOnboarding() { refreshMonitorStatus(); }

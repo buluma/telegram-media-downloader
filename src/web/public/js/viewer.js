@@ -45,9 +45,36 @@ export function openMediaViewer(index) {
     document.getElementById('modal-meta').textContent = `${file.sizeFormatted} • ${formatDate(file.modified)}`;
     document.getElementById('modal-counter').textContent = `${index + 1} / ${state.files.length}`;
     document.getElementById('modal-download').href = url;
-    
+
     modal.classList.remove('hidden');
     document.body.style.overflow = 'hidden';
+
+    // Warm the cache for the NEXT image only (not all of them — that
+    // would defeat the lazy-load gains in the gallery). When the user
+    // hits → / swipes left, the file is already in the browser cache
+    // so the modal updates instantly. Skipped for non-image media to
+    // avoid pulling multi-megabyte video files the user may never view.
+    prefetchNeighbor(index + 1);
+}
+
+// Track the currently-prefetched URL so we can swap the <link> instead of
+// piling up a new one on every navigation step.
+let _prefetchLink = null;
+function prefetchNeighbor(nextIndex) {
+    const next = state.files[nextIndex];
+    if (!next || next.type !== 'images') {
+        if (_prefetchLink) { _prefetchLink.remove(); _prefetchLink = null; }
+        return;
+    }
+    const href = `/files/${encodeURIComponent(next.fullPath)}?inline=1`;
+    if (_prefetchLink && _prefetchLink.href.endsWith(href)) return;
+    if (!_prefetchLink) {
+        _prefetchLink = document.createElement('link');
+        _prefetchLink.rel = 'prefetch';
+        _prefetchLink.as = 'image';
+        document.head.appendChild(_prefetchLink);
+    }
+    _prefetchLink.href = href;
 }
 
 function resetZoom() {
