@@ -509,6 +509,124 @@
         /* Safe-area fillers for notched displays (mobile bottom-nav). */
         .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
         .pt-safe { padding-top: env(safe-area-inset-top); }
+
+        /* ============================================================
+           Story-ring around an avatar — used to surface "this group is
+           downloading right now". Static ring = ring=active; spinning
+           gradient = ring=downloading.
+           ============================================================ */
+        .avatar-ring {
+            box-shadow:
+                0 0 0 2px var(--tg-sidebar, #0E1621),
+                0 0 0 4px var(--tg-blue, #2AABEE);
+            border-radius: 50%;
+        }
+        .avatar-ring-active {
+            box-shadow: 0 0 0 2px var(--tg-sidebar, #0E1621);
+            position: relative;
+        }
+        .avatar-ring-active::before {
+            content: "";
+            position: absolute;
+            inset: -4px;
+            border-radius: 50%;
+            background: conic-gradient(from 0deg,
+                #2AABEE, #4FAE4E, #FF9800, #2AABEE);
+            -webkit-mask:
+                radial-gradient(circle, transparent 53%, #000 55%);
+                    mask:
+                radial-gradient(circle, transparent 53%, #000 55%);
+            animation: avatar-ring-spin 2.4s linear infinite;
+            z-index: -1;
+        }
+        @keyframes avatar-ring-spin {
+            to { transform: rotate(360deg); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .avatar-ring-active::before { animation: none; }
+        }
+
+        /* ============================================================
+           Telegram-style chat row used by the sidebar groups list, the
+           dialogs picker and (compact) the accounts list.
+           ============================================================ */
+        .chat-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 12px;
+            border-radius: 10px;
+            cursor: pointer;
+            position: relative;
+            -webkit-tap-highlight-color: transparent;
+            transition: background-color 120ms ease;
+        }
+        .chat-row:hover { background: var(--tg-hover, #2B5278); }
+        .chat-row.is-selected {
+            background: var(--tg-hover, #2B5278);
+        }
+        .chat-row.is-selected::before {
+            content: "";
+            position: absolute;
+            left: 0; top: 8px; bottom: 8px;
+            width: 3px;
+            background: var(--tg-blue, #2AABEE);
+            border-radius: 0 3px 3px 0;
+        }
+        .chat-row .row-text { flex: 1; min-width: 0; }
+        .chat-row .row-title {
+            display: flex; align-items: center; gap: 6px;
+            font-weight: 500;
+            color: var(--tg-text, #F5F5F5);
+            min-width: 0;
+        }
+        .chat-row .row-title-name {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: 0;
+        }
+        .chat-row .row-subtitle {
+            font-size: 12px;
+            color: var(--tg-textSecondary, #8B9BAA);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .chat-row .row-meta {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 4px;
+            margin-left: auto;
+            color: var(--tg-textSecondary, #8B9BAA);
+            font-size: 11px;
+        }
+        .chat-row .unread-pill {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 22px; height: 22px;
+            padding: 0 6px;
+            border-radius: 11px;
+            background: var(--tg-blue, #2AABEE);
+            color: #fff;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .chat-row .unread-pill.muted { background: var(--tg-textSecondary, #8B9BAA); }
+        .chat-row .status-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .chat-row .status-pill-active   { background: rgba(79,174,78,0.18);  color: #5BC55A; }
+        .chat-row .status-pill-paused   { background: rgba(255,152,0,0.18);  color: #FFB54E; }
+        .chat-row .status-pill-add      { background: rgba(255,255,255,0.06); color: var(--tg-textSecondary, #8B9BAA); }
     </style>
 </head>
 
