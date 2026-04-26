@@ -3,7 +3,7 @@
  * Uses ES Modules — Complete Implementation
  */
 
-import { state } from './store.js';
+import { state, getGroupName, updateGroupNameCache, isUnresolvedName } from './store.js';
 import { api } from './api.js';
 import { createAvatar, escapeHtml, getFileIcon, showToast, formatBytes } from './utils.js';
 import * as Settings from './settings.js';
@@ -39,6 +39,43 @@ async function init() {
     ws.on('config_updated', () => { if (state.currentPage === 'settings') Settings.loadSettings(); });
     ws.on('monitor_event', (m) => {
         if (m.type === 'download_complete') Notifications.notifyDownloadComplete(m.payload || {});
+    });
+
+    // Server-side broadcast emitted by /api/groups/refresh-info (and any
+    // future name-update path). Merge into the canonical name cache and
+    // re-render anything that depends on a name. This is what keeps every
+    // open tab in sync without a full reload.
+    ws.on('groups_refreshed', (m) => {
+        const n = updateGroupNameCache(m.updates);
+        if (n > 0) {
+            renderGroupsList();
+            // If the gallery is currently open on a refreshed group, update
+            // the page title in place.
+            if (state.currentGroupId) {
+                const fresh = getGroupName(state.currentGroupId);
+                if (fresh && fresh !== state.currentGroup) {
+                    state.currentGroup = fresh;
+                    const t = document.getElementById('page-title');
+                    if (t) t.textContent = fresh;
+                }
+            }
+        }
+    });
+
+    // If a download completes for a group whose name we don't know yet,
+    // kick off a refresh-info so the next render gets the real label.
+    ws.on('download_complete', (m) => {
+        const id = m?.payload?.groupId;
+        if (id == null) return;
+        const cached = state.groupNameCache?.[String(id)];
+        const cfg = (state.groups || []).find(g => String(g.id) === String(id));
+        const known = cached || (cfg && !isUnresolvedName(cfg.name, id));
+        if (!known && !state._resolvingGroups) {
+            state._resolvingGroups = true;
+            api.post('/api/groups/refresh-info').then(r => {
+                if (r?.updates) updateGroupNameCache(r.updates);
+            }).catch(() => {}).finally(() => { state._resolvingGroups = false; });
+        }
     });
 
     // Live "this group is downloading" ring state — driven by the same
@@ -81,6 +118,17 @@ async function init() {
 
     await loadGroups();
     await loadStats();
+
+    // First-load name resolve — best-effort, fire-and-forget. Catches the
+    // case where the SPA boots before the engine has connected (so any
+    // paste-link-only or DB-only groups still show as "Unknown chat").
+    if (!state._resolvingGroups) {
+        state._resolvingGroups = true;
+        api.post('/api/groups/refresh-info').then(r => {
+            if (r?.updates) updateGroupNameCache(r.updates);
+            if (r?.updated > 0) renderGroupsList();
+        }).catch(() => {}).finally(() => { state._resolvingGroups = false; });
+    }
     // Routes need to be registered BEFORE router.start() so the initial
     // hash dispatch lands on a real handler.
     registerRoutes();
@@ -216,15 +264,14 @@ function registerRoutes() {
         // Open a specific group's gallery — match the existing openGroup()
         // behaviour so the sidebar selection stays consistent.
         renderPage('viewer');
-        const g = state.groups?.find(x => String(x.id) === String(params.groupId));
-        if (g) openGroup(params.groupId, g.name);
+        // Always resolve through the canonical lookup so deep-linking to a
+        // group whose name was only just refreshed still picks it up.
+        openGroup(params.groupId, getGroupName(params.groupId));
     });
     router.route('/groups', () => renderPage('groups'));
     router.route('/groups/:groupId', ({ params }) => {
         renderPage('groups');
-        const g = (state.allDialogs || []).find(d => String(d.id) === String(params.groupId))
-              || state.groups?.find(x => String(x.id) === String(params.groupId));
-        if (g) openGroupSettings(params.groupId, g.name || g.title || params.groupId);
+        openGroupSettings(params.groupId, getGroupName(params.groupId));
     });
     router.route('/engine', () => renderPage('settings', { section: 'engine' }));
     router.route('/settings', () => renderPage('settings'));
@@ -305,30 +352,30 @@ function renderGroupsList() {
     let needsResolve = false;
     list.innerHTML = sorted.map(g => {
         const id = String(g.downloadId || g.id || g.name);
-        const rawName = g.name;
-        // Detect unresolved entries (added via paste-link before the engine
-        // could see the chat) and surface a friendly placeholder. We'll fire
-        // a one-shot refresh below.
-        const looksUnresolved = !rawName
-            || rawName === 'Unknown'
-            || rawName === id
-            || /^-?\d{6,}$/.test(rawName);
-        if (looksUnresolved) needsResolve = true;
-        const displayName = looksUnresolved ? i18nT('groups.unknown_chat', 'Unknown chat') : rawName;
-        const subtitle = looksUnresolved
+        // Route every render through the canonical lookup so a name set by
+        // the WS `groups_refreshed` handler propagates without a reload.
+        const canonical = getGroupName(id, { fallback: i18nT('groups.unknown_chat', 'Unknown chat') });
+        // Did the canonical lookup fall through to the placeholder? If so,
+        // surface the friendly "Resolving…" subtitle and trigger a one-shot
+        // refresh-info below.
+        const stillUnresolved = isUnresolvedName(g.name, id)
+            && !state.groupNameCache?.[id];
+        if (stillUnresolved) needsResolve = true;
+        const subtitle = stillUnresolved
             ? i18nTf('groups.resolving', { count: g.totalFiles || 0 }, `Resolving… · ${g.totalFiles || 0} files`)
             : i18nTf('groups.files_size', { count: g.totalFiles || 0, size: g.sizeFormatted || '0 B' }, `${g.totalFiles || 0} files · ${g.sizeFormatted || '0 B'}`);
         const ring = state.activeRings.has(id) ? 'downloading' : null;
         return renderChatRow({
             id,
-            name: displayName,
+            name: canonical,
             subtitle,
             avatarType: g.type,
             avatarRing: ring,
             avatarDot: ring ? 'monitor' : null,
             time: g.lastDownloadAt ? formatRelativeTime(g.lastDownloadAt) : '',
             selected: state.currentGroupId === id,
-            data: { groupName: rawName },
+            // Don't ship the (possibly stale) raw name through the dataset —
+            // click handlers re-resolve from the canonical store.
         });
     }).join('');
 
@@ -337,18 +384,25 @@ function renderGroupsList() {
     if (needsResolve && !state._resolvingGroups) {
         state._resolvingGroups = true;
         api.post('/api/groups/refresh-info').then(r => {
+            // Server now returns { updates: [{id, name}] } — cache them so
+            // every render path picks up the new name immediately. The WS
+            // `groups_refreshed` broadcast covers other open tabs.
+            if (r?.updates) updateGroupNameCache(r.updates);
             if (r?.updated > 0) loadGroups();
         }).catch(() => {}).finally(() => { state._resolvingGroups = false; });
     }
 
     // Event delegation — click opens the group viewer; right-click / long-press
-    // shows a context menu (handled by gestures.js / future addition).
+    // shows a context menu (handled by gestures.js / future addition). Names
+    // are re-resolved at click time via getGroupName() so a refreshed name
+    // wins over whatever the row was rendered with.
     list.querySelectorAll('.chat-row[data-id]').forEach(el => {
-        el.addEventListener('click', () => openGroup(el.dataset.id, el.dataset.groupName));
+        const fire = () => openGroup(el.dataset.id, getGroupName(el.dataset.id));
+        el.addEventListener('click', fire);
         el.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
-                openGroup(el.dataset.id, el.dataset.groupName);
+                fire();
             }
         });
     });
@@ -361,11 +415,15 @@ function normalize(str) {
 // ============ Open Group / Show All ============
 function openGroup(groupId, groupName) {
     state.currentGroupId = groupId;
-    state.currentGroup = groupName || groupId;
+    // Always reconcile with the canonical store so the modal/header never
+    // show a stale "Unknown" or numeric id when /api/groups/refresh-info
+    // (or the WS `groups_refreshed` broadcast) has already filled it in.
+    const canonical = getGroupName(groupId, { fallback: groupName });
+    state.currentGroup = canonical || groupId;
     state.page = 1;
     state.hasMore = true;
     state.files = [];
-    
+
     document.getElementById('page-title').textContent = state.currentGroup;
     document.getElementById('page-subtitle').textContent = i18nT('viewer.subtitle.loading', 'Loading...');
     navigateTo('viewer');
@@ -398,7 +456,11 @@ async function loadAllFiles() {
             try {
                 const res = await api.get(`/api/downloads/${encodeURIComponent(group.id)}?page=1&limit=20`);
                 if (res.files) {
-                    allFiles = allFiles.concat(res.files.map(f => ({ ...f, groupName: group.name })));
+                    // Stamp the canonical name (not the possibly-stale
+                    // `group.name` from /api/downloads) so any per-file
+                    // breadcrumb the viewer renders stays consistent.
+                    const canonical = getGroupName(group.id, { fallback: group.name });
+                    allFiles = allFiles.concat(res.files.map(f => ({ ...f, groupName: canonical, groupId: group.id })));
                 }
             } catch (e) {}
         }
@@ -763,20 +825,23 @@ function renderDialogsList(dialogs) {
                 ? { label: i18nT('groups.status.paused', 'Paused'), kind: 'paused' }
                 : { label: i18nT('groups.status.add', 'Add'), kind: 'add' };
 
+        // Canonical name — for dialogs the d.name is usually authoritative
+        // (Telegram-side title) but route through getGroupName so a config
+        // override (custom label) wins when present.
+        const dispName = getGroupName(d.id, { fallback: d.name || d.title });
         return renderChatRow({
             id: d.id,
-            name: d.name,
+            name: dispName,
             avatarType: d.type,
             subtitle: subParts.join(' · '),
             statusPill,
-            data: { dialogName: d.name },
         });
     }).join('');
 
     // Click anywhere on the row → open the group settings sheet for that
-    // dialog. Keyboard Enter/Space mirrors the click for accessibility.
+    // dialog. Re-resolve through the canonical store at click time.
     list.querySelectorAll('.chat-row[data-id]').forEach(el => {
-        const fire = () => openGroupSettings(el.dataset.id, el.dataset.dialogName);
+        const fire = () => openGroupSettings(el.dataset.id, getGroupName(el.dataset.id));
         el.addEventListener('click', fire);
         el.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fire(); }
@@ -813,7 +878,11 @@ function switchGroupsTab(tab) {
 let currentEditGroup = null;
 
 async function openGroupSettings(groupId, groupName) {
-    currentEditGroup = { id: groupId, name: groupName };
+    // Always resolve via the canonical store — callers may pass nothing
+    // (deep-link router) or a stale label (sidebar dataset).
+    const canonical = getGroupName(groupId, { fallback: groupName });
+    currentEditGroup = { id: groupId, name: canonical };
+    groupName = canonical;
     
     const modal = document.getElementById('group-modal');
     if (!modal) return;
@@ -1359,6 +1428,9 @@ async function loadStats() {
  * Delete a specific group -- files, DB, config, photo
  */
 async function purgeGroup(groupId, groupName) {
+    // Re-resolve through the canonical store so the confirm/toast messages
+    // match what the rest of the UI shows.
+    groupName = getGroupName(groupId, { fallback: groupName });
     if (!confirm(i18nTf('purge.group.confirm', { name: groupName }, `Delete all data for "${groupName}"?\n\nFiles, database records, and configuration will be permanently removed.`))) return;
 
     try {

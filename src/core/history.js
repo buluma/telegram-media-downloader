@@ -94,6 +94,22 @@ export class HistoryDownloader extends EventEmitter {
         return counts;
     }
 
+    /**
+     * Request a graceful cancel of the in-flight backfill loop.
+     *
+     * Sets two flags the iteration loop checks at every step:
+     *   - `cancelFlag` short-circuits the for-await body (immediate return)
+     *   - `running = false` prevents any "is still running" callers from
+     *     re-entering the queue.
+     *
+     * Idempotent — calling twice is a no-op.
+     */
+    cancel() {
+        this.cancelFlag = true;
+        this.running = false;
+        this.emit('log', '🛑 Backfill cancellation requested');
+    }
+
     async downloadHistory(groupId, options = {}) {
         this.running = true;
         this.cancelFlag = false;
@@ -190,8 +206,9 @@ export class HistoryDownloader extends EventEmitter {
         } catch (error) {
             this.emit('error', error);
         } finally {
-
-            this.emit('complete', { ...this.stats, lastMessageId: lastId });
+            const cancelled = this.cancelFlag === true;
+            this.running = false;
+            this.emit('complete', { ...this.stats, lastMessageId: lastId, cancelled });
         }
     }
 

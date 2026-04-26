@@ -22,12 +22,18 @@ export function openMediaViewer(index) {
     // Reset Views
     imageContainer.classList.add('hidden');
     videoContainer.classList.add('hidden');
-    
-    // Reset States
+
+    // Reset States — fully unload the previous media so it stops
+    // streaming/buffering in the background. Without this, swiping
+    // from a 100 MB video to an image leaves the video network-fetching
+    // and pinned in memory.
     resetZoom();
     if (document.fullscreenElement) document.exitFullscreen();
     video.pause();
-    
+    video.removeAttribute('src');
+    try { video.load(); } catch {}
+    image.removeAttribute('src');
+
     if (file.type === 'images') {
         image.src = url;
         imageContainer.classList.remove('hidden');

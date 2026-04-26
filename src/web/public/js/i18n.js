@@ -70,12 +70,19 @@ export function onLanguageChange(fn) {
     return () => listeners.delete(fn);
 }
 
-/** Re-translate every element under `root` that has a data-i18n* attribute. */
+/** Re-translate every element under `root` that has a data-i18n* attribute.
+ * Keys ending with `_html` are rendered as innerHTML so embedded `<code>`
+ * / `<b>` / `<a>` markup in the translation actually formats — using
+ * textContent would surface literal angle brackets in the UI.
+ */
 export function applyToDOM(root = document) {
     root.querySelectorAll('[data-i18n]').forEach((el) => {
         const key = el.dataset.i18n;
-        const fallback = el.dataset.i18nFallback || el.textContent.trim();
-        el.textContent = t(key, fallback);
+        const isHtml = key && key.endsWith('_html');
+        const fallback = el.dataset.i18nFallback || (isHtml ? el.innerHTML : el.textContent.trim());
+        const value = t(key, fallback);
+        if (isHtml) el.innerHTML = value;
+        else el.textContent = value;
     });
     // Attribute-shaped translations: data-i18n-aria-label, data-i18n-placeholder, data-i18n-title
     for (const attr of ['aria-label', 'placeholder', 'title']) {

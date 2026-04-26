@@ -31,7 +31,7 @@ import { listUserStories, listAllStories, storyToJob } from '../core/stories.js'
 import { metrics } from '../core/metrics.js';
 import {
     hashPassword, loginVerify, isAuthConfigured,
-    issueSession, validateSession, revokeSession, startSessionGc,
+    issueSession, validateSession, revokeSession, revokeAllSessions, startSessionGc,
 } from '../core/web-auth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -241,6 +241,8 @@ const PUBLIC_API_PATHS = new Set([
     '/api/login',
     '/api/auth_check',
     '/api/auth/setup', // first-run only — guarded inside the handler
+    '/api/auth/reset/request',  // logs token to stdout — no body returned
+    '/api/auth/reset/confirm',  // requires the stdout token + new password
 ]);
 
 // Treat connections from the local machine as "trusted enough" to bootstrap
@@ -428,6 +430,88 @@ app.post('/api/auth/change-password', loginLimiter, async (req, res) => {
         res.json({ success: true });
     } catch (e) {
         console.error('change-password:', e);
+        res.status(500).json({ error: 'Internal error' });
+    }
+});
+
+// ====== Password reset (token-gated) =======================================
+//
+// "I forgot my password" without dropping into the CLI. The flow is:
+//   1. POST /api/auth/reset/request — server prints a one-time, 10-min TTL
+//      token to its own stdout (visible via `docker compose logs` or the
+//      Maintenance "Download log" button). Returns 200 with no token in the
+//      body, so a network attacker can't see it.
+//   2. POST /api/auth/reset/confirm { token, newPassword } — verifies the
+//      token, rehashes the password, revokes ALL existing sessions, and
+//      issues a fresh cookie.
+//
+// The token is single-use and only valid until consumed or expired. Rate
+// limiter is `loginLimiter` (10 attempts / 15 min) so an attacker who guesses
+// the token still gets bounced.
+const _resetTokens = new Map(); // token → expiresAt
+const RESET_TOKEN_TTL_MS = 10 * 60 * 1000;
+
+function _gcResetTokens() {
+    const now = Date.now();
+    for (const [tok, exp] of _resetTokens) if (exp <= now) _resetTokens.delete(tok);
+}
+
+app.post('/api/auth/reset/request', loginLimiter, async (req, res) => {
+    try {
+        _gcResetTokens();
+        const config = await readConfigSafe();
+        if (!isAuthConfigured(config.web)) {
+            return res.status(409).json({ error: 'No password configured yet — use /api/auth/setup' });
+        }
+        const token = crypto.randomBytes(16).toString('hex');
+        _resetTokens.set(token, Date.now() + RESET_TOKEN_TTL_MS);
+        // Eye-catching banner so it's easy to spot in `docker compose logs`.
+        console.log('\n' + '='.repeat(60));
+        console.log('🔐  DASHBOARD PASSWORD RESET TOKEN');
+        console.log('    Token: ' + token);
+        console.log('    Valid for 10 minutes. Single-use.');
+        console.log('    Paste it into the dashboard reset form to continue.');
+        console.log('='.repeat(60) + '\n');
+        res.json({ success: true, ttlSeconds: Math.floor(RESET_TOKEN_TTL_MS / 1000) });
+    } catch (e) {
+        console.error('reset/request:', e);
+        res.status(500).json({ error: 'Internal error' });
+    }
+});
+
+app.post('/api/auth/reset/confirm', loginLimiter, async (req, res) => {
+    try {
+        _gcResetTokens();
+        const { token, newPassword } = req.body || {};
+        if (typeof token !== 'string' || typeof newPassword !== 'string') {
+            return res.status(400).json({ error: 'token and newPassword required' });
+        }
+        if (newPassword.length < 8) {
+            return res.status(400).json({ error: 'New password must be at least 8 characters' });
+        }
+        const exp = _resetTokens.get(token);
+        if (!exp || exp <= Date.now()) {
+            return res.status(401).json({ error: 'Invalid or expired token' });
+        }
+        // Single-use — burn the token before we do anything else so a retry
+        // can't replay it even if the rest of the flow throws.
+        _resetTokens.delete(token);
+
+        const config = await readConfigSafe();
+        if (!config.web) config.web = {};
+        config.web.passwordHash = hashPassword(newPassword);
+        config.web.enabled = true;
+        delete config.web.password;
+        await fs.writeFile(CONFIG_PATH, JSON.stringify(config, null, 4));
+
+        // Revoke every existing session — if someone reset the password,
+        // assume the previous owner is locked out and shouldn't be trusted.
+        revokeAllSessions();
+        const { token: sessionTok, maxAgeMs } = issueSession();
+        res.cookie('tg_dl_session', sessionTok, { ...SESSION_COOKIE_OPTS, maxAge: maxAgeMs });
+        res.json({ success: true });
+    } catch (e) {
+        console.error('reset/confirm:', e);
         res.status(500).json({ error: 'Internal error' });
     }
 });
