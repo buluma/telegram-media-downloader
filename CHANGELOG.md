@@ -24,7 +24,7 @@ All notable changes to this project are documented here. The format is based on 
 
 ### Added — features
 - **Download by Link** (`POST /api/download/url`): paste any `t.me/.../<msg>`, `/c/<id>/<msg>`, `/c/<id>/<topic>/<msg>`, `tg://resolve`, or `tg://privatepost` URL and pull just that media.
-- **Telegram Stories** (Xinomo parity): username + per-story selection, queued through the regular downloader.
+- **Telegram Stories**: username + per-story selection, queued through the regular downloader.
 - **TTL/self-destructing media**: monitor detects `media.ttlSeconds` and front-loads the queue so the file is captured before expiry.
 - **Forum topics**: per-group filter list with whitelist mode.
 - **Proxy** (SOCKS4/5 + MTProxy) wired into the GramJS client; Settings UI with TCP-reachability test.
@@ -47,7 +47,7 @@ All notable changes to this project are documented here. The format is based on 
 ### Fixed
 - Terminal raw-mode is restored on `exit` / SIGINT / SIGTERM — no more dead shells on crash.
 - Plaintext apiId no longer printed at CLI startup.
-- `.gitignore` malformed line removed; `docs/` and `CLAUDE.md` are now tracked.
+- `.gitignore` malformed line removed; `docs/` is now tracked.
 - Orphan `src/index.js_fragment_setupWebAuth` deleted.
 
 ### Migration notes

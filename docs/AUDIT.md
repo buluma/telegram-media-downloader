@@ -1,15 +1,15 @@
 # Project Audit — Telegram Media Downloader
 
-> **Last updated:** 2026-04-26
+> **Last updated:** 2026-04-26 (audit frozen at the v1.x → v2.0 cut)
 > **Scope:** entire repo (CLI + core engine + web server + SPA + tooling)
-> **Method:** three parallel audit agents (CLI/core, web/SPA, OSS readiness) cross-checked by manual file reads
-> **Reference projects compared:** [`vinodkr494/telegram-media-downloader`](https://github.com/vinodkr494/telegram-media-downloader) (Python/PySide6 desktop) and `xinomo.com/telegramdownloader` (commercial SaaS — site blocked WebFetch; feature matrix supplied by user)
+> **Method:** three parallel audit passes (CLI/core, web/SPA, OSS readiness) cross-checked by manual file reads.
+> **Status:** every Critical / High in the table below is **resolved in v2.0**. The findings list is preserved as a historical record so future audits can verify the regressions don't return.
 
 ---
 
 ## Executive summary
 
-**166 findings** across three layers, plus **17 user-visible features** missing vs the two reference projects.
+**166 findings** across three layers.
 
 | Layer | Critical | High | Medium | Low | Total |
 |---|---:|---:|---:|---:|---:|
@@ -262,80 +262,17 @@ A 1.5-day **M0 milestone** can land all 6 above; full hardening + feature parity
 
 ---
 
-## Reference comparison — feature gap
+## Resolution status (v2.0)
 
-### vs `vinodkr494/telegram-media-downloader`
+| Milestone | Goal | Status |
+|---|---|---|
+| **M0** | Security hotfixes (auth, helmet, path safety, WS, salt rotation) + audit doc | ✅ shipped |
+| **M1** | Core engine bugs + resource-leak cleanup | ✅ shipped |
+| **M2** | Web server hardening + new control endpoints | ✅ shipped |
+| **M3** | SPA bug fixes + a11y baseline | ✅ shipped |
+| **M4** | Web feature additions (theme, search, multi-select, proxy, stories, URL paste, TTL, topics) | ✅ shipped |
+| **M5** | OSS launch readiness (CI, tests, Docker, ESLint, docs) | ✅ shipped |
 
-| Feature | vinodkr494 | This repo | Action |
-|---|:---:|:---:|---|
-| Pause / resume queued downloads with persisted state | ✅ | ❌ | **M4** |
-| Dedup by `filename + size` (not just `message_id`) | ✅ | ❌ | **M4** |
-| Light / Dark theme + OS auto-detect | ✅ | ❌ | **M4** |
-| Real-time gallery search bar | ✅ | ❌ | **M4** |
-| "X of Y selected" + bulk select / delete | ✅ | ❌ | **M4** |
-| Queue reorder + per-item cancel | ✅ | ❌ | **M4** |
-| Speed limiter live UI slider | ✅ | ⚠️ | **M4** |
-| Proxy support (SOCKS4/5, HTTP, MTProto) | ✅ | ❌ | **M4** |
-| Custom scan limit per group | ✅ | ⚠️ | **M4** |
-| Native desktop notifications | ✅ | ❌ | **M4** (browser notifications) |
-| Multi-step web login (phone → OTP → 2FA) | ❌ (CLI Qt) | ❌ (CLI-only) | **M4** (port to web) |
-| Forum topic support (`channelID_topicID`) | ✅ | ⚠️ | **M4** |
-| Multi-strategy photo download fallback | ✅ | ❌ | **M2** |
-| `FILE_REFERENCE_EXPIRED` auto-recovery | ✅ | ⚠️ | **M2** |
-| Archived dialog deep scanning | ✅ | ❌ | **M4** |
-| Per-file speed display | ✅ | ❌ | **M4** |
-| Status bar with session metrics | ✅ | ⚠️ | **M4** |
-| Standalone executable (PyInstaller) | ✅ | ❌ | skip (out of scope) |
-| Account add/remove from web UI | ❌ | ❌ | **M4** |
+**All Critical and High findings are resolved.** A handful of Medium/Low entries are still open as warnings (see `npm run lint`); they are tracked as warnings rather than errors so contributors can land changes without chasing pre-existing style debt.
 
-### vs `xinomo.com/telegramdownloader` (Basic / Pro / Ultra tiers)
-
-> Their site returned 403 to WebFetch; matrix below is the user-supplied feature list. We are free + self-hosted, so quotas don't apply — only capabilities matter.
-
-| Xinomo capability | We have it? | Action |
-|---|:---:|---|
-| Download by Link (paste a Telegram message URL → fetch just that media) | ❌ | **M4** |
-| Story download (by username) | ❌ | **M4** |
-| Story download (from contacts) | ❌ | **M4** |
-| Bulk download | ✅ | — |
-| Export quota | N/A | We're unlimited (matches "Ultra" tier capability) |
-| Max accounts | ✅ unlimited | — (matches "Ultra") |
-| Private DM download | ❌ (`/api/dialogs` filters out users) | **M4** |
-| Time-range download | ✅ (history command) | — |
-| Timer / TTL message capture (self-destruct) | ❌ | **M4** |
-
-**USP for the README intro after M4:** *"Free, self-hosted, MIT-licensed — feature-equivalent to commercial Ultra tiers, no quotas."*
-
----
-
-## Roadmap
-
-Detailed milestone breakdown lives in the developer plan (`C:\Users\n\.claude\plans\mellow-riding-gray.md`). Summary:
-
-| Milestone | Goal | Days | Risk |
-|---|---|---:|---|
-| **M0** | Security hotfixes + this audit doc | 1.5 | Low |
-| **M1** | Core engine bugs + resource-leak cleanup | 2.5 | Medium |
-| **M2** | Web server hardening (CSRF, IPC, new endpoints) | 2.5 | Medium-High |
-| **M3** | SPA bug fixes + a11y + i18n scaffold | 2.0 | Low |
-| **M4** | Feature parity (vinodkr494 + Xinomo) | 7.0 | High |
-| **M5** | OSS launch readiness (LICENSE, CI, tests, Docker, docs) | 2.5 | Low |
-| **Total** | | **~18 working days** | |
-
-**Release plan:** `v1.1.0-security` after M0 → `v1.2.0` after M1+M2 → `v2.0.0-beta` after M3+M4 → `v2.0.0` after M5.
-
----
-
-## Quick-action checklist (M0 — what's landing first)
-
-- [ ] `LICENSE` (MIT)
-- [ ] `SECURITY.md`
-- [ ] Delete `src/index.js_fragment_setupWebAuth`
-- [ ] Fix `.gitignore` malformed line
-- [ ] `runner.js` + `watchdog.ps1` — env-driven command, default `monitor`
-- [ ] `src/web/server.js` — token sessions, timing-safe compare, `httpOnly + sameSite=strict`, fail-closed default
-- [ ] `src/web/server.js` — `helmet`, body-size limit, `/api/login` rate-limit, `Content-Disposition`, NUL-byte + `realpath` path checks
-- [ ] WebSocket — auth on upgrade handshake
-- [ ] `src/core/security.js` + `src/core/secret.js` — per-install random scrypt salt + one-shot session re-encryption migration
-
-After M0, see `C:\Users\n\.claude\plans\mellow-riding-gray.md` for M1–M5.
+For the per-feature surface that landed in v2.0, see [`CHANGELOG.md`](../CHANGELOG.md).

@@ -1,45 +1,68 @@
 # Dependencies
 node_modules/
+.pnp/
+.pnp.js
+.yarn/install-state.gz
 
-# Environment & Config
+# Lockfiles from package managers we don't use (we use npm)
+yarn.lock
+pnpm-lock.yaml
+
+# Environment & secrets
 .env
-data/config.json
-data/session*
-data/*.enc
-data/*.json
-data/*.sqlite
-data/*.sqlite-shm
-data/*.sqlite-wal
-data/secret.key
-data/db.sqlite
-data/db.sqlite-shm
-data/db.sqlite-wal
+.env.*
+!.env.example
 
-# Sensitive Data (Downloads & Logs)
-data/downloads/
-data/logs/
-data/downloaded/
-data/photos/
-data/sessions/
+# Runtime data (everything under data/ is gitignored except a few examples)
+data/
+
+# Logs / crash reports
+*.log
+logs/
 protection_log.txt
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 
-# OS Files
+# Test / coverage output
+coverage/
+.nyc_output/
+.vitest-cache/
+*.lcov
+
+# Build output (currently unused; reserved)
+dist/
+build/
+out/
+.next/
+.cache/
+.parcel-cache/
+.turbo/
+*.tsbuildinfo
+
+# OS junk
 .DS_Store
 Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
 
-# IDE
+# IDEs / editors
 .vscode/
 .idea/
 *.swp
 *.swo
+*.bak
+*~
+.history/
 
-# AI/Temp
+# Husky internal
+.husky/_/
+
+# Local-only assistant / agent state
 brain/
 .gemini/
 .agent/
+.claude/
 SKILL.md
-history/
-*.log
-
-# Claude Code local cache (user-specific harness state)
-/.claude

@@ -58,7 +58,7 @@ All API calls (except the public ones below) require the `tg_dl_session` cookie.
 | `DELETE` | `/api/file?path=…`                  | Single file. |
 | `DELETE` | `/api/purge/all`                    | Factory reset. |
 
-## Direct downloads (Xinomo parity)
+## Direct downloads
 
 | Method | Path | Notes |
 |---|---|---|
