@@ -60,6 +60,9 @@ async function init() {
     document.getElementById('change-password-btn')?.addEventListener('click', Settings.changePassword);
     document.getElementById('logout-btn')?.addEventListener('click', Settings.signOut);
 
+    // Paste-URL drawer
+    setupPasteUrl();
+
     navigateTo('viewer');
 }
 
@@ -677,6 +680,48 @@ function setupEventListeners() {
     
     // Media tabs
     setupMediaTabs();
+}
+
+function setupPasteUrl() {
+    const btn = document.getElementById('paste-url-btn');
+    const panel = document.getElementById('paste-url-panel');
+    const cancel = document.getElementById('paste-url-cancel');
+    const submit = document.getElementById('paste-url-submit');
+    const input = document.getElementById('paste-url-input');
+    const resultEl = document.getElementById('paste-url-result');
+    if (!btn || !panel || !submit) return;
+
+    btn.addEventListener('click', () => {
+        const wasHidden = panel.classList.toggle('hidden');
+        if (!wasHidden) input?.focus();
+    });
+    cancel?.addEventListener('click', () => panel.classList.add('hidden'));
+
+    submit.addEventListener('click', async () => {
+        const text = input.value.trim();
+        if (!text) { showToast('Paste at least one Telegram link', 'warning'); return; }
+        submit.disabled = true;
+        try {
+            const r = await api.post('/api/download/url', { url: text });
+            const ok = r.results.filter(x => x.ok).length;
+            const fail = r.results.length - ok;
+            resultEl.textContent = `${ok} queued, ${fail} failed.`;
+            r.results.forEach(x => {
+                if (!x.ok) console.warn('paste-url failed:', x.url, x.error);
+            });
+            if (ok > 0) {
+                showToast(`Queued ${ok} download${ok > 1 ? 's' : ''}`, 'success');
+                input.value = '';
+            }
+            if (fail > 0 && ok === 0) {
+                showToast(`All ${fail} URL(s) failed — check console`, 'error');
+            }
+        } catch (e) {
+            showToast(`Request failed: ${e.message}`, 'error');
+        } finally {
+            submit.disabled = false;
+        }
+    });
 }
 
 function refreshCurrentPage() {
