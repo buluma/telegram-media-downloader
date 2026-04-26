@@ -79,26 +79,24 @@ jobs:
             if docker exec smoke node scripts/healthcheck.js >/dev/null 2>&1; then
               echo "OK: healthcheck passed after ${i}s"
 
-              # Entrypoint must drop from root → node (uid 1000). If it
-              # didn't, the data volume chown trick won't apply but worse
-              # — the app would run as root, defeating the whole non-root
-              # posture of the image. BusyBox `ps` doesn't take `-p PID`,
-              # so we read /proc/$pid/status directly.
-              PID=$(docker exec smoke pgrep -f 'node src/web/server.js' | head -n1)
-              if [ -z "$PID" ]; then
-                echo "FAIL: server.js process not found"
+              # Entrypoint must drop from root → node. If it didn't, the
+              # data volume chown trick won't apply but worse — the app
+              # would run as root, defeating the whole non-root posture
+              # of the image.
+              #
+              # Avoid pipes that can fire SIGPIPE (BusyBox `pgrep | head`
+              # → 141 → set -e -o pipefail kills the script). Capture the
+              # full ps listing then scan it with awk.
+              PS_OUT=$(docker exec smoke ps -o user=,comm=)
+              if ! echo "$PS_OUT" | awk '$1=="node" && $2=="node" {f=1} END{exit !f}'; then
+                echo "FAIL: no node process running as node user"
+                echo "--- ps -o user,comm ---"
+                echo "$PS_OUT"
                 docker logs smoke
                 docker stop smoke >/dev/null
                 exit 1
               fi
-              APP_UID=$(docker exec smoke sh -c "awk '/^Uid:/ {print \$2}' /proc/$PID/status")
-              if [ "$APP_UID" != "1000" ]; then
-                echo "FAIL: app running as uid '$APP_UID', expected 1000 (node)"
-                docker logs smoke
-                docker stop smoke >/dev/null
-                exit 1
-              fi
-              echo "OK: app running as uid $APP_UID (node)"
+              echo "OK: app running as node user"
 
               docker stop smoke >/dev/null
               exit 0
