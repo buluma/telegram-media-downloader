@@ -1,0 +1,61 @@
+name: Bug report
+description: Something isn't working
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing! For **security** issues please follow `SECURITY.md` instead of opening a public issue.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug + how to reproduce.
+      placeholder: When I click X the dashboard shows Y. I expected Z.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run `npm run web`
+        2. Click "Add account"
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      description: Output of `git rev-parse --short HEAD` or the release tag.
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where does the bug happen?
+      options:
+        - Web dashboard
+        - CLI (interactive)
+        - Monitor (headless)
+        - History backfill
+        - Docker / deployment
+        - Other
+  - type: input
+    id: node
+    attributes:
+      label: Node.js version
+      description: Output of `node --version`.
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: Windows 11 / Ubuntu 22.04 / macOS 14 / Docker on …
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: |
+        Set `TGDL_DEBUG=1` and re-run; paste the relevant output. Redact tokens / credentials.
+      render: shell
