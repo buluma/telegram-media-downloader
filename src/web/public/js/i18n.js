@@ -38,6 +38,19 @@ export function t(key, fallback) {
     return (dict && dict[key]) || fallback || key;
 }
 
+/**
+ * Translate + interpolate `{name}` placeholders against `vars`.
+ *   tf('viewer.bulk.confirm', { count: 3 }, 'Delete 3 file(s)?')
+ * The fallback string is used (and interpolated) when the key is missing,
+ * so callers can keep an English string inline as a safety net during a
+ * translation roll-out.
+ */
+export function tf(key, vars, fallback) {
+    const tpl = (dict && dict[key]) || fallback || key;
+    if (!vars) return tpl;
+    return tpl.replace(/\{(\w+)\}/g, (_, k) => (vars[k] != null ? String(vars[k]) : `{${k}}`));
+}
+
 export function getLang() {
     return localStorage.getItem(LS_KEY) || 'auto';
 }
