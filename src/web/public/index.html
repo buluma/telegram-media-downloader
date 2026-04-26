@@ -1,10 +1,22 @@
 <!DOCTYPE html>
-<html lang="th">
+<html lang="en">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Telegram Downloader - Config</title>
+    <meta name="color-scheme" content="dark">
+    <title>Telegram Downloader</title>
+
+    <!-- Apply persisted theme before paint to avoid the "dark flash" on
+         light-mode reloads. Inline because we need it pre-CSS. -->
+    <script>
+        (() => {
+            const t = localStorage.getItem('tgdl-theme') || 'auto';
+            const dark = t === 'dark' || (t === 'auto' && !window.matchMedia('(prefers-color-scheme: light)').matches);
+            document.documentElement.classList.add(dark ? 'theme-dark' : 'theme-light');
+            document.documentElement.dataset.theme = t;
+        })();
+    </script>
 
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -48,6 +60,25 @@
             color: #F5F5F5;
             overscroll-behavior: none;
         }
+
+        /* ===== Light theme overrides =====
+           When html.theme-light is set, replace the dark Tailwind colours
+           with a Telegram-light-inspired palette. Uses class-level overrides
+           so the existing markup doesn't have to change. */
+        html.theme-light body { background: #FFFFFF; color: #232E3C; }
+        html.theme-light .bg-tg-bg { background-color: #FFFFFF !important; }
+        html.theme-light .bg-tg-sidebar { background-color: #F4F4F5 !important; }
+        html.theme-light .bg-tg-panel { background-color: #F0F4F7 !important; }
+        html.theme-light .bg-tg-lightBg { background-color: #FFFFFF !important; }
+        html.theme-light .text-tg-text { color: #1F2937 !important; }
+        html.theme-light .text-tg-textSecondary { color: #65737E !important; }
+        html.theme-light .text-white { color: #1F2937 !important; }
+        html.theme-light .border-tg-border { border-color: #E1E5EA !important; }
+        html.theme-light .hover\:bg-tg-hover:hover { background-color: #DCEDFF !important; }
+        html.theme-light .bg-tg-hover { background-color: #DCEDFF !important; }
+        html.theme-light ::-webkit-scrollbar-thumb { background: #C1C9D2 !important; }
+        html.theme-light .modal-backdrop { background-color: rgba(0, 0, 0, 0.45) !important; }
+        html.theme-light .tg-input { background: #FFFFFF !important; color: #1F2937 !important; border-color: #E1E5EA !important; }
 
         ::-webkit-scrollbar {
             width: 6px;
@@ -814,6 +845,18 @@
                                 </div>
                             </div>
                             <p class="text-xs text-tg-textSecondary">Files exceeding these limits will be skipped</p>
+                        </div>
+                    </div>
+
+                    <!-- Appearance -->
+                    <div class="bg-tg-panel rounded-xl p-4 mb-4">
+                        <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
+                            <i class="ri-palette-line text-tg-blue"></i> Appearance
+                        </h3>
+                        <div class="grid grid-cols-3 gap-2 text-sm">
+                            <button data-theme-set="light" class="theme-btn py-2 px-3 rounded-lg bg-tg-bg/40 hover:bg-tg-hover transition flex items-center gap-2 justify-center"><i class="ri-sun-line"></i> Light</button>
+                            <button data-theme-set="dark" class="theme-btn py-2 px-3 rounded-lg bg-tg-bg/40 hover:bg-tg-hover transition flex items-center gap-2 justify-center"><i class="ri-moon-line"></i> Dark</button>
+                            <button data-theme-set="auto" class="theme-btn py-2 px-3 rounded-lg bg-tg-bg/40 hover:bg-tg-hover transition flex items-center gap-2 justify-center"><i class="ri-contrast-2-line"></i> Auto</button>
                         </div>
                     </div>
 
