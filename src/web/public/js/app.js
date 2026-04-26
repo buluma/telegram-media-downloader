@@ -15,6 +15,8 @@ import { initStatusBar } from './statusbar.js';
 import * as Notifications from './notifications.js';
 import { initOnboarding, refreshOnboarding } from './onboarding.js';
 import { initShortcuts } from './shortcuts.js';
+import * as router from './router.js';
+import { openSheet } from './sheet.js';
 
 // ============ Initialization ============
 async function init() {
@@ -49,6 +51,11 @@ async function init() {
 
     await loadGroups();
     await loadStats();
+    // Routes need to be registered BEFORE router.start() so the initial
+    // hash dispatch lands on a real handler.
+    registerRoutes();
+    setupFab();
+    router.start();
     
     // Expose to window for HTML onclick handlers
     window.navigateTo = navigateTo;
@@ -97,31 +104,54 @@ async function init() {
     });
     highlightThemeButtons();
 
-    navigateTo('viewer');
+    // The initial render is handled by router.start() below — it dispatches
+    // to whichever hash the URL has (default /viewer).
 }
 
 // ============ Navigation ============
-function navigateTo(page) {
+//
+// Public navigateTo(page) is the SPA's user-facing way to switch pages — it
+// always goes through the hash router so the URL stays in sync, browser
+// back/forward works, and deep-links to e.g. #/settings/proxy land on the
+// right place. The actual DOM swap lives in renderPage().
+
+function navigateTo(page, opts) {
+    const url = page.startsWith('#/') ? page : `#/${page}`;
+    router.navigate(url, opts);
+}
+
+function renderPage(page, params = {}) {
     state.currentPage = page;
-    
+    state.currentRouteParams = params;
+
     document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
     document.querySelector(`.nav-item[data-page="${page}"]`)?.classList.add('active');
-    
-    // Hide all pages, show selected
+
+    // Bottom-nav active state
+    document.querySelectorAll('.bottom-nav-item').forEach(el => el.classList.remove('active'));
+    document.querySelector(`.bottom-nav-item[data-nav="${page}"]`)?.classList.add('active');
+
     document.querySelectorAll('#content-area > div[id^="page-"]').forEach(el => el.classList.add('hidden'));
     document.getElementById(`page-${page}`)?.classList.remove('hidden');
-    
-    // Show media tabs only on viewer page
+
     const mediaTabs = document.getElementById('media-tabs');
     if (mediaTabs) mediaTabs.style.display = page === 'viewer' ? '' : 'none';
-    
+
     closeSidebar();
-    
+
     if (page === 'settings') {
         Settings.loadSettings();
         initEngine();
         document.getElementById('page-title').textContent = 'Settings';
         document.getElementById('page-subtitle').textContent = 'System Configuration';
+        // Optional deep-link: #/settings/<section> scrolls to that section.
+        if (params.section) {
+            setTimeout(() => {
+                const el = document.querySelector(`[data-settings-section="${params.section}"]`)
+                       || document.querySelector(`#setting-${params.section}, .${params.section}-section`);
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 80);
+        }
     } else if (page === 'groups') {
         renderGroupsConfig();
         document.getElementById('page-title').textContent = 'Manage Groups';
@@ -133,6 +163,33 @@ function navigateTo(page) {
             showAllMedia();
         }
     }
+}
+
+// Register hash routes. Patterns documented in router.js.
+function registerRoutes() {
+    router.route('/viewer', () => renderPage('viewer'));
+    router.route('/viewer/:groupId', ({ params }) => {
+        // Open a specific group's gallery — match the existing openGroup()
+        // behaviour so the sidebar selection stays consistent.
+        renderPage('viewer');
+        const g = state.groups?.find(x => String(x.id) === String(params.groupId));
+        if (g) openGroup(params.groupId, g.name);
+    });
+    router.route('/groups', () => renderPage('groups'));
+    router.route('/groups/:groupId', ({ params }) => {
+        renderPage('groups');
+        const g = (state.allDialogs || []).find(d => String(d.id) === String(params.groupId))
+              || state.groups?.find(x => String(x.id) === String(params.groupId));
+        if (g) openGroupSettings(params.groupId, g.name || g.title || params.groupId);
+    });
+    router.route('/engine', () => renderPage('settings', { section: 'engine' }));
+    router.route('/settings', () => renderPage('settings'));
+    router.route('/settings/:section', ({ params }) => renderPage('settings', { section: params.section }));
+    router.route('/stories', () => {
+        renderPage('viewer');
+        document.getElementById('stories-btn')?.click();
+    });
+    router.route('/account/add', () => { window.location.href = '/add-account.html'; });
 }
 
 function closeSidebar() {
@@ -975,6 +1032,40 @@ function highlightThemeButtons() {
         b.classList.toggle('ring-2', active);
         b.classList.toggle('ring-tg-blue', active);
         b.classList.toggle('text-tg-blue', active);
+    });
+}
+
+function setupFab() {
+    const fab = document.getElementById('fab');
+    if (!fab) return;
+    fab.addEventListener('click', () => {
+        const list = document.createElement('div');
+        list.className = 'flex flex-col';
+        const items = [
+            { icon: 'ri-link-m', label: 'Paste a Telegram link', sub: 'Download from a t.me/... URL', run: () => document.getElementById('paste-url-btn')?.click() },
+            { icon: 'ri-camera-line', label: 'Stories', sub: 'Save someone\'s active Stories', run: () => document.getElementById('stories-btn')?.click() },
+            { icon: 'ri-user-add-line', label: 'Add Telegram account', sub: 'Phone → OTP → 2FA wizard', run: () => { window.location.href = '/add-account.html'; } },
+            { icon: 'ri-chat-3-line', label: 'Browse chats', sub: 'Pick a chat to monitor or backfill', run: () => navigateTo('groups') },
+        ];
+        for (const it of items) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'flex items-center gap-3 p-3 rounded-lg hover:bg-tg-hover text-left w-full';
+            btn.innerHTML = `
+                <div class="w-10 h-10 rounded-full bg-tg-blue/15 flex items-center justify-center text-tg-blue">
+                    <i class="${it.icon} text-xl"></i>
+                </div>
+                <div class="min-w-0 flex-1">
+                    <div class="text-tg-text font-medium text-sm">${escapeHtml(it.label)}</div>
+                    <div class="text-tg-textSecondary text-xs truncate">${escapeHtml(it.sub)}</div>
+                </div>`;
+            btn.addEventListener('click', () => {
+                handle.close();
+                setTimeout(it.run, 80); // let the sheet close before triggering the next UI
+            });
+            list.appendChild(btn);
+        }
+        const handle = openSheet({ title: 'Quick actions', content: list, size: 'sm' });
     });
 }
 
