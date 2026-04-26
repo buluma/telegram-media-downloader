@@ -10,7 +10,10 @@
 #>
 
 $Program = "src/index.js"
-$Command = "history"
+# Subcommand to run under the watchdog. Default 'monitor' so production
+# supervision actually keeps a long-running process alive. Override via
+# env: `$env:TGDL_RUN = "history"; .\watchdog.ps1`
+$Command = if ($env:TGDL_RUN) { $env:TGDL_RUN } else { "monitor" }
 $LogFile = "data/logs/protection_log.txt"
 $RetryCount = 0
 $MaxRetries = 10
@@ -37,7 +40,10 @@ while ($true) {
     Write-Host "`n🚀 Launching Process (Attempt #$($RetryCount + 1))..." -ForegroundColor Green
     
     # --- RUN THE APP ---
-    node $Program $Command
+    # Split $Command on whitespace so multi-word overrides like
+    # "history --no-prompt" work. PowerShell expands array as separate args.
+    $cmdArgs = @($Command -split '\s+' | Where-Object { $_ })
+    node $Program @cmdArgs
     # -------------------
 
     $exitCode = $LASTEXITCODE
