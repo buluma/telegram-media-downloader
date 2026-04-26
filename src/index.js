@@ -55,18 +55,41 @@ function question(query) {
 }
 
 async function main() {
-    // TTY Check
-    if (!process.stdin.isTTY) {
-        console.error(colorize('❌ Error: This tool requires an interactive terminal.', 'red', 'bold'));
+    resilience.init();
+
+    const command = process.argv[2];
+
+    // Default behaviour with no subcommand: launch the web dashboard.
+    // Everything (accounts, groups, history, monitor, settings, link
+    // downloads, stories) is reachable from the browser. The interactive
+    // CLI is still available via `node src/index.js menu` (or `help`) for
+    // headless / power-user workflows.
+    if (!command) {
+        const port = process.env.PORT || 3000;
+        const url = `http://localhost:${port}`;
+        console.log(colorize('\n🚀 Telegram Downloader', 'cyan', 'bold'));
+        console.log(colorize(`   Dashboard: ${url}`, 'green'));
+        console.log(colorize('   First run? Open the URL and follow the setup wizard.', 'dim'));
+        console.log(colorize('   Power-user CLI: `node src/index.js menu`\n', 'dim'));
+        await import('./web/server.js');
+        return new Promise(() => {}); // keep alive
+    }
+
+    // Help / menu output never needs a terminal.
+    if (command === 'menu' || command === 'help' || command === '--help' || command === '-h') {
+        showMenu();
+        return;
+    }
+
+    // Other subcommands beyond this point are interactive — they need a TTY.
+    if (!process.stdin.isTTY && command !== 'web' && command !== 'monitor' && command !== 'history') {
+        console.error(colorize('❌ This subcommand needs an interactive terminal.', 'red', 'bold'));
         process.exit(1);
     }
 
-    // Activate Resilience System
-    resilience.init();
-
     clearScreen();
     console.log(colorize('╔════════════════════════════════════════════╗', 'cyan'));
-    console.log(colorize('║   📱 TELEGRAM AUTO-DOWNLOADER CLI v1.0.0    ║', 'cyan', 'bold'));
+    console.log(colorize('║   📱 TELEGRAM DOWNLOADER — CLI              ║', 'cyan', 'bold'));
     console.log(colorize('╚════════════════════════════════════════════╝', 'cyan'));
     console.log();
 
@@ -151,9 +174,8 @@ async function main() {
     const connManager = new ConnectionManager(client);
     connManager.start();
 
-    // Parse command
-    const command = process.argv[2] || 'menu';
-
+    // The no-args / 'menu' / 'help' branches are handled earlier in main();
+    // anything that reaches the switch is a real subcommand.
     switch (command) {
         case 'dialogs':
         case 'groups':
@@ -177,21 +199,20 @@ async function main() {
         case 'settings':
             await configureGlobalSettings(config);
             break;
-        case 'auth':
-            await setupWebAuth(config);
-            break;
         case 'accounts':
             await manageAccounts(accountManager, config);
             break;
         case 'web':
             await import('./web/server.js');
-            await new Promise(() => {}); // Keep alive
+            await new Promise(() => {}); // keep alive
             break;
         case 'purge':
             await purgeData(client, config);
             break;
         default:
-            showMenu();
+            console.log(colorize(`Unknown command: ${command}`, 'red'));
+            console.log(colorize('Run with no arguments to start the dashboard, or `node src/index.js menu` for help.', 'dim'));
+            process.exitCode = 1;
     }
 
     // Graceful disconnect all accounts
@@ -1389,27 +1410,18 @@ async function startHistory(accountManager, config, connManager) {
 }
 
 function showMenu() {
-    console.log(colorize('📌 Available Commands:', 'cyan', 'bold'));
+    const port = process.env.PORT || 3000;
     console.log();
-    console.log(colorize('  --- Groups ---', 'dim'));
-    console.log('  ' + colorize('node src/index.js config', 'white') + '   - Configure groups (Enable/Disable, Filters)');
-    console.log('  ' + colorize('node src/index.js dialogs', 'white') + '  - List all groups');
+    console.log(colorize('Telegram Downloader — most things are easier in the dashboard', 'cyan', 'bold'));
+    console.log(colorize(`  npm start                       → open dashboard at http://localhost:${port}`, 'green'));
     console.log();
-    console.log(colorize('  --- Accounts ---', 'dim'));
-    console.log('  ' + colorize('node src/index.js accounts', 'white') + ' - Manage Telegram accounts');
+    console.log(colorize('Power-user CLI subcommands (when you really want a terminal):', 'dim'));
+    console.log(colorize('  monitor    history    dialogs    accounts    config    settings    viewer    auth    purge', 'white'));
     console.log();
-    console.log(colorize('  --- System ---', 'dim'));
-    console.log('  ' + colorize('node src/index.js settings', 'white') + ' - System settings (Disk/Speed/Path)');  
-    console.log('  ' + colorize('node src/index.js viewer', 'white') + '   - View download stats');
-    console.log('  ' + colorize('node src/index.js auth', 'white') + '     - Setup web password');
-    console.log();
-    console.log(colorize('  --- Download ---', 'dim'));
-    console.log('  ' + colorize('node src/index.js monitor', 'white') + '  - Start real-time monitor');
-    console.log('  ' + colorize('node src/index.js history', 'white') + '  - Download history');
-    console.log('  ' + colorize('node src/index.js web', 'white') + '      - Start web GUI (http://localhost:3000)');
-    console.log();
-    console.log(colorize('  --- Data ---', 'dim'));
-    console.log('  ' + colorize('node src/index.js purge', 'white') + '    - Delete group data or all data');
+    console.log(colorize('Examples:', 'dim'));
+    console.log('  ' + colorize('node src/index.js monitor', 'white') + '   headless real-time monitor (servers)');
+    console.log('  ' + colorize('node src/index.js history', 'white') + '   bulk-backfill an existing group');
+    console.log('  ' + colorize('node src/index.js auth', 'white') + '      reset the dashboard password');
     console.log();
 }
 

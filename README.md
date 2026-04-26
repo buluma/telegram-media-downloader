@@ -139,16 +139,16 @@ Long-running monitor under a watchdog (Linux / macOS): `TGDL_RUN=monitor ./runne
 
 ## CLI cheatsheet
 
+The dashboard does almost everything. The CLI subcommands stay around for headless servers and emergencies.
+
 | Command | What it does |
 | --- | --- |
-| `npm start` | Interactive main menu (config, monitor, history, accounts, viewer, purge). |
-| `npm run web` | Web dashboard on `:3000`. |
-| `npm run monitor` | Headless real-time monitor. |
+| `npm start` | **Default.** Opens the dashboard at `http://localhost:3000`. |
+| `npm run prod` | Same dashboard but supervised by the watchdog (`runner.js`). |
+| `npm run monitor` | Headless real-time monitor for servers (no dashboard UI). |
 | `npm run history` | Bulk backfill an existing chat. |
-| `npm run dialogs` | List every Telegram chat your account can see + its ID. |
-| `npm run auth` | Set / change the dashboard password. |
-| `npm run prod` | Watchdog-managed production process (`runner.js`, env `TGDL_RUN`). |
-| `node src/index.js purge` | Delete one chat's data, or factory-reset. |
+| `npm run auth` | Reset / change the dashboard password from the terminal. |
+| `npm run menu` | Full list of subcommands. |
 
 ## Configuration
 
