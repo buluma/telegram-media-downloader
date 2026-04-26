@@ -1,0 +1,25 @@
+# Anything we don't actually want shipped into the runtime image.
+.git
+.gitignore
+.github
+.vscode
+.idea
+node_modules
+data
+docs
+tests
+**/*.test.js
+*.md
+!README.md
+!SECURITY.md
+!LICENSE
+.editorconfig
+.nvmrc
+.prettierrc
+.prettierignore
+.eslintrc*
+eslint.config.js
+.husky
+coverage
+.claude
+CLAUDE.md
