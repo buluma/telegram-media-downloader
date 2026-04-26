@@ -4,9 +4,10 @@ import { api } from './api.js';
 import { ws } from './ws.js';
 import { formatBytes } from './utils.js';
 import { t as i18nT } from './i18n.js';
+import { subscribe as subscribeMonitorStatus, refreshNow as refreshMonitorStatus } from './monitor-status.js';
 
 const $ = (id) => document.getElementById(id);
-let pollHandle = null;
+let statsPollHandle = null;
 
 function applyState(state) {
     const dot = $('status-dot');
@@ -23,28 +24,33 @@ function applyState(state) {
     if (lbl) lbl.textContent = m.text;
 }
 
-async function refresh() {
+function applyMonitor(mon) {
+    if (!mon) return;
+    applyState(mon.state);
+    const q = $('status-queue'); if (q) q.textContent = mon.queue ?? 0;
+    const a = $('status-active'); if (a) a.textContent = mon.active ?? 0;
+}
+
+async function refreshStats() {
     try {
-        const [mon, stats] = await Promise.all([
-            api.get('/api/monitor/status').catch(() => null),
-            api.get('/api/stats').catch(() => null),
-        ]);
-        if (mon) {
-            applyState(mon.state);
-            $('status-queue').textContent = mon.queue ?? 0;
-            $('status-active').textContent = mon.active ?? 0;
-        }
+        const stats = await api.get('/api/stats').catch(() => null);
         if (stats) {
-            $('status-files').textContent = stats.totalFiles ?? 0;
-            $('status-disk').textContent = stats.diskUsageFormatted || formatBytes(stats.diskUsage || 0);
+            const f = $('status-files'); if (f) f.textContent = stats.totalFiles ?? 0;
+            const d = $('status-disk'); if (d) d.textContent = stats.diskUsageFormatted || formatBytes(stats.diskUsage || 0);
         }
     } catch { /* keep last values */ }
 }
 
 export function initStatusBar() {
-    refresh();
-    if (pollHandle) clearInterval(pollHandle);
-    pollHandle = setInterval(refresh, 5000);
+    // Monitor state/queue/active: piggy-back on the shared monitor-status
+    // poller (one /api/monitor/status fetch, three subscribers).
+    subscribeMonitorStatus(applyMonitor);
+
+    // Stats are heavier (disk walk on the server) and change slowly — keep
+    // a separate, slower cadence so we don't hammer it.
+    refreshStats();
+    if (statsPollHandle) clearInterval(statsPollHandle);
+    statsPollHandle = setInterval(refreshStats, 15000);
 
     // Live cues from the WebSocket
     ws.on('__ws_open', () => {
@@ -57,7 +63,8 @@ export function initStatusBar() {
     ws.on('*', (m) => {
         // refresh counters on relevant events; ignore most chatter to avoid stalls
         if (m.type && /^(download_complete|history_done|file_deleted|group_purged|purge_all|monitor_event)$/.test(m.type)) {
-            refresh();
+            refreshMonitorStatus();
+            refreshStats();
         }
     });
 }

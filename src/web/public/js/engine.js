@@ -3,6 +3,7 @@
 import { api } from './api.js';
 import { showToast, formatBytes, escapeHtml } from './utils.js';
 import { t as i18nT, tf as i18nTf } from './i18n.js';
+import { subscribe as subscribeMonitorStatus, refreshNow as refreshMonitorStatus } from './monitor-status.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -106,12 +107,10 @@ function applyStatus(status) {
     set('engine-uptime', formatUptime(status.uptimeMs));
 }
 
-let pollHandle = null;
-
-async function refresh() {
-    try { applyStatus(await api.get('/api/monitor/status')); }
-    catch { /* SPA bootstraps without engine being reachable yet — not fatal */ }
-}
+// Refresh helper — kept as a thin alias around the shared monitor-status
+// module so existing call sites in this file (WS handlers below) keep
+// reading naturally.
+function refresh() { refreshMonitorStatus(); }
 
 export function initEngine() {
     $('engine-start')?.addEventListener('click', async () => {
@@ -139,10 +138,9 @@ export function initEngine() {
         }
     });
 
-    refresh();
-    // Light polling so Queue/Uptime stay fresh even if the WS misses an event.
-    if (pollHandle) clearInterval(pollHandle);
-    pollHandle = setInterval(refresh, 3000);
+    // Subscribe to the shared monitor-status poller — same data the
+    // statusbar and onboarding modules consume, but only one HTTP request.
+    subscribeMonitorStatus(applyStatus);
 }
 
 export function handleEngineWsMessage(msg) {
