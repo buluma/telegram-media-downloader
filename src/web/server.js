@@ -24,6 +24,7 @@ import { SecureSession } from '../core/security.js';
 import { AccountManager } from '../core/accounts.js';
 import { loadConfig } from '../config/manager.js';
 import { runtime } from '../core/runtime.js';
+import { parseTelegramUrl, parseUrlList, UrlParseError } from '../core/url-resolver.js';
 import {
     hashPassword, loginVerify, isAuthConfigured,
     issueSession, validateSession, revokeSession, startSessionGc,
@@ -624,6 +625,109 @@ app.get('/api/history/:jobId', (req, res) => {
 app.get('/api/history', (req, res) => {
     res.json(Array.from(_historyJobs.values()));
 });
+
+// ====== Download-by-Link (Xinomo parity) ===================================
+//
+// Paste any t.me message link (or a tg:// URL) and pull just that media
+// into the queue. Supports private channels (/c/<id>/...), forum topics
+// (extra path segment), and bulk newline-separated input.
+
+function detectMediaType(message) {
+    const m = message?.media || message;
+    if (m?.sticker || message?.sticker) return 'stickers';
+    if (m?.photo || m?.className === 'MessageMediaPhoto') return 'photos';
+    const doc = m?.document || (m?.className === 'MessageMediaDocument' ? m : null);
+    if (doc) {
+        const mime = doc.mimeType || '';
+        if (mime.startsWith('video/')) return 'videos';
+        if (mime.startsWith('audio/')) return mime.includes('ogg') ? 'voice' : 'audio';
+        if (mime.includes('gif') || (doc.attributes || []).some(a => a.className === 'DocumentAttributeAnimated')) return 'gifs';
+        if (mime.includes('image/webp') || mime.includes('application/x-tgsticker')) return 'stickers';
+        return 'documents';
+    }
+    return null;
+}
+
+app.post('/api/download/url', async (req, res) => {
+    try {
+        const { url, urls } = req.body || {};
+        const list = Array.isArray(urls) ? urls : (url ? parseUrlList(url) : []);
+        if (!list.length) return res.status(400).json({ error: 'Provide url or urls' });
+
+        const am = await getAccountManager();
+        if (am.count === 0) return res.status(409).json({ error: 'No Telegram accounts loaded' });
+
+        const { DownloadManager } = await import('../core/downloader.js');
+        const { RateLimiter } = await import('../core/security.js');
+
+        const config = loadConfig();
+        const standalone = !runtime._downloader;
+        const downloader = runtime._downloader || new DownloadManager(
+            am.getDefaultClient(), config, new RateLimiter(config.rateLimits),
+        );
+        if (standalone) {
+            await downloader.init();
+            downloader.start();
+        }
+
+        const results = [];
+        for (const raw of list) {
+            try {
+                const parsed = parseTelegramUrl(raw);
+                // Try every account until one can read the chat
+                let resolved = null;
+                let workingClient = null;
+                for (const [, c] of am.clients) {
+                    try {
+                        const entity = await c.getEntity(parsed.chatRef);
+                        const messages = await c.getMessages(entity, { ids: [parsed.messageId] });
+                        if (messages?.[0]) {
+                            resolved = { entity, message: messages[0] };
+                            workingClient = c;
+                            break;
+                        }
+                    } catch { /* try next */ }
+                }
+                if (!resolved) { results.push({ url: raw, ok: false, error: 'No account could read the message' }); continue; }
+
+                const mediaType = detectMediaType(resolved.message);
+                if (!mediaType) { results.push({ url: raw, ok: false, error: 'Message has no downloadable media' }); continue; }
+
+                const groupId = String(resolved.entity.id);
+                const groupName = resolved.entity.title || resolved.entity.username || resolved.entity.firstName || groupId;
+                // Switch the downloader's reference client for this enqueue if
+                // the runtime's client differs from the resolver's. The
+                // downloader's .client is used to actually fetch bytes.
+                downloader.client = workingClient;
+                const ok = await downloader.enqueue({
+                    message: resolved.message,
+                    groupId,
+                    groupName,
+                    mediaType,
+                }, 1); // realtime priority
+                results.push({ url: raw, ok, group: groupName, messageId: parsed.messageId, mediaType });
+            } catch (e) {
+                results.push({ url: raw, ok: false, error: e instanceof UrlParseError ? e.message : (e?.message || 'Failed') });
+            }
+        }
+
+        if (standalone) {
+            // Tear down once jobs drain — fire-and-forget.
+            (async () => {
+                while (downloader.pendingCount > 0 || downloader.active.size > 0) {
+                    await new Promise(r => setTimeout(r, 1000));
+                }
+                downloader.stop().catch(() => {});
+            })();
+        }
+
+        res.json({ success: true, results });
+    } catch (e) {
+        console.error('POST /api/download/url:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
 
 // 1. Stats API (SQLite)
 app.get('/api/stats', async (req, res) => {
