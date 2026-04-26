@@ -1314,6 +1314,17 @@
                                 </div>
                                 <div id="setting-force-https" class="tg-toggle shrink-0 mt-0.5"></div>
                             </div>
+                            <div class="flex items-start justify-between gap-3 py-1 border-t border-tg-border/50 pt-3">
+                                <div class="min-w-0">
+                                    <div class="text-tg-text text-sm" data-i18n="settings.security.rate_limit">API rate limit</div>
+                                    <p class="text-xs text-tg-textSecondary mt-0.5" data-i18n="settings.security.rate_limit_help">Throttles <code>/api/*</code> per IP (default off). Enable only if exposing the dashboard publicly. Login + setup limiters stay on regardless.</p>
+                                </div>
+                                <div id="setting-rate-limit" class="tg-toggle shrink-0 mt-0.5"></div>
+                            </div>
+                            <div class="flex items-center justify-between gap-3 py-1">
+                                <label for="setting-rate-limit-rpm" class="text-tg-text text-sm" data-i18n="settings.security.rate_limit_rpm">Requests per minute</label>
+                                <input id="setting-rate-limit-rpm" type="number" min="10" max="1000000" step="500" class="tg-input text-sm w-32 text-right" placeholder="10000">
+                            </div>
                             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 <div>
                                     <label class="text-tg-text text-sm block mb-1">Current password</label>

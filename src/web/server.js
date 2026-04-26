@@ -166,13 +166,42 @@ app.use(helmet({
 }));
 
 // Defense-in-depth: a coarse global rate limit on every API path. The login
-// endpoint has its own stricter limiter below.
+// endpoint has its own stricter limiter below (which is NOT user-toggleable
+// — it stays on regardless to slow brute-force).
+//
+// Default is OFF — a private, auth-gated dashboard with a chatty SPA
+// (per-group photo fetches, status polling, gallery scrolling) trips a
+// modest cap easily, and the prior 600/min default was masking real
+// load as 429s. Users who expose the dashboard publicly can re-enable
+// it from Settings → Dashboard security.
+//
+// `_rateLimitConfig` is refreshed from disk every 30 s, plus immediately
+// after POST /api/config so toggling in the UI takes effect without a
+// restart. The skip + limit functions read this in-memory cache to stay
+// sync (express-rate-limit's hooks don't accept async).
+const RATE_LIMIT_DEFAULT_RPM = 10000;
+let _rateLimitConfig = { enabled: false, perMinute: RATE_LIMIT_DEFAULT_RPM };
+
+async function refreshRateLimitConfig() {
+    try {
+        const config = await readConfigSafe();
+        const cfg = config.web?.rateLimit || {};
+        const rpm = parseInt(cfg.perMinute, 10);
+        _rateLimitConfig = {
+            enabled: cfg.enabled === true,
+            perMinute: Number.isFinite(rpm) && rpm >= 10 ? Math.min(1000000, rpm) : RATE_LIMIT_DEFAULT_RPM,
+        };
+    } catch { /* keep last-known-good */ }
+}
+refreshRateLimitConfig();
+setInterval(refreshRateLimitConfig, 30 * 1000).unref();
+
 const apiLimiter = rateLimit({
     windowMs: 60 * 1000,
-    limit: 600,
+    limit: () => _rateLimitConfig.perMinute,
     standardHeaders: 'draft-7',
     legacyHeaders: false,
-    skip: (req) => !req.path.startsWith('/api/'),
+    skip: (req) => !req.path.startsWith('/api/') || !_rateLimitConfig.enabled,
 });
 app.use(apiLimiter);
 
@@ -1525,6 +1554,10 @@ app.post('/api/config', async (req, res) => {
             try { await _accountManager.disconnectAll(); } catch {}
             _accountManager = null;
         }
+
+        // Refresh the cached rate-limit config so the toggle / RPM change
+        // takes effect immediately instead of waiting for the 30s sweep.
+        if (req.body.web?.rateLimit) refreshRateLimitConfig();
 
         broadcast({ type: 'config_updated' });
         res.json({ success: true });

@@ -85,6 +85,33 @@ export async function loadSettings() {
             };
         }
 
+        const rlToggle = document.getElementById('setting-rate-limit');
+        const rlInput  = document.getElementById('setting-rate-limit-rpm');
+        if (rlToggle && rlInput) {
+            const rlCfg = config.web?.rateLimit || {};
+            rlToggle.classList.toggle('active', rlCfg.enabled === true);
+            rlInput.value = rlCfg.perMinute || 10000;
+
+            const saveRateLimit = async () => {
+                const enabled   = rlToggle.classList.contains('active');
+                const perMinute = Math.max(10, Math.min(1000000, parseInt(rlInput.value, 10) || 10000));
+                rlInput.value = perMinute;
+                try {
+                    await api.post('/api/config', { web: { rateLimit: { enabled, perMinute } } });
+                    showToast(enabled ? `Rate limit: ${perMinute}/min` : 'Rate limit disabled', enabled ? 'success' : 'info');
+                } catch (err) {
+                    showToast(`Save failed: ${err.message}`, 'error');
+                }
+            };
+
+            rlToggle.onclick = (e) => {
+                e.preventDefault();
+                rlToggle.classList.toggle('active');
+                saveRateLimit();
+            };
+            rlInput.onchange = saveRateLimit;
+        }
+
         // Telegram API: only the apiId is exposed; apiHash is server-only.
         const apiIdEl = document.getElementById('setting-api-id');
         if (apiIdEl) apiIdEl.value = tg.apiId || '';
