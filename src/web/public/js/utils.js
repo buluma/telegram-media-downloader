@@ -14,6 +14,27 @@ export function formatDate(dateStr) {
     return new Date(dateStr).toLocaleString();
 }
 
+/**
+ * Telegram-style relative time. "now" / "5m" / "2h" / "yesterday" / dd.mm.
+ * Returns '' for invalid / missing input so callers don't have to guard.
+ */
+export function formatRelativeTime(input) {
+    if (!input) return '';
+    const t = typeof input === 'number' ? input : Date.parse(input);
+    if (!Number.isFinite(t)) return '';
+    const now = Date.now();
+    const dSec = Math.max(0, Math.round((now - t) / 1000));
+    if (dSec < 45) return 'now';
+    if (dSec < 60 * 60) return `${Math.round(dSec / 60)}m`;
+    if (dSec < 24 * 60 * 60) return `${Math.round(dSec / 3600)}h`;
+    if (dSec < 2 * 24 * 60 * 60) return 'yesterday';
+    if (dSec < 7 * 24 * 60 * 60) return `${Math.round(dSec / 86400)}d`;
+    const d = new Date(t);
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    return `${dd}.${mm}`;
+}
+
 export function escapeHtml(text) {
     if (!text) return '';
     return text
@@ -58,32 +79,69 @@ export function getAvatarClass(id) {
     return colors[numId % colors.length];
 }
 
-export function createAvatar(id, name, type) {
+/**
+ * Render a Telegram-style avatar. Two call signatures:
+ *   createAvatar(id, name, type)               // legacy positional
+ *   createAvatar({ id, name, type, ring, dot, size })   // preferred
+ *
+ * `ring` ∈ 'downloading' | 'active' | null    → animated gradient ring (story-ring).
+ * `dot`  ∈ 'monitor' | 'queue' | 'error' | null → small status dot at bottom-right.
+ *                  Replaces the type badge while a runtime-status dot is shown.
+ * `size` ∈ 'sm' (32) | 'md' (40) | 'lg' (48 default) | 'xl' (64).
+ */
+export function createAvatar(idOrOpts, name, type) {
+    const opts = typeof idOrOpts === 'object'
+        ? idOrOpts
+        : { id: idOrOpts, name, type };
+    const { id, ring, dot, size = 'lg' } = opts;
+    name = opts.name ?? name;
+    type = opts.type ?? type;
+
+    const sizePx = { sm: 32, md: 40, lg: 48, xl: 64 }[size] || 48;
+    const initialPx = sizePx >= 56 ? 28 : sizePx >= 44 ? 20 : 16;
     const gradient = getAvatarClass(id);
     const initial = (name || '?').charAt(0).toUpperCase();
+
     let typeIcon = 'question-line';
-    
     if (type === 'channel' || String(id).startsWith('-100')) typeIcon = 'megaphone-fill';
     else if (type === 'group' || String(id).startsWith('-')) typeIcon = 'group-fill';
+    else if (type === 'bot') typeIcon = 'robot-2-fill';
     else typeIcon = 'user-fill';
 
+    // The runtime-status dot wins visually over the type badge, but we still
+    // render the type badge below for context — Telegram's chat list shows
+    // both: a tiny green online dot AND a colored channel/group badge.
+    const dotMap = {
+        monitor: { color: '#4FAE4E', label: 'monitoring' },
+        queue:   { color: '#2AABEE', label: 'in queue' },
+        error:   { color: '#E53935', label: 'error' },
+    };
+    const dotMeta = dotMap[dot];
+
+    const ringClass = ring === 'downloading' ? 'avatar-ring avatar-ring-active'
+        : ring === 'active' ? 'avatar-ring' : '';
+
     return `
-        <div class="relative w-12 h-12 flex-shrink-0">
-            <img src="/api/groups/${id}/photo" 
-                 class="w-full h-full rounded-full object-cover bg-tg-bg border border-white/5" 
+        <div class="relative flex-shrink-0 ${ringClass}" style="width:${sizePx}px;height:${sizePx}px">
+            <img src="/api/groups/${encodeURIComponent(id)}/photo"
+                 class="w-full h-full rounded-full object-cover bg-tg-bg"
                  onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'"
                  loading="lazy"
-                 alt="${escapeHtml(name)}">
-            
+                 alt="${escapeHtml(String(name || id))}">
             <div class="absolute inset-0 w-full h-full rounded-full ${gradient} flex items-center justify-center text-white hidden shadow-inner">
-                <span class="text-xl font-bold drop-shadow-md pb-0.5">${initial}</span>
+                <span class="font-bold drop-shadow-md" style="font-size:${initialPx}px">${initial}</span>
             </div>
-
-            <div class="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-tg-panel flex items-center justify-center z-10 border border-tg-bg">
-                <div class="w-4 h-4 rounded-full bg-tg-bg flex items-center justify-center text-tg-textSecondary text-[10px]">
-                    <i class="ri-${typeIcon}"></i>
+            ${dotMeta ? `
+                <span class="absolute -bottom-0.5 -right-0.5 rounded-full border-2 border-tg-sidebar"
+                      style="width:14px;height:14px;background:${dotMeta.color}"
+                      aria-label="${dotMeta.label}"></span>
+            ` : `
+                <div class="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-tg-panel flex items-center justify-center z-10 border border-tg-bg">
+                    <div class="w-4 h-4 rounded-full bg-tg-bg flex items-center justify-center text-tg-textSecondary text-[10px]">
+                        <i class="ri-${typeIcon}"></i>
+                    </div>
                 </div>
-            </div>
+            `}
         </div>
     `;
 }

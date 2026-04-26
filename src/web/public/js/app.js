@@ -17,6 +17,8 @@ import { initOnboarding, refreshOnboarding } from './onboarding.js';
 import { initShortcuts } from './shortcuts.js';
 import * as router from './router.js';
 import { openSheet } from './sheet.js';
+import { renderChatRow, renderEmptyState, renderRowSkeletons } from './components.js';
+import { formatRelativeTime } from './utils.js';
 
 // ============ Initialization ============
 async function init() {
@@ -35,6 +37,32 @@ async function init() {
     ws.on('config_updated', () => { if (state.currentPage === 'settings') Settings.loadSettings(); });
     ws.on('monitor_event', (m) => {
         if (m.type === 'download_complete') Notifications.notifyDownloadComplete(m.payload || {});
+    });
+
+    // Live "this group is downloading" ring state — driven by the same
+    // download_progress / download_complete events the engine card uses.
+    state.activeRings = state.activeRings || new Set();
+    function markRing(groupId, on) {
+        const id = String(groupId);
+        const had = state.activeRings.has(id);
+        if (on) state.activeRings.add(id); else state.activeRings.delete(id);
+        if (had !== on) renderGroupsList();
+    }
+    ws.on('download_progress', (m) => { if (m.payload?.groupId) markRing(m.payload.groupId, true); });
+    ws.on('download_complete', (m) => {
+        if (m.payload?.groupId) {
+            // Hold the ring for ~600ms after the last byte so users can see
+            // the completion before it fades.
+            setTimeout(() => markRing(m.payload.groupId, false), 600);
+        }
+    });
+    ws.on('monitor_state', (m) => {
+        if (m.state === 'stopped' || m.state === 'error') {
+            if (state.activeRings?.size) {
+                state.activeRings.clear();
+                renderGroupsList();
+            }
+        }
     });
 
     // Sticky status bar (engine state + counters + WS link)
@@ -240,36 +268,44 @@ function renderGroupsList() {
     
     const sorted = Array.from(map.values());
 
-    list.innerHTML = sorted.map(g => `
-        <div class="group-item hover:bg-tg-hover px-3 py-2 cursor-pointer flex items-center gap-3" data-group-id="${escapeHtml(String(g.downloadId || g.id || g.name))}" data-group-name="${escapeHtml(g.name)}">
-            ${createAvatar(g.id || g.name, g.name, g.type)}
-            <div class="flex-1 min-w-0">
-                <div class="flex items-center gap-2">
-                     <h3 class="text-sm font-medium text-tg-text truncate">${escapeHtml(g.name)}</h3>
-                </div>
-                <p class="text-xs text-tg-textSecondary">${g.totalFiles || 0} files • ${g.sizeFormatted || '0 B'}</p>
-            </div>
-            <button class="purge-btn w-8 h-8 rounded-full hover:bg-red-500/20 flex items-center justify-center opacity-0 group-item-hover transition-all" 
-                data-purge-id="${escapeHtml(String(g.downloadId || g.id || g.name))}" data-purge-name="${escapeHtml(g.name)}" title="Delete group data">
-                <i class="ri-delete-bin-line text-red-400 text-sm"></i>
-            </button>
-        </div>
-    `).join('');
-
-    // Event delegation for group clicks
-    list.querySelectorAll('.group-item[data-group-id]').forEach(el => {
-        el.addEventListener('click', (e) => {
-            // Don't navigate when clicking delete button
-            if (e.target.closest('.purge-btn')) return;
-            openGroup(el.dataset.groupId, el.dataset.groupName);
+    if (sorted.length === 0) {
+        list.innerHTML = renderEmptyState({
+            icon: 'ri-chat-3-line',
+            title: 'No groups yet',
+            body: 'Add a Telegram chat from the Chats page to start downloading.',
+            actionLabel: 'Browse chats',
+            actionHref: '#/groups',
         });
-    });
+        return;
+    }
 
-    // Event delegation for purge buttons
-    list.querySelectorAll('.purge-btn[data-purge-id]').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            purgeGroup(btn.dataset.purgeId, btn.dataset.purgeName);
+    state.activeRings = state.activeRings || new Set();
+    list.innerHTML = sorted.map(g => {
+        const id = String(g.downloadId || g.id || g.name);
+        const subtitle = `${g.totalFiles || 0} files · ${g.sizeFormatted || '0 B'}`;
+        const ring = state.activeRings.has(id) ? 'downloading' : null;
+        return renderChatRow({
+            id,
+            name: g.name,
+            subtitle,
+            avatarType: g.type,
+            avatarRing: ring,
+            avatarDot: ring ? 'monitor' : null,
+            time: g.lastDownloadAt ? formatRelativeTime(g.lastDownloadAt) : '',
+            selected: state.currentGroupId === id,
+            data: { groupName: g.name },
+        });
+    }).join('');
+
+    // Event delegation — click opens the group viewer; right-click / long-press
+    // shows a context menu (handled by gestures.js / future addition).
+    list.querySelectorAll('.chat-row[data-id]').forEach(el => {
+        el.addEventListener('click', () => openGroup(el.dataset.id, el.dataset.groupName));
+        el.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                openGroup(el.dataset.id, el.dataset.groupName);
+            }
         });
     });
 }
@@ -543,46 +579,37 @@ function renderDialogsList(dialogs) {
     }
     
     list.innerHTML = filtered.map(d => {
-        let btnClass, btnLabel;
-        if (d.inConfig && d.enabled) {
-            btnClass = 'bg-green-500/20 text-green-400';
-            btnLabel = '✅ Active';
-        } else if (d.inConfig && !d.enabled) {
-            btnClass = 'bg-yellow-500/15 text-yellow-400';
-            btnLabel = '⏸ Paused';
-        } else {
-            btnClass = 'bg-tg-bg text-tg-textSecondary';
-            btnLabel = '+ Add';
-        }
         const typeLabel = d.type === 'channel' ? 'Channel'
             : d.type === 'group' ? 'Group'
             : d.type === 'bot' ? 'Bot'
-            : d.type === 'user' ? 'DM' : 'Dialog';
+            : d.type === 'user' ? 'Direct message' : 'Dialog';
         const subParts = [typeLabel];
         if (d.members) subParts.push(`${d.members} members`);
-        if (d.archived) subParts.push('📦 archived');
-        const badge = d.type === 'user'
-            ? '<span class="ml-2 text-[10px] text-amber-400 bg-amber-400/10 px-1.5 py-0.5 rounded">DM</span>'
-            : '';
-        return `
-        <div class="bg-tg-panel rounded-xl p-4 flex items-center gap-3 hover:bg-tg-hover transition-colors">
-            ${createAvatar(d.id, d.name, d.type)}
-            <div class="flex-1 min-w-0">
-                <h3 class="text-tg-text font-medium truncate">${escapeHtml(d.name)}${badge}</h3>
-                <p class="text-xs text-tg-textSecondary">${subParts.join(' • ')}</p>
-            </div>
-            <button data-dialog-id="${escapeHtml(String(d.id))}" data-dialog-name="${escapeHtml(d.name)}"
-                class="px-3 py-1.5 rounded-lg text-sm ${btnClass} hover:opacity-80 transition">
-                ${btnLabel}
-            </button>
-        </div>`;
+        if (d.archived) subParts.push('archived');
+
+        const statusPill = (d.inConfig && d.enabled)
+            ? { label: 'Active', kind: 'active' }
+            : (d.inConfig && !d.enabled)
+                ? { label: 'Paused', kind: 'paused' }
+                : { label: 'Add', kind: 'add' };
+
+        return renderChatRow({
+            id: d.id,
+            name: d.name,
+            avatarType: d.type,
+            subtitle: subParts.join(' · '),
+            statusPill,
+            data: { dialogName: d.name },
+        });
     }).join('');
 
-    // Event delegation for dialog config buttons
-    list.querySelectorAll('button[data-dialog-id]').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            openGroupSettings(btn.dataset.dialogId, btn.dataset.dialogName);
+    // Click anywhere on the row → open the group settings sheet for that
+    // dialog. Keyboard Enter/Space mirrors the click for accessibility.
+    list.querySelectorAll('.chat-row[data-id]').forEach(el => {
+        const fire = () => openGroupSettings(el.dataset.id, el.dataset.dialogName);
+        el.addEventListener('click', fire);
+        el.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fire(); }
         });
     });
 }
