@@ -257,8 +257,9 @@ export class DownloadManager extends EventEmitter {
             return true;
         }
 
-        if (priority === 2) this.queue.push(job);   // history: FIFO normal lane
-        else this._high.push(job);                  // realtime: FIFO high lane
+        if (priority === 2) this.queue.push(job);             // history: FIFO normal lane
+        else if (priority === 0) this._high.unshift(job);     // TTL/preempt: front of high lane
+        else this._high.push(job);                            // realtime: FIFO high lane
 
         this.emit('queue', this.pendingCount);
         return true;
@@ -463,7 +464,8 @@ export class DownloadManager extends EventEmitter {
                 fileName: path.basename(filePath),
                 fileSize: size,
                 fileType: type,
-                filePath: path.relative(DOWNLOADS_DIR, filePath)
+                filePath: path.relative(DOWNLOADS_DIR, filePath),
+                ttlSeconds: job.ttlSeconds || null,
             });
         } catch(e) {
             console.error('DB Insert Error', e);

@@ -397,13 +397,22 @@ export class RealtimeMonitor extends EventEmitter {
                     return;
                 }
 
-                // Queue for download with HIGH priority
+                // Detect TTL / self-destructing media — fast-path queue at the
+                // front of the realtime lane so the file is captured before
+                // it expires.
+                const ttlSeconds = message?.media?.ttlSeconds;
+                const priority = ttlSeconds && ttlSeconds > 0 ? 0 : 1;
+                if (ttlSeconds) {
+                    this.emit('download', { group: group.name, type: 'ttl', messageId: message.id, ttl: ttlSeconds });
+                }
+
                 const added = await this.downloader.enqueue({
                     message,
                     groupId: group.id,
                     groupName: group.name,
-                    mediaType
-                }, 1);
+                    mediaType,
+                    ttlSeconds,
+                }, priority);
 
                 if (added) {
                     this.stats.downloaded++;
