@@ -663,35 +663,70 @@ app.get('/api/stats', async (req, res) => {
 // 2. Dialogs API (Groups)
 app.get('/api/dialogs', async (req, res) => {
     try {
-        if (!telegramClient || !telegramClient.connected) {
+        // Prefer the AccountManager-managed default client; fall back to the
+        // legacy single-session client for installs that haven't migrated.
+        let client = null;
+        try {
+            const am = await getAccountManager();
+            client = am.getDefaultClient();
+        } catch { /* no creds yet */ }
+        if ((!client || !client.connected) && telegramClient?.connected) client = telegramClient;
+        if (!client || !client.connected) {
             return res.status(503).json({ error: 'Telegram client not connected' });
         }
-        
+
         const config = JSON.parse(await fs.readFile(CONFIG_PATH, 'utf8'));
         const configGroups = config.groups || [];
-        
-        const dialogs = await telegramClient.getDialogs({ limit: 200 });
-        const results = dialogs
-            .filter(d => d.isGroup || d.isChannel)
-            .map(d => {
+        const allowDM = config.allowDmDownloads === true;
+
+        // Pull both active and archived in parallel so a sometimes-archived
+        // backup channel doesn't disappear from the picker.
+        const [active, archived] = await Promise.all([
+            client.getDialogs({ limit: 500 }).catch(() => []),
+            client.getDialogs({ limit: 200, archived: true }).catch(() => []),
+        ]);
+        const seen = new Set();
+        const merged = [];
+        for (const d of [...active, ...archived]) {
+            const id = String(d.id);
+            if (seen.has(id)) continue;
+            seen.add(id);
+            merged.push({ d, archived: archived.includes(d) });
+        }
+
+        const results = merged
+            .filter(({ d }) => {
+                if (d.isGroup || d.isChannel) return true;
+                // DMs (user/bot conversations) are off by default for privacy;
+                // gated behind the allowDmDownloads master switch.
+                return !!d.isUser && allowDM;
+            })
+            .map(({ d, archived }) => {
                 const id = d.id.toString();
                 const configGroup = configGroups.find(g => String(g.id) === id);
+                let type = 'group';
+                if (d.isChannel) type = 'channel';
+                else if (d.isUser && d.entity?.bot) type = 'bot';
+                else if (d.isUser) type = 'user';
                 return {
                     id,
-                    name: d.title || d.name || 'Unknown',
-                    type: d.isChannel ? 'channel' : 'group',
+                    name: d.title || d.name || (d.entity?.firstName || '') + (d.entity?.lastName ? ' ' + d.entity.lastName : '') || 'Unknown',
+                    type,
                     username: d.username,
+                    archived,
+                    members: d.entity?.participantsCount || null,
                     enabled: configGroup?.enabled || false,
                     inConfig: !!configGroup,
-                    filters: configGroup?.filters || { photos: true, videos: true, files: true, links: true, voice: false, gifs: false },
+                    filters: configGroup?.filters || { photos: true, videos: true, files: true, links: true, voice: false, gifs: false, stickers: false },
                     autoForward: configGroup?.autoForward || { enabled: false, destination: null, deleteAfterForward: false },
-                    photoUrl: `/api/groups/${id}/photo`
+                    photoUrl: `/api/groups/${id}/photo`,
                 };
             });
-            
-        res.json({ success: true, dialogs: results });
+
+        res.json({ success: true, dialogs: results, allowDM });
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        console.error('GET /api/dialogs:', error);
+        res.status(500).json({ error: 'Internal error' });
     }
 });
 
