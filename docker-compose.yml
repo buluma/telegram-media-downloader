@@ -1,4 +1,9 @@
-version: '3.8'
+# Compose file for Telegram Media Downloader.
+#
+# Defaults to the in-process web dashboard (which can also start the realtime
+# monitor from the Engine card in Settings). To run a separate headless
+# monitor, copy this service block and set TGDL_RUN=monitor; both processes
+# can share the same data volume safely (SQLite WAL mode).
 
 services:
   telegram-downloader:
@@ -11,11 +16,23 @@ services:
     volumes:
       - ./data:/app/data
     environment:
-      - TZ=Asia/Bangkok
-    stdin_open: true # Required for interactive login if running via docker attach (first run)
-    tty: true
+      - NODE_ENV=production
+      - TZ=${TZ:-UTC}
+      - TGDL_DEBUG=${TGDL_DEBUG:-}
+      # Override to run the watchdog process (history / monitor) instead.
+      # - TGDL_RUN=monitor
+    healthcheck:
+      test: ["CMD", "node", "scripts/healthcheck.js"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
-# Usage:
-# 1. Build & Run: docker-compose up -d
-# 2. First Run (Login): docker-compose exec telegram-downloader npm start
-#    (Or just run 'docker-compose run telegram-downloader npm start' for interactive setup)
+# First-time setup:
+#   docker compose up -d
+#   open http://localhost:3000 — set the dashboard password (only allowed
+#   from localhost on first run), then go to Settings → Telegram Accounts
+#   → Add account.
+#
+# Headless / no browser:
+#   docker compose run --rm telegram-downloader node src/index.js
