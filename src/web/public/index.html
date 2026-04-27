@@ -1189,14 +1189,19 @@
                             <div class="grid grid-cols-3 gap-3">
                                 <div>
                                     <label class="text-tg-textSecondary text-xs block mb-1" data-i18n="settings.size.total_disk">Total Disk</label>
-                                    <select id="setting-max-disk" class="tg-input w-full text-sm">
-                                        <option value="" data-i18n="settings.size.no_limit">No limit</option>
-                                        <option value="10GB">10 GB</option>
-                                        <option value="50GB">50 GB</option>
-                                        <option value="100GB">100 GB</option>
-                                        <option value="500GB">500 GB</option>
-                                        <option value="1TB">1 TB</option>
-                                    </select>
+                                    <input id="setting-max-disk" type="text" list="disk-size-presets" class="tg-input w-full text-sm" placeholder="e.g. 500GB">
+                                    <datalist id="disk-size-presets">
+                                        <option value=""></option>
+                                        <option value="50GB"></option>
+                                        <option value="100GB"></option>
+                                        <option value="250GB"></option>
+                                        <option value="500GB"></option>
+                                        <option value="1TB"></option>
+                                        <option value="2TB"></option>
+                                        <option value="5TB"></option>
+                                        <option value="10TB"></option>
+                                    </datalist>
+                                    <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.size.total_disk_help">Free-form: 50GB, 1TB, 250 MB. Empty = no limit.</p>
                                 </div>
                                 <div>
                                     <label class="text-tg-textSecondary text-xs block mb-1" data-i18n="settings.size.per_video">Per Video</label>
@@ -1575,12 +1580,11 @@
                     <div class="px-3 pt-6">
                         <div class="relative w-full h-1 bg-white/30 rounded-full cursor-pointer group/progress"
                             id="video-progress-container">
-                            <div id="video-progress-fill" class="h-full bg-white rounded-full transition-all"
-                                style="width: 0%">
-                                <div
-                                    class="absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 bg-white rounded-full opacity-0 group-hover/progress:opacity-100 transition-opacity">
-                                </div>
-                            </div>
+                            <div id="video-progress-fill" class="absolute left-0 top-0 h-full bg-white rounded-full transition-all"
+                                style="width: 0%"></div>
+                            <div id="video-progress-dot"
+                                class="absolute top-1/2 w-3 h-3 -mt-1.5 -ml-1.5 bg-white rounded-full opacity-0 group-hover/progress:opacity-100 transition-opacity z-20 pointer-events-none shadow"
+                                style="left: 0%"></div>
                         </div>
                     </div>
 

@@ -455,8 +455,25 @@ function openGroup(groupId, groupName) {
 
     document.getElementById('page-title').textContent = state.currentGroup;
     document.getElementById('page-subtitle').textContent = i18nT('viewer.subtitle.loading', 'Loading...');
+    // Mirror the sidebar avatar into the header so the user sees which
+    // chat they're inside. Falls back to a coloured initial when there's
+    // no profile photo cached yet.
+    updateHeaderAvatar(groupId, state.currentGroup);
     navigateTo('viewer');
     loadGroupFiles(groupId);
+}
+
+function updateHeaderAvatar(groupId, displayName) {
+    const el = document.getElementById('header-avatar');
+    if (!el) return;
+    const photo = (state.groups || []).find(g => String(g.id) === String(groupId))?.photoUrl
+        || `/photos/${encodeURIComponent(String(groupId))}.jpg`;
+    // Render a coloured initial as the immediate fallback; if the photo
+    // request 404s, the existing src stays empty and the initial shows.
+    const initial = (displayName || '?').trim().charAt(0).toUpperCase() || '?';
+    const slot = (Math.abs(parseInt(String(groupId).slice(-3)) || 0) % 6) + 1;
+    el.className = `tg-avatar tg-avatar-${slot} w-10 h-10 text-lg flex-shrink-0 relative overflow-hidden`;
+    el.innerHTML = `<span>${initial}</span><img src="${photo}" alt="" class="absolute inset-0 w-full h-full object-cover" onerror="this.remove()">`;
 }
 
 function showAllMedia() {
