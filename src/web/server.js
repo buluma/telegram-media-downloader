@@ -1408,16 +1408,32 @@ runtime.on('state', (s) => {
 runtime.on('event', (e) => {
     if (e.type === 'download_complete' && e.payload) {
         const p = e.payload;
-        // Stash the relative-to-DOWNLOADS_DIR file path so the SPA can open
-        // a finished item in the media viewer with one click. The
-        // downloader emits the absolute disk path; normalise to forward
-        // slashes + strip the DOWNLOADS_DIR prefix so the value matches
-        // what `/files/<path>?inline=1` expects.
+        // Normalise `filePath` to a path that's relative to DOWNLOADS_DIR
+        // — the form the SPA's `/files/<path>?inline=1` route expects.
+        //
+        // The downloader's `buildPath()` defaults to `'./data/downloads'`,
+        // so the emitted filePath is usually a RELATIVE string like
+        // `data/downloads/<group>/images/<file>`. Older code path (before
+        // v2.3.19) only stripped an ABSOLUTE prefix, which made every
+        // queue-history entry ship with a literal `data/downloads/`
+        // segment — and `/files/data/downloads/...` then got joined to
+        // DOWNLOADS_DIR a second time and 404'd. Walk three forms:
+        //   1. absolute under DOWNLOADS_DIR
+        //   2. relative starting with `./data/downloads/` or `data/downloads/`
+        //   3. already canonical `<group>/<type>/<file>` — leave alone
         let relPath = null;
         if (p.filePath) {
-            const abs = String(p.filePath).replace(/\\/g, '/');
-            const root = path.resolve(DOWNLOADS_DIR).replace(/\\/g, '/') + '/';
-            relPath = abs.startsWith(root) ? abs.slice(root.length) : abs;
+            let s = String(p.filePath).replace(/\\/g, '/');
+            const absRoot = path.resolve(DOWNLOADS_DIR).replace(/\\/g, '/');
+            if (s.startsWith(absRoot + '/')) {
+                relPath = s.slice(absRoot.length + 1);
+            } else if (s.startsWith('./data/downloads/')) {
+                relPath = s.slice('./data/downloads/'.length);
+            } else if (s.startsWith('data/downloads/')) {
+                relPath = s.slice('data/downloads/'.length);
+            } else {
+                relPath = s;
+            }
         }
         pushQueueHistory({
             key: p.key,
@@ -1789,12 +1805,21 @@ app.get('/api/stats', async (req, res) => {
         const dbStats = getDbStats(); // From DB
         const config = JSON.parse(await fs.readFile(CONFIG_PATH, 'utf8'));
         
-        // Disk Usage Cache (or read from disk_usage.json if preferred)
-        let diskUsage = 0;
+        // Disk usage — prefer the live `SUM(file_size)` from the DB
+        // because it's always in sync with the row count we just read,
+        // and fall back to the `data/disk_usage.json` cache if (and
+        // only if) the DB sum is suspiciously low. The legacy cache
+        // file was written sparingly by older downloader versions and
+        // never invalidated when the DB was purged + repopulated, so a
+        // user with thousands of files could end up reading a
+        // multi-week-old "930 KB" snapshot from the JSON.
+        let diskUsage = Number(dbStats.totalSize) || 0;
         const diskUsagePath = path.join(DATA_DIR, 'disk_usage.json');
-        if (existsSync(diskUsagePath)) {
-            const d = JSON.parse(await fs.readFile(diskUsagePath, 'utf8'));
-            diskUsage = d.size;
+        if (diskUsage <= 0 && existsSync(diskUsagePath)) {
+            try {
+                const d = JSON.parse(await fs.readFile(diskUsagePath, 'utf8'));
+                if (d && Number.isFinite(d.size)) diskUsage = d.size;
+            } catch { /* corrupt cache — ignore */ }
         }
 
         // Account count: reflect the on-disk session files even when no
@@ -2245,7 +2270,24 @@ app.get('/api/downloads/:groupId', async (req, res, next) => {
 async function safeResolveDownload(userPath) {
     if (typeof userPath !== 'string' || userPath.length === 0) return { ok: false, reason: 'forbidden' };
     if (userPath.includes('\0')) return { ok: false, reason: 'forbidden' };
-    const normalized = path.normalize(userPath);
+    let normalized = path.normalize(userPath);
+    // Tolerate the legacy `data/downloads/` prefix that was sneaking
+    // into queue-history entries + some DB rows because downloader's
+    // `buildPath()` defaulted to `'./data/downloads'` (relative form
+    // was being stored verbatim instead of always-stripped). Without
+    // this fix, the second `path.join(DOWNLOADS_DIR, …)` below would
+    // double the prefix → `<root>/data/downloads/data/downloads/<…>`
+    // → 404 for every cached preview link the SPA rendered.
+    const dataDownloadsPrefix = 'data' + path.sep + 'downloads' + path.sep;
+    while (normalized.startsWith(dataDownloadsPrefix)) {
+        normalized = normalized.slice(dataDownloadsPrefix.length);
+    }
+    // Defensive: also strip the POSIX form when running on Windows
+    // (path.normalize keeps forward slashes if they're already there
+    // because that's what came over the URL).
+    while (normalized.startsWith('data/downloads/')) {
+        normalized = normalized.slice('data/downloads/'.length);
+    }
     if (path.isAbsolute(normalized)) return { ok: false, reason: 'forbidden' };
     if (normalized.split(path.sep).includes('..')) return { ok: false, reason: 'forbidden' };
     const candidate = path.join(DOWNLOADS_DIR, normalized);

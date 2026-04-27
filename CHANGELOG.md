@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.19] — 2026-04-28
+
+### Fixed
+- **Queue thumbnail / "click to view" 404'd for every finished item.** Root cause: `downloader.js`'s `buildPath()` defaults to `'./data/downloads'` (relative), so `writtenPath` (and the `complete` event payload's `filePath`) is a relative string like `data/downloads/<group>/images/<file>`. v2.3.6's stripper only handled the absolute form (`/app/data/downloads/<…>`); when the input was relative-with-prefix it slipped through unchanged → SPA built `/files/data/downloads/<…>` → `safeResolveDownload()` joined to `DOWNLOADS_DIR` a second time → 404. Two-part fix:
+  - `pushQueueHistory()` now walks **three** forms (absolute under `DOWNLOADS_DIR` / relative `./data/downloads/` / relative `data/downloads/`) and strips whichever it sees, so new entries persist the canonical `<group>/<type>/<file>` form.
+  - `safeResolveDownload()` is now **lenient on the legacy prefix** — it strips any leading `data/downloads/` (and `data\downloads\` on Windows) before joining to `DOWNLOADS_DIR`, so existing queue-history entries + DB rows from before this release also resolve correctly.
+- **All Media: some tiles 404 / "click open viewer" failed for some files.** Same root cause — DB rows from before the path-stripping fix carried the legacy prefix. The `safeResolveDownload()` change above fixes those too without a DB rewrite.
+- **Status-bar disk usage showed nonsensical values** (e.g. `930.54 KB` with 8 784 files). The endpoint was reading from `data/disk_usage.json` — a cache that older downloader versions wrote sparingly and never invalidated when the DB was purged + repopulated. Switched to the live `SUM(file_size)` from the DB (`getDbStats().totalSize`); falls back to the JSON cache only when the DB sum is zero.
+
+### Changed
+- **SW VERSION** bumped `'v18'` → `'v19'`.
+
 ## [2.3.18] — 2026-04-28
 
 ### Added — `?v=` cache-busting on JS / locale assets
