@@ -111,6 +111,17 @@ export class DownloadManager extends EventEmitter {
         this.LOG_DIR = LOGS_DIR;
         this._scalerInterval = null;
         this._consecutiveSuccess = 0; // Track success streak for scaling up
+        // Per-key paused set + global flag for the IDM-style Queue page.
+        // A paused key sits in either lane but is skipped by the worker
+        // dequeue and re-queued at the back so live jobs keep flowing.
+        // `_globalPaused` short-circuits every drain — workers loop without
+        // touching the queues until `resumeAll()` clears it.
+        this._paused = new Set();
+        this._globalPaused = false;
+        // Map<key, job> snapshot for queued/high jobs so the Queue page can
+        // resolve filenames + sizes for entries that haven't started yet.
+        // Kept in lock-step with enqueue/cancel to stay O(1).
+        this._jobs = new Map();
         
         // Ensure directories
         fs.mkdir(DOWNLOADS_DIR, { recursive: true }).catch(() => {});
@@ -242,11 +253,19 @@ export class DownloadManager extends EventEmitter {
     async enqueue(job, priority = 1) {
         const key = `${job.groupId}_${job.message.id}`;
         job.key = key;
+        // Stamp first-seen time for Queue-page sort-by-Added-time. Don't
+        // overwrite if a re-enqueue (e.g. retry path) already set it.
+        if (!job.addedAt) job.addedAt = Date.now();
+        // Cache a thin file-size hint so the snapshot can render size +
+        // progress before the worker actually starts the job.
+        if (job.fileSize == null) {
+            try { job.fileSize = this.getFileSize(job.message); } catch {}
+        }
 
         // Dedup check (Memory + Active)
         if (this.active.has(key)) return false;
-        
-        // Check DB 
+
+        // Check DB
         if (this.isDownloaded(job.groupId, job.message.id)) return false;
 
         // --- DYNAMIC DEFENSE: DISK SPILLOVER ---
@@ -261,8 +280,156 @@ export class DownloadManager extends EventEmitter {
         else if (priority === 0) this._high.unshift(job);     // TTL/preempt: front of high lane
         else this._high.push(job);                            // realtime: FIFO high lane
 
+        // Track for snapshot()/cancel(). Kept tiny on purpose — only the
+        // fields the Queue page actually renders.
+        this._jobs.set(key, job);
+
         this.emit('queue', this.pendingCount);
+        this.emit('queue_changed', { key, op: 'enqueue' });
         return true;
+    }
+
+    /**
+     * Queue-page surface: pause/resume/cancel/retry by key, plus globals.
+     * All operations are O(queue length) at worst (single Array.filter for
+     * cancel) which is fine for the < 1k queues the UI is designed for.
+     */
+    pauseJob(key) {
+        if (!key) return false;
+        this._paused.add(key);
+        this.emit('queue_changed', { key, op: 'pause' });
+        return true;
+    }
+
+    resumeJob(key) {
+        if (!key) return false;
+        const had = this._paused.delete(key);
+        if (had) this.emit('queue_changed', { key, op: 'resume' });
+        return had;
+    }
+
+    isPaused(key) {
+        return this._globalPaused || this._paused.has(key);
+    }
+
+    /**
+     * Remove a queued job. Active jobs can't be cancelled mid-flight here
+     * (gramJS exposes no abort signal on downloadMedia), but we drop them
+     * from `_jobs` so the snapshot stops listing them and the partial file
+     * is wiped on the next worker cycle.
+     */
+    cancelJob(key) {
+        if (!key) return false;
+        const before = this._high.length + this.queue.length;
+        this._high = this._high.filter(j => j.key !== key);
+        this.queue = this.queue.filter(j => j.key !== key);
+        this._jobs.delete(key);
+        this._paused.delete(key);
+        const removed = (this._high.length + this.queue.length) < before;
+        if (removed) {
+            this.emit('queue', this.pendingCount);
+            this.emit('queue_changed', { key, op: 'cancel' });
+        }
+        return removed;
+    }
+
+    pauseAll() {
+        this._globalPaused = true;
+        this.emit('queue_changed', { op: 'pause-all' });
+    }
+
+    resumeAll() {
+        this._globalPaused = false;
+        this._paused.clear();
+        this.emit('queue_changed', { op: 'resume-all' });
+    }
+
+    cancelAllQueued() {
+        const removed = this._high.length + this.queue.length;
+        for (const j of this._high) this._jobs.delete(j.key);
+        for (const j of this.queue) this._jobs.delete(j.key);
+        this._high = [];
+        this.queue = [];
+        this.emit('queue', this.pendingCount);
+        this.emit('queue_changed', { op: 'cancel-all' });
+        return removed;
+    }
+
+    /**
+     * Re-enqueue a previously-failed job at the FRONT of the high lane so
+     * a manual retry from the Queue page jumps the line. Caller passes the
+     * raw job (the same shape originally handed to `enqueue`).
+     */
+    retryJob(job) {
+        if (!job || !job.message) return false;
+        const key = job.key || `${job.groupId}_${job.message.id}`;
+        job.key = key;
+        if (!job.addedAt) job.addedAt = Date.now();
+        this._paused.delete(key);
+        this._high.unshift(job);
+        this._jobs.set(key, job);
+        this.emit('queue', this.pendingCount);
+        this.emit('queue_changed', { key, op: 'retry' });
+        return true;
+    }
+
+    /**
+     * Single-shot snapshot of the entire downloader state, used by the
+     * Queue-page boot path (`GET /api/queue/snapshot`). Returns plain
+     * JSON-serialisable data; the heavy `message` object stays inside
+     * `_jobs` and is never emitted.
+     */
+    snapshot() {
+        const mapJob = (job, status) => ({
+            key: job.key,
+            groupId: String(job.groupId || ''),
+            groupName: job.groupName || null,
+            mediaType: job.mediaType || null,
+            messageId: job.message?.id ?? null,
+            fileName: job.fileName || null,
+            fileSize: job.fileSize || (job.message ? this.getFileSize(job.message) : 0) || 0,
+            progress: 0,
+            received: 0,
+            total: 0,
+            bps: 0,
+            eta: null,
+            status: this._paused.has(job.key) ? 'paused' : status,
+            addedAt: job.addedAt || null,
+        });
+        const active = [];
+        for (const [, st] of this.active) {
+            const total = st.total || st.fileSize || 0;
+            const received = st.received || 0;
+            const bps = st.bps || 0;
+            const eta = (bps > 0 && total > received) ? Math.round((total - received) / bps) : null;
+            active.push({
+                key: st.key,
+                groupId: String(st.groupId || ''),
+                groupName: st.groupName || null,
+                mediaType: st.mediaType || null,
+                messageId: st.message?.id ?? null,
+                fileName: st.fileName || null,
+                fileSize: total,
+                progress: st.progress || 0,
+                received,
+                total,
+                bps,
+                eta,
+                status: this._paused.has(st.key) ? 'paused' : 'active',
+                addedAt: st.addedAt || st.startedAt || null,
+            });
+        }
+        const queued = [];
+        for (const j of this._high) queued.push(mapJob(j, 'queued'));
+        for (const j of this.queue) queued.push(mapJob(j, 'queued'));
+        return {
+            active,
+            queued,
+            globalPaused: this._globalPaused,
+            pausedCount: this._paused.size,
+            workers: this.workerCount,
+            pending: this.pendingCount,
+        };
     }
 
     // --- SPILLOVER LOGIC ---
@@ -308,6 +475,13 @@ export class DownloadManager extends EventEmitter {
 
     async runWorker(id) {
         while (this.running) {
+            // 0. Globally paused? Spin without touching the lanes so resume
+            //    is instantaneous.
+            if (this._globalPaused) {
+                await this.sleep(250);
+                continue;
+            }
+
             // 1. Drain high-priority (realtime) lane first, then history.
             let job = this._high.shift() || this.queue.shift();
 
@@ -325,7 +499,17 @@ export class DownloadManager extends EventEmitter {
                 continue;
             }
 
+            // 4. Per-job pause: shove it to the back of the matching lane
+            //    so other queued work keeps draining. Snapshot still shows
+            //    it as 'paused' (see snapshot()).
+            if (this._paused.has(job.key)) {
+                this.queue.push(job);
+                await this.sleep(150);
+                continue;
+            }
+
             this.active.set(job.key, { ...job, workerId: id, progress: 0, startedAt: Date.now() });
+            this._jobs.delete(job.key);
             this.emit('start', job);
 
             try {
