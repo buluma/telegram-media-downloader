@@ -90,7 +90,10 @@
         html.theme-light .bg-tg-panel { background-color: #F0F4F7 !important; }
         html.theme-light .bg-tg-lightBg { background-color: #FFFFFF !important; }
         html.theme-light .text-tg-text { color: #1F2937 !important; }
-        html.theme-light .text-tg-textSecondary { color: #65737E !important; }
+        /* Bumped from #65737E so labels like "Downloaded Groups" and footer
+           captions stay readable on the light sidebar background without
+           needing hover. */
+        html.theme-light .text-tg-textSecondary { color: #4B5563 !important; }
         html.theme-light .text-white { color: #1F2937 !important; }
         html.theme-light .border-tg-border { border-color: #E1E5EA !important; }
         html.theme-light .hover\:bg-tg-hover:hover { background-color: #DCEDFF !important; }
@@ -129,15 +132,16 @@
         html.theme-light .bg-gray-700 { background-color: #E5E7EB !important; }
         html.theme-light .bg-gray-700\/40 { background-color: rgba(229, 231, 235, 0.7) !important; }
 
-        /* The custom .tg-btn-secondary lives in JS-side CSS injected at
-           runtime; if the runtime style isn't present (or is dark-only) we
-           still want a sensible neutral pill in light mode. Scope kept
-           narrow so it doesn't fight the dark variant. */
+        /* Light-mode override of the base .tg-btn-secondary defined above. */
         html.theme-light .tg-btn-secondary {
             background: #E1E5EA !important;
             color: #1F2937 !important;
+            border-color: #D1D5DB !important;
         }
-        html.theme-light .tg-btn-secondary:hover { background: #D1D5DB !important; }
+        html.theme-light .tg-btn-secondary:hover {
+            background: #D1D5DB !important;
+            border-color: #9CA3AF !important;
+        }
 
         /* Rescue-mode chips (per-group modal). The active chip already
            uses brand blue; inactive chips use bg-tg-bg/40 which the slash
@@ -197,8 +201,10 @@
         /* Auto-fill datalist / number inputs read white-on-white in some
            browsers. Force a stronger visible border so users can find the
            setting-max-disk + setting-rate-limit-rpm fields by sight. */
-        html.theme-light input.tg-input { border: 1px solid #D1D5DB !important; }
-        html.theme-light input.tg-input:focus { border-color: #2AABEE !important; box-shadow: 0 0 0 3px rgba(42,171,238,0.18) !important; }
+        /* Cover both <input> and <select> — selects were borderless before. */
+        html.theme-light .tg-input { border: 1px solid #D1D5DB !important; }
+        html.theme-light .tg-input:hover { border-color: #9CA3AF !important; }
+        html.theme-light .tg-input:focus { border-color: #2AABEE !important; box-shadow: 0 0 0 3px rgba(42,171,238,0.18) !important; }
         html.theme-light .tg-input::placeholder { color: #9CA3AF !important; }
 
         /* Tg-toggle inactive track is too dark in light mode. */
@@ -392,6 +398,44 @@
             transform: scale(0.98);
         }
 
+        /* Used everywhere in the SPA for non-primary actions (Save credentials,
+           Export, Resync, Restart, log View/Copy/Download, Backfill presets,
+           remove-account, etc.). Was relying on a hypothetical JS-injected
+           runtime style that never existed, so dark-mode buttons fell back to
+           the browser default and looked broken. */
+        .tg-btn-secondary {
+            background: #2F3B4A;
+            color: #F5F5F5;
+            padding: 8px 14px;
+            border-radius: 8px;
+            border: 1px solid #38444D;
+            font-weight: 500;
+            font-size: 13px;
+            line-height: 1.2;
+            cursor: pointer;
+            transition: background 0.15s, border-color 0.15s, transform 0.15s;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            white-space: nowrap;
+        }
+
+        .tg-btn-secondary:hover {
+            background: #3A4A5C;
+            border-color: #4A5C6E;
+        }
+
+        .tg-btn-secondary:active {
+            transform: scale(0.98);
+        }
+
+        .tg-btn-secondary:disabled,
+        .tg-btn-secondary[disabled] {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
         .tg-toggle {
             width: 44px;
             height: 24px;
@@ -454,16 +498,24 @@
 
         .tg-input {
             background: #242F3D;
-            border: none;
+            /* Subtle border so inputs and selects are visually bounded
+               against the panel — borderless inputs blended into card
+               backgrounds in dark mode. */
+            border: 1px solid #38444D;
             border-radius: 8px;
-            padding: 12px 16px;
+            padding: 11px 16px;
             color: #F5F5F5;
             width: 100%;
             outline: none;
         }
 
+        .tg-input:hover {
+            border-color: #4A5C6E;
+        }
+
         .tg-input:focus {
-            box-shadow: 0 0 0 2px #2AABEE;
+            border-color: #2AABEE;
+            box-shadow: 0 0 0 2px rgba(42, 171, 238, 0.25);
         }
 
         .modal-backdrop {
@@ -1406,19 +1458,16 @@
                             <div class="grid grid-cols-3 gap-3">
                                 <div>
                                     <label class="text-tg-textSecondary text-xs block mb-1" data-i18n="settings.size.total_disk">Total Disk</label>
-                                    <input id="setting-max-disk" type="text" list="disk-size-presets" class="tg-input w-full text-sm" placeholder="e.g. 500GB">
-                                    <datalist id="disk-size-presets">
-                                        <option value=""></option>
-                                        <option value="50GB"></option>
-                                        <option value="100GB"></option>
-                                        <option value="250GB"></option>
-                                        <option value="500GB"></option>
-                                        <option value="1TB"></option>
-                                        <option value="2TB"></option>
-                                        <option value="5TB"></option>
-                                        <option value="10TB"></option>
-                                    </datalist>
-                                    <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.size.total_disk_help">Free-form: 50GB, 1TB, 250 MB. Empty = no limit.</p>
+                                    <div class="flex gap-1">
+                                        <input id="setting-max-disk-value" type="number" min="0" step="1" placeholder="500" class="tg-input flex-1 text-sm">
+                                        <select id="setting-max-disk-unit" class="tg-input text-sm" style="max-width:78px;">
+                                            <option value="">—</option>
+                                            <option value="MB">MB</option>
+                                            <option value="GB">GB</option>
+                                            <option value="TB">TB</option>
+                                        </select>
+                                    </div>
+                                    <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.size.total_disk_help">Empty value = no limit. Auto-rotate (below) uses this cap.</p>
                                 </div>
                                 <div>
                                     <label class="text-tg-textSecondary text-xs block mb-1" data-i18n="settings.size.per_video">Per Video</label>

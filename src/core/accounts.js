@@ -148,8 +148,12 @@ export class AccountManager {
      */
     _startKeepAlive() {
         if (this._keepAliveTimer) clearInterval(this._keepAliveTimer);
+        // Coalesce repeated FloodWait warnings so a throttled DC doesn't log
+        // a wall of identical lines. Cleared once a successful ping lands.
+        const lastWarnAt = new Map(); // accountId → ts
+        const FLOOD_WARN_INTERVAL_MS = 5 * 60 * 1000;
         const tick = async () => {
-            for (const [, client] of this.clients) {
+            for (const [id, client] of this.clients) {
                 if (!client?.connected) continue;
                 try {
                     // 90 s extension — keeps the connection past the next
@@ -158,7 +162,22 @@ export class AccountManager {
                         pingId: BigInt(Date.now()),
                         disconnectDelay: 90,
                     }));
-                } catch { /* best-effort — gramJS will reconnect if needed */ }
+                    lastWarnAt.delete(id);
+                } catch (e) {
+                    // FloodWait is the one signal worth surfacing — keep
+                    // pinging an already-throttled DC and we just dig the
+                    // hole deeper. Other failures (network blips, half-
+                    // closed sockets) stay silent; gramJS will reconnect.
+                    const text = e?.errorMessage || e?.message || String(e || '');
+                    if (/FLOOD/i.test(text) || /flood_wait/i.test(text)) {
+                        const now = Date.now();
+                        const prev = lastWarnAt.get(id) || 0;
+                        if (now - prev > FLOOD_WARN_INTERVAL_MS) {
+                            lastWarnAt.set(id, now);
+                            console.warn(`[keep-alive] FloodWait on account ${id}: ${text}`);
+                        }
+                    }
+                }
             }
         };
         // First ping fires fast so a freshly-loaded set of clients gets

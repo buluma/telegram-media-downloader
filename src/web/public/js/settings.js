@@ -41,7 +41,16 @@ export async function loadSettings() {
             }
         }
 
-        bind('setting-max-disk', dm.maxTotalSize || '');
+        // Total disk cap is split into a numeric input + unit dropdown so
+        // mobile + desktop users get a real picker instead of a flaky
+        // <input list> autocomplete. parseDiskCap() handles legacy strings
+        // like "500GB", "1.5 TB", "250 MB", or a bare number (= MB).
+        const parsed = parseDiskCap(dm.maxTotalSize);
+        const dvEl = document.getElementById('setting-max-disk-value');
+        const duEl = document.getElementById('setting-max-disk-unit');
+        if (dvEl) dvEl.value = parsed.value;
+        if (duEl) duEl.value = parsed.unit;
+
         bind('setting-max-video', dm.maxVideoSize || '');
         bind('setting-max-image', dm.maxImageSize || '');
 
@@ -234,6 +243,41 @@ const ADVANCED_DEFAULTS = {
     },
 };
 
+/**
+ * Split a disk-cap string like "500GB", "1.5 TB", "250MB", or a bare
+ * number-as-MB into { value, unit } for the dual input. Returns
+ * `{ value: '', unit: '' }` for empty/null/garbage so the picker shows
+ * "no limit". Accepts both upper- and lower-case units.
+ */
+function parseDiskCap(s) {
+    if (s == null || s === '' || s === 0 || s === '0') return { value: '', unit: '' };
+    if (typeof s === 'number' && Number.isFinite(s)) return { value: String(s), unit: 'MB' };
+    const m = String(s).trim().match(/^([\d.]+)\s*([KMGT]?B?)?$/i);
+    if (!m) return { value: '', unit: '' };
+    const num = parseFloat(m[1]);
+    if (!Number.isFinite(num) || num <= 0) return { value: '', unit: '' };
+    let unit = (m[2] || 'MB').toUpperCase();
+    if (unit === 'K' || unit === 'KB') unit = 'MB';   // drop sub-MB granularity, the disk rotator works in MB
+    if (unit === 'G') unit = 'GB';
+    if (unit === 'T') unit = 'TB';
+    if (unit === 'M') unit = 'MB';
+    if (!['MB', 'GB', 'TB'].includes(unit)) unit = 'GB';
+    return { value: String(num), unit };
+}
+
+/**
+ * Inverse of parseDiskCap — combines (value, unit) into the string form
+ * the server expects. Empty value or empty unit → null (= no limit).
+ */
+function combineDiskCap(value, unit) {
+    const v = String(value ?? '').trim();
+    const u = String(unit ?? '').trim().toUpperCase();
+    if (!v || !u) return null;
+    const n = parseFloat(v);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return `${n}${u}`;
+}
+
 function loadAdvanced(config) {
     const adv = config?.advanced || {};
     const set = (id, val) => {
@@ -340,7 +384,7 @@ export async function saveSettings() {
         },
         pollingInterval: parseInt(get('setting-polling')),
         diskManagement: {
-            maxTotalSize: get('setting-max-disk') || null,
+            maxTotalSize: combineDiskCap(get('setting-max-disk-value'), get('setting-max-disk-unit')),
             maxVideoSize: get('setting-max-video') || null,
             maxImageSize: get('setting-max-image') || null,
             enabled: document.getElementById('setting-disk-rotate')?.classList.contains('active') === true,

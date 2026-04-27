@@ -104,7 +104,13 @@ async function paintUpdateBadge() {
         badge.classList.remove('hidden');
         if (dismiss) {
             dismiss.classList.remove('hidden');
+            // Re-bind on every paint since the badge may render different
+            // versions over the lifetime of the tab; guard against
+            // double-fires from rapid clicks before hide() lands.
+            let dismissing = false;
             dismiss.onclick = () => {
+                if (dismissing) return;
+                dismissing = true;
                 try { localStorage.setItem(UPDATE_DISMISS_KEY, latest); } catch { /* private mode */ }
                 hide();
             };
@@ -119,8 +125,14 @@ async function paintUpdateBadge() {
 }
 
 let _updatePollHandle = null;
+let _booted = false;
 
 export function initStatusBar() {
+    // Idempotent — a stray double call (hot-reload, recovery flow) would
+    // otherwise re-bind every WS handler below and fire each event 2×.
+    if (_booted) return;
+    _booted = true;
+
     // Build/version chip — fired once at boot, then on every config_updated
     // (which usually means the SPA was reloaded into a new container).
     paintVersion();

@@ -635,6 +635,18 @@ function startElapsedTimer() {
     }, 1000);
 }
 
+/**
+ * Called by the router when navigating away from #/backfill. Stops the
+ * 1-second elapsed-time ticker so it doesn't keep DOM-thrashing in the
+ * background once nobody's looking. Safe to call when not running.
+ */
+export function stopBackfillPage() {
+    if (elapsedTimer) {
+        clearInterval(elapsedTimer);
+        elapsedTimer = null;
+    }
+}
+
 function formatElapsed(ms) {
     if (!Number.isFinite(ms) || ms < 0) ms = 0;
     const s = Math.floor(ms / 1000);

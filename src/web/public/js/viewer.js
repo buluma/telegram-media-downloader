@@ -276,7 +276,10 @@ class VideoPlayer {
 
         // Fullscreen — fullscreen the container so our custom controls stay.
         this.fsBtn.onclick = () => this.toggleFullscreen();
-        document.addEventListener('fullscreenchange', () => this._refreshFsIcon());
+        // Keep a ref so unload() can detach — otherwise every viewer open
+        // adds another listener and stale ones fire after the modal closes.
+        this._onFullscreenChange = () => this._refreshFsIcon();
+        document.addEventListener('fullscreenchange', this._onFullscreenChange);
 
         // Retry button (error overlay).
         this.retryBtn.onclick = () => {
@@ -390,15 +393,28 @@ class VideoPlayer {
         try { this.video.pause(); } catch {}
         try { this.video.removeAttribute('src'); } catch {}
         try { this.video.load(); } catch {}
+        // Drop the metadata-loaded handler so a stale resume from the
+        // previous clip can't seek the next file to the wrong position.
+        try { this.video.onloadedmetadata = null; } catch {}
         if (document.pictureInPictureElement) {
             document.exitPictureInPicture().catch(() => {});
         }
         this._currentUrl = null;
         this._storageKey = null;
+        this._resumePlayed = false;
         if (this._hideTimer) { clearTimeout(this._hideTimer); this._hideTimer = null; }
         this.speedMenu.classList.add('hidden');
         this._hideError();
         this._showSpinner(false);
+    }
+
+    /** Permanently tear down — call when the player is being thrown away. */
+    destroy() {
+        this.unload();
+        if (this._onFullscreenChange) {
+            document.removeEventListener('fullscreenchange', this._onFullscreenChange);
+            this._onFullscreenChange = null;
+        }
     }
 
     togglePlay() {

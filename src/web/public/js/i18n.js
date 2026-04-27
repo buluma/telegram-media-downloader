@@ -96,10 +96,17 @@ export function applyToDOM(root = document) {
     }
 }
 
+// Module-level promise so consumers that translate during early bootstrap
+// (before initI18n() has resolved) can `await ready` to avoid getting an
+// empty dict. `initI18n()` assigns this on first call.
+let _readyResolve;
+export const ready = new Promise((resolve) => { _readyResolve = resolve; });
+
 export async function initI18n() {
     const stored = localStorage.getItem(LS_KEY) || 'auto';
     active = stored === 'auto' ? detect() : stored;
     document.documentElement.lang = active;
     await load(active);
     applyToDOM();
+    try { _readyResolve?.(active); } catch {}
 }
