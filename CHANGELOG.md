@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.9] — 2026-04-28
+
+### Added
+- **Settings → Video Player** — dedicated section for every playback preference. All settings are browser-side (`localStorage`), no server round-trip; the viewer module reads the same keys on every clip `.load()` so changes take effect on the next open.
+  - **Autoplay videos** — start playing automatically on open. Falls back to a muted start if the browser blocks autoplay-with-sound.
+  - **Start muted** — toggles the saved mute state explicitly (also satisfies most browsers' autoplay policy).
+  - **Loop video** — `<video loop>` flag, restarts the clip at the end.
+  - **Auto-advance to next** — when a video ends and looping is off, opens the next file in the gallery automatically (60 ms debounce so the previous `onended` returns first).
+  - **Remember position** — toggle to disable the existing per-clip resume behaviour. Defaults to ON to preserve legacy behaviour; the saved per-clip key is preserved when off so re-enabling restores everyone's history.
+  - **Default playback speed** — bound directly to the existing `video-speed` localStorage key, so changing it propagates to every player open instantly.
+  - **Default volume** — same pattern, bound to `video-volume` (0–100% slider with live label).
+- **i18n**: 12 new keys for the settings labels + helper text + toast confirmations (en + th lockstep, 621 keys total).
+
 ## [2.3.8] — 2026-04-28
 
 ### Fixed
