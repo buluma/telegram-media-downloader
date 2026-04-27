@@ -22,6 +22,32 @@ import { formatRelativeTime } from './utils.js';
 import { attachLongPress, attachPullToRefresh } from './gestures.js';
 import { initI18n, setLang, getLang, applyToDOM as applyI18n, t as i18nT, tf as i18nTf } from './i18n.js';
 
+// ============ Render coalescing ============
+//
+// WebSocket events arrive in bursts — a single backfill run can fire
+// dozens of download_progress / download_complete messages within a few
+// hundred milliseconds, each of which previously triggered a full
+// renderGroupsList(). On a 200-group sidebar that was the difference
+// between a buttery scroll and the UI freezing for 300 ms at a time.
+//
+// scheduleRender() collapses repeated requests into a single rAF tick,
+// guaranteed to fire no more than once per ~150 ms window. The Map keys
+// each render function so distinct renders don't shadow each other.
+const _scheduledRenders = new Map(); // fn → { timer, frame }
+const RENDER_COALESCE_MS = 150;
+
+function scheduleRender(fn) {
+    if (_scheduledRenders.has(fn)) return;
+    const handle = {};
+    handle.timer = setTimeout(() => {
+        handle.frame = requestAnimationFrame(() => {
+            _scheduledRenders.delete(fn);
+            try { fn(); } catch (e) { console.error('scheduled render', e); }
+        });
+    }, RENDER_COALESCE_MS);
+    _scheduledRenders.set(fn, handle);
+}
+
 // ============ Initialization ============
 async function init() {
     setupEventListeners();
@@ -80,12 +106,15 @@ async function init() {
 
     // Live "this group is downloading" ring state — driven by the same
     // download_progress / download_complete events the engine card uses.
+    // Renders are coalesced via scheduleRender() because download_progress
+    // can fire 5–10× per second per active job; rendering the entire
+    // sidebar that often was a measurable freeze on slower devices.
     state.activeRings = state.activeRings || new Set();
     function markRing(groupId, on) {
         const id = String(groupId);
         const had = state.activeRings.has(id);
         if (on) state.activeRings.add(id); else state.activeRings.delete(id);
-        if (had !== on) renderGroupsList();
+        if (had !== on) scheduleRender(renderGroupsList);
     }
     ws.on('download_progress', (m) => { if (m.payload?.groupId) markRing(m.payload.groupId, true); });
     ws.on('download_complete', (m) => {
@@ -99,7 +128,7 @@ async function init() {
         if (m.state === 'stopped' || m.state === 'error') {
             if (state.activeRings?.size) {
                 state.activeRings.clear();
-                renderGroupsList();
+                scheduleRender(renderGroupsList);
             }
         }
     });
