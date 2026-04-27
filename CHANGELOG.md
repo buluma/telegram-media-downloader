@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.1] — 2026-04-28
+
+### Added
+- **In-dashboard update notifier.** New `GET /api/version/check` (public) polls `api.github.com/repos/.../releases/latest`, caches the result for 6 h server-side, and degrades fail-soft (last-known-good cache served on transient errors; cold-start unreachable returns `updateAvailable:false` rather than blanking the UI). The status-bar shows a clickable **"Update available → vX.Y.Z"** pill linking to the release page when the latest tag is newer than the running version (semver-numeric compare, pre-release suffix ignored). Per-version dismiss button writes to `localStorage` so the same release is never re-nagged; a per-session toast fires once so users notice on first load even if the chip is offscreen on a narrow viewport.
+- **i18n keys.** `update.available`, `update.toast`, `update.click_for_release`, `update.dismiss` (en + th lockstep).
+
 ## [2.3.0] — 2026-04-28
 
 A large quality-of-life release. Web dashboard learns to do every CLI op, the download pipeline self-heals, and four new top-level surfaces ship.

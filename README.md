@@ -98,7 +98,7 @@ A self-hosted application that watches your Telegram chats and downloads new med
 - **Light / dark / auto theme** with `prefers-color-scheme` detection, persistence, and a fully-tuned light palette.
 - **Full bilingual UI (en / th)** — `data-i18n` everywhere, lockstep translation files, runtime language switcher.
 - **Live engine card** — start, stop, queue depth, active workers, uptime; updates over WebSocket.
-- **Sticky status bar** — monitor state, queue, active, total files, disk usage, WebSocket health, plus a live **version chip** (auto-bumps per push).
+- **Sticky status bar** — monitor state, queue, active, total files, disk usage, WebSocket health, plus a live **version chip** (auto-bumps per push) and an **"Update available" pill** that quietly polls GitHub Releases and links you straight to the new release notes.
 - **Queue page (IDM-style)** — virtualised live job list with per-row pause / resume / cancel / retry and a global throttle slider (up to 50 MB/s).
 - **Backfill tab** — pick a chat, choose preset (100 / 1k / 10k / dump-all) or custom range, watch progress.
 - **Maintenance panel** — CLI parity from the browser: integrity sweep, rescue sweep, disk rotate, prune orphans, re-export sessions, view raw `config.json` (rendered as a JSON tree), download diagnostics bundle.
@@ -143,7 +143,7 @@ A self-hosted application that watches your Telegram chats and downloads new med
 ### Operations
 - **Docker image** on GHCR, multi-stage, runs as non-root `node` user, `tini` as PID 1, built-in `HEALTHCHECK` against `/api/auth_check`. Multi-arch (amd64 + arm64).
 - **GHCR pull-policy:always** in the bundled compose file — `docker compose up -d` always grabs `:latest`.
-- **`/api/version` + `/metrics`** endpoints — version chip + OpenMetrics text format for Prometheus scraping.
+- **`/api/version` + `/api/version/check` + `/metrics`** endpoints — version chip, GitHub-Releases-backed update notifier (cached 6 h, fail-soft), and OpenMetrics text format for Prometheus scraping.
 - **Network log rotation** at 5 MB (writes preserved, never skipped).
 - **GitHub Actions CI** — lint + test on Node 20 & 22 across Ubuntu / Windows / macOS, plus a Docker workflow that builds + smoke-tests the image (file perms, healthcheck, runs-as-non-root) before publishing to GHCR.
 - **48 vitest specs** covering URL parsing, AES round-trip + legacy decrypt, scrypt password verify, session tokens, proxy mapping, DB migrations + dedup, name sanitisation.
