@@ -36,8 +36,12 @@ export async function sweep() {
     _running = true;
     const result = { scanned: 0, pruned: 0 };
     try {
+        // Pull file_size too so we can repair NULL / 0 sizes from old
+        // downloader versions that didn't always stat the file before
+        // INSERT — that's the source of the "Disk: 1 MB for 8000 files"
+        // status-bar nonsense the user kept seeing.
         const rows = getDb().prepare(
-            `SELECT id, file_path, file_name, group_id FROM downloads WHERE file_path IS NOT NULL`
+            `SELECT id, file_path, file_name, group_id, file_size FROM downloads WHERE file_path IS NOT NULL`
         ).all();
         result.scanned = rows.length;
 
@@ -45,23 +49,46 @@ export async function sweep() {
         // Tunable via config.advanced.integrity.batchSize (read at start()).
         const BATCH = Math.max(1, _batchSize | 0) || 64;
         const deleteIds = [];
+        // [{id, size}, ...] — rows whose actual on-disk size differs from
+        // the stored value (or whose stored value is null/0). Backfilled
+        // in one transaction at the end.
+        const sizeFixes = [];
         for (let i = 0; i < rows.length; i += BATCH) {
             const slice = rows.slice(i, i + BATCH);
             const checks = await Promise.all(slice.map(async (r) => {
-                const rel = String(r.file_path || '').replace(/\\/g, '/');
+                let rel = String(r.file_path || '').replace(/\\/g, '/');
                 if (!rel) return null;
+                // Tolerate the legacy `data/downloads/` prefix that some
+                // older rows still carry — same fix that
+                // safeResolveDownload() does in the request path.
+                while (rel.startsWith('data/downloads/')) rel = rel.slice('data/downloads/'.length);
                 // Defence-in-depth: refuse to stat anything that walks outside
                 // DOWNLOADS_DIR. Rows with bogus paths get pruned.
                 if (rel.includes('..') || path.isAbsolute(rel)) return r.id;
                 const abs = path.join(DOWNLOADS_DIR, rel);
                 try {
                     const st = await fs.stat(abs);
-                    return st.size > 0 ? null : r.id;
+                    if (st.size <= 0) return r.id;
+                    // Backfill or correct the stored file_size if it's
+                    // null / 0 / wrong. Tolerance > 0 for the rare case
+                    // an editor / re-encode legitimately changed bytes.
+                    const stored = Number(r.file_size) || 0;
+                    if (stored !== st.size) sizeFixes.push({ id: r.id, size: st.size });
+                    return null;
                 } catch {
                     return r.id;
                 }
             }));
             for (const id of checks) if (id) deleteIds.push(id);
+        }
+
+        if (sizeFixes.length) {
+            const upd = getDb().prepare('UPDATE downloads SET file_size = ? WHERE id = ?');
+            const tx = getDb().transaction((items) => {
+                for (const it of items) upd.run(it.size, it.id);
+            });
+            tx(sizeFixes);
+            result.sizeFixed = sizeFixes.length;
         }
 
         if (deleteIds.length) {
