@@ -3,7 +3,7 @@
  * Supports dynamic account assignment per group for monitoring & forwarding
  */
 
-import { TelegramClient } from 'telegram';
+import { TelegramClient, Api } from 'telegram';
 import { StringSession } from 'telegram/sessions/index.js';
 import fs from 'fs';
 import path from 'path';
@@ -126,7 +126,53 @@ export class AccountManager {
         // Sync metadata to config for Web API
         await this.syncToConfig();
 
+        // Start the keep-alive pinger so the main DC sender doesn't idle
+        // out and reconnect every 30-90 s during downloads. gramJS's media
+        // DC senders are still per-download (we can't pin those without
+        // forking gramJS) but every keep-alive on the main client also
+        // refreshes the session, which prevents the cascading reconnects
+        // we used to see in network.log.
+        this._startKeepAlive();
+
         return loaded;
+    }
+
+    /**
+     * Background ping loop that keeps every connected client's main DC
+     * session warm. Telegram drops idle MTProto connections after ~75 s;
+     * Api.PingDelayDisconnect tells the server to extend that window so
+     * we don't lose the session between user actions / file downloads.
+     *
+     * Idempotent — calling twice is a no-op (the second call resets the
+     * interval to the freshest set of clients).
+     */
+    _startKeepAlive() {
+        if (this._keepAliveTimer) clearInterval(this._keepAliveTimer);
+        const tick = async () => {
+            for (const [, client] of this.clients) {
+                if (!client?.connected) continue;
+                try {
+                    // 90 s extension — keeps the connection past the next
+                    // tick (60 s) with comfortable headroom.
+                    await client.invoke(new Api.PingDelayDisconnect({
+                        pingId: BigInt(Date.now()),
+                        disconnectDelay: 90,
+                    }));
+                } catch { /* best-effort — gramJS will reconnect if needed */ }
+            }
+        };
+        // First ping fires fast so a freshly-loaded set of clients gets
+        // their disconnect-delay extended before the gramJS default expires.
+        setTimeout(tick, 5 * 1000);
+        this._keepAliveTimer = setInterval(tick, 60 * 1000);
+        this._keepAliveTimer.unref?.();
+    }
+
+    stopKeepAlive() {
+        if (this._keepAliveTimer) {
+            clearInterval(this._keepAliveTimer);
+            this._keepAliveTimer = null;
+        }
     }
 
     /**
@@ -293,6 +339,9 @@ export class AccountManager {
                 userId: String(me.id),
                 username: me.username || ''
             });
+            // Re-arm the keep-alive sweep so the freshly-added client gets
+            // pinged on the next tick instead of waiting up to 60 s.
+            this._startKeepAlive();
 
             console.log();
             console.log(colorize('═══════════════════════════════════════', 'green'));
@@ -500,6 +549,7 @@ export class AccountManager {
                     username: me.username || '',
                 });
                 await this.syncToConfig().catch(() => {});
+                this._startKeepAlive();
                 flow.accountId = finalId;
                 setState('done');
             } catch (e) {
