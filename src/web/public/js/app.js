@@ -635,11 +635,17 @@ function showAllMedia() {
     if (grid) grid.innerHTML = '';
 
     // Make sure the viewer page section is actually visible BEFORE we
-    // start the fetch — otherwise clicking "All Media" while the user
-    // is on Settings / Engine / Queue would silently load files into
-    // a hidden DOM and the user would see nothing change. openGroup()
-    // already calls navigateTo('viewer'); showAllMedia was missing it.
-    navigateTo('viewer');
+    // start the fetch — clicking "All Media" while the user is on
+    // Settings / Engine / Queue would otherwise silently load files
+    // into a hidden DOM. Guard against re-entry: renderPage('viewer')
+    // is also a caller of showAllMedia, so an unconditional
+    // navigateTo() here would build an infinite loop
+    // (sidebar click → showAllMedia → navigateTo → renderPage('viewer')
+    //  → showAllMedia → navigateTo → …).
+    if (state.currentPage !== 'viewer') {
+        navigateTo('viewer');
+        return;   // renderPage will re-enter us with the page visible
+    }
 
     // Load files from all groups
     loadAllFiles();
