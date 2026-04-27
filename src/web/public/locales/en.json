@@ -648,5 +648,7 @@
     "queue.toast.cleared_finished": "Cleared finished",
     "queue.toast.throttle_saved": "Speed limit updated",
     "queue.toast.throttle_failed": "Failed to update: {msg}",
-    "queue.confirm.cancel_all": "Cancel every queued download? Active jobs continue."
+    "queue.confirm.cancel_all": "Cancel every queued download? Active jobs continue.",
+    "queue.confirm.cancel_title": "Cancel download?",
+    "queue.confirm.cancel": "Stop this download? Any partial bytes will be discarded."
 }

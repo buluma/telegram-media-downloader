@@ -648,5 +648,7 @@
     "queue.toast.cleared_finished": "ล้างที่เสร็จแล้ว",
     "queue.toast.throttle_saved": "อัปเดตความเร็วแล้ว",
     "queue.toast.throttle_failed": "อัปเดตไม่ได้: {msg}",
-    "queue.confirm.cancel_all": "ยกเลิก download ที่รออยู่ทั้งหมด? งานที่กำลังทำจะไปต่อ"
+    "queue.confirm.cancel_all": "ยกเลิก download ที่รออยู่ทั้งหมด? งานที่กำลังทำจะไปต่อ",
+    "queue.confirm.cancel_title": "ยกเลิกการ download?",
+    "queue.confirm.cancel": "หยุด download นี้? bytes ที่โหลดมาแล้วจะถูกทิ้ง"
 }

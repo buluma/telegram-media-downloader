@@ -151,10 +151,17 @@ export class AccountManager {
         // Coalesce repeated FloodWait warnings so a throttled DC doesn't log
         // a wall of identical lines. Cleared once a successful ping lands.
         const lastWarnAt = new Map(); // accountId → ts
+        // Per-account "skip until" timestamps so a FloodWait pauses the
+        // next N ticks for that DC instead of pinging right back into the
+        // throttle. Reset on first clean ping (in the success path).
+        const skipUntil = new Map(); // accountId → ts
         const FLOOD_WARN_INTERVAL_MS = 5 * 60 * 1000;
+        const FLOOD_BACKOFF_MS = 10 * 60 * 1000;
         const tick = async () => {
+            const now = Date.now();
             for (const [id, client] of this.clients) {
                 if (!client?.connected) continue;
+                if ((skipUntil.get(id) || 0) > now) continue;   // serving FloodWait penalty
                 try {
                     // 90 s extension — keeps the connection past the next
                     // tick (60 s) with comfortable headroom.
@@ -163,18 +170,21 @@ export class AccountManager {
                         disconnectDelay: 90,
                     }));
                     lastWarnAt.delete(id);
+                    skipUntil.delete(id);
                 } catch (e) {
                     // FloodWait is the one signal worth surfacing — keep
                     // pinging an already-throttled DC and we just dig the
-                    // hole deeper. Other failures (network blips, half-
-                    // closed sockets) stay silent; gramJS will reconnect.
+                    // hole deeper. Back off for 10 min and let the
+                    // throttle decay. Other failures (network blips,
+                    // half-closed sockets) stay silent; gramJS will
+                    // reconnect.
                     const text = e?.errorMessage || e?.message || String(e || '');
                     if (/FLOOD/i.test(text) || /flood_wait/i.test(text)) {
-                        const now = Date.now();
+                        skipUntil.set(id, Date.now() + FLOOD_BACKOFF_MS);
                         const prev = lastWarnAt.get(id) || 0;
-                        if (now - prev > FLOOD_WARN_INTERVAL_MS) {
-                            lastWarnAt.set(id, now);
-                            console.warn(`[keep-alive] FloodWait on account ${id}: ${text}`);
+                        if (Date.now() - prev > FLOOD_WARN_INTERVAL_MS) {
+                            lastWarnAt.set(id, Date.now());
+                            console.warn(`[keep-alive] FloodWait on account ${id}, pausing pings for 10m: ${text}`);
                         }
                     }
                 }

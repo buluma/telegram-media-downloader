@@ -200,6 +200,9 @@ async function init() {
     window.openGroup = openGroup;
     window.showAllMedia = showAllMedia;
     window.openMediaViewer = Viewer.openMediaViewer;
+    // Expose Viewer namespace so other modules (Queue, Backfill, etc.)
+    // can call openMediaViewerSingle without their own import cycle.
+    window.Viewer = Viewer;
     window.closeMediaViewer = Viewer.closeMediaViewer;
     window.openGroupSettings = openGroupSettings;
     window.closeGroupSettings = closeGroupSettings;
@@ -597,33 +600,41 @@ function showAllMedia() {
     loadAllFiles();
 }
 
-async function loadAllFiles() {
-    try {
-        const downloads = await api.get('/api/downloads');
-        // Fan-out: 20 sequential awaits used to pay full RTT × 20 (the
-        // wait dominated on a slow link). Promise.all collapses that to
-        // one round-trip and still respects per-group failures via the
-        // .catch — a single 500 from one group can't sink the page.
-        const slice = downloads.slice(0, 20);
-        const results = await Promise.all(slice.map(group =>
-            api.get(`/api/downloads/${encodeURIComponent(group.id)}?page=1&limit=20`)
-                .then(res => {
-                    if (!res?.files) return [];
-                    // Stamp the canonical name (not the possibly-stale
-                    // `group.name` from /api/downloads) so any per-file
-                    // breadcrumb the viewer renders stays consistent.
-                    const canonical = getGroupName(group.id, { fallback: group.name });
-                    return res.files.map(f => ({ ...f, groupName: canonical, groupId: group.id }));
-                })
-                .catch(() => [])
-        ));
-        const allFiles = results.flat();
+// Per-page batch size for the All-Media + group infinite-scroll path.
+const FILES_PER_PAGE = 50;
 
-        state.files = allFiles;
+async function loadAllFiles() {
+    state.loading = true;
+    const grid = document.getElementById('media-grid');
+    if (state.page === 1 && grid) grid.innerHTML = renderGallerySkeletons(12);
+
+    try {
+        const type = state.currentFilter && state.currentFilter !== 'all' ? state.currentFilter : 'all';
+        const res = await api.get(`/api/downloads/all?page=${state.page}&limit=${FILES_PER_PAGE}&type=${encodeURIComponent(type)}`);
+        const newFiles = res?.files || [];
+
+        if (state.page === 1) {
+            state.files = newFiles;
+        } else {
+            state.files = state.files.concat(newFiles);
+        }
+        // Off-by-one safety: hasMore ALSO requires that the running total
+        // is still below the server-reported total. Otherwise a perfectly-
+        // packed last page (length === FILES_PER_PAGE) keeps firing a
+        // 0-row request forever.
+        const total = Number(res?.total) || state.files.length;
+        state.hasMore = newFiles.length === FILES_PER_PAGE && state.files.length < total;
+
         renderMediaGrid();
-        document.getElementById('page-subtitle').textContent = i18nTf('viewer.subtitle.files', { count: allFiles.length }, `${allFiles.length} files`);
+        document.getElementById('page-subtitle').textContent = i18nTf(
+            'viewer.subtitle.files',
+            { count: total },
+            `${total} files`,
+        );
     } catch (e) {
         showToast(i18nT('viewer.error.load', 'Error loading files'), 'error');
+    } finally {
+        state.loading = false;
     }
 }
 
@@ -641,7 +652,8 @@ async function loadGroupFiles(groupId) {
     }
 
     try {
-        const res = await api.get(`/api/downloads/${encodeURIComponent(groupId)}?page=${state.page}&limit=50`);
+        const type = state.currentFilter && state.currentFilter !== 'all' ? state.currentFilter : 'all';
+        const res = await api.get(`/api/downloads/${encodeURIComponent(groupId)}?page=${state.page}&limit=${FILES_PER_PAGE}&type=${encodeURIComponent(type)}`);
         const newFiles = res.files || [];
 
         if (state.page === 1) {
@@ -650,9 +662,11 @@ async function loadGroupFiles(groupId) {
             state.files = state.files.concat(newFiles);
         }
 
-        state.hasMore = newFiles.length === 50;
+        // Off-by-one safety same as loadAllFiles — short last page no
+        // longer keeps pagination armed forever.
+        const total = Number(res.total) || state.files.length;
+        state.hasMore = newFiles.length === FILES_PER_PAGE && state.files.length < total;
         renderMediaGrid();
-        const total = res.total || state.files.length;
         document.getElementById('page-subtitle').textContent = i18nTf('viewer.subtitle.files', { count: total }, `${total} files`);
     } catch (e) {
         showToast(i18nT('viewer.error.load', 'Error loading files'), 'error');
@@ -1397,7 +1411,19 @@ function setupMediaTabs() {
             document.querySelectorAll('#media-tabs .tab-item').forEach(t => t.classList.remove('active'));
             tab.classList.add('active');
             state.currentFilter = tab.dataset.type || 'all';
-            renderMediaGrid();
+            // Server-side filter: reset pagination + re-fetch with the new
+            // ?type=. Without this, switching tabs would only filter what
+            // we've already paginated client-side, hiding everything past
+            // the first page (the "Photos shows 30" symptom).
+            state.page = 1;
+            state.hasMore = true;
+            state.files = [];
+            if (state.currentPage === 'viewer') {
+                if (state.currentGroupId) loadGroupFiles(state.currentGroupId);
+                else loadAllFiles();
+            } else {
+                renderMediaGrid();
+            }
         });
     });
 }
@@ -1627,10 +1653,13 @@ function setupInfiniteScroll() {
     if (!sentinel) return;
     
     const observer = new IntersectionObserver((entries) => {
-        if (entries[0].isIntersecting && !state.loading && state.hasMore && state.currentGroupId) {
-            state.page++;
-            loadGroupFiles(state.currentGroupId);
-        }
+        if (!entries[0].isIntersecting || state.loading || !state.hasMore) return;
+        // currentGroupId === null on the All-Media surface — page through
+        // /api/downloads/all instead of the per-group endpoint.
+        if (state.currentPage !== 'viewer') return;
+        state.page++;
+        if (state.currentGroupId) loadGroupFiles(state.currentGroupId);
+        else loadAllFiles();
     });
     observer.observe(sentinel);
 }

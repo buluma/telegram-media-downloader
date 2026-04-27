@@ -373,18 +373,55 @@ function renderRows() {
     rowsHost.style.transform = `translateY(${start * ROW_HEIGHT}px)`;
     rowsHost.innerHTML = slice.map(j => renderRow(j)).join('');
 
-    // Wire per-row action buttons via event delegation. Doing it on the
-    // host (rather than per-button addEventListener) keeps the cost
-    // O(1) per re-render even with 100+ visible rows.
+    // Wire per-row interaction via event delegation. Doing it on the host
+    // (rather than per-row addEventListener) keeps the cost O(1) per
+    // re-render even with 100+ visible rows.
     rowsHost.onclick = (ev) => {
         const btn = ev.target.closest('[data-row-action]');
-        if (!btn) return;
-        ev.preventDefault();
-        ev.stopPropagation();
-        const key = btn.closest('[data-key]')?.dataset.key;
-        if (!key) return;
-        const action = btn.dataset.rowAction;
-        runRowAction(action, key);
+        if (btn) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            const key = btn.closest('[data-key]')?.dataset.key;
+            if (!key) return;
+            runRowAction(btn.dataset.rowAction, key);
+            return;
+        }
+        // Click anywhere else on a "done" row → open the media in the
+        // viewer. Skip when an action button was the target (handled
+        // above) or when text-selection is in progress.
+        const row = ev.target.closest('[data-row-open]');
+        if (!row) return;
+        if (window.getSelection()?.toString()) return;
+        const fp = row.dataset.rowOpen;
+        if (!fp) return;
+        // Build a minimal `state.files`-shaped record + 0-index so the
+        // gallery's existing openMediaViewer pipeline can take over —
+        // works for image / video / audio / document alike.
+        const fileType = row.dataset.rowOpenType === 'video' ? 'videos'
+            : row.dataset.rowOpenType === 'image' ? 'images'
+            : row.dataset.rowOpenType === 'audio' ? 'audio'
+            : 'documents';
+        const ext = (fp.split('.').pop() || '').toLowerCase();
+        try {
+            // Stash the synthetic file in window so app.js's viewer can
+            // pick it up. Falls back to a direct in-tab open if the
+            // viewer isn't on the page (defensive).
+            const file = {
+                name: fp.split(/[\\/]/).pop(),
+                fullPath: fp,
+                path: fp,
+                type: fileType,
+                extension: '.' + ext,
+            };
+            if (window.Viewer?.openMediaViewerSingle) {
+                window.Viewer.openMediaViewerSingle(file);
+            } else {
+                window.open(`/files/${encodeURIComponent(fp)}?inline=1`, '_blank');
+            }
+        } catch (e) {
+            console.warn('queue row open failed:', e);
+            window.open(`/files/${encodeURIComponent(fp)}?inline=1`, '_blank');
+        }
     };
 }
 
@@ -392,12 +429,24 @@ function renderRow(j) {
     const name = j.fileName || (j.messageId ? `#${j.messageId}` : i18nT('queue.row.unnamed', 'Unnamed file'));
     const groupName = getGroupName(j.groupId, { fallback: j.groupName || j.groupId || '?' });
     const ext = (name.split('.').pop() || '').toLowerCase();
-    const icon = j.mediaType === 'video' || j.mediaType === 'videos' ? 'ri-video-line'
-        : j.mediaType === 'image' || j.mediaType === 'photos' ? 'ri-image-line'
-        : j.mediaType === 'audio' || j.mediaType === 'voice' ? 'ri-music-line'
+    const isImage = j.mediaType === 'image' || j.mediaType === 'photos' || ['jpg','jpeg','png','webp','gif','bmp'].includes(ext);
+    const isVideo = j.mediaType === 'video' || j.mediaType === 'videos' || ['mp4','mkv','mov','avi','webm'].includes(ext);
+    const isAudio = j.mediaType === 'audio' || j.mediaType === 'voice' || ['mp3','m4a','flac','wav','ogg'].includes(ext);
+    const icon = isVideo ? 'ri-video-line'
+        : isImage ? 'ri-image-line'
+        : isAudio ? 'ri-music-line'
         : getFileIcon(ext);
-    const pct = Math.max(0, Math.min(100, j.progress || 0));
-    const sizeStr = j.fileSize ? formatBytes(j.fileSize) : '—';
+
+    // Status-aware progress: completed jobs always read 100, queued reads
+    // blank, otherwise use the live %. Without this, finished rows kept
+    // showing 0% because the in-memory job object was never bumped.
+    const isDone = j.status === 'done';
+    const pct = isDone ? 100 : Math.max(0, Math.min(100, j.progress || 0));
+    // Size is only meaningful once Telegram has told us; show "—" only
+    // while the job is queued and the size is genuinely unknown.
+    const sizeStr = j.fileSize
+        ? formatBytes(j.fileSize)
+        : (j.status === 'queued' ? '…' : '—');
     const speedStr = (j.status === 'active' && j.bps) ? `${formatBytes(j.bps)}/s` : '—';
     const etaStr = (j.status === 'active' && j.eta != null) ? formatEta(j.eta) : '—';
 
@@ -409,6 +458,29 @@ function renderRow(j) {
         done:    'bg-tg-green/20 text-tg-green',
     }[j.status] || 'bg-gray-700/40 text-gray-300';
     const pillLabel = i18nT(`queue.status.${j.status}`, j.status);
+
+    // Click-to-view: a finished row whose filePath we know becomes a link
+    // to the in-app media viewer. Nothing else changes (drag-select etc.
+    // still fires through the same handler).
+    const openable = isDone && j.filePath;
+    const rowExtraCls = openable ? ' cursor-pointer' : '';
+    const rowAttrs = openable
+        ? `data-row-open="${escapeHtml(j.filePath)}" data-row-open-type="${isVideo ? 'video' : isImage ? 'image' : isAudio ? 'audio' : 'file'}"`
+        : '';
+
+    // Thumbnail: for finished items, hit the actual `/files/` URL with
+    // ?inline=1 so the gallery's thumbnailing pipeline takes over (browser
+    // renders the image / video poster / audio glyph). For everything else
+    // fall back to the type icon.
+    const thumb = openable && (isImage || isVideo)
+        ? `<${isVideo ? 'video' : 'img'}
+                src="/files/${encodeURIComponent(j.filePath)}?inline=1"
+                class="w-9 h-9 rounded object-cover bg-tg-bg/40"
+                ${isVideo ? 'preload="metadata" muted' : 'alt=""'}
+                onerror="this.outerHTML='<div class=\\'w-9 h-9 rounded bg-tg-bg/40 flex items-center justify-center text-tg-textSecondary\\'><i class=\\'${icon}\\'></i></div>'">`
+        : `<div class="w-9 h-9 rounded bg-tg-bg/40 flex items-center justify-center text-tg-textSecondary">
+                <i class="${icon}"></i>
+           </div>`;
 
     // Per-row action set is status-dependent. Active/queued: pause, cancel.
     // Paused: resume, cancel. Failed: retry, dismiss. Done: dismiss.
@@ -426,13 +498,16 @@ function renderRow(j) {
         actions.push(actionBtn('dismiss', 'ri-delete-bin-line', i18nT('queue.action.dismiss', 'Dismiss')));
     }
 
+    // Hide the % under a finished bar (label is redundant against the
+    // pill) and show "100%" only while in-flight so the progress feedback
+    // stays meaningful.
+    const pctLabel = isDone ? '' : (j.status === 'queued' ? '' : `${pct}%`);
+
     return `
-        <div data-key="${escapeHtml(j.key)}"
-             class="grid grid-cols-[40px_minmax(0,2.5fr)_90px_minmax(140px,1.4fr)_80px_70px_90px_120px] items-center gap-2 px-3 border-b border-tg-border/40 hover:bg-tg-hover/40"
+        <div data-key="${escapeHtml(j.key)}" ${rowAttrs}
+             class="grid grid-cols-[40px_minmax(0,2.5fr)_90px_minmax(140px,1.4fr)_80px_70px_90px_120px] items-center gap-2 px-3 border-b border-tg-border/40 hover:bg-tg-hover/40${rowExtraCls}"
              style="height: ${ROW_HEIGHT}px;">
-            <div class="w-9 h-9 rounded bg-tg-bg/40 flex items-center justify-center text-tg-textSecondary">
-                <i class="${icon}"></i>
-            </div>
+            ${thumb}
             <div class="min-w-0">
                 <div class="text-sm text-tg-text truncate" title="${escapeHtml(name)}">${escapeHtml(name)}</div>
                 <div class="text-[11px] text-tg-textSecondary truncate">${escapeHtml(groupName)}${j.error ? ' · ' + escapeHtml(j.error) : ''}</div>
@@ -440,9 +515,9 @@ function renderRow(j) {
             <div class="text-xs text-tg-textSecondary text-right tabular-nums">${escapeHtml(sizeStr)}</div>
             <div class="min-w-0">
                 <div class="h-1.5 bg-tg-bg/60 rounded overflow-hidden">
-                    <div class="h-full ${j.status === 'failed' ? 'bg-red-500' : j.status === 'done' ? 'bg-tg-green' : 'bg-tg-blue'} transition-all" style="width: ${pct}%"></div>
+                    <div class="h-full ${j.status === 'failed' ? 'bg-red-500' : isDone ? 'bg-tg-green' : 'bg-tg-blue'} transition-all" style="width: ${pct}%"></div>
                 </div>
-                <div class="text-[10px] text-tg-textSecondary tabular-nums mt-0.5">${pct}%</div>
+                <div class="text-[10px] text-tg-textSecondary tabular-nums mt-0.5">${escapeHtml(pctLabel)}</div>
             </div>
             <div class="text-xs text-tg-textSecondary text-right tabular-nums">${escapeHtml(speedStr)}</div>
             <div class="text-xs text-tg-textSecondary text-right tabular-nums">${escapeHtml(etaStr)}</div>
@@ -502,6 +577,14 @@ async function runRowAction(action, key) {
         } else if (action === 'resume') {
             await api.post(`/api/queue/${encodeURIComponent(key)}/resume`);
         } else if (action === 'cancel') {
+            // Confirm before aborting an in-flight download — easy to
+            // mis-tap on mobile and the work is already partially done.
+            if (!(await confirmSheet({
+                title: i18nT('queue.confirm.cancel_title', 'Cancel download?'),
+                message: i18nT('queue.confirm.cancel', 'Stop this download? Any partial bytes will be discarded.'),
+                confirmLabel: i18nT('queue.action.cancel', 'Cancel'),
+                danger: true,
+            }))) return;
             await api.post(`/api/queue/${encodeURIComponent(key)}/cancel`);
             remove(key);
             scheduleRender();
@@ -509,7 +592,9 @@ async function runRowAction(action, key) {
             await api.post(`/api/queue/${encodeURIComponent(key)}/retry`);
         } else if (action === 'dismiss') {
             // Local-only — drop from the recent tail. Server-side
-            // clear-finished is the bulk equivalent.
+            // clear-finished is the bulk equivalent. No confirm: the
+            // action is non-destructive (file + DB row stay) and a
+            // user-visible Undo would be more annoying than a re-add.
             remove(key);
             scheduleRender();
         }

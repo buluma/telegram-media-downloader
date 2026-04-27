@@ -18,10 +18,17 @@ export function getDb() {
     }
 
     db = new Database(DB_PATH);
-    
+
     // Performance tuning
     db.pragma('journal_mode = WAL');
     db.pragma('synchronous = NORMAL');
+    // Without busy_timeout, a long write (sweeper bulk delete) makes
+    // concurrent readers fail INSTANTLY with SQLITE_BUSY instead of
+    // waiting. 5 s gives us plenty of headroom for the longest write
+    // we currently issue (rescue sweeper batches 5000 rows).
+    db.pragma('busy_timeout = 5000');
+    // Tame WAL growth on sustained writes — checkpoint every ~1000 pages.
+    db.pragma('wal_autocheckpoint = 1000');
 
     initSchema();
     return db;
@@ -189,15 +196,55 @@ export function getRescueStats() {
  */
 export function fileAlreadyStored(groupId, fileName, fileSize) {
     if (!fileName || !fileSize) return false;
-    const r = getDb()
-        .prepare('SELECT 1 FROM downloads WHERE group_id = ? AND file_name = ? AND file_size = ? LIMIT 1')
+    const r = _prep('SELECT 1 FROM downloads WHERE group_id = ? AND file_name = ? AND file_size = ? LIMIT 1')
         .get(String(groupId), String(fileName), Number(fileSize));
     return !!r;
 }
 
+// Hot-path prepared-statement cache. `isDownloaded()` is called per message
+// in every monitor pass and per row by the dedup pre-check, so re-preparing
+// the same SQL each call was a measurable parse cost. The cache is lazily
+// populated on first DB access since `getDb()` is also lazy.
+const _stmtCache = new Map();
+function _prep(sql) {
+    let s = _stmtCache.get(sql);
+    if (!s) {
+        s = getDb().prepare(sql);
+        _stmtCache.set(sql, s);
+    }
+    return s;
+}
+
 export function isDownloaded(groupId, messageId) {
-    const stmt = getDb().prepare('SELECT 1 FROM downloads WHERE group_id = ? AND message_id = ? LIMIT 1');
-    return !!stmt.get(String(groupId), Number(messageId));
+    return !!_prep('SELECT 1 FROM downloads WHERE group_id = ? AND message_id = ? LIMIT 1')
+        .get(String(groupId), Number(messageId));
+}
+
+/**
+ * All-Media query — same shape as getDownloads() but spans every group, with
+ * the per-row group_id + group_name preserved so the gallery can paint the
+ * right tile and the viewer can route back to the source chat. Powers the
+ * `/api/downloads/all` endpoint that the All-Media surface uses for true
+ * infinite-scroll across the full library (previous All-Media path was
+ * capped at 20 groups × 20 files = ~400 max — see v2.3.6 blocker).
+ */
+export function getAllDownloads(limit = 50, offset = 0, type = 'all') {
+    const lim = Math.max(1, Math.min(500, parseInt(limit, 10) || 50));
+    const off = Math.max(0, parseInt(offset, 10) || 0);
+    const typeMap = { images: 'photo', videos: 'video', documents: 'document', audio: 'audio' };
+    const params = [];
+    let where = '';
+    if (type !== 'all' && typeMap[type]) {
+        where = ' WHERE file_type = ?';
+        params.push(typeMap[type]);
+    }
+    const rows = getDb()
+        .prepare(`SELECT * FROM downloads${where} ORDER BY datetime(created_at) DESC, id DESC LIMIT ? OFFSET ?`)
+        .all(...params, lim, off);
+    const total = getDb()
+        .prepare(`SELECT COUNT(*) AS c FROM downloads${where}`)
+        .get(...params).c;
+    return { files: rows, total };
 }
 
 export function getDownloads(groupId, limit = 50, offset = 0, type = 'all') {

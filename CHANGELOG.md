@@ -2,6 +2,39 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.6] — 2026-04-28
+
+A blocker fix the user spotted (gallery showing 209 of 2454 files), plus the priority items from a third audit pass — silent FloodWait loops, Windows-reserved filenames, downloader/rotator races, queue UX overhaul, and the avatar flicker.
+
+### Fixed — blocker
+- **All Media was capped at ~400 files.** `loadAllFiles()` was hard-coded to fetch the first 20 groups × 20 files each, with no pagination and no infinite-scroll. With 2454 files in the user's library, the gallery showed ~209 (and Photos / Videos tabs ~30–50 each). New endpoint `GET /api/downloads/all?page&limit&type` orders by `created_at DESC` across every group, the SPA's existing `setupInfiniteScroll` sentinel pages it, and the per-tab type filter is now a server-side `?type=` query so the count under each tab is accurate. Also fixed an off-by-one where a perfectly-packed last page kept pagination armed forever.
+
+### Fixed — critical
+- **FloodWait retry was a tight infinite loop.** `downloader.js:717` called `return this.download(job, attempt)` *without* incrementing `attempt`, so a sustained throttle would re-enter forever. Now tracks FloodWait retries on a separate counter (`MAX_FLOOD_RETRIES = 8`); the normal retry budget stays untouched but a persistent flood gives up cleanly.
+- **`sanitizeName()` produced filenames Windows refuses to open.** A chat literally named `CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, or `LPT1`–`LPT9` (with or without an extension) would land in a folder Windows can't even `stat`. Reserved-name check now prefixes with `_`. Also switched the truncation from `slice(0, 80)` (UTF-16 char count → mid-codepoint cut on multibyte chars) to UTF-8 byte truncation that backs off to the last full codepoint.
+- **Rename collision silently overwrote.** `fs.rename(.part, final)` is destructive on every major platform — two accounts that produced the same final filename would see one's content quietly replace the other's, with the earlier DB row pointing at the wrong bytes. Now suffixes ` (1)`, ` (2)` … on collision.
+- **Disk-rotator could delete a file the downloader was mid-writing.** Caused intermittent `Downloaded file is empty (0 bytes)` failures in the wild because the rotator's sweep would unlink the `.part` out from under the active download. Downloader now publishes `_activeFilePaths: Set<string>`; the rotator's constructor takes a `getActiveFilePaths` accessor and skips any candidate whose absolute path is in the Set.
+- **gramJS keep-alive kept hammering throttled DCs.** The `Api.PingDelayDisconnect` catch was logging FloodWait but pinging again 60 s later. Now serves a 10-minute backoff per offending account before the next ping; warn lines are still coalesced to one per 5 min.
+
+### Fixed — UX
+- **Avatar flicker on every sidebar re-render.** `/api/groups/:id/photo` was inheriting the global `/api/*` `Cache-Control: no-store` policy, so every `renderGroupsList()` paint forced a fresh round-trip and a brief flash. The endpoint now overrides with `private, max-age=86400, stale-while-revalidate=604800` — bytes are content-addressed by group ID and rewritten in place when the photo changes, so the long TTL is safe.
+- **Queue page overhaul.**
+  - Finished rows are clickable and open the matching media in the in-app viewer (image / video / audio).
+  - Cancel + dismiss now go through the themed `confirmSheet` (was instant, easy to mis-tap).
+  - Progress bar reads 100 % when status is `done` (was stuck at 0 %); shows blank for queued (was 0 %).
+  - Size column shows `…` for queued items whose size hasn't been negotiated yet, `—` only when truly unknown.
+  - Real thumbnail (image / video poster) for finished rows where we know the file path; the icon stays as fallback.
+- **Forwarder delete-after-forward unlink failure** is now logged at WARN with the filename instead of swallowed inside the upload catch — the integrity sweep will eventually reap the orphan.
+
+### Fixed — DB performance
+- **`busy_timeout = 5000`** added at boot. A long write (rescue / disk-rotator bulk delete) used to fail concurrent reads instantly with `SQLITE_BUSY`; now waits up to 5 s.
+- **`wal_autocheckpoint = 1000`** explicit. Tames `-wal` growth on sustained writes.
+- **Hot-path prepared-statement cache.** `isDownloaded()` and `fileAlreadyStored()` were re-preparing the same SQL on every call (called per message in every monitor pass); module-level `_prep()` cache fixes that.
+
+### Added — endpoint + i18n
+- `GET /api/downloads/all` for the All Media surface.
+- `queue.confirm.cancel_title`, `queue.confirm.cancel` in en + th lockstep (596 keys total).
+
 ## [2.3.5] — 2026-04-28
 
 ### Fixed

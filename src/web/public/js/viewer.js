@@ -23,6 +23,21 @@ let zoomState = { scale: 1, panning: false, pointX: 0, pointY: 0, startX: 0, sta
 /** @type {VideoPlayer|null} */
 let videoPlayer = null;
 
+/**
+ * One-shot open: hand a `{ fullPath, type, name, … }` record straight to
+ * the modal without first walking it through a gallery list. Used by the
+ * Queue page to surface a finished download in the in-app viewer with one
+ * click. Stages the file into `state.files` so the existing prev/next +
+ * delete + share pipeline keeps working — the user doesn't notice the
+ * difference, but Queue page state is never overwritten because it owns
+ * its own store.
+ */
+export function openMediaViewerSingle(file) {
+    if (!file?.fullPath) return;
+    state.files = [file];
+    openMediaViewer(0);
+}
+
 export function openMediaViewer(index) {
     state.currentFileIndex = index;
     const file = state.files[index];
