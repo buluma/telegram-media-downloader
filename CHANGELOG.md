@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.17] — 2026-04-28
+
+### Removed
+- **Help paragraph under the Font picker.** The text was stuck at "All ten options support Thai" since v2.3.14, never updated when v2.3.15 added the 10 Latin-only fonts (and would have grown stale again next time the registry expands). User asked to drop it. Picker is self-explanatory — `<optgroup>` labels already say "Thai-capable", "Latin (Thai falls back)", and "No webfont".
+- Dropped i18n keys `settings.font_help` (en + th). 637 → **636 keys total** (parity preserved).
+
+### Changed
+- **SW VERSION** bumped `'v16'` → `'v17'`.
+
 ## [2.3.16] — 2026-04-28
 
 ### Fixed

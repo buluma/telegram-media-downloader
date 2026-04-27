@@ -77,7 +77,6 @@
     "settings.language": "ภาษา",
     "settings.language.auto": "ตามระบบ",
     "settings.font": "ฟอนต์",
-    "settings.font_help": "ทั้ง 10 ตัวเลือกรองรับภาษาไทย หน้าจอจะเปลี่ยนทันทีเมื่อเลือกใหม่",
     "settings.notifications": "การแจ้งเตือนผ่านเบราว์เซอร์",
     "settings.notifications_help": "แสดงการแจ้งเตือนของระบบเมื่อดาวน์โหลดเสร็จสิ้น",
 
