@@ -230,10 +230,19 @@ app.use((req, res, next) => {
         // a more specific route — leave their version alone.)
         res.setHeader('Cache-Control', 'no-cache, max-age=0');
     } else if (p.startsWith('/js/') || p.startsWith('/css/') || p.startsWith('/locales/')) {
-        // 1-hour cache until we add hash-busting filenames. Once the build
-        // pipeline emits e.g. /js/app.abcdef.js, bump this to:
-        //   public, max-age=31536000, immutable
-        res.setHeader('Cache-Control', 'public, max-age=3600');
+        // Asset cache-busting middleware (further down) appends a
+        // ?v=<APP_VERSION> query string to every internal `<script>`,
+        // `<link>`, and `import` so the URL changes on every release.
+        // That makes it safe to cap the HTTP cache at the maximum
+        // (1 year + immutable) for any request that carries the `?v=`
+        // — the URL itself guarantees freshness on the next deploy.
+        // Bare requests (no `?v=`, e.g. someone curls the file
+        // directly) get the conservative 1 h fallback.
+        if (req.query && req.query.v) {
+            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        } else {
+            res.setHeader('Cache-Control', 'public, max-age=3600');
+        }
     }
     next();
 });
@@ -838,6 +847,82 @@ app.get('/metrics', (req, res) => {
 app.use(checkAuth);
 
 // Serve static files AFTER auth
+// Asset cache-busting — append `?v=<APP_VERSION>` to every internal
+// `<script src="/js/...">` in the SPA HTML AND to every relative
+// `import './X.js'` inside the JS modules themselves. Without it, a
+// new deploy that doesn't change a file's bytes (or one whose change
+// the browser missed) keeps serving the previously-cached copy from
+// the HTTP cache for the full max-age window. With `?v=` the URL
+// changes on every release, so a stale cache hit is impossible — and
+// we can safely upgrade the JS Cache-Control to `immutable` + 1 y
+// (handled in the cache-headers middleware further up).
+//
+// In-memory cache so we only do the regex once per file per process
+// lifetime; a server restart re-reads (which is exactly what we want
+// after a `docker compose pull`).
+const _cacheBust = new Map();
+const _publicDir = path.join(__dirname, 'public');
+// Resolve the running version ONCE at module load — same source the
+// /api/version handler uses, but cached as a string here for the
+// per-request rewriters to avoid re-reading package.json each call.
+const appVersion = _readCurrentVersion();
+
+function _rewriteHtmlSrc(html) {
+    return html.replace(
+        /\b(src|href)="(\/(?:js|locales)\/[^"?]+\.(?:js|json))"/g,
+        (m, attr, url) => `${attr}="${url}?v=${appVersion}"`
+    );
+}
+
+function _rewriteJsImports(js) {
+    // Match: `from './X.js'`, `import './X.js'`, `import('./X.js')`.
+    // Skip any specifier that already carries a query string.
+    return js.replace(
+        /(\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)(['"])(\.{1,2}\/[^'"?]+\.js)\2/g,
+        (m, lead, q, spec) => `${lead}${q}${spec}?v=${appVersion}${q}`
+    );
+}
+
+function _serveCacheBusted(reqPath, mime, rewrite, res) {
+    let body = _cacheBust.get(reqPath);
+    if (!body) {
+        try {
+            const filePath = path.join(_publicDir, reqPath);
+            const real = fsSync.realpathSync(filePath);
+            const root = fsSync.realpathSync(_publicDir);
+            if (!real.startsWith(root + path.sep) && real !== root) return false;
+            body = rewrite(fsSync.readFileSync(real, 'utf8'));
+            _cacheBust.set(reqPath, body);
+        } catch { return false; }
+    }
+    res.setHeader('Content-Type', mime);
+    res.send(body);
+    return true;
+}
+
+app.use((req, res, next) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+    // HTML entry points — rewrite the two `<script>` tags + any
+    // future inline asset link the index gains.
+    if (req.path === '/' || req.path === '/index.html'
+        || req.path === '/login.html' || req.path === '/setup-needed.html'
+        || req.path === '/add-account.html') {
+        const file = req.path === '/' ? '/index.html' : req.path;
+        if (_serveCacheBusted(file, 'text/html; charset=utf-8', _rewriteHtmlSrc, res)) return;
+        return next();
+    }
+    // JS modules — rewrite every relative `import './X.js'` so the
+    // child URL inherits the same `?v=` and the browser HTTP cache
+    // can't stale-serve a single module while the rest of the bundle
+    // is fresh. The Cache-Control middleware further up keys off the
+    // `?v=` query string to upgrade these to immutable.
+    if (req.path.startsWith('/js/') && req.path.endsWith('.js')) {
+        if (_serveCacheBusted(req.path, 'application/javascript; charset=utf-8', _rewriteJsImports, res)) return;
+        return next();
+    }
+    next();
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/photos', express.static(PHOTOS_DIR));
 

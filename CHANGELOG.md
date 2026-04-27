@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.18] — 2026-04-28
+
+### Added — `?v=` cache-busting on JS / locale assets
+- **HTML rewrite**: `<script src="/js/...">`, `<link href="/locales/...">`, etc., are post-processed before the SPA HTML is served, appending `?v=<APP_VERSION>` to every internal `js/` or `locales/` URL.
+- **JS rewrite**: every relative `import './X.js'` (and `import('./X.js')`, `import './X.js'`) inside the served JS modules is rewritten to carry the same `?v=` so the child URL inherits the cache-bust and the browser HTTP cache can't stale-serve a single transitive module while the rest of the bundle is fresh.
+- **Cache-Control upgrade**: any `/js/*.js` or `/locales/*.json` request that arrives with a `?v=` query string now returns `Cache-Control: public, max-age=31536000, immutable`. Bare requests (no `?v=`) keep the conservative 1 h fallback so a curl / direct fetch still revalidates.
+- **In-memory rewrite cache** so the regex runs once per file per process lifetime; a server restart re-reads (which is exactly what we want after `docker compose pull`).
+
+The combined effect: a fresh release flips every internal asset URL automatically (no manual filename hashing, no build step), the browser HTTP cache treats it as a different resource, and the SW cache-first path naturally fetches the new bytes too.
+
+### Changed
+- **SW VERSION** bumped `'v17'` → `'v18'`.
+
 ## [2.3.17] — 2026-04-28
 
 ### Removed
