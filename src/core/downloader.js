@@ -16,15 +16,41 @@ const DATA_DIR = path.join(__dirname, '../../data');
 const DOWNLOADS_DIR = path.join(DATA_DIR, 'downloads');
 const LOGS_DIR = path.join(DATA_DIR, 'logs');
 
+// Windows reserved device names — both bare and with any extension are
+// rejected by the OS (`CON.jpg` is just as bad as `CON`). Match
+// case-insensitively against the part BEFORE the first dot.
+const _WIN_RESERVED = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)/i;
+
 /**
- * Shared folder name sanitizer — use everywhere to prevent duplicate folders
+ * Shared folder + filename sanitizer.
+ *
+ * - Strips path / control / NUL chars and collapses whitespace.
+ * - Prefixes Windows reserved names with `_` so a chat literally named
+ *   `CON` or a file like `PRN.jpg` doesn't ENOENT on Windows hosts.
+ * - Truncates by **UTF-8 byte length** rather than UTF-16 char length
+ *   (`.slice(80)` would silently corrupt multi-byte CJK / emoji at the
+ *   boundary; we cut at a byte cap and back off to the last full
+ *   codepoint).
  */
 export function sanitizeName(name) {
-    return name
+    let s = String(name || '')
         .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
         .replace(/\s+/g, '_')
-        .replace(/_+/g, '_')
-        .slice(0, 80);
+        .replace(/_+/g, '_');
+    if (_WIN_RESERVED.test(s)) s = '_' + s;
+    return _truncUtf8(s, 80);
+}
+
+function _truncUtf8(s, maxBytes) {
+    const enc = new TextEncoder();
+    const dec = new TextDecoder('utf-8', { fatal: false });
+    const bytes = enc.encode(s);
+    if (bytes.length <= maxBytes) return s;
+    // Walk back from maxBytes until we land on a UTF-8 codepoint boundary
+    // (the high bits of a continuation byte are 10xxxxxx → 0x80..0xBF).
+    let cut = maxBytes;
+    while (cut > 0 && (bytes[cut] & 0xC0) === 0x80) cut--;
+    return dec.decode(bytes.subarray(0, cut));
 }
 
 /**
@@ -110,6 +136,10 @@ export class DownloadManager extends EventEmitter {
         this._high = [];
         this.queue = [];
         this.active = new Map(); // Key -> Promise/Status
+        // Absolute paths of files currently being written (.part + final
+        // candidates). The disk-rotator consults this Set before unlinking
+        // anything to avoid yanking a file out from under an active write.
+        this._activeFilePaths = new Set();
         this.concurrency = config.download?.concurrent || 10;
         this.running = false;
         this.workers = [];
@@ -615,6 +645,13 @@ export class DownloadManager extends EventEmitter {
             // 4. Build Paths
             const finalPath = await this.buildPath(job);
             const partPath = `${finalPath}.part`;
+            // Tell the disk-rotator: hands off these paths until we're done.
+            // Both candidates go into the Set — the .part is the in-flight
+            // write; finalPath is the rename target. The collision-suffix
+            // path can't be predicted here but the .part is enough to guard
+            // the dangerous moment.
+            this._activeFilePaths.add(partPath);
+            this._activeFilePaths.add(finalPath);
 
             // 5. Execute Download
             try {
@@ -686,21 +723,43 @@ export class DownloadManager extends EventEmitter {
                     try { await fs.unlink(partPath); } catch {}
                     throw new Error('Downloaded file is empty (0 bytes)');
                 }
-                await fs.rename(partPath, finalPath);
+                // Collision guard: `fs.rename` silently overwrites an
+                // existing destination on every major platform, so two
+                // accounts that produced the same final filename for
+                // different content (rare but possible — same msg via
+                // a forwarded copy etc.) would silently clobber. If the
+                // target exists, suffix `(1)`, `(2)` … until we land on
+                // a free name before the rename.
+                let writtenPath = finalPath;
+                if (existsSync(writtenPath)) {
+                    const ext = path.extname(writtenPath);
+                    const stem = writtenPath.slice(0, writtenPath.length - ext.length);
+                    let i = 1;
+                    while (i < 1000 && existsSync(`${stem} (${i})${ext}`)) i++;
+                    writtenPath = `${stem} (${i})${ext}`;
+                }
+                await fs.rename(partPath, writtenPath);
                 let finalStats;
-                try { finalStats = await fs.stat(finalPath); }
+                try { finalStats = await fs.stat(writtenPath); }
                 catch (e) { throw new Error(`Post-rename verify failed: ${e.message}`); }
                 if (!finalStats.size) {
-                    try { await fs.unlink(finalPath); } catch {}
+                    try { await fs.unlink(writtenPath); } catch {}
                     throw new Error('Final file is 0 bytes after rename');
                 }
-                return this.registerDownload(job, finalPath, finalStats.size);
+                return this.registerDownload(job, writtenPath, finalStats.size);
 
             } catch (error) {
                 try {
                     if (existsSync(partPath)) await fs.unlink(partPath);
                 } catch (cleanupErr) { }
                 throw error;
+            } finally {
+                // Hand control of the paths back to the rotator regardless
+                // of how this attempt ended (success, failure, retry,
+                // cancel). A leaked entry here would silently freeze that
+                // path against future deletion forever.
+                this._activeFilePaths.delete(partPath);
+                this._activeFilePaths.delete(finalPath);
             }
 
         } catch (error) {
@@ -719,7 +778,18 @@ export class DownloadManager extends EventEmitter {
                 this.throttle(); // Dynamic: reduce concurrency on flood
                 if (this.rateLimiter) await this.rateLimiter.pauseForFloodWait(seconds);
                 else await this.sleep(seconds * 1000);
-                return this.download(job, attempt);
+                // Bug fixed in v2.3.6: previously `return this.download(job, attempt)`
+                // (no bump) — a sustained throttle would tight-loop forever
+                // because `attempt` never crossed `maxRetries`. Track FloodWait
+                // attempts on a SEPARATE counter so a transient flood doesn't
+                // burn the normal retry budget, but a persistent one still
+                // gives up cleanly.
+                const floods = (job._floodAttempts = (job._floodAttempts || 0) + 1);
+                const MAX_FLOOD_RETRIES = 8;
+                if (floods <= MAX_FLOOD_RETRIES) {
+                    return this.download(job, attempt);
+                }
+                throw new Error(`FloodWait retry cap (${MAX_FLOOD_RETRIES}) exceeded for ${job.fileName || job.key}`);
             }
 
             if (error.message?.includes('FILE_REFERENCE_EXPIRED') || error.errorMessage === 'FILE_REFERENCE_EXPIRED') {

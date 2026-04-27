@@ -85,12 +85,19 @@ export class DiskRotator {
      * @param {() => object} opts.loadConfig  reads current config (called per sweep)
      * @param {(msg: object) => void} [opts.broadcast]  WS broadcast (file_deleted events)
      */
-    constructor({ loadConfig, broadcast } = {}) {
+    constructor({ loadConfig, broadcast, getActiveFilePaths } = {}) {
         if (typeof loadConfig !== 'function') {
             throw new Error('DiskRotator requires loadConfig');
         }
         this._loadConfig = loadConfig;
         this._broadcast = typeof broadcast === 'function' ? broadcast : () => {};
+        // Optional accessor returning a Set<absolutePath> of files currently
+        // being written by the downloader. The rotator skips any candidate
+        // whose absolute path is in the Set, so we never yank a file out
+        // from under an active write.
+        this._getActiveFilePaths = typeof getActiveFilePaths === 'function'
+            ? getActiveFilePaths
+            : () => null;
         this._timer = null;
         this._sweeping = false;
         this._intervalMs = 0;
@@ -173,11 +180,24 @@ export class DiskRotator {
             let deleted = 0;
             let safety = maxDeletes;
 
+            // Snapshot the in-flight set ONCE per sweep iteration. The
+            // downloader updates this Set on every download start/end, so
+            // this is conservatively-fresh — we miss writes that start
+            // mid-sweep, but the worst case is "we deleted a file that
+            // was about to be written" → next download retries cleanly.
+            const inFlight = this._getActiveFilePaths() || null;
+            const isInFlight = (row) => {
+                if (!inFlight || !row.file_path) return false;
+                const abs = path.resolve(DOWNLOADS_DIR, row.file_path);
+                return inFlight.has(abs) || inFlight.has(`${abs}.part`);
+            };
+
             outer: while (total > capBytes && safety > 0) {
                 const candidates = getOldestDownloads(batch);
                 if (!candidates.length) break;
                 for (const row of candidates) {
                     if (total <= capBytes || safety <= 0) break outer;
+                    if (isInFlight(row)) continue;   // skip — downloader is mid-write
                     await tryUnlink(row);
                     const removed = deleteDownloadsBy({ ids: [row.id] });
                     if (removed > 0) {

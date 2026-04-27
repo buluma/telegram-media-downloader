@@ -19,7 +19,7 @@ import { StringSession } from 'telegram/sessions/index.js';
 import crypto from 'crypto';
 
 import { getOrGenerateSecret } from '../core/secret.js';
-import { getDb, getDownloads, getStats as getDbStats, deleteGroupDownloads, deleteAllDownloads, backfillGroupNames, searchDownloads, deleteDownloadsBy } from '../core/db.js';
+import { getDb, getDownloads, getAllDownloads, getStats as getDbStats, deleteGroupDownloads, deleteAllDownloads, backfillGroupNames, searchDownloads, deleteDownloadsBy } from '../core/db.js';
 import { sanitizeName } from '../core/downloader.js';
 import { SecureSession } from '../core/security.js';
 import { AccountManager } from '../core/accounts.js';
@@ -1303,6 +1303,17 @@ runtime.on('state', (s) => {
 runtime.on('event', (e) => {
     if (e.type === 'download_complete' && e.payload) {
         const p = e.payload;
+        // Stash the relative-to-DOWNLOADS_DIR file path so the SPA can open
+        // a finished item in the media viewer with one click. The
+        // downloader emits the absolute disk path; normalise to forward
+        // slashes + strip the DOWNLOADS_DIR prefix so the value matches
+        // what `/files/<path>?inline=1` expects.
+        let relPath = null;
+        if (p.filePath) {
+            const abs = String(p.filePath).replace(/\\/g, '/');
+            const root = path.resolve(DOWNLOADS_DIR).replace(/\\/g, '/') + '/';
+            relPath = abs.startsWith(root) ? abs.slice(root.length) : abs;
+        }
         pushQueueHistory({
             key: p.key,
             groupId: String(p.groupId || ''),
@@ -1310,6 +1321,7 @@ runtime.on('event', (e) => {
             mediaType: p.mediaType || null,
             messageId: p.messageId ?? null,
             fileName: p.fileName || (p.filePath ? p.filePath.split(/[\\/]/).pop() : null),
+            filePath: relPath,
             fileSize: p.fileSize || 0,
             status: 'done',
             addedAt: p.addedAt || null,
@@ -1990,6 +2002,64 @@ app.get('/api/downloads', async (req, res) => {
         res.json(results);
     } catch (error) {
         res.status(500).json({ error: error.message });
+    }
+});
+
+// 5a. All-Media: paginated cross-group feed. Pre-v2.3.6 the SPA simulated
+// this by fanning out 20 per-group queries × 20 files = a hard cap of 400
+// files visible regardless of how big the library actually was. Now the DB
+// does the ORDER BY across every group, the SPA gets clean infinite-scroll,
+// and per-tab type filters (`?type=images|videos|documents|audio`) produce
+// accurate counts.
+app.get('/api/downloads/all', async (req, res) => {
+    try {
+        const page  = Math.max(1, parseInt(req.query.page, 10) || 1);
+        const limit = Math.max(1, Math.min(500, parseInt(req.query.limit, 10) || 50));
+        const type  = req.query.type || 'all';
+        const offset = (page - 1) * limit;
+        const result = getAllDownloads(limit, offset, type);
+
+        // Same row → tile shape as `/api/downloads/:groupId` so the SPA
+        // renderer is unchanged. Per-row group_name + group_id are
+        // preserved on every tile.
+        let config = {};
+        try { config = JSON.parse(await fs.readFile(CONFIG_PATH, 'utf8')); } catch { /* ok — fall back to row.group_name */ }
+        const configGroups = new Map((config.groups || []).map(g => [String(g.id), g]));
+        const files = result.files.map(row => {
+            const typeFolder = row.file_type === 'photo' ? 'images'
+                : row.file_type === 'video' ? 'videos'
+                : row.file_type === 'audio' ? 'audio'
+                : row.file_type === 'sticker' ? 'stickers'
+                : 'documents';
+            const stored = (row.file_path || '').replace(/\\/g, '/');
+            const fallbackFolder = sanitizeName(
+                configGroups.get(String(row.group_id))?.name
+                || row.group_name
+                || String(row.group_id)
+            );
+            const fullPath = stored && stored.includes('/')
+                ? stored
+                : `${fallbackFolder}/${typeFolder}/${row.file_name}`;
+            return {
+                name: row.file_name,
+                path: row.file_path,
+                fullPath,
+                size: row.file_size,
+                sizeFormatted: formatBytes(row.file_size),
+                type: typeFolder,
+                extension: path.extname(row.file_name || ''),
+                modified: row.created_at,
+                groupId: row.group_id,
+                groupName: configGroups.get(String(row.group_id))?.name || row.group_name || null,
+                pendingUntil: row.pending_until || null,
+                rescuedAt: row.rescued_at || null,
+            };
+        });
+
+        res.json({ files, total: result.total, page, totalPages: Math.ceil(result.total / limit) });
+    } catch (e) {
+        console.error('GET /api/downloads/all:', e);
+        res.status(500).json({ error: 'Internal error' });
     }
 });
 
@@ -2974,6 +3044,13 @@ app.get('/api/groups/:id/photo', async (req, res) => {
             if (real !== realRoot && !real.startsWith(realRoot + path.sep)) {
                 return res.status(400).send('Path escape detected');
             }
+            // Override the global /api/* `no-store` policy — avatar bytes
+            // are content-addressed by group ID and the file is rewritten
+            // in place when the group's photo changes, so a 1-day private
+            // cache is safe AND eliminates the per-render avatar flicker
+            // (every renderGroupsList re-paint was triggering a fresh
+            // round trip thanks to no-store).
+            res.setHeader('Cache-Control', 'private, max-age=86400, stale-while-revalidate=604800');
             return res.sendFile(real);
         } catch { return res.status(404).send('Not found'); }
     };
@@ -3312,8 +3389,17 @@ ${tip}
 
     // Boot the disk rotator. No-op when diskManagement.enabled is false —
     // safe to call at every startup. Restarts via POST /api/config (above).
+    // The `getActiveFilePaths` accessor lets the rotator skip any file the
+    // downloader is currently writing — without this, a sweep firing during
+    // a slow large download would unlink the .part out from under it,
+    // producing the "Downloaded file is empty (0 bytes)" failures we kept
+    // seeing in the wild.
     try {
-        const rotator = getDiskRotator({ loadConfig, broadcast });
+        const rotator = getDiskRotator({
+            loadConfig,
+            broadcast,
+            getActiveFilePaths: () => runtime?._downloader?._activeFilePaths || null,
+        });
         rotator.start();
     } catch (e) {
         console.warn('[disk-rotator] start failed:', e.message);
