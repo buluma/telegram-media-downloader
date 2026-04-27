@@ -1,22 +1,22 @@
 // Single source of truth for /api/monitor/status.
 //
-// Before this module existed, statusbar.js (5 s), engine.js (3 s) and
-// onboarding.js (4 s) each polled the endpoint independently — three
-// HTTP requests every few seconds, each waking the engine up. Now there
-// is ONE poller; consumers subscribe via subscribe(fn) and receive the
-// same snapshot via a synchronous callback after each refresh.
+// WS-first design: every state change (monitor_state, download_progress,
+// download_complete, history_progress, history_done, history_error,
+// config_updated, monitor_event) calls refreshNow() from the relevant
+// handler — so the snapshot is fresh within the WS round-trip latency,
+// not the poll interval. The 30-second background poll is just a
+// safety net that catches up after a WS disconnect / missed event.
 //
-// Refresh cadence is the tightest of the original three (3 s). Calls
-// suspend while document.hidden so a background tab doesn't keep
-// hammering the API.
-//
-// `refreshNow()` triggers an out-of-band refresh — used by WS handlers
-// (engine state transitions, queue length changes) that want the
-// snapshot to update immediately instead of waiting for the next tick.
+// Calls suspend while document.hidden so a background tab doesn't keep
+// hammering the API. On tab return we refresh immediately if the
+// snapshot is older than one cycle.
 
 import { api } from './api.js';
 
-const POLL_INTERVAL_MS = 3000;
+// Safety-net interval — was 3 s when WS coverage was incomplete. With
+// the WS now driving the active updates, 30 s is plenty for "catch up
+// after a missed event" duty.
+const POLL_INTERVAL_MS = 30000;
 
 let timer = null;
 let inFlight = false;

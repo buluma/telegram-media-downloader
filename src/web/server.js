@@ -1426,11 +1426,27 @@ app.get('/api/groups', async (req, res) => {
         const config = JSON.parse(await fs.readFile(CONFIG_PATH, 'utf8'));
         // Pull the best DB-side name per group_id so a config row with
         // "Unknown" doesn't shadow a real name we already saved at
-        // download time.
+        // download time. Plain MAX(group_name) misbehaves on this
+        // schema because "Unknown" sorts above most ASCII titles —
+        // a group with rows ["Unknown", "Cool Channel"] would surface
+        // "Unknown". CASE-filter out the placeholders before MAX, then
+        // fall back to MAX(any) only if every row was a placeholder.
         let dbNames = new Map();
         try {
-            const rows = getDb().prepare(`SELECT group_id, MAX(group_name) AS name FROM downloads GROUP BY group_id`).all();
-            for (const r of rows) dbNames.set(String(r.group_id), r.name);
+            const rows = getDb().prepare(`
+                SELECT group_id,
+                       MAX(CASE
+                             WHEN group_name IS NOT NULL
+                              AND group_name != ''
+                              AND group_name != 'Unknown'
+                              AND group_name != 'unknown'
+                              AND group_name NOT GLOB '-?[0-9]*'
+                              AND group_name NOT GLOB 'Group [0-9]*'
+                           THEN group_name END) AS best_name,
+                       MAX(group_name) AS any_name
+                  FROM downloads
+                 GROUP BY group_id`).all();
+            for (const r of rows) dbNames.set(String(r.group_id), r.best_name || r.any_name);
         } catch {}
 
         const groupsWithPhotos = await Promise.all((config.groups || []).map(async (group) => {
@@ -1455,21 +1471,31 @@ app.get('/api/downloads', async (req, res) => {
         const configGroups = config.groups || [];
         const db = getDb();
 
-        // Query DB for aggregation with group_name (MAX ignores NULLs)
+        // CASE-filter "Unknown" / numeric-id placeholders BEFORE MAX so
+        // a group with mixed rows ["Cool Channel", "Unknown"] returns
+        // "Cool Channel" instead of the lexically-larger "Unknown".
         const rows = db.prepare(`
-            SELECT group_id, MAX(group_name) as group_name, COUNT(*) as count, SUM(file_size) as size
-            FROM downloads 
-            GROUP BY group_id
+            SELECT group_id,
+                   MAX(CASE
+                         WHEN group_name IS NOT NULL
+                          AND group_name != ''
+                          AND group_name != 'Unknown'
+                          AND group_name != 'unknown'
+                          AND group_name NOT GLOB '-?[0-9]*'
+                          AND group_name NOT GLOB 'Group [0-9]*'
+                       THEN group_name END) AS best_name,
+                   MAX(group_name) AS any_name,
+                   COUNT(*) as count,
+                   SUM(file_size) as size
+              FROM downloads
+             GROUP BY group_id
         `).all();
-        
+
         const results = rows.map(r => {
             const cfg = configGroups.find(g => String(g.id) === r.group_id);
-            // Best-available — prefer config name if real, else DB-saved
-            // name, else a friendly "Unknown chat (#id)" placeholder.
-            // Never drop the row just because the name is missing — the
-            // sidebar still needs to show the file count so the user can
-            // open it and trigger a refresh.
-            const name = bestGroupName(r.group_id, cfg?.name, r.group_name);
+            // Best-available — prefer config name if real, else the
+            // CASE-filtered DB best, else any DB name, else placeholder.
+            const name = bestGroupName(r.group_id, cfg?.name, r.best_name || r.any_name);
             const hasPhoto = existsSync(path.join(PHOTOS_DIR, `${r.group_id}.jpg`));
 
             return {

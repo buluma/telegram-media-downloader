@@ -119,9 +119,10 @@ export function initEngine() {
     // click listener on engine-start/stop, so after N visits a single
     // click fired N concurrent POSTs to /api/monitor/start.
     if (initEngine._wired) {
+        // Already initialised — just kick a refresh to repopulate the
+        // visible card; no need to spin up another poller because the
+        // shared monitor-status module handles cadence centrally.
         refresh();
-        if (pollHandle) clearInterval(pollHandle);
-        pollHandle = setInterval(refresh, 3000);
         return;
     }
     initEngine._wired = true;
