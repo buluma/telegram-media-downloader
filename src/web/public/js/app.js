@@ -275,6 +275,17 @@ async function init() {
         langSelect.addEventListener('change', () => setLang(langSelect.value));
     }
 
+    // Font picker — populated from the registry in fonts.js. Boot-time
+    // <script> in index.html already applied the saved font BEFORE
+    // first paint to avoid FOUC; here we only wire the <select> so
+    // user changes take effect live.
+    const Fonts = await import('./fonts.js');
+    const fontSelect = document.getElementById('setting-font');
+    if (fontSelect) {
+        Fonts.populateSelect(fontSelect);
+        fontSelect.addEventListener('change', () => Fonts.applyFont(fontSelect.value));
+    }
+
     // Appearance toggle
     initTheme();
     document.querySelectorAll('[data-theme-set]').forEach(btn => {

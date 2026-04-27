@@ -76,6 +76,8 @@
     "settings.theme.auto": "Auto",
     "settings.language": "Language",
     "settings.language.auto": "Auto-Detect",
+    "settings.font": "Font",
+    "settings.font_help": "All ten options support Thai. The page re-renders instantly when you switch.",
     "settings.notifications": "Browser Notifications",
     "settings.notifications_help": "Get a system toast when downloads finish.",
 

@@ -2,6 +2,28 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.14] — 2026-04-28
+
+### Added — user-selectable font
+- **Settings → Appearance → Font** — pick from 11 options (10 Google Fonts that support Thai + a no-webfont "System default"). IBM Plex Sans is still the default. Switching applies live across the whole app via a `--tgdl-font-family` CSS variable; mono regions (time block, log viewer, queue size column) stay on IBM Plex Mono regardless of UI choice.
+  - **IBM Plex Sans** (default, current pair: IBM Plex Sans + IBM Plex Sans Thai)
+  - **Noto Sans Thai** (Google's own pan-script family)
+  - **Sarabun** (very common Thai government / SaaS font)
+  - **Prompt** (modern Thai display)
+  - **Kanit** (popular UI face)
+  - **Mitr** (rounded, friendly)
+  - **K2D** (geometric, pairs well with Latin)
+  - **Bai Jamjuree** (geometric)
+  - **Athiti** (humanist sans)
+  - **Niramit** (light / airy)
+  - **System default** (no webfont — uses the OS's native Thai face; useful for air-gapped deployments)
+- **Boot-time font preload** in `index.html` reads the saved choice from `localStorage` BEFORE first paint and injects the matching `<link>` so the SPA opens with the right font already in CSSOM (no flash of unstyled text on cold load).
+- New module `js/fonts.js` houses the font registry + `applyFont()` + `populateSelect()`. The boot-time `<script>` mirrors the same registry inline (the script runs before the module graph evaluates).
+- **i18n**: `settings.font`, `settings.font_help` (en + th lockstep, 637 keys total).
+
+### Changed
+- **SW VERSION** bumped `'v13'` → `'v14'` so the new `index.html` (with boot script + font select) reaches the browser instead of being served from the v2.3.13 cache.
+
 ## [2.3.13] — 2026-04-28
 
 ### Changed — locale tone + casing pass
