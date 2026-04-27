@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.20] — 2026-04-28
+
+### Fixed
+- **Status-bar disk usage was still nonsense after v2.3.19** ("Disk: 1.03 MB" with 8 786 files) because the DB rows themselves carried `file_size = 0 / NULL` from older downloader versions that didn't always stat after rename. The integrity sweep now **backfills the correct on-disk size** every time it walks a row whose stored `file_size` doesn't match the actual `fs.stat().size`. Result: after one boot-sweep pass (≈30 s after start, then every `intervalMin` minutes), the status-bar disk number reflects reality. The sweep also now tolerates the legacy `data/downloads/` prefix in `file_path` (same fix v2.3.19 applied to `safeResolveDownload()`), so rows that were previously skipped as "outside downloads dir" will now stat + heal cleanly.
+- **Manual `Verify files on disk`** in Settings → Maintenance now reports `sizeFixed` alongside `pruned`, so you can see how many DB rows had their byte-count repaired.
+
+### Changed
+- **SW VERSION** bumped `'v19'` → `'v20'`.
+
 ## [2.3.19] — 2026-04-28
 
 ### Fixed
