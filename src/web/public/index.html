@@ -57,23 +57,71 @@
     </script>
 
     <link href="https://cdn.jsdelivr.net/npm/remixicon@4.0.0/fonts/remixicon.css" rel="stylesheet">
-    <!-- IBM Plex Sans for UI text + IBM Plex Mono for tabular numbers /
-         code spans / log viewer. Roboto kept as a fallback in the stack
-         so an offline session that already cached it still renders
-         cleanly. -->
+    <!-- Webfonts: IBM Plex is the default UI face (Sans + Mono + Thai
+         subset). The user can swap from Settings → Appearance → Font
+         to any of nine other Thai-capable Google Fonts; the chosen
+         family is applied to `--tgdl-font-family` and that variable
+         drives every text element via the `*` rule below.
+         The inline `<script>` two lines down reads the saved font from
+         localStorage BEFORE first paint and injects the matching
+         Google Fonts <link>, eliminating FOUC on cold load. -->
     <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link id="tgdl-fonts-default" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        // Boot-time font preload — runs before <body> so the chosen
+        // family is in CSSOM before the SPA renders. Falls back to
+        // IBM Plex (already loaded above) on any error.
+        (function () {
+            try {
+                const saved = localStorage.getItem('tgdl-font');
+                if (!saved || saved === 'ibm-plex-sans') return;
+                // Family registry mirrors src/web/public/js/fonts.js — we
+                // can't `import` here because this runs before module
+                // graph evaluation. Keep the two lists in sync.
+                const REG = {
+                    'system':         { q: null,                                                                                                family: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' },
+                    'ibm-plex-sans':  { q: 'IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Thai:wght@400;500;600;700',                  family: "'IBM Plex Sans', 'IBM Plex Sans Thai'" },
+                    'noto-sans-thai': { q: 'Noto+Sans:wght@400;500;600;700&family=Noto+Sans+Thai:wght@400;500;600;700',                          family: "'Noto Sans', 'Noto Sans Thai'" },
+                    'sarabun':        { q: 'Sarabun:wght@400;500;600;700',                                                                       family: "'Sarabun'" },
+                    'prompt':         { q: 'Prompt:wght@400;500;600;700',                                                                        family: "'Prompt'" },
+                    'kanit':          { q: 'Kanit:wght@400;500;600;700',                                                                         family: "'Kanit'" },
+                    'mitr':           { q: 'Mitr:wght@400;500;600;700',                                                                          family: "'Mitr'" },
+                    'k2d':            { q: 'K2D:wght@400;500;600;700',                                                                           family: "'K2D'" },
+                    'bai-jamjuree':   { q: 'Bai+Jamjuree:wght@400;500;600;700',                                                                  family: "'Bai Jamjuree'" },
+                    'athiti':         { q: 'Athiti:wght@400;500;600;700',                                                                        family: "'Athiti'" },
+                    'niramit':        { q: 'Niramit:wght@400;500;600;700',                                                                       family: "'Niramit'" },
+                };
+                const f = REG[saved];
+                if (!f) return;
+                if (f.q) {
+                    const link = document.createElement('link');
+                    link.rel = 'stylesheet';
+                    link.href = 'https://fonts.googleapis.com/css2?family=' + f.q + '&display=swap';
+                    link.id = 'tgdl-fonts-user';
+                    document.head.appendChild(link);
+                }
+                document.documentElement.style.setProperty('--tgdl-font-family',
+                    f.family + ", 'IBM Plex Sans', 'IBM Plex Sans Thai', 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif");
+            } catch (e) { /* private mode / no localStorage / network — fall back to IBM Plex */ }
+        })();
+    </script>
 
     <style>
+        :root {
+            --tgdl-font-family: 'IBM Plex Sans', 'IBM Plex Sans Thai', 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        }
         * {
-            font-family: 'IBM Plex Sans', 'IBM Plex Sans Thai', 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            font-family: var(--tgdl-font-family);
             box-sizing: border-box;
             -webkit-tap-highlight-color: transparent;
         }
         /* Mono font hooks — Tailwind's `font-mono` and any inline mono
            class now resolve to IBM Plex Mono so the time block + log
-           viewer + queue size column read consistently. */
+           viewer + queue size column read consistently. Mono stays IBM
+           Plex regardless of UI font choice — most Thai-friendly
+           webfonts don't ship a mono companion, and a mono unit width
+           is more important here than family consistency. */
         .font-mono, code, pre, kbd, samp,
         [class*="tabular-nums"] {
             font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -1620,11 +1668,23 @@
                             <i class="ri-translate-2 text-tg-textSecondary" aria-hidden="true"></i>
                             <span data-i18n="settings.language">Language</span>
                         </label>
-                        <select id="setting-language" class="tg-input w-full text-sm">
+                        <select id="setting-language" class="tg-input w-full text-sm mb-3">
                             <option value="auto" data-i18n="settings.language.auto">Auto-detect</option>
                             <option value="en">English</option>
                             <option value="th">ไทย</option>
                         </select>
+
+                        <label for="setting-font" class="text-tg-text text-sm block mb-2 flex items-center gap-2">
+                            <i class="ri-font-family text-tg-textSecondary" aria-hidden="true"></i>
+                            <span data-i18n="settings.font">Font</span>
+                        </label>
+                        <select id="setting-font" class="tg-input w-full text-sm">
+                            <!-- Options populated by js/fonts.js so the
+                                 list stays in sync with the boot-time
+                                 registry. Default selection is set
+                                 from localStorage. -->
+                        </select>
+                        <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.font_help">All ten options support Thai. The page re-renders instantly when you switch.</p>
                     </div>
 
                     <!-- Video Player preferences (browser-side only,
