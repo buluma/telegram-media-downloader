@@ -166,6 +166,55 @@ app.use(helmet({
     crossOriginResourcePolicy: { policy: 'same-origin' },
 }));
 
+// HTTP caching policy. Browsers (and intermediaries like Cloudflare) will
+// happily serve a 200 from disk for several seconds even on responses with
+// no cache headers — that surfaces as "the dashboard says I'm logged out
+// for 3 s after I log in", "stats look stuck", or "photos refuse to refresh
+// after a profile update". Pin each path prefix to an explicit policy:
+//
+//   /api/*      → never cache (auth-dependent + state mutates constantly)
+//   /files/*    → 60 s private (downloads list updates as the queue drains)
+//   /photos/*   → 1 d fresh, 7 d stale-while-revalidate (avatars rarely change)
+//   /js,/css,/locales → 1 h public (TODO: bump to 1 y immutable when we
+//                       hash filenames so cache-busting is automatic)
+//   /sw.js      → no-cache (PWA service worker — must always re-check)
+//
+// Sits BEFORE the static handlers so res.setHeader wins over express.static's
+// default ETag/Last-Modified-only behaviour.
+app.use((req, res, next) => {
+    const p = req.path;
+    if (p.startsWith('/api/')) {
+        // Auth-dependent — vary on the session cookie so a shared cache
+        // (Cloudflare with "Cache Everything", a corporate proxy) can't
+        // hand user A's response to user B. Use res.vary() so we APPEND
+        // to whatever Vary express may set later (Accept-Encoding etc.)
+        // instead of clobbering it.
+        res.setHeader('Cache-Control', 'no-store, max-age=0');
+        res.setHeader('Pragma', 'no-cache');
+        res.vary('Cookie');
+    } else if (p.startsWith('/photos/')) {
+        // Avatars are content-addressed by group ID; new uploads overwrite
+        // the file in place, so a 1-day TTL is fine. SWR lets the browser
+        // serve a stale copy instantly while it revalidates in the background.
+        res.setHeader('Cache-Control', 'private, max-age=86400, stale-while-revalidate=604800');
+    } else if (p.startsWith('/files/')) {
+        // Downloads — short TTL because the queue can land more files at any
+        // moment and the gallery refreshes its listing on WS events.
+        res.setHeader('Cache-Control', 'private, max-age=60');
+    } else if (p === '/sw.js') {
+        // Service worker manifest must never be cached or PWA updates stick.
+        // (Future PWA agent may also set this; if so, theirs runs first via
+        // a more specific route — leave their version alone.)
+        res.setHeader('Cache-Control', 'no-cache, max-age=0');
+    } else if (p.startsWith('/js/') || p.startsWith('/css/') || p.startsWith('/locales/')) {
+        // 1-hour cache until we add hash-busting filenames. Once the build
+        // pipeline emits e.g. /js/app.abcdef.js, bump this to:
+        //   public, max-age=31536000, immutable
+        res.setHeader('Cache-Control', 'public, max-age=3600');
+    }
+    next();
+});
+
 // Defense-in-depth: a coarse global rate limit on every API path. The login
 // endpoint has its own stricter limiter below (which is NOT user-toggleable
 // — it stays on regardless to slow brute-force).
