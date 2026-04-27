@@ -1,87 +1,52 @@
-// Font registry — every option supports Thai. The list mirrors the
-// inline boot-time loader in index.html (kept in two places so the
-// boot script can run before the module graph evaluates and avoid
-// FOUC). When you add a font here, ALSO add it to the REG object in
-// the inline <script> at the top of index.html.
+// Font registry — Thai-capable fonts at the top, Latin-only further
+// down. Every choice falls back through IBM Plex Sans Thai → system
+// stack, so Thai glyphs render even when the user's primary pick is a
+// Latin-only Google Font (e.g. Roboto).
 //
-// `query` is the GoogleFonts CSS API path fragment ("css2?family=" + q
-// + "&display=swap"). `family` is the CSS font-family stack — it
-// always falls back to IBM Plex + system stack so missing glyphs
-// (e.g. emoji, special icons) still render.
+// The inline boot-time `<script>` in index.html mirrors this registry
+// (it has to run before the ES module graph evaluates to avoid FOUC).
+// When you add a font here, ALSO add it to the REG object in that
+// inline script.
 //
-// `system` is the no-webfont escape hatch: every OS picks a
-// reasonable Thai-capable system font. Useful in air-gapped /
-// no-internet deployments.
+// `category` drives the <optgroup> grouping in the picker:
+//   'thai'   — covers Thai natively
+//   'latin'  — Latin-only; Thai falls through to IBM Plex Sans Thai
+//   'system' — no webfont download
+//
+// `query` is the GoogleFonts CSS API path fragment ("css2?family=" +
+// query + "&display=swap"); `null` for the system option.
+// `family` is the CSS font-family value; the apply() helper appends
+// the FALLBACK_STACK so emoji, mono, and Thai glyphs still resolve.
 
 export const FALLBACK_STACK = "'IBM Plex Sans', 'IBM Plex Sans Thai', 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
 
 export const FONTS = [
-    {
-        id: 'ibm-plex-sans',
-        name: 'IBM Plex Sans (default)',
-        query: 'IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Thai:wght@400;500;600;700',
-        family: "'IBM Plex Sans', 'IBM Plex Sans Thai'",
-    },
-    {
-        id: 'noto-sans-thai',
-        name: 'Noto Sans Thai',
-        query: 'Noto+Sans:wght@400;500;600;700&family=Noto+Sans+Thai:wght@400;500;600;700',
-        family: "'Noto Sans', 'Noto Sans Thai'",
-    },
-    {
-        id: 'sarabun',
-        name: 'Sarabun',
-        query: 'Sarabun:wght@400;500;600;700',
-        family: "'Sarabun'",
-    },
-    {
-        id: 'prompt',
-        name: 'Prompt',
-        query: 'Prompt:wght@400;500;600;700',
-        family: "'Prompt'",
-    },
-    {
-        id: 'kanit',
-        name: 'Kanit',
-        query: 'Kanit:wght@400;500;600;700',
-        family: "'Kanit'",
-    },
-    {
-        id: 'mitr',
-        name: 'Mitr',
-        query: 'Mitr:wght@400;500;600;700',
-        family: "'Mitr'",
-    },
-    {
-        id: 'k2d',
-        name: 'K2D',
-        query: 'K2D:wght@400;500;600;700',
-        family: "'K2D'",
-    },
-    {
-        id: 'bai-jamjuree',
-        name: 'Bai Jamjuree',
-        query: 'Bai+Jamjuree:wght@400;500;600;700',
-        family: "'Bai Jamjuree'",
-    },
-    {
-        id: 'athiti',
-        name: 'Athiti',
-        query: 'Athiti:wght@400;500;600;700',
-        family: "'Athiti'",
-    },
-    {
-        id: 'niramit',
-        name: 'Niramit',
-        query: 'Niramit:wght@400;500;600;700',
-        family: "'Niramit'",
-    },
-    {
-        id: 'system',
-        name: 'System default',
-        query: null,
-        family: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-    },
+    // ─── Thai-capable ────────────────────────────────────────────
+    { id: 'ibm-plex-sans',  category: 'thai',   name: 'IBM Plex Sans (default)', query: 'IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Thai:wght@400;500;600;700', family: "'IBM Plex Sans', 'IBM Plex Sans Thai'" },
+    { id: 'noto-sans-thai', category: 'thai',   name: 'Noto Sans Thai',          query: 'Noto+Sans:wght@400;500;600;700&family=Noto+Sans+Thai:wght@400;500;600;700',         family: "'Noto Sans', 'Noto Sans Thai'" },
+    { id: 'sarabun',        category: 'thai',   name: 'Sarabun',                 query: 'Sarabun:wght@400;500;600;700',                                                      family: "'Sarabun'" },
+    { id: 'prompt',         category: 'thai',   name: 'Prompt',                  query: 'Prompt:wght@400;500;600;700',                                                       family: "'Prompt'" },
+    { id: 'kanit',          category: 'thai',   name: 'Kanit',                   query: 'Kanit:wght@400;500;600;700',                                                        family: "'Kanit'" },
+    { id: 'mitr',           category: 'thai',   name: 'Mitr',                    query: 'Mitr:wght@400;500;600;700',                                                         family: "'Mitr'" },
+    { id: 'k2d',            category: 'thai',   name: 'K2D',                     query: 'K2D:wght@400;500;600;700',                                                          family: "'K2D'" },
+    { id: 'bai-jamjuree',   category: 'thai',   name: 'Bai Jamjuree',            query: 'Bai+Jamjuree:wght@400;500;600;700',                                                 family: "'Bai Jamjuree'" },
+    { id: 'athiti',         category: 'thai',   name: 'Athiti',                  query: 'Athiti:wght@400;500;600;700',                                                       family: "'Athiti'" },
+    { id: 'niramit',        category: 'thai',   name: 'Niramit',                 query: 'Niramit:wght@400;500;600;700',                                                      family: "'Niramit'" },
+
+    // ─── Latin-only (Thai chars fall back to IBM Plex Sans Thai) ─
+    { id: 'roboto',          category: 'latin', name: 'Roboto',           query: 'Roboto:wght@400;500;700',                family: "'Roboto'" },
+    { id: 'inter',           category: 'latin', name: 'Inter',            query: 'Inter:wght@400;500;600;700',             family: "'Inter'" },
+    { id: 'open-sans',       category: 'latin', name: 'Open Sans',        query: 'Open+Sans:wght@400;500;600;700',         family: "'Open Sans'" },
+    { id: 'lato',            category: 'latin', name: 'Lato',             query: 'Lato:wght@400;700',                      family: "'Lato'" },
+    { id: 'source-sans-3',   category: 'latin', name: 'Source Sans 3',    query: 'Source+Sans+3:wght@400;500;600;700',     family: "'Source Sans 3'" },
+    { id: 'manrope',         category: 'latin', name: 'Manrope',          query: 'Manrope:wght@400;500;600;700',           family: "'Manrope'" },
+    { id: 'dm-sans',         category: 'latin', name: 'DM Sans',          query: 'DM+Sans:wght@400;500;600;700',           family: "'DM Sans'" },
+    { id: 'work-sans',       category: 'latin', name: 'Work Sans',        query: 'Work+Sans:wght@400;500;600;700',         family: "'Work Sans'" },
+    { id: 'plus-jakarta',    category: 'latin', name: 'Plus Jakarta Sans', query: 'Plus+Jakarta+Sans:wght@400;500;600;700', family: "'Plus Jakarta Sans'" },
+    { id: 'outfit',          category: 'latin', name: 'Outfit',           query: 'Outfit:wght@400;500;600;700',            family: "'Outfit'" },
+
+    // ─── No webfont ──────────────────────────────────────────────
+    { id: 'system',          category: 'system', name: 'System default', query: null, family: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' },
 ];
 
 const LS_KEY = 'tgdl-font';
@@ -119,11 +84,25 @@ export function applyFont(id) {
     );
 }
 
-/** Populate a `<select id="setting-font">` with the registry. */
+/**
+ * Populate a `<select id="setting-font">` with the registry, grouped
+ * by category. Each <option> previews its own family so the user can
+ * see what they're picking before the page applies it.
+ */
 export function populateSelect(selectEl) {
     if (!selectEl) return;
-    selectEl.innerHTML = FONTS
-        .map(f => `<option value="${f.id}" style="font-family: ${f.family.replace(/"/g, '&quot;')}, ${FALLBACK_STACK}">${f.name}</option>`)
-        .join('');
+    const groups = {
+        thai:   { label: 'Thai-capable',                items: [] },
+        latin:  { label: 'Latin (Thai falls back)',     items: [] },
+        system: { label: 'No webfont',                  items: [] },
+    };
+    for (const f of FONTS) (groups[f.category] || groups.thai).items.push(f);
+    selectEl.innerHTML = Object.values(groups)
+        .filter(g => g.items.length)
+        .map(g => `
+            <optgroup label="${g.label}">
+                ${g.items.map(f => `<option value="${f.id}" style="font-family: ${f.family.replace(/"/g, '&quot;')}, ${FALLBACK_STACK}">${f.name}</option>`).join('')}
+            </optgroup>
+        `).join('');
     selectEl.value = getActiveFontId();
 }

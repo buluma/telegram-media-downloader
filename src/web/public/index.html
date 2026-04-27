@@ -81,6 +81,7 @@
                 // graph evaluation. Keep the two lists in sync.
                 const REG = {
                     'system':         { q: null,                                                                                                family: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' },
+                    // Thai-capable
                     'ibm-plex-sans':  { q: 'IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Thai:wght@400;500;600;700',                  family: "'IBM Plex Sans', 'IBM Plex Sans Thai'" },
                     'noto-sans-thai': { q: 'Noto+Sans:wght@400;500;600;700&family=Noto+Sans+Thai:wght@400;500;600;700',                          family: "'Noto Sans', 'Noto Sans Thai'" },
                     'sarabun':        { q: 'Sarabun:wght@400;500;600;700',                                                                       family: "'Sarabun'" },
@@ -91,6 +92,17 @@
                     'bai-jamjuree':   { q: 'Bai+Jamjuree:wght@400;500;600;700',                                                                  family: "'Bai Jamjuree'" },
                     'athiti':         { q: 'Athiti:wght@400;500;600;700',                                                                        family: "'Athiti'" },
                     'niramit':        { q: 'Niramit:wght@400;500;600;700',                                                                       family: "'Niramit'" },
+                    // Latin-only (Thai falls back to IBM Plex Sans Thai via the FALLBACK_STACK)
+                    'roboto':         { q: 'Roboto:wght@400;500;700',                                                                            family: "'Roboto'" },
+                    'inter':          { q: 'Inter:wght@400;500;600;700',                                                                         family: "'Inter'" },
+                    'open-sans':      { q: 'Open+Sans:wght@400;500;600;700',                                                                     family: "'Open Sans'" },
+                    'lato':           { q: 'Lato:wght@400;700',                                                                                  family: "'Lato'" },
+                    'source-sans-3':  { q: 'Source+Sans+3:wght@400;500;600;700',                                                                 family: "'Source Sans 3'" },
+                    'manrope':        { q: 'Manrope:wght@400;500;600;700',                                                                       family: "'Manrope'" },
+                    'dm-sans':        { q: 'DM+Sans:wght@400;500;600;700',                                                                       family: "'DM Sans'" },
+                    'work-sans':      { q: 'Work+Sans:wght@400;500;600;700',                                                                     family: "'Work Sans'" },
+                    'plus-jakarta':   { q: 'Plus+Jakarta+Sans:wght@400;500;600;700',                                                             family: "'Plus Jakarta Sans'" },
+                    'outfit':         { q: 'Outfit:wght@400;500;600;700',                                                                        family: "'Outfit'" },
                 };
                 const f = REG[saved];
                 if (!f) return;
