@@ -2,7 +2,7 @@
 
 import { api } from './api.js';
 import { ws } from './ws.js';
-import { formatBytes } from './utils.js';
+import { formatBytes, showToast } from './utils.js';
 import { t as i18nT } from './i18n.js';
 import { subscribe as subscribeMonitorStatus, refreshNow as refreshMonitorStatus } from './monitor-status.js';
 
@@ -77,11 +77,59 @@ async function paintVersion() {
     } catch { /* best-effort cosmetic */ }
 }
 
+// Update-check: poll /api/version/check (server-cached at 6 h) and surface a
+// "vX.Y.Z" pill next to the version chip if a newer GitHub release exists.
+// Per-version dismissal lives in localStorage so we don't nag forever; a
+// per-session toast fires once so the user notices even if the chip is off-
+// screen on a narrow viewport. Cosmetic — fail-soft on every error path.
+const UPDATE_DISMISS_KEY = 'tgdl.update.dismissed';
+const UPDATE_TOASTED_KEY = 'tgdl.update.toasted';
+async function paintUpdateBadge() {
+    const badge = $('status-update-badge');
+    const dismiss = $('status-update-dismiss');
+    if (!badge) return;
+    const hide = () => {
+        badge.classList.add('hidden');
+        if (dismiss) dismiss.classList.add('hidden');
+    };
+    try {
+        const r = await api.get('/api/version/check').catch(() => null);
+        if (!r || !r.updateAvailable || !r.latest) { hide(); return; }
+        if (localStorage.getItem(UPDATE_DISMISS_KEY) === r.latest) { hide(); return; }
+
+        const latest = r.latest;
+        badge.textContent = `${i18nT('update.available', 'Update available')} → ${latest}`;
+        badge.title = i18nT('update.click_for_release', 'v{version} is out — click to view release notes').replace('{version}', latest);
+        badge.href = r.releaseUrl || `https://github.com/botnick/telegram-media-downloader/releases/tag/${latest}`;
+        badge.classList.remove('hidden');
+        if (dismiss) {
+            dismiss.classList.remove('hidden');
+            dismiss.onclick = () => {
+                try { localStorage.setItem(UPDATE_DISMISS_KEY, latest); } catch { /* private mode */ }
+                hide();
+            };
+        }
+
+        if (sessionStorage.getItem(UPDATE_TOASTED_KEY) !== latest) {
+            try { sessionStorage.setItem(UPDATE_TOASTED_KEY, latest); } catch { /* private mode */ }
+            const msg = i18nT('update.toast', 'Update available — {version}').replace('{version}', latest);
+            showToast(msg, 'info', 6000);
+        }
+    } catch { hide(); }
+}
+
+let _updatePollHandle = null;
+
 export function initStatusBar() {
     // Build/version chip — fired once at boot, then on every config_updated
     // (which usually means the SPA was reloaded into a new container).
     paintVersion();
     ws.on('config_updated', paintVersion);
+
+    // Update-check chip — one fetch at boot, refresh every 6 h (server caches).
+    paintUpdateBadge();
+    if (_updatePollHandle) clearInterval(_updatePollHandle);
+    _updatePollHandle = setInterval(paintUpdateBadge, 6 * 60 * 60 * 1000);
 
     // Monitor state/queue/active: piggy-back on the shared monitor-status
     // poller (one /api/monitor/status fetch, three subscribers).
