@@ -622,7 +622,9 @@ function renderAll() {
 }
 
 function startElapsedTimer() {
-    if (elapsedTimer) return;
+    // Defensive: clear before re-arming so a rapid stop/start (e.g. router
+    // double-fires #/backfill on hashchange) can't end up with two intervals.
+    if (elapsedTimer) clearInterval(elapsedTimer);
     elapsedTimer = setInterval(() => {
         if (state.currentPage !== 'backfill') return;
         document.querySelectorAll('#backfill-active-list [data-elapsed]').forEach(el => {

@@ -341,6 +341,15 @@ class VideoPlayer {
         this._resumePlayed = false;
         this._lastSavedAt = 0;
 
+        // Pause + rewind the OLD source first so a stale ontimeupdate /
+        // onloadedmetadata can't fire after the new clip's UI reset and
+        // re-paint the seek bar with the previous clip's position. Without
+        // this, switching clips from the gallery left the playhead and
+        // play-icon mid-track.
+        try { this.video.pause(); } catch {}
+        try { this.video.currentTime = 0; } catch {}
+        try { this.video.onloadedmetadata = null; } catch {}
+
         // Reset UI synchronously so the previous clip's state never bleeds in.
         this.curTime.textContent = '00:00';
         this.durTime.textContent = '00:00';

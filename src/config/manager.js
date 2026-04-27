@@ -186,7 +186,13 @@ export function loadConfig() {
 }
 
 export function saveConfig(config) {
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 4));
+    // Atomic write: stage to a temp file, then rename. Without this, an
+    // fs.watch consumer (monitor.js) could read a half-written JSON if
+    // the process is preempted mid-write, and JSON.parse would throw.
+    // rename() is atomic on the same filesystem on POSIX + on NTFS.
+    const tmp = `${CONFIG_PATH}.tmp.${process.pid}.${Date.now()}`;
+    fs.writeFileSync(tmp, JSON.stringify(config, null, 4));
+    fs.renameSync(tmp, CONFIG_PATH);
 }
 
 export function addGroup(config, group) {

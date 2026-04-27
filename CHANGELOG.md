@@ -2,6 +2,26 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.3] — 2026-04-28
+
+Second-pass audit + four more user-reported defects. Fixes a real entity-cache shape bug and a path-traversal hole in the profile-photo endpoint that the first audit missed.
+
+### Fixed — security
+- **Path traversal in `/api/groups/:id/photo`** — `req.params.id` was interpolated straight into a filesystem path with no validation. A request like `/api/groups/..%2F..%2Fetc%2Fpasswd/photo` could escape `PHOTOS_DIR`. Now requires `id` to match `/^-?\d+$/` (signed Telegram ID) and runs a `fs.realpathSync` check before `sendFile`.
+- **CSRF defence-in-depth.** Added an Origin / Referer same-host check to every `POST` / `PUT` / `PATCH` / `DELETE`. Requests with neither header (CLI, native clients) pass through — the `sameSite=strict` cookie still gates them.
+- **Prototype-pollution filter** on the `POST /api/config` body. Strips `__proto__`, `constructor`, `prototype` keys recursively before any `{ ...currentConfig, ...req.body }` spread.
+
+### Fixed — backend correctness
+- **`entityCache` shape bug.** First lookup returned `{ entity, client }`, but the cache stored only `entity`. Every subsequent cache hit returned a bare entity, so callers reading `r.entity` got `undefined` and silently fell through to "unknown chat" naming. Cache now stores `{ entity, client, at }`, has a 30-min TTL, and a 5000-entry hard cap so it can't grow without bound.
+- **`saveConfig()` was not atomic.** `fs.writeFileSync(CONFIG_PATH, json)` could be observed mid-write by `fs.watch` consumers (monitor.js's `reloadConfig`), making `JSON.parse` throw on a half-written file. Switched to temp-file + `fs.renameSync()` (atomic on POSIX + NTFS).
+- **Standalone-downloader IIFEs** in `/api/stories/download` and `/api/download/url` had no error boundary — a throw inside the drain loop became an unhandled rejection. Wrapped in `.catch()`.
+- **`/api/dialogs` cache TTL** could become permanent if the system clock jumped backward (NTP correction). Wrapped the `now - cache.at` comparisons in `Math.max(0, …)`.
+- **EADDRINUSE on `server.listen()`** failed silently — the container exited with no clue where to look. Added an `error` handler that prints a clear "Port X is already in use" message and `process.exit(1)`.
+
+### Fixed — frontend
+- **VideoPlayer seek bar + play/pause didn't reset between clips** — switching clips from the gallery left the progress bar mid-track and the play icon showing the previous clip's state, because a stale `ontimeupdate` from the OLD source could fire after `load()` reset the UI but before the new src had taken over. Now explicitly `pause()` + `currentTime = 0` + null `onloadedmetadata` BEFORE the UI reset.
+- **Backfill `startElapsedTimer()` defensive guard** — clears any existing interval before re-arming so a router double-fire on `#/backfill` can't stack two tickers.
+
 ## [2.3.2] — 2026-04-28
 
 Audit-driven defect sweep — fixes uncovered while reviewing v2.3.1 in detail. No new feature surface; everything below is correctness, leak-prevention, or UX polish.
