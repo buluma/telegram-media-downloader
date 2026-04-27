@@ -476,6 +476,11 @@
     "pwa.installed": "ติดตั้งแอปแล้ว",
     "pwa.update_available": "มีเวอร์ชันใหม่ — รีโหลดเพื่ออัปเดต",
 
+    "update.available": "มีเวอร์ชันใหม่",
+    "update.toast": "มีเวอร์ชันใหม่ — {version}",
+    "update.click_for_release": "{version} ออกแล้ว — คลิกเพื่อดู release notes",
+    "update.dismiss": "ปิดการแจ้งเตือน",
+
     "maintenance.title": "บำรุงรักษา",
     "maintenance.subtitle": "งานปฏิบัติการที่เคยต้องใช้ CLI ตอนนี้ทำได้ผ่านเบราว์เซอร์ทั้งหมด",
     "maintenance.failed": "ล้มเหลว: {msg}",

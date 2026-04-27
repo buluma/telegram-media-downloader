@@ -476,6 +476,11 @@
     "pwa.installed": "App installed",
     "pwa.update_available": "Update available — reload to apply",
 
+    "update.available": "Update available",
+    "update.toast": "Update available — {version}",
+    "update.click_for_release": "{version} is out — click to view release notes",
+    "update.dismiss": "Dismiss",
+
     "maintenance.title": "Maintenance",
     "maintenance.subtitle": "Operational tasks that used to need a CLI session. Everything below is safe to run from the browser.",
     "maintenance.failed": "Failed: {msg}",

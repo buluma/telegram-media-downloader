@@ -345,6 +345,7 @@ const PUBLIC_API_PATHS = new Set([
     '/api/login',
     '/api/auth_check',
     '/api/version',  // public so the status-bar chip can render pre-login
+    '/api/version/check',  // public update-check (GitHub releases poll, cached)
     '/api/auth/setup', // first-run only — guarded inside the handler
     '/api/auth/reset/request',  // logs token to stdout — no body returned
     '/api/auth/reset/confirm',  // requires the stdout token + new password
@@ -637,16 +638,88 @@ app.post('/api/auth/reset/confirm', loginLimiter, async (req, res) => {
 // Build identity for the status-bar version chip + bug reports.
 // `commit` falls back to "dev" outside of CI; the Docker build passes it
 // in via a `GIT_SHA` build arg → ENV. `builtAt` likewise.
+function _readCurrentVersion() {
+    if (process.env.npm_package_version) return process.env.npm_package_version;
+    try {
+        return JSON.parse(fsSync.readFileSync(path.join(__dirname, '../../package.json'), 'utf8')).version;
+    } catch { return 'unknown'; }
+}
+
 app.get('/api/version', (req, res) => {
     res.json({
-        version: process.env.npm_package_version || (() => {
-            try {
-                return JSON.parse(fsSync.readFileSync(path.join(__dirname, '../../package.json'), 'utf8')).version;
-            } catch { return 'unknown'; }
-        })(),
+        version: _readCurrentVersion(),
         commit: (process.env.GIT_SHA || 'dev').slice(0, 7),
         builtAt: process.env.BUILT_AT || null,
     });
+});
+
+// Update-check: poll the GitHub Releases API for the latest tag, cache it for
+// 6 hours, and tell the SPA whether a newer version is out. Fail-soft — any
+// network/parse error returns updateAvailable:false and we keep serving the
+// last-known good answer (marked stale) so a flaky GitHub doesn't blank the
+// status-bar chip. Public path so the chip can render pre-login.
+const UPDATE_CHECK_TTL_MS = 6 * 60 * 60 * 1000;
+const UPDATE_CHECK_REPO = 'botnick/telegram-media-downloader';
+let _updateCache = { fetchedAt: 0, data: null };
+
+function _cmpSemver(a, b) {
+    const norm = (s) => String(s || '').replace(/^v/i, '').split('-')[0].split('.').map((n) => parseInt(n, 10) || 0);
+    const A = norm(a), B = norm(b);
+    const len = Math.max(A.length, B.length);
+    for (let i = 0; i < len; i++) {
+        const x = A[i] || 0, y = B[i] || 0;
+        if (x > y) return 1;
+        if (x < y) return -1;
+    }
+    return 0;
+}
+
+async function _fetchLatestRelease() {
+    if (typeof fetch !== 'function') return null;
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 5000);
+    try {
+        const r = await fetch(`https://api.github.com/repos/${UPDATE_CHECK_REPO}/releases/latest`, {
+            headers: { 'Accept': 'application/vnd.github+json', 'User-Agent': 'tgdl-update-check' },
+            signal: ctrl.signal,
+        });
+        if (!r.ok) return null;
+        const j = await r.json();
+        return {
+            tag: j.tag_name,
+            name: j.name || j.tag_name,
+            url: j.html_url,
+            publishedAt: j.published_at,
+        };
+    } catch { return null; }
+    finally { clearTimeout(t); }
+}
+
+app.get('/api/version/check', async (req, res) => {
+    const current = _readCurrentVersion();
+    const now = Date.now();
+    const force = req.query.force === '1';
+    if (!force && _updateCache.data && (now - _updateCache.fetchedAt) < UPDATE_CHECK_TTL_MS) {
+        const { latest } = _updateCache.data;
+        const updateAvailable = _cmpSemver(latest, current) > 0;
+        return res.json({ current, ..._updateCache.data, updateAvailable, cached: true });
+    }
+    const latest = await _fetchLatestRelease();
+    if (!latest) {
+        if (_updateCache.data) {
+            const updateAvailable = _cmpSemver(_updateCache.data.latest, current) > 0;
+            return res.json({ current, ..._updateCache.data, updateAvailable, cached: true, stale: true });
+        }
+        return res.json({ current, latest: null, updateAvailable: false, error: 'unreachable' });
+    }
+    const data = {
+        latest: latest.tag,
+        latestName: latest.name,
+        releaseUrl: latest.url,
+        publishedAt: latest.publishedAt,
+    };
+    _updateCache = { fetchedAt: now, data };
+    res.json({ current, ...data, updateAvailable: _cmpSemver(latest.tag, current) > 0, cached: false });
 });
 
 app.get('/api/auth_check', async (req, res) => {
