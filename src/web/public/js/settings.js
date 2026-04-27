@@ -102,6 +102,71 @@ export async function loadSettings() {
             };
         }
 
+        // Video Player preferences. Pure browser-side (localStorage); the
+        // viewer module reads the same keys on every clip .load(). One
+        // helper covers all the on/off toggles to avoid 5 copies of the
+        // same wire-up.
+        const wireBoolPref = (toggleId, key, onMsg, offMsg) => {
+            const el = document.getElementById(toggleId);
+            if (!el) return;
+            const refresh = () => el.classList.toggle('active', localStorage.getItem(key) === '1');
+            refresh();
+            el.onclick = (e) => {
+                e.preventDefault();
+                const on = localStorage.getItem(key) !== '1';
+                try { localStorage.setItem(key, on ? '1' : '0'); } catch { /* private mode */ }
+                refresh();
+                showToast(on ? i18nT(onMsg, onMsg) : i18nT(offMsg, offMsg), 'info');
+            };
+        };
+        wireBoolPref('setting-viewer-autoplay',     'viewer-autoplay',     'toast.viewer_autoplay_on',     'toast.viewer_autoplay_off');
+        wireBoolPref('setting-viewer-start-muted',  'video-muted',         'toast.viewer_muted_on',        'toast.viewer_muted_off');
+        wireBoolPref('setting-viewer-loop',         'viewer-loop',         'toast.viewer_loop_on',         'toast.viewer_loop_off');
+        wireBoolPref('setting-viewer-auto-advance', 'viewer-auto-advance', 'toast.viewer_advance_on',      'toast.viewer_advance_off');
+        // Resume defaults to ON (legacy behaviour) — store the OPPOSITE
+        // sense ('viewer-no-resume' = 1 when disabled) so existing users
+        // who never touched the toggle keep their resume behaviour.
+        const resumeEl = document.getElementById('setting-viewer-resume');
+        if (resumeEl) {
+            const KEY = 'viewer-no-resume';
+            const refresh = () => resumeEl.classList.toggle('active', localStorage.getItem(KEY) !== '1');
+            refresh();
+            resumeEl.onclick = (e) => {
+                e.preventDefault();
+                const wasOn = localStorage.getItem(KEY) !== '1';
+                try { localStorage.setItem(KEY, wasOn ? '1' : '0'); } catch { /* private mode */ }
+                refresh();
+                showToast(wasOn
+                    ? i18nT('toast.viewer_resume_off', 'Resume disabled')
+                    : i18nT('toast.viewer_resume_on', 'Resume enabled'),
+                    'info');
+            };
+        }
+        // Default speed — bound directly to the existing video-speed key
+        // so changing it here propagates instantly to every player open.
+        const speedSel = document.getElementById('setting-viewer-default-speed');
+        if (speedSel) {
+            const cur = parseFloat(localStorage.getItem('video-speed') || '1');
+            speedSel.value = String(Number.isFinite(cur) && cur > 0 ? cur : 1);
+            speedSel.onchange = () => {
+                try { localStorage.setItem('video-speed', String(parseFloat(speedSel.value) || 1)); } catch {}
+            };
+        }
+        // Default volume — same pattern, just clamped 0..1.
+        const volSlider = document.getElementById('setting-viewer-default-volume');
+        const volLabel  = document.getElementById('setting-viewer-default-volume-val');
+        if (volSlider) {
+            const cur = parseFloat(localStorage.getItem('video-volume') || '1');
+            const pct = Math.round((Number.isFinite(cur) ? cur : 1) * 100);
+            volSlider.value = String(pct);
+            if (volLabel) volLabel.textContent = String(pct);
+            volSlider.oninput = () => {
+                const n = parseInt(volSlider.value, 10);
+                if (volLabel) volLabel.textContent = String(n);
+                try { localStorage.setItem('video-volume', String(Math.max(0, Math.min(1, n / 100)))); } catch {}
+            };
+        }
+
         const notifyToggle = document.getElementById('setting-notifications');
         if (notifyToggle) {
             const refresh = () => notifyToggle.classList.toggle('active', Notifications.isEnabled());

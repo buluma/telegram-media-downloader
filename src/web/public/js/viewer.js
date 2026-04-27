@@ -126,6 +126,7 @@ function setupImageZoom() {
 const VOL_LS_KEY = 'video-volume';
 const MUTED_LS_KEY = 'video-muted';
 const SPEED_LS_KEY = 'video-speed';
+const AUTOPLAY_LS_KEY = 'viewer-autoplay';
 const HOVER_TIMEOUT_MS = 2000;
 
 const SUPPORTS_HOVER = typeof window.matchMedia === 'function'
@@ -324,6 +325,22 @@ class VideoPlayer {
             this._refreshPlayIcons();
             this._showControls(true);
             if (this._storageKey) localStorage.removeItem(this._storageKey);
+            // Auto-advance: jump to the next file in the gallery list
+            // when the user opted in. Skipped when looping is on (loop
+            // would re-fire onended forever) or when the modal has
+            // already been closed.
+            if (localStorage.getItem('viewer-auto-advance') === '1' && !this.video.loop) {
+                try {
+                    const idx = state.currentFileIndex;
+                    if (Number.isFinite(idx) && idx + 1 < state.files.length) {
+                        // Defer one tick so this onended handler returns
+                        // before we tear down + re-init for the next clip.
+                        setTimeout(() => {
+                            try { openMediaViewer(idx + 1); } catch {}
+                        }, 60);
+                    }
+                } catch {}
+            }
         };
         this.video.onvolumechange = () => {
             this._refreshVolumeUi();
@@ -387,10 +404,20 @@ class VideoPlayer {
         this._refreshSpeedUi();
         this._refreshFsIcon();
 
+        // Apply the loop preference — re-read every load() so a setting
+        // change between clips takes effect on the next open.
+        try { this.video.loop = localStorage.getItem('viewer-loop') === '1'; } catch {}
+
         // Resume — race-safe (apply inline if metadata's already there).
+        // Honour the "Remember position" toggle: when the user disables
+        // it via Settings → Video Player, the saved key is still read on
+        // the file's own per-clip path (so old saves don't disappear)
+        // but we never SEEK to it.
+        const resumeAllowed = localStorage.getItem('viewer-no-resume') !== '1';
         const applyResume = () => {
             if (this._resumePlayed) return;
             this._resumePlayed = true;
+            if (!resumeAllowed) return;
             const saved = localStorage.getItem(this._storageKey);
             if (!saved) return;
             const time = parseFloat(saved);
@@ -410,6 +437,30 @@ class VideoPlayer {
         if (this.video.readyState >= 1) applyResume();
 
         this._showControls(true);
+
+        // Honour the user's "Autoplay videos" setting (Settings → Video
+        // Player). Browsers block autoplay-with-sound on first
+        // interaction, so if we ever can't start with audio we fall back
+        // to a muted start — the user can unmute with one click. The
+        // mute state we already restored above wins when present.
+        if (localStorage.getItem(AUTOPLAY_LS_KEY) === '1') {
+            const tryPlay = () => {
+                this.video.play().catch(() => {
+                    // Browser refused (autoplay policy) — flip mute on
+                    // and try once more. If that also fails we silently
+                    // leave the centre play button up for the user.
+                    if (!this.video.muted) {
+                        this.video.muted = true;
+                        this._refreshVolumeUi();
+                        this.video.play().catch(() => {});
+                    }
+                });
+            };
+            // Wait for at least metadata so the play() promise resolves
+            // cleanly on slow links; oncanplay covers cold cache too.
+            if (this.video.readyState >= 2) tryPlay();
+            else this.video.addEventListener('canplay', tryPlay, { once: true });
+        }
     }
 
     /** Stop any in-flight network activity and reset playback. */
