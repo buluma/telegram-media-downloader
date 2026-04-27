@@ -491,5 +491,7 @@
     "maintenance.signout_all.help": "Revokes every dashboard session token. You'll be sent back to the login page. Use this after rotating the password or if you suspect a compromise.",
     "maintenance.signout_all.action": "Sign out all",
     "maintenance.signout_all.confirm": "Sign out every browser? You will be redirected to the login page.",
-    "maintenance.signout_all.done": "All sessions revoked"
+    "maintenance.signout_all.done": "All sessions revoked",
+    "maintenance.signout_all.password_prompt": "Enter your dashboard password to sign out every browser:",
+    "maintenance.export.password_prompt": "Enter your dashboard password to export the session string:"
 }

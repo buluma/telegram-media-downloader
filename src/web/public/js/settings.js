@@ -531,11 +531,18 @@ async function maintExportSession() {
         const str = document.getElementById('maint-export-str');
         const copy = document.getElementById('maint-export-copy');
         if (doBtn) doBtn.addEventListener('click', async () => {
+            // Force the user to retype their dashboard password — exporting
+            // a session string lets the holder act as the account, so cookie
+            // alone is not enough proof of identity.
+            const password = window.prompt(i18nT('maintenance.export.password_prompt',
+                'Enter your dashboard password to export the session string:'));
+            if (password == null || password === '') return;
             doBtn.disabled = true;
             try {
                 const r = await api.post('/api/maintenance/session/export', {
                     confirm: true,
                     accountId: pick.value,
+                    password,
                 });
                 if (str) str.value = r.session || '';
                 if (out) out.classList.remove('hidden');
@@ -560,8 +567,13 @@ async function maintExportSession() {
 async function maintRevokeAllSessions() {
     if (!confirm(i18nT('maintenance.signout_all.confirm',
         'Sign out every browser? You will be redirected to the login page.'))) return;
+    // Require the dashboard password — without it a stolen cookie could
+    // mass-evict everyone else off the dashboard.
+    const password = window.prompt(i18nT('maintenance.signout_all.password_prompt',
+        'Enter your dashboard password to sign out every browser:'));
+    if (password == null || password === '') return;
     try {
-        await api.post('/api/maintenance/sessions/revoke-all', { confirm: true });
+        await api.post('/api/maintenance/sessions/revoke-all', { confirm: true, password });
         showToast(i18nT('maintenance.signout_all.done', 'All sessions revoked'), 'success');
         setTimeout(() => { window.location.href = '/login.html'; }, 600);
     } catch (e) {
