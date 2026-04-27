@@ -188,6 +188,32 @@ async function init() {
     window.purgeGroup = purgeGroup;
     window.purgeAll = purgeAll;
     
+    // View-mode toggle in the header — cycles grid → compact → list. Persists
+    // in localStorage so the choice survives reloads. The actual layout is
+    // CSS-driven (see .media-grid.view-* in index.html).
+    const viewModeBtn = document.getElementById('view-mode-btn');
+    if (viewModeBtn) {
+        const VIEW_MODES = ['grid', 'compact', 'list'];
+        const VIEW_ICON = { grid: 'ri-layout-grid-line', compact: 'ri-grid-line', list: 'ri-list-check-2' };
+        const applyViewMode = (mode) => {
+            state.viewMode = mode;
+            try { localStorage.setItem('tgdl-view-mode', mode); } catch {}
+            const grid = document.getElementById('media-grid');
+            if (grid) {
+                grid.classList.remove('view-grid', 'view-compact', 'view-list');
+                grid.classList.add(`view-${mode}`);
+            }
+            const icon = viewModeBtn.querySelector('i');
+            if (icon) icon.className = `${VIEW_ICON[mode] || VIEW_ICON.grid} text-xl text-tg-textSecondary`;
+        };
+        const stored = (() => { try { return localStorage.getItem('tgdl-view-mode'); } catch { return null; } })();
+        applyViewMode(VIEW_MODES.includes(stored) ? stored : 'grid');
+        viewModeBtn.addEventListener('click', () => {
+            const next = VIEW_MODES[(VIEW_MODES.indexOf(state.viewMode) + 1) % VIEW_MODES.length];
+            applyViewMode(next);
+        });
+    }
+
     // Settings globals
     window.applyPreset = Settings.applyPreset;
     document.getElementById('save-settings')?.addEventListener('click', Settings.saveSettings);
