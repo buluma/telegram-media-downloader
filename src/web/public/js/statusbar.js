@@ -46,11 +46,22 @@ export function initStatusBar() {
     // poller (one /api/monitor/status fetch, three subscribers).
     subscribeMonitorStatus(applyMonitor);
 
-    // Stats are heavier (disk walk on the server) and change slowly — keep
-    // a separate, slower cadence so we don't hammer it.
+    // Stats are heavier (disk walk + DB scan on the server). WS events
+    // (download_complete / file_deleted / bulk_delete / purge_*) push
+    // freshness already; the 60-second poll is just a safety net for
+    // missed events / WS disconnects.
     refreshStats();
     if (statsPollHandle) clearInterval(statsPollHandle);
-    statsPollHandle = setInterval(refreshStats, 15000);
+    statsPollHandle = setInterval(refreshStats, 60000);
+
+    // Refresh on every event that mutates the file/disk counters so we
+    // don't sit on stale numbers between safety-poll ticks.
+    const wsRefresh = () => refreshStats();
+    ws.on('download_complete', wsRefresh);
+    ws.on('file_deleted', wsRefresh);
+    ws.on('bulk_delete', wsRefresh);
+    ws.on('purge_all', wsRefresh);
+    ws.on('group_purged', wsRefresh);
 
     // Live cues from the WebSocket
     ws.on('__ws_open', () => {
