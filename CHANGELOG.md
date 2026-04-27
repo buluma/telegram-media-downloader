@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.15] — 2026-04-28
+
+### Added — Latin font choices
+- **10 Latin Google Fonts** added to the picker on top of v2.3.14's 10 Thai-capable fonts: **Roboto**, **Inter**, **Open Sans**, **Lato**, **Source Sans 3**, **Manrope**, **DM Sans**, **Work Sans**, **Plus Jakarta Sans**, **Outfit**. Thai characters fall back through the `--tgdl-font-family` chain to IBM Plex Sans Thai so a Latin-only pick (e.g. Roboto) still renders Thai cleanly.
+- The `<select>` is now grouped by `<optgroup>`: **Thai-capable** (10), **Latin (Thai falls back)** (10), **No webfont** (1) = **21 total**.
+
+### Fixed
+- **Per-group view: media not complete after switching from a Photos / Videos tab.** When the user filtered All Media to Photos and then clicked a group in the sidebar, the previous `state.currentFilter` survived → `loadGroupFiles()` fetched `?type=images` only → user saw a partial library and the tab UI silently said "All". Both `openGroup()` and `showAllMedia()` now reset the filter to "all" and re-paint the tab strip to match.
+
+### Changed
+- **SW VERSION** bumped `'v14'` → `'v15'` so the new font registry + filter-reset reach the browser.
+
 ## [2.3.14] — 2026-04-28
 
 ### Added — user-selectable font

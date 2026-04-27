@@ -570,6 +570,11 @@ function openGroup(groupId, groupName) {
     state.page = 1;
     state.hasMore = true;
     state.files = [];
+    // Reset the type filter when entering a new gallery view — user
+    // was reporting "media not complete" because a previous Photos /
+    // Videos tab choice survived the navigation and silently filtered
+    // out everything else for the new group.
+    resetGalleryFilter();
 
     document.getElementById('page-title').textContent = state.currentGroup;
     document.getElementById('page-subtitle').textContent = i18nT('viewer.subtitle.loading', 'Loading...');
@@ -600,6 +605,7 @@ function showAllMedia() {
     state.page = 1;
     state.hasMore = true;
     state.files = [];
+    resetGalleryFilter();
 
     document.getElementById('page-title').textContent = i18nT('viewer.all_media.title', 'All Media');
     document.getElementById('page-subtitle').textContent = i18nT('viewer.all_media.subtitle', 'All downloaded files');
@@ -1413,6 +1419,17 @@ async function confirmDeleteFile() {
     } catch (e) {
         showToast(i18nTf('viewer.delete.failed', { msg: e.message }, 'Failed to delete: ' + e.message), 'error');
     }
+}
+
+// Reset the All / Photos / Videos / Files / Audio tab back to "All"
+// and re-paint the tab UI to match. Called whenever we enter a fresh
+// gallery view (All Media or per-group) so a stale tab choice from
+// the previous view doesn't silently filter the new content.
+function resetGalleryFilter() {
+    state.currentFilter = 'all';
+    document.querySelectorAll('#media-tabs .tab-item').forEach(t => {
+        t.classList.toggle('active', (t.dataset.type || 'all') === 'all');
+    });
 }
 
 // ============ Media Tabs ============
