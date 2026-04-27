@@ -1398,14 +1398,47 @@ app.get('/api/dialogs', async (req, res) => {
 });
 
 // 3. Config Groups List (with Photo URLs)
+// Mirror of the SPA's `looksUnresolved`. If a name is empty / "Unknown" /
+// the bare numeric id / a "Group ..." placeholder, the caller should
+// prefer any other source instead of trusting it.
+function nameLooksUnresolved(name, id) {
+    if (!name) return true;
+    const s = String(name).trim();
+    if (!s) return true;
+    if (s === 'Unknown' || s === 'unknown') return true;
+    if (id != null && s === String(id)) return true;
+    if (/^-?\d{6,}$/.test(s)) return true;
+    if (/^Group\s/i.test(s)) return true;
+    return false;
+}
+
+// Best-available name for a group id. Tries the config-set label first,
+// falls back to the DB's most recently-seen `group_name` for that id.
+// Last-resort placeholder is "Unknown chat (#<id>)" — never the bare id.
+function bestGroupName(id, configName, dbName) {
+    if (!nameLooksUnresolved(configName, id)) return configName;
+    if (!nameLooksUnresolved(dbName, id)) return dbName;
+    return `Unknown chat (#${id})`;
+}
+
 app.get('/api/groups', async (req, res) => {
     try {
         const config = JSON.parse(await fs.readFile(CONFIG_PATH, 'utf8'));
+        // Pull the best DB-side name per group_id so a config row with
+        // "Unknown" doesn't shadow a real name we already saved at
+        // download time.
+        let dbNames = new Map();
+        try {
+            const rows = getDb().prepare(`SELECT group_id, MAX(group_name) AS name FROM downloads GROUP BY group_id`).all();
+            for (const r of rows) dbNames.set(String(r.group_id), r.name);
+        } catch {}
+
         const groupsWithPhotos = await Promise.all((config.groups || []).map(async (group) => {
             const photoPath = path.join(PHOTOS_DIR, `${group.id}.jpg`);
             const hasPhoto = existsSync(photoPath);
             return {
                 ...group,
+                name: bestGroupName(group.id, group.name, dbNames.get(String(group.id))),
                 photoUrl: hasPhoto ? `/photos/${group.id}.jpg` : null
             };
         }));
@@ -1431,10 +1464,14 @@ app.get('/api/downloads', async (req, res) => {
         
         const results = rows.map(r => {
             const cfg = configGroups.find(g => String(g.id) === r.group_id);
-            const name = cfg?.name || r.group_name;
-            if (!name) return null; // Skip groups without a resolved name
+            // Best-available — prefer config name if real, else DB-saved
+            // name, else a friendly "Unknown chat (#id)" placeholder.
+            // Never drop the row just because the name is missing — the
+            // sidebar still needs to show the file count so the user can
+            // open it and trigger a refresh.
+            const name = bestGroupName(r.group_id, cfg?.name, r.group_name);
             const hasPhoto = existsSync(path.join(PHOTOS_DIR, `${r.group_id}.jpg`));
-            
+
             return {
                 id: r.group_id,
                 name: name,
@@ -1508,16 +1545,25 @@ app.get('/api/downloads/:groupId', async (req, res) => {
 // used to escape the root. Returns null if the request is unsafe or the file
 // doesn't exist.
 async function safeResolveDownload(userPath) {
-    if (typeof userPath !== 'string' || userPath.length === 0) return null;
-    if (userPath.includes('\0')) return null;
+    if (typeof userPath !== 'string' || userPath.length === 0) return { ok: false, reason: 'forbidden' };
+    if (userPath.includes('\0')) return { ok: false, reason: 'forbidden' };
     const normalized = path.normalize(userPath);
-    if (path.isAbsolute(normalized)) return null;
+    if (path.isAbsolute(normalized)) return { ok: false, reason: 'forbidden' };
+    if (normalized.split(path.sep).includes('..')) return { ok: false, reason: 'forbidden' };
     const candidate = path.join(DOWNLOADS_DIR, normalized);
     const rootReal = await fs.realpath(DOWNLOADS_DIR).catch(() => path.resolve(DOWNLOADS_DIR));
     let real;
-    try { real = await fs.realpath(candidate); } catch { return null; }
-    if (!real.startsWith(rootReal + path.sep) && real !== rootReal) return null;
-    return real;
+    try { real = await fs.realpath(candidate); }
+    catch (e) {
+        // ENOENT → genuinely missing (deleted / never written / DB drift).
+        // Tell the caller so the route can return 404 instead of a
+        // misleading 403 that makes users think it's a permission bug.
+        return { ok: false, reason: e.code === 'ENOENT' ? 'missing' : 'forbidden' };
+    }
+    if (!real.startsWith(rootReal + path.sep) && real !== rootReal) {
+        return { ok: false, reason: 'forbidden' };
+    }
+    return { ok: true, real };
 }
 
 // Search across all downloads (filename + group name).
@@ -1572,9 +1618,9 @@ app.post('/api/downloads/bulk-delete', async (req, res) => {
         // Resolve every supplied path safely; ignore those that escape the root.
         let unlinked = 0;
         for (const p of pathList) {
-            const real = await safeResolveDownload(p);
-            if (real) {
-                try { await fs.unlink(real); unlinked++; } catch (e) { if (e.code !== 'ENOENT') throw e; }
+            const r = await safeResolveDownload(p);
+            if (r.ok) {
+                try { await fs.unlink(r.real); unlinked++; } catch (e) { if (e.code !== 'ENOENT') throw e; }
             }
         }
         // For id-based deletion we still need to find the on-disk path. The DB
@@ -1592,9 +1638,9 @@ app.post('/api/downloads/bulk-delete', async (req, res) => {
                     : row.file_type === 'audio' ? 'audio'
                     : row.file_type === 'sticker' ? 'stickers' : 'documents';
                 const candidate = `${folder}/${typeFolder}/${row.file_name}`;
-                const real = await safeResolveDownload(candidate);
-                if (real) {
-                    try { await fs.unlink(real); unlinked++; } catch (e) { if (e.code !== 'ENOENT') throw e; }
+                const r = await safeResolveDownload(candidate);
+                if (r.ok) {
+                    try { await fs.unlink(r.real); unlinked++; } catch (e) { if (e.code !== 'ENOENT') throw e; }
                 }
             }
         }
@@ -1613,15 +1659,18 @@ app.delete('/api/file', async (req, res) => {
         const filePath = req.query.path;
         if (!filePath) return res.status(400).json({ error: 'Path required' });
 
-        const real = await safeResolveDownload(filePath);
-        if (!real) return res.status(403).json({ error: 'Access denied' });
+        const r = await safeResolveDownload(filePath);
+        if (!r.ok) {
+            const status = r.reason === 'missing' ? 404 : 403;
+            return res.status(status).json({ error: r.reason === 'missing' ? 'File not found' : 'Access denied' });
+        }
 
-        await fs.unlink(real);
+        await fs.unlink(r.real);
         console.log(`🗑️ Deleted: ${filePath}`);
 
         // Remove from DB (by basename — the DB stores filenames, not paths).
         const db = getDb();
-        const fileName = path.basename(real);
+        const fileName = path.basename(r.real);
         db.prepare('DELETE FROM downloads WHERE file_name = ?').run(fileName);
 
         broadcast({ type: 'file_deleted', path: filePath });
@@ -2266,18 +2315,24 @@ app.use('/files', async (req, res, next) => {
         if (!reqPath) return next();
         if (reqPath.includes('\0')) return res.status(400).send('Bad request');
 
-        const real = await safeResolveDownload(reqPath);
-        if (!real) return res.status(403).send('Forbidden');
+        const r = await safeResolveDownload(reqPath);
+        if (!r.ok) {
+            // Distinguish "genuinely missing" from "blocked for safety" so
+            // users see "File not found" instead of a misleading "Forbidden"
+            // when a file was rotated/deleted but the DB row lingered.
+            const status = r.reason === 'missing' ? 404 : 403;
+            return res.status(status).send(r.reason === 'missing' ? 'File not found' : 'Forbidden');
+        }
 
         const inline = req.query.inline === '1';
-        const baseName = path.basename(real);
+        const baseName = path.basename(r.real);
         // Quote-safe filename (RFC 6266 fallback handled by encodeURIComponent).
         const dispKind = inline ? 'inline' : 'attachment';
         res.setHeader(
             'Content-Disposition',
             `${dispKind}; filename*=UTF-8''${encodeURIComponent(baseName)}`
         );
-        res.sendFile(real);
+        res.sendFile(r.real);
     } catch (e) {
         next();
     }

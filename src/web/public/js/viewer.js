@@ -117,34 +117,39 @@ function setupVideoPlayer(fileId) {
     if (dur)  dur.textContent  = '00:00';
     if (fill) fill.style.width = '0%';
 
-    // Resume-from-saved-time waits for `loadedmetadata` so we know the
-    // duration is valid before applying. Doing it inline races the
-    // browser's own seek-to-zero on src change and gets clobbered.
-    video.onloadedmetadata = () => {
+    // Resume-from-saved-time. Race-safe: if metadata is already loaded
+    // when this runs (small clip / cached / fast network), the
+    // loadedmetadata event has already fired and our handler would
+    // never run — so we apply the seek inline. Otherwise wait for the
+    // event.
+    const applyResume = () => {
         const savedTime = localStorage.getItem(STORAGE_KEY);
         if (!savedTime) return;
         const time = parseFloat(savedTime);
-        if (!isNaN(time) && time > 0 && time < video.duration) {
-            video.currentTime = time;
+        if (!isNaN(time) && time > 0 && time < (video.duration || Infinity)) {
+            try { video.currentTime = time; } catch {}
             const ts = formatTime(time);
             showToast(i18nTf('viewer.video.resumed', { time: ts }, `Resumed at ${ts}`));
         }
     };
+    if (video.readyState >= 1) applyResume();
+    else video.onloadedmetadata = applyResume;
 
-    // 2. Save time on update
+    // Save progress — throttled to once per 2 s so we don't hammer
+    // localStorage 4×/sec. Near the end of the clip, drop the saved
+    // entry so a fresh re-watch doesn't auto-jump back to the credits.
+    let lastSavedAt = 0;
     video.ontimeupdate = () => {
-        // Update UI
         updateVideoUI(video);
-        
-        // Save progress (debounced slightly by nature of event)
-        // Check if video is near end (95%), if so, clear progress
-        if (video.duration > 0) {
-            if (video.currentTime / video.duration > 0.95) {
-                localStorage.removeItem(STORAGE_KEY);
-            } else {
-                localStorage.setItem(STORAGE_KEY, video.currentTime);
-            }
+        if (!(video.duration > 0)) return;
+        if (video.currentTime / video.duration > 0.95) {
+            localStorage.removeItem(STORAGE_KEY);
+            return;
         }
+        const now = Date.now();
+        if (now - lastSavedAt < 2000) return;
+        lastSavedAt = now;
+        localStorage.setItem(STORAGE_KEY, String(video.currentTime));
     };
     
     // Restore persisted volume + mute from prior session.
@@ -307,12 +312,14 @@ function updateVideoUI(video) {
     const current = document.getElementById('video-current-time');
     const duration = document.getElementById('video-duration');
     const fill = document.getElementById('video-progress-fill');
-    
+    const dot = document.getElementById('video-progress-dot');
+
     if (current) current.textContent = formatTime(video.currentTime);
     if (duration && video.duration) duration.textContent = formatTime(video.duration);
-    if (fill && video.duration) {
-        const pct = (video.currentTime / video.duration) * 100;
-        fill.style.width = `${pct}%`;
+    if (video.duration) {
+        const pct = Math.max(0, Math.min(100, (video.currentTime / video.duration) * 100));
+        if (fill) fill.style.width = `${pct}%`;
+        if (dot) dot.style.left = `${pct}%`;
     }
 }
 
@@ -382,7 +389,30 @@ export function setupViewerEvents() {
 }
 
 function navigateMedia(dir) {
-    const newIndex = state.currentFileIndex + dir;
+    // Walk through the active filter, not the unfiltered state.files —
+    // tapping → in the Photos filter shouldn't jump to a video. The
+    // filter list lives on `state.currentFilter` (set by the gallery
+    // tab handler in app.js); fall back to walking everything when no
+    // filter is set.
+    const currentFilter = state.currentFilter || 'all';
+    const visible = currentFilter === 'all'
+        ? state.files
+        : state.files.filter(f => f.type === currentFilter);
+
+    // Map the unfiltered currentFileIndex to its position in the
+    // filtered list, then step.
+    const currentFile = state.files[state.currentFileIndex];
+    const visibleIndex = currentFile ? visible.indexOf(currentFile) : -1;
+    if (visibleIndex < 0) {
+        // Current file is filtered out (rare — filter changed mid-view).
+        // Just step inside state.files and let the user notice.
+        const newIndex = state.currentFileIndex + dir;
+        if (newIndex >= 0 && newIndex < state.files.length) openMediaViewer(newIndex);
+        return;
+    }
+    const nextVisible = visible[visibleIndex + dir];
+    if (!nextVisible) return; // hit the edge
+    const newIndex = state.files.indexOf(nextVisible);
     if (newIndex >= 0 && newIndex < state.files.length) {
         openMediaViewer(newIndex);
     }
