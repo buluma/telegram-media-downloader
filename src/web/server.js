@@ -1088,6 +1088,212 @@ app.get('/api/history', (req, res) => {
     res.json(Array.from(_historyJobs.values()).map(({ _runner, ...rest }) => rest));
 });
 
+// ====== Queue (IDM-style download manager) =================================
+//
+// Drives the new #/queue page. The page boots from /api/queue/snapshot,
+// then patches its in-memory store from existing WS events
+// (download_start / _progress / _complete / _error) plus a new
+// `queue_changed` event emitted by the downloader when jobs are
+// paused/resumed/cancelled/retried. Per-row + global actions live under
+// /api/queue/* below.
+//
+// Recent (last N finished/failed) is persisted to disk so a page reload
+// doesn't drop the tail. We keep it small (cap = 100) and fire-and-forget
+// the writes so this can never block the WS event loop.
+
+const QUEUE_HISTORY_PATH = path.join(DATA_DIR, 'queue-history.json');
+const QUEUE_HISTORY_CAP = 100;
+let _queueHistory = []; // newest first
+let _queueHistoryDirty = false;
+let _queueHistoryFlushTimer = null;
+// Map<key, jobMeta> — keeps original job objects around so /retry can
+// re-enqueue without the client having to round-trip the message ref.
+const _failedJobMeta = new Map();
+
+(async function loadQueueHistory() {
+    try {
+        const raw = await fs.readFile(QUEUE_HISTORY_PATH, 'utf-8');
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) _queueHistory = parsed.slice(0, QUEUE_HISTORY_CAP);
+    } catch { /* first-run, no file yet */ }
+})();
+
+function flushQueueHistorySoon() {
+    _queueHistoryDirty = true;
+    if (_queueHistoryFlushTimer) return;
+    _queueHistoryFlushTimer = setTimeout(async () => {
+        _queueHistoryFlushTimer = null;
+        if (!_queueHistoryDirty) return;
+        _queueHistoryDirty = false;
+        try {
+            await fs.mkdir(DATA_DIR, { recursive: true });
+            await fs.writeFile(QUEUE_HISTORY_PATH, JSON.stringify(_queueHistory.slice(0, QUEUE_HISTORY_CAP)), 'utf-8');
+        } catch (e) {
+            console.error('queue-history.json write failed:', e?.message || e);
+        }
+    }, 1500).unref?.();
+}
+
+function pushQueueHistory(entry) {
+    if (!entry || !entry.key) return;
+    // Dedup by key — last write wins so a retry → success replaces the
+    // old failed row instead of stacking duplicates.
+    _queueHistory = [entry, ..._queueHistory.filter(e => e.key !== entry.key)].slice(0, QUEUE_HISTORY_CAP);
+    flushQueueHistorySoon();
+}
+
+// Subscribe directly to the downloader's `error` event whenever the
+// runtime spins one up so we can stash the raw job (incl. live `message`
+// reference) for the retry path. The serialized payload broadcast over WS
+// strips `message`, which gramJS needs to actually re-download.
+runtime.on('state', (s) => {
+    if (s.state !== 'running' || !runtime._downloader) return;
+    const dl = runtime._downloader;
+    if (dl.__queueWired) return;
+    dl.__queueWired = true;
+    dl.on('error', ({ job }) => {
+        if (job?.key) _failedJobMeta.set(job.key, job);
+    });
+    dl.on('complete', (job) => {
+        if (job?.key) _failedJobMeta.delete(job.key);
+    });
+});
+
+// Capture finishes/failures off the runtime event stream so the snapshot
+// always has a populated "recent" tail even after a server restart.
+runtime.on('event', (e) => {
+    if (e.type === 'download_complete' && e.payload) {
+        const p = e.payload;
+        pushQueueHistory({
+            key: p.key,
+            groupId: String(p.groupId || ''),
+            groupName: p.groupName || null,
+            mediaType: p.mediaType || null,
+            messageId: p.messageId ?? null,
+            fileName: p.fileName || (p.filePath ? p.filePath.split(/[\\/]/).pop() : null),
+            fileSize: p.fileSize || 0,
+            status: 'done',
+            addedAt: p.addedAt || null,
+            finishedAt: Date.now(),
+            error: null,
+        });
+        _failedJobMeta.delete(p.key);
+    } else if (e.type === 'download_error' && e.payload?.job) {
+        const p = e.payload.job;
+        const errMsg = e.payload.error || 'Download failed';
+        pushQueueHistory({
+            key: p.key,
+            groupId: String(p.groupId || ''),
+            groupName: p.groupName || null,
+            mediaType: p.mediaType || null,
+            messageId: p.messageId ?? null,
+            fileName: p.fileName || null,
+            fileSize: p.fileSize || 0,
+            status: 'failed',
+            addedAt: p.addedAt || null,
+            finishedAt: Date.now(),
+            error: errMsg,
+        });
+    }
+});
+
+function requireDownloader(res) {
+    if (!runtime._downloader) {
+        res.status(409).json({ error: 'Engine is not running. Start the monitor first.' });
+        return null;
+    }
+    return runtime._downloader;
+}
+
+app.get('/api/queue/snapshot', (req, res) => {
+    try {
+        const dl = runtime._downloader;
+        const snap = dl ? dl.snapshot() : { active: [], queued: [], globalPaused: false, pausedCount: 0, workers: 0, pending: 0 };
+        res.json({
+            ...snap,
+            recent: _queueHistory.slice(0, QUEUE_HISTORY_CAP),
+            engineRunning: runtime.state === 'running',
+            maxSpeed: (runtime._downloader?.config?.download?.maxSpeed) || null,
+        });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/queue/pause-all', (req, res) => {
+    const dl = requireDownloader(res); if (!dl) return;
+    dl.pauseAll();
+    broadcast({ type: 'queue_changed', payload: { op: 'pause-all' } });
+    res.json({ success: true });
+});
+
+app.post('/api/queue/resume-all', (req, res) => {
+    const dl = requireDownloader(res); if (!dl) return;
+    dl.resumeAll();
+    broadcast({ type: 'queue_changed', payload: { op: 'resume-all' } });
+    res.json({ success: true });
+});
+
+app.post('/api/queue/cancel-all', (req, res) => {
+    const dl = requireDownloader(res); if (!dl) return;
+    const removed = dl.cancelAllQueued();
+    broadcast({ type: 'queue_changed', payload: { op: 'cancel-all', removed } });
+    res.json({ success: true, removed });
+});
+
+app.post('/api/queue/clear-finished', (req, res) => {
+    _queueHistory = [];
+    flushQueueHistorySoon();
+    _failedJobMeta.clear();
+    broadcast({ type: 'queue_changed', payload: { op: 'clear-finished' } });
+    res.json({ success: true });
+});
+
+// Per-row routes. Keys look like "<chatId>_<messageId>"; URL-encode them.
+app.post('/api/queue/:key/pause', (req, res) => {
+    const dl = requireDownloader(res); if (!dl) return;
+    const key = decodeURIComponent(req.params.key);
+    const ok = dl.pauseJob(key);
+    broadcast({ type: 'queue_changed', payload: { op: 'pause', key } });
+    res.json({ success: ok });
+});
+
+app.post('/api/queue/:key/resume', (req, res) => {
+    const dl = requireDownloader(res); if (!dl) return;
+    const key = decodeURIComponent(req.params.key);
+    const ok = dl.resumeJob(key);
+    broadcast({ type: 'queue_changed', payload: { op: 'resume', key } });
+    res.json({ success: ok });
+});
+
+app.post('/api/queue/:key/cancel', async (req, res) => {
+    const dl = requireDownloader(res); if (!dl) return;
+    const key = decodeURIComponent(req.params.key);
+    // Best-effort delete of any partial file the worker may have left
+    // behind. We don't know the exact path until the download path is
+    // built (config-dependent), so this is intentionally a no-op for the
+    // cases the downloader hasn't reached yet.
+    const removed = dl.cancelJob(key);
+    _failedJobMeta.delete(key);
+    broadcast({ type: 'queue_changed', payload: { op: 'cancel', key } });
+    res.json({ success: removed });
+});
+
+app.post('/api/queue/:key/retry', async (req, res) => {
+    const dl = requireDownloader(res); if (!dl) return;
+    const key = decodeURIComponent(req.params.key);
+    const meta = _failedJobMeta.get(key);
+    if (!meta) {
+        // No cached job means we never saw the original message — surface
+        // a friendly error instead of silently doing nothing. The caller
+        // can fall back to re-pasting the link from the viewer.
+        return res.status(404).json({ error: 'Cannot retry: original job no longer in memory. Re-trigger from the source (link / backfill / monitor).' });
+    }
+    dl.retryJob(meta);
+    broadcast({ type: 'queue_changed', payload: { op: 'retry', key } });
+    res.json({ success: true });
+});
+
 // ====== Proxy test =========================================================
 //
 // Briefly opens a TCP connection to host:port to confirm the proxy is

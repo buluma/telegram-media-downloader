@@ -22,6 +22,7 @@ import { formatRelativeTime } from './utils.js';
 import { attachLongPress, attachPullToRefresh } from './gestures.js';
 import { initI18n, setLang, getLang, applyToDOM as applyI18n, t as i18nT, tf as i18nTf } from './i18n.js';
 import { showBackfillPage, deepLinkFromModal as backfillDeepLink } from './backfill.js';
+import { showQueuePage, initQueue } from './queue.js';
 
 // ============ Render coalescing ============
 //
@@ -163,6 +164,10 @@ async function init() {
     // hash dispatch lands on a real handler.
     registerRoutes();
     setupFab();
+    // Wire the Queue store + WS handlers eagerly so its in-memory state
+    // (and the bottom-nav badge) tracks live downloads even when the user
+    // hasn't visited the page yet.
+    initQueue();
     router.start();
     
     // Expose to window for HTML onclick handlers
@@ -315,6 +320,10 @@ function renderPage(page, params = {}) {
         document.getElementById('page-subtitle').textContent = i18nT('backfill.page.subtitle', 'Pull older messages into the queue');
         // Show the page first; backfill module loads server state then renders.
         showBackfillPage(params).catch(e => console.error('backfill page', e));
+    } else if (page === 'queue') {
+        document.getElementById('page-title').textContent = i18nT('queue.page.title', 'Queue');
+        document.getElementById('page-subtitle').textContent = i18nT('queue.page.subtitle', 'Active + pending + recently finished downloads');
+        showQueuePage(params).catch(e => console.error('queue page', e));
     }
 }
 
@@ -339,6 +348,8 @@ function registerRoutes() {
     router.route('/settings/:section', ({ params }) => renderPage('settings', { section: params.section }));
     router.route('/backfill', () => renderPage('backfill'));
     router.route('/backfill/:groupId', ({ params }) => renderPage('backfill', { groupId: params.groupId }));
+    router.route('/queue', () => renderPage('queue'));
+    router.route('/queue/:status', ({ params }) => renderPage('queue', { status: params.status }));
     router.route('/stories', () => {
         renderPage('viewer');
         document.getElementById('stories-btn')?.click();
