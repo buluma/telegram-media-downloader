@@ -33,6 +33,22 @@ import {
     hashPassword, loginVerify, isAuthConfigured,
     issueSession, validateSession, revokeSession, revokeAllSessions, startSessionGc,
 } from '../core/web-auth.js';
+import { suppressNoise, wrapConsoleMethod } from '../core/logger.js';
+
+// Demote gramJS reconnect chatter from stderr/stdout to data/logs/network.log.
+// gramJS opens a fresh DC connection per file download (different DCs host
+// different media buckets), so a busy monitor logs hundreds of "Disconnecting
+// from <ip>:443/TCPFull..." lines per hour through the bare console — which
+// drowns out real errors. Both methods are wrapped because gramJS uses
+// console.log for most of its lifecycle messages and console.error for the
+// occasional warning. TGDL_DEBUG=1 brings them back.
+console.log = wrapConsoleMethod(console.log, 'gramjs');
+console.error = wrapConsoleMethod(console.error, 'gramjs');
+process.on('unhandledRejection', (reason) => {
+    const msg = reason?.message || String(reason);
+    if (suppressNoise(msg, 'unhandledRejection')) return;
+    console.error('Unhandled rejection:', reason);
+});
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, '../../data');
@@ -1966,6 +1982,29 @@ function _requireConfirm(req, res) {
     return true;
 }
 
+// Stronger guard for irreversible / sensitive ops (export Telegram session,
+// sign-out-everywhere). Forces the user to retype their dashboard password
+// in the request body — the cookie alone isn't enough because a session
+// hijacker would already have it.
+async function _requirePassword(req, res) {
+    const supplied = req.body?.password;
+    if (typeof supplied !== 'string' || !supplied) {
+        res.status(400).json({ error: 'Password required' });
+        return false;
+    }
+    try {
+        const config = await readConfigSafe();
+        if (!isAuthConfigured(config.web) || !loginVerify(supplied, config.web)) {
+            res.status(403).json({ error: 'Invalid password' });
+            return false;
+        }
+    } catch {
+        res.status(500).json({ error: 'Internal error' });
+        return false;
+    }
+    return true;
+}
+
 // Force re-resolve every group entity (name + photo) against Telegram. This is
 // /api/groups/refresh-info under a friendlier name; the SPA already calls the
 // underlying handler, this is the explicit "Resync now" button.
@@ -2130,6 +2169,7 @@ app.get('/api/maintenance/logs/download', async (req, res) => {
 // flow. We never log the value.
 app.post('/api/maintenance/session/export', async (req, res) => {
     if (!_requireConfirm(req, res)) return;
+    if (!(await _requirePassword(req, res))) return;
     try {
         const { accountId } = req.body || {};
         if (typeof accountId !== 'string' || !accountId) {
@@ -2157,6 +2197,7 @@ app.post('/api/maintenance/session/export', async (req, res) => {
 // rotating the password from another device.
 app.post('/api/maintenance/sessions/revoke-all', async (req, res) => {
     if (!_requireConfirm(req, res)) return;
+    if (!(await _requirePassword(req, res))) return;
     try {
         revokeAllSessions();
         res.clearCookie('tg_dl_session', SESSION_COOKIE_OPTS);
@@ -2485,6 +2526,24 @@ app.use('/files', async (req, res, next) => {
             // users see "File not found" instead of a misleading "Forbidden"
             // when a file was rotated/deleted but the DB row lingered.
             const status = r.reason === 'missing' ? 404 : 403;
+            // Auto-prune the DB row for genuinely-missing files so the
+            // gallery stops listing them on next refresh. Done in the
+            // background so the response isn't blocked by the DB write.
+            if (r.reason === 'missing') {
+                queueMicrotask(() => {
+                    try {
+                        const norm = reqPath.replace(/\\/g, '/');
+                        const fileName = path.basename(norm);
+                        const db = getDb();
+                        const result = db.prepare(
+                            `DELETE FROM downloads WHERE file_path = ? OR file_path = ? OR file_name = ?`
+                        ).run(norm, norm.replace(/\//g, '\\'), fileName);
+                        if (result.changes > 0) {
+                            broadcast({ type: 'file_deleted', path: norm, autoPruned: true });
+                        }
+                    } catch { /* never let a stray request crash the server */ }
+                });
+            }
             return res.status(status).send(r.reason === 'missing' ? 'File not found' : 'Forbidden');
         }
 

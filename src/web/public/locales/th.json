@@ -491,5 +491,7 @@
     "maintenance.signout_all.help": "ยกเลิก session ทั้งหมดของแดชบอร์ด คุณจะถูกพากลับไปหน้า login ใช้เมื่อรีเซ็ตรหัสหรือสงสัยว่าถูกแฮก",
     "maintenance.signout_all.action": "ออกจากระบบทั้งหมด",
     "maintenance.signout_all.confirm": "ออกจากระบบทุกเบราว์เซอร์? จะเปลี่ยนเส้นทางไปหน้า login",
-    "maintenance.signout_all.done": "ยกเลิก session ทั้งหมดแล้ว"
+    "maintenance.signout_all.done": "ยกเลิก session ทั้งหมดแล้ว",
+    "maintenance.signout_all.password_prompt": "ใส่รหัสผ่านแดชบอร์ดเพื่อออกจากระบบทุกเบราว์เซอร์:",
+    "maintenance.export.password_prompt": "ใส่รหัสผ่านแดชบอร์ดเพื่อ export session string:"
 }
