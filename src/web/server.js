@@ -2362,6 +2362,10 @@ app.post('/api/maintenance/resync-dialogs', async (req, res) => {
 
         let updated = 0;
         let mutated = false;
+        // Collect DB updates first; flush them in one transaction at the
+        // end so we don't open and close the WAL writer N times while the
+        // gallery is being read concurrently.
+        const pendingDbUpdates = [];   // [[realName, id], ...]
         for (const id of ids) {
             const resolved = await resolveEntityAcrossAccounts(id);
             if (!resolved) continue;
@@ -2375,12 +2379,22 @@ app.post('/api/maintenance/resync-dialogs', async (req, res) => {
                     cg.name = realName;
                     mutated = true;
                 }
-                try {
-                    getDb().prepare(`UPDATE downloads SET group_name = ? WHERE group_id = ? AND (group_name IS NULL OR group_name = '' OR group_name = 'Unknown' OR group_name = ?)`).run(realName, id, id);
-                } catch {}
+                pendingDbUpdates.push([realName, id]);
                 updated++;
             }
             await downloadProfilePhoto(id).catch(() => {});
+        }
+        if (pendingDbUpdates.length > 0) {
+            try {
+                const db = getDb();
+                const stmt = db.prepare(`UPDATE downloads SET group_name = ? WHERE group_id = ? AND (group_name IS NULL OR group_name = '' OR group_name = 'Unknown' OR group_name = ?)`);
+                const tx = db.transaction((rows) => {
+                    for (const [name, gid] of rows) stmt.run(name, gid, gid);
+                });
+                tx(pendingDbUpdates);
+            } catch (err) {
+                console.warn('[resync-dialogs] batch update failed:', err.message);
+            }
         }
         if (mutated) await writeConfigAtomic(config);
         // Invalidate the dialogs cache so the next /api/dialogs and the next
@@ -2497,6 +2511,20 @@ app.get('/api/maintenance/logs/download', async (req, res) => {
         const lines = Math.max(10, Math.min(100000, parseInt(req.query.lines, 10) || 5000));
         const filePath = path.join(LOGS_DIR, name);
         if (!existsSync(filePath)) return res.status(404).json({ error: 'Log not found' });
+
+        // Realpath check defends against symlink escapes that the basename
+        // filter can't catch (e.g. logs/foo.log -> /etc/passwd). Resolve
+        // both sides so a case-insensitive FS or a symlinked LOGS_DIR still
+        // compares cleanly.
+        try {
+            const realFile = fsSync.realpathSync(filePath);
+            const realLogs = fsSync.realpathSync(LOGS_DIR);
+            if (realFile !== realLogs && !realFile.startsWith(realLogs + path.sep)) {
+                return res.status(400).json({ error: 'Path escape detected' });
+            }
+        } catch {
+            return res.status(400).json({ error: 'Invalid log name' });
+        }
 
         // Naive tail — read whole file (logs are bounded), keep last N lines.
         // Acceptable up to a few hundred MB; if logs ever grow bigger we'd
@@ -3251,6 +3279,50 @@ ${tip}
         console.warn('[monitor] auto-start skipped:', e.message);
     }
 });
+
+// Graceful shutdown — Docker / systemd / Ctrl-C send SIGTERM/SIGINT and
+// expect the process to exit fast. Without this we just relied on
+// `.unref()` on background timers and an OS kill timeout (10 s default
+// in Docker), which made `docker compose restart` feel sluggish and
+// left WS clients with abrupt connection drops. The 5 s hard-exit
+// safety net catches any handle that refuses to release.
+let _shuttingDown = false;
+async function gracefulShutdown(signal) {
+    if (_shuttingDown) return;
+    _shuttingDown = true;
+    console.log(`\n[shutdown] ${signal} received — cleaning up…`);
+
+    // Stop background sweepers first so their setInterval callbacks
+    // don't try to write to a closing DB / broadcast to dead clients.
+    try { integrity.stop?.(); } catch (e) { console.warn('[shutdown] integrity.stop:', e.message); }
+    try { getRescueSweeper()?.stop(); } catch (e) { console.warn('[shutdown] rescue.stop:', e.message); }
+    try { getDiskRotator()?.stop(); } catch (e) { console.warn('[shutdown] rotator.stop:', e.message); }
+
+    // Stop the monitor + its keep-alive ping.
+    try { if (runtime?.state === 'running') await runtime.stop(); } catch (e) { console.warn('[shutdown] runtime.stop:', e.message); }
+    try { _accountManager?.stopKeepAlive?.(); } catch (e) { console.warn('[shutdown] keep-alive.stop:', e.message); }
+
+    // Close every WebSocket so browsers see a clean close-frame instead
+    // of a TCP RST and don't spam reconnect attempts during the bounce.
+    try {
+        for (const c of clients) {
+            try { c.close(1001, 'server shutting down'); } catch {}
+        }
+    } catch {}
+
+    // Stop accepting new HTTP connections; let the in-flight ones drain.
+    try { server.close(() => process.exit(0)); } catch { process.exit(0); }
+
+    // Hard exit if anything refuses to release within 5 s. Anything we
+    // hadn't accounted for would otherwise hang the container teardown.
+    setTimeout(() => {
+        console.warn('[shutdown] forced exit (timed out waiting for handles)');
+        process.exit(0);
+    }, 5_000).unref?.();
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 /**
  * Resolve group names from Telegram API for DB records with NULL or default group_name.

@@ -150,6 +150,10 @@ export function openSheet(opts) {
         e.stopPropagation();
         close();
     }
+    // Non-dismissible sheets *must* provide their own close button (e.g. an
+    // OK/Cancel inside the content) — Esc + backdrop click intentionally
+    // do nothing. `closeBtn` is always wired below so the × in the header
+    // works regardless.
     if (dismissible) {
         root.addEventListener('click', onBackdropClick);
         document.addEventListener('keydown', onEsc, true);

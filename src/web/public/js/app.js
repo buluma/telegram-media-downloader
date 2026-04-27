@@ -21,7 +21,7 @@ import { renderChatRow, renderEmptyState, renderRowSkeletons, renderGallerySkele
 import { formatRelativeTime } from './utils.js';
 import { attachLongPress, attachPullToRefresh } from './gestures.js';
 import { initI18n, setLang, getLang, applyToDOM as applyI18n, t as i18nT, tf as i18nTf } from './i18n.js';
-import { showBackfillPage, deepLinkFromModal as backfillDeepLink } from './backfill.js';
+import { showBackfillPage, deepLinkFromModal as backfillDeepLink, stopBackfillPage } from './backfill.js';
 import { showQueuePage, initQueue } from './queue.js';
 
 // ============ Render coalescing ============
@@ -299,6 +299,11 @@ function navigateTo(page, opts) {
 }
 
 function renderPage(page, params = {}) {
+    // Per-page teardown: stop background tickers/listeners owned by the
+    // page we're leaving so they don't keep running invisible.
+    if (state.currentPage === 'backfill' && page !== 'backfill') {
+        try { stopBackfillPage(); } catch {}
+    }
     state.currentPage = page;
     state.currentRouteParams = params;
 
@@ -687,8 +692,13 @@ function renderMediaGrid() {
     const sections = groupFilesByTime(filteredWithIndex);
 
     const html = sections.map(([label, items]) => {
+        // Sticky inside a CSS Grid was clipping the trailing media tiles
+        // and stacking multiple headers at the top of the scrollport
+        // (each header sticks until the next pushes it). Plain inline
+        // header keeps each section's title aligned with its row without
+        // hijacking the scroll geometry.
         const headerHtml = label
-            ? `<h4 class="grid-section-header" style="grid-column: 1 / -1; padding: 12px 4px 6px; color: var(--tg-textSecondary, #8B9BAA); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; position: sticky; top: 0; background: var(--tg-bg, #17212B); z-index: 1;">${escapeHtml(label)}</h4>`
+            ? `<h4 class="grid-section-header" style="grid-column: 1 / -1; padding: 16px 4px 8px; color: var(--tg-textSecondary, #8B9BAA); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;">${escapeHtml(label)}</h4>`
             : '';
         const tiles = items.map(({ file, originalIndex }) => {
             const checked = state.selected.has(file.fullPath);

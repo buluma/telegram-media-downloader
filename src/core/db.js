@@ -72,6 +72,18 @@ function initSchema() {
     try { db.exec('CREATE INDEX IF NOT EXISTS idx_pending_until ON downloads(pending_until) WHERE pending_until IS NOT NULL'); } catch {}
     try { db.exec('CREATE INDEX IF NOT EXISTS idx_group_message ON downloads(group_id, message_id)'); } catch {}
 
+    // Smoke-test every column the rest of the code path depends on. The
+    // ALTER TABLE migrations above swallow "column already exists" so they
+    // also swallow real failures (out-of-disk, locked DB, corrupt schema).
+    // A failed migration was previously discovered at query time —
+    // halfway through a download — as a generic "no such column" runtime
+    // error. Forcing the SELECT here makes us fail at boot instead.
+    try {
+        db.prepare('SELECT pinned, pending_until, rescued_at, ttl_seconds, file_hash FROM downloads LIMIT 0').all();
+    } catch (e) {
+        throw new Error(`DB schema migration incomplete — column missing after ALTER TABLE: ${e.message}. Inspect data/db.sqlite or restore from backup.`);
+    }
+
     // Queue/Pending Table
     db.exec(`
         CREATE TABLE IF NOT EXISTS queue (

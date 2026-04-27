@@ -194,7 +194,14 @@ export class RealtimeMonitor extends EventEmitter {
         // local row rescued so the sweeper skips it.
         this.deleteHandler = async (update) => {
             if (!this.running) return;
-            try { await this.handleDeleteEvent(update); } catch (e) { /* keep monitor alive */ }
+            try {
+                await this.handleDeleteEvent(update);
+            } catch (e) {
+                // Keep the monitor alive but log the cause — a silent swallow
+                // here used to hide DB-locked + FloodWait + markRescued failures
+                // from the rescue panel.
+                console.warn('[monitor] delete event failed:', e?.message || e);
+            }
         };
 
         // Register handler on ALL available clients (multi-account)

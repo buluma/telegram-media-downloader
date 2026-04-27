@@ -2,6 +2,35 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.2] — 2026-04-28
+
+Audit-driven defect sweep — fixes uncovered while reviewing v2.3.1 in detail. No new feature surface; everything below is correctness, leak-prevention, or UX polish.
+
+### Fixed — frontend
+- **VideoPlayer fullscreen listener leak.** Every viewer open used to attach a fresh `fullscreenchange` listener on `document` without removing the previous one. After 100 opens, 100 stale callbacks fired on every F11. Listener ref is now stored on the player instance and detached in `unload()` / `destroy()`.
+- **VideoPlayer resume race.** `onloadedmetadata` from a previous clip could fire after a new clip had loaded and seek the new file to the wrong timestamp. The handler is now nulled in `unload()` so a stale resume can't bleed across clips.
+- **Backfill page elapsed-time ticker leak.** `setInterval` fired every 1 s for the rest of the tab's life even after navigating away from `#/backfill`. Router now calls `stopBackfillPage()` on route change.
+- **Status-bar double-bound on hot reload.** `initStatusBar()` had no idempotence guard, so a stray double call (recovery flow, dev hot-reload) bound every WS handler twice and fired each event 2×. Added `_booted` guard.
+- **Update-pill dismiss double-fire.** Rapid clicks on the new update notifier's × could fire the dismiss handler twice before the badge hid. Added per-paint `dismissing` guard.
+- **i18n early-bootstrap race.** Modules that translated during bootstrap (before `initI18n()` resolved) saw an empty dict. Added a `ready` promise consumers can `await`.
+- **Gallery section headers were `position: sticky`** inside a CSS Grid, which clipped trailing tiles and stacked multiple "Today / Yesterday / …" headers at the top of the scrollport while scrolling. Reverted to inline static headers.
+- **`setting-max-disk` dropdown was non-functional** — the `<input list>` datalist autocomplete didn't render a clickable arrow on most browsers / mobile. Replaced with a real numeric input + unit `<select>` (MB / GB / TB). Legacy free-form values like "500GB", "1.5 TB", "250 MB" still parse correctly on load.
+- **Light-mode dim text** — labels like "Downloaded Groups" in the sidebar were rendered in `#65737E` on a `#F4F4F5` background, which barely passed contrast and needed hover to read. Bumped `.text-tg-textSecondary` to `#4B5563` (Tailwind gray-600) in light mode for headers and footer captions.
+- **Borderless inputs in both themes** — `.tg-input` was declared `border: none` in dark mode and only `<input>` (not `<select>`) got a light-mode border, so dropdowns blended into their card background. Added a subtle 1 px border in dark mode (`#38444D`, hovers to `#4A5C6E`, focuses to the brand blue) and broadened the light-mode rule to cover both inputs and selects.
+- **`.tg-btn-secondary` had no base CSS in dark mode** — the class was used on dozens of buttons (Save credentials, Export, Resync, Restart, log View/Copy/Download, Backfill presets, Remove account, …) but only had a light-mode override. Dark-mode buttons fell back to the browser default and looked broken. Added a proper base style (panel-grey background, subtle border, hover + active + disabled states) and tightened the light-mode override to match.
+
+### Fixed — backend
+- **Schema migrations now smoke-tested at boot.** The `ALTER TABLE ADD COLUMN` migrations were wrapped in `try/catch` to ignore "column already exists", which also swallowed real failures (out-of-disk, locked DB, corrupt schema). A `SELECT pinned, pending_until, rescued_at, ttl_seconds, file_hash FROM downloads LIMIT 0` after the migration block forces "no such column" failures to surface at boot instead of mid-download.
+- **Graceful shutdown** on `SIGTERM` / `SIGINT`. Stops the integrity sweep, rescue sweeper, disk rotator, monitor, and keep-alive ping; closes every WebSocket with code 1001; drains the HTTP server. Hard-exit safety net at 5 s. Makes `docker compose restart` snappy and stops phantom WS reconnect attempts during the bounce.
+- **`/api/maintenance/logs/download` realpath check.** Basename filter alone could be tricked by a symlinked log entry on case-insensitive FS; now both sides are resolved with `fs.realpathSync` and compared against `LOGS_DIR`.
+- **`/api/maintenance/resync-dialogs` batched in a single transaction** instead of N `UPDATE` statements between every async `resolveEntityAcrossAccounts` call. Avoids WAL contention with concurrent gallery readers.
+- **Keep-alive FloodWait surfaced.** The `Api.PingDelayDisconnect` catch was silent — a throttled DC kept getting pinged, digging the FloodWait deeper. Now logs once per account per 5-minute window when the failure is FloodWait, and clears the warn cache once a ping lands cleanly.
+- **Monitor delete-event errors logged.** `handleDeleteEvent` failures (DB locked, FloodWait, missing row) used to vanish into a silent catch — the rescue panel never learned why a "rescued" badge didn't appear. Now warns to the console.
+
+### Added — i18n
+- **7 keys that the code referenced but were absent from the locale files** (rendered as raw key strings or fallback text in the UI): `backfill.row.cancel_title`, `purge.all.title`, `purge.all.title2`, `purge.group.title`, `settings.size.total_disk_help`, `viewer.bulk.title`, `viewer.delete.title`.
+- **Thai locale fully humanized.** All 591 strings rewritten in natural conversational Thai instead of stiff machine-translation tone. Tech terms (`monitor`, `queue`, `download`, `session`, `proxy`, `worker`, `dashboard`, `cookie`, `Stories`, `Backfill`, `FloodWait`, `gramJS`, `Maintenance`, `Rescue`, `VACUUM`, …) kept in English where that's how Thai users actually say them. Confirmations made direct ("แน่ใจนะ? กู้คืนไม่ได้นะ"), help text rewritten like a friend explaining what each setting does, possessive `ของคุณ` spam removed, every `{placeholder}` token preserved.
+
 ## [2.3.1] — 2026-04-28
 
 ### Added
