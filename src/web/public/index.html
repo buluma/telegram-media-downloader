@@ -432,12 +432,18 @@
         }
         .bottom-nav-item.active { color: var(--tg-blue, #2AABEE); }
         .bottom-nav-item i { font-size: 22px; }
-        /* Five-tab bottom nav: at very narrow viewports (≤360px) shrink the
-           icon and label one tier so a fifth tab still gets enough room
-           without the labels wrapping or the tap target collapsing. */
-        @media (max-width: 360px) {
+        .bottom-nav-item span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+        /* Six-tab bottom nav: at narrow viewports the icons + labels shrink
+           one tier so the row still gets enough room without the labels
+           wrapping or the tap target collapsing. The breakpoint moved up
+           from 360 to 420 px when the Queue tab made it a six-tab row. */
+        @media (max-width: 420px) {
             .bottom-nav-item i { font-size: 19px; }
             .bottom-nav-item { font-size: 10px; gap: 2px; }
+        }
+        @media (max-width: 340px) {
+            .bottom-nav-item i { font-size: 17px; }
+            .bottom-nav-item { font-size: 9px; }
         }
         .bottom-nav-item .nav-badge {
             position: absolute;
@@ -746,6 +752,11 @@
                     onclick="navigateTo('backfill')">
                     <i class="ri-history-line text-xl text-tg-textSecondary"></i>
                     <span class="text-tg-text" data-i18n="nav.backfill">Backfill</span>
+                </div>
+                <div class="nav-item flex items-center gap-3 p-3 cursor-pointer hover:bg-tg-hover" data-page="queue"
+                    onclick="navigateTo('queue')">
+                    <i class="ri-download-cloud-2-line text-xl text-tg-textSecondary"></i>
+                    <span class="text-tg-text" data-i18n="nav.queue">Queue</span>
                 </div>
                 <div class="nav-item flex items-center gap-3 p-3 cursor-pointer hover:bg-tg-hover" data-page="settings"
                     onclick="navigateTo('settings')">
@@ -1673,6 +1684,97 @@
                     </section>
                 </div>
 
+                <!-- Queue Page (IDM-style download manager) — sortable,
+                     filterable table of every job (active + queued +
+                     recently finished + failed) with per-row + global
+                     controls. Body uses absolute positioning over a
+                     fixed-height spacer so the virtualiser only renders
+                     visible rows + a small over-scroll buffer (see
+                     js/queue.js for the math). -->
+                <div id="page-queue" class="hidden max-w-5xl mx-auto">
+                    <!-- Top toolbar — chips, sort, search, global actions -->
+                    <section class="bg-tg-panel rounded-xl p-3 mb-3">
+                        <div id="queue-chips" class="flex flex-wrap gap-1.5 mb-3"></div>
+                        <div class="flex flex-wrap items-center gap-2">
+                            <div class="relative flex-1 min-w-[180px]">
+                                <i class="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-tg-textSecondary"></i>
+                                <input id="queue-search" type="text" autocomplete="off"
+                                    class="tg-input w-full pl-9 text-sm"
+                                    data-i18n-placeholder="queue.search_placeholder"
+                                    placeholder="Search filename or group…">
+                            </div>
+                            <select id="queue-sort" class="tg-input text-sm">
+                                <option value="addedAt" data-i18n="queue.sort.added">Added time</option>
+                                <option value="size" data-i18n="queue.sort.size">Size</option>
+                                <option value="progress" data-i18n="queue.sort.progress">Progress</option>
+                                <option value="group" data-i18n="queue.sort.group">Group</option>
+                                <option value="filename" data-i18n="queue.sort.filename">Filename</option>
+                            </select>
+                            <div class="flex items-center gap-1.5 ml-auto">
+                                <button id="queue-pause-all" type="button"
+                                    class="px-3 py-1.5 text-xs rounded-lg bg-tg-bg/60 hover:bg-tg-hover text-tg-text flex items-center gap-1.5"
+                                    data-i18n-title="queue.action.pause_all" title="Pause all">
+                                    <i class="ri-pause-line"></i><span class="hidden sm:inline" data-i18n="queue.action.pause_all">Pause all</span>
+                                </button>
+                                <button id="queue-resume-all" type="button"
+                                    class="px-3 py-1.5 text-xs rounded-lg bg-tg-bg/60 hover:bg-tg-hover text-tg-text flex items-center gap-1.5"
+                                    data-i18n-title="queue.action.resume_all" title="Resume all">
+                                    <i class="ri-play-line"></i><span class="hidden sm:inline" data-i18n="queue.action.resume_all">Resume all</span>
+                                </button>
+                                <button id="queue-clear-finished" type="button"
+                                    class="px-3 py-1.5 text-xs rounded-lg bg-tg-bg/60 hover:bg-tg-hover text-tg-text flex items-center gap-1.5"
+                                    data-i18n-title="queue.action.clear_finished" title="Clear finished">
+                                    <i class="ri-check-double-line"></i><span class="hidden sm:inline" data-i18n="queue.action.clear_finished">Clear finished</span>
+                                </button>
+                                <button id="queue-cancel-all" type="button"
+                                    class="px-3 py-1.5 text-xs rounded-lg bg-red-500/15 hover:bg-red-500/25 text-red-400 flex items-center gap-1.5"
+                                    data-i18n-title="queue.action.cancel_all" title="Cancel all queued">
+                                    <i class="ri-close-circle-line"></i><span class="hidden sm:inline" data-i18n="queue.action.cancel_all">Cancel queued</span>
+                                </button>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Body: virtualised table -->
+                    <section class="bg-tg-panel rounded-xl overflow-hidden">
+                        <!-- Sticky column header -->
+                        <div class="hidden md:grid grid-cols-[40px_minmax(0,2.5fr)_90px_minmax(140px,1.4fr)_80px_70px_90px_120px] items-center gap-2 px-3 py-2 text-[11px] uppercase tracking-wide text-tg-textSecondary border-b border-tg-border bg-tg-bg/30">
+                            <span></span>
+                            <span data-i18n="queue.col.file">File</span>
+                            <span class="text-right" data-i18n="queue.col.size">Size</span>
+                            <span data-i18n="queue.col.progress">Progress</span>
+                            <span class="text-right" data-i18n="queue.col.speed">Speed</span>
+                            <span class="text-right" data-i18n="queue.col.eta">ETA</span>
+                            <span data-i18n="queue.col.status">Status</span>
+                            <span class="text-right" data-i18n="queue.col.actions">Actions</span>
+                        </div>
+                        <!-- Virtualiser viewport. The inner spacer takes the
+                             full unfiltered height; rows are absolutely
+                             positioned at row-index * 56 px so we only ever
+                             render visible + 5-row buffer. -->
+                        <div id="queue-viewport" class="relative overflow-y-auto" style="height: calc(100vh - 280px); min-height: 320px;">
+                            <div id="queue-spacer" class="relative" style="height: 0px;">
+                                <div id="queue-rows" class="absolute inset-x-0 top-0"></div>
+                            </div>
+                            <div id="queue-empty" class="hidden text-center py-12">
+                                <i class="ri-download-cloud-2-line text-4xl text-tg-textSecondary mb-2"></i>
+                                <p class="text-sm text-tg-textSecondary" data-i18n="queue.empty.title">Queue is empty</p>
+                                <p class="text-xs text-tg-textSecondary opacity-70 mt-1" data-i18n="queue.empty.body">Start the engine or kick off a backfill — every download flows through here.</p>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Bottom strip: aggregate counters + speed throttle -->
+                    <section class="bg-tg-panel rounded-xl p-3 mt-3 flex flex-wrap items-center gap-3">
+                        <div id="queue-aggregate" class="text-xs text-tg-textSecondary tabular-nums flex items-center gap-3 flex-wrap"></div>
+                        <div class="flex items-center gap-2 ml-auto">
+                            <label for="queue-throttle" class="text-xs text-tg-textSecondary" data-i18n="queue.throttle.label">Max speed</label>
+                            <input id="queue-throttle" type="range" min="0" max="10485760" step="262144" value="0" class="w-32 accent-tg-blue">
+                            <span id="queue-throttle-value" class="text-xs text-tg-text tabular-nums w-20 text-right" data-i18n="queue.throttle.unlimited">Unlimited</span>
+                        </div>
+                    </section>
+                </div>
+
             </div>
         </main>
     </div>
@@ -1866,9 +1968,9 @@
     </button>
 
     <!-- Bottom navigation (mobile only) — replaces the drawer-only
-         navigation pattern. Five tabs: Library / Chats / Backfill / Engine /
-         Settings. At ≤360px the icons shrink one tier so the row stays
-         comfortably tappable without crowding the labels. -->
+         navigation pattern. Six tabs: Library / Chats / Backfill / Queue /
+         Engine / Settings. At ≤360px the icons shrink one tier so the row
+         stays comfortably tappable without crowding the labels. -->
     <nav class="bottom-nav" aria-label="Primary">
         <a class="bottom-nav-item" href="#/viewer" data-nav="viewer" data-i18n-aria-label="nav.library" aria-label="Library">
             <i class="ri-gallery-line" aria-hidden="true"></i><span data-i18n="nav.library">Library</span>
@@ -1878,6 +1980,10 @@
         </a>
         <a class="bottom-nav-item" href="#/backfill" data-nav="backfill" data-i18n-aria-label="nav.backfill" aria-label="Backfill">
             <i class="ri-history-line" aria-hidden="true"></i><span data-i18n="nav.backfill">Backfill</span>
+        </a>
+        <a class="bottom-nav-item" href="#/queue" data-nav="queue" data-i18n-aria-label="nav.queue" aria-label="Queue">
+            <i class="ri-download-cloud-2-line" aria-hidden="true"></i><span data-i18n="nav.queue">Queue</span>
+            <span id="queue-nav-badge" class="nav-badge hidden"></span>
         </a>
         <a class="bottom-nav-item" href="#/engine" data-nav="engine" data-i18n-aria-label="nav.engine" aria-label="Engine">
             <i class="ri-broadcast-line" aria-hidden="true"></i><span data-i18n="nav.engine">Engine</span>
