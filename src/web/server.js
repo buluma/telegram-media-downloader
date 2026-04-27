@@ -282,6 +282,32 @@ app.use(apiLimiter);
 // imports) should get their own dedicated route with a larger limit.
 app.use(express.json({ limit: '256kb' }));
 
+// CSRF defence-in-depth on top of `sameSite=strict` cookies. Reject any
+// state-changing request whose Origin or Referer header points at a
+// different host than the one we're serving from. CLI / extension /
+// curl clients that send neither header pass through — they can't have
+// obtained the session cookie cross-site anyway thanks to sameSite=strict.
+const STATE_CHANGING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+app.use((req, res, next) => {
+    if (!STATE_CHANGING_METHODS.has(req.method)) return next();
+    const headerOrigin = req.headers.origin || req.headers.referer;
+    if (!headerOrigin) return next();   // CLI / native client — sameSite still gates them
+    let originHost;
+    try { originHost = new URL(headerOrigin).host; } catch { originHost = null; }
+    if (!originHost) {
+        return res.status(403).json({ error: 'Invalid Origin/Referer' });
+    }
+    const expected = req.headers.host;
+    if (originHost === expected) return next();
+    // Allow localhost and 127.0.0.1 to alias each other on dev setups
+    // where the SPA loads from one and posts to the other.
+    const localPair = (a, b) => /^(localhost|127\.0\.0\.1|\[?::1\]?)(:\d+)?$/i.test(a)
+                              && /^(localhost|127\.0\.0\.1|\[?::1\]?)(:\d+)?$/i.test(b)
+                              && a.split(':')[1] === b.split(':')[1];
+    if (localPair(originHost, expected)) return next();
+    return res.status(403).json({ error: 'Cross-origin request blocked' });
+});
+
 // Rolling expiry-cleanup for session tokens. Unref'd so it doesn't keep the
 // process alive on shutdown.
 startSessionGc();
@@ -1475,7 +1501,7 @@ app.post('/api/stories/download', async (req, res) => {
                     await new Promise(r => setTimeout(r, 1000));
                 }
                 downloader.stop().catch(() => {});
-            })();
+            })().catch(e => console.warn('[stories] standalone drain failed:', e?.message || e));
         }
         res.json({ success: true, queued, requested: storyIds.length });
     } catch (e) {
@@ -1629,7 +1655,7 @@ app.post('/api/download/url', async (req, res) => {
                     await new Promise(r => setTimeout(r, 1000));
                 }
                 downloader.stop().catch(() => {});
-            })();
+            })().catch(e => console.warn('[download/url] standalone drain failed:', e?.message || e));
         }
 
         res.json({ success: true, results });
@@ -1697,6 +1723,8 @@ app.get('/api/stats', async (req, res) => {
 // fully-built result for 5 min cuts the Telegram round-trip out of every
 // repeat open. `?fresh=1` forces a refetch if the user wants to see a
 // just-added chat.
+// `at` is wallclock milliseconds; comparisons elsewhere always use Math.max(0, …)
+// to stay safe across NTP backward jumps.
 let _dialogsResponseCache = { at: 0, body: null };
 
 app.get('/api/dialogs', async (req, res) => {
@@ -1705,7 +1733,7 @@ app.get('/api/dialogs', async (req, res) => {
         const now = Date.now();
         if (!wantFresh
             && _dialogsResponseCache.body
-            && now - _dialogsResponseCache.at < 5 * 60 * 1000) {
+            && Math.max(0, now - _dialogsResponseCache.at) < 5 * 60 * 1000) {
             return res.json(_dialogsResponseCache.body);
         }
 
@@ -1827,7 +1855,7 @@ function bestGroupName(id, configName, dbName, dialogsName) {
 let _dialogsNameCache = { at: 0, byId: new Map() };
 async function getDialogsNameCache() {
     const now = Date.now();
-    if (now - _dialogsNameCache.at < 5 * 60 * 1000 && _dialogsNameCache.byId.size > 0) {
+    if (Math.max(0, now - _dialogsNameCache.at) < 5 * 60 * 1000 && _dialogsNameCache.byId.size > 0) {
         return _dialogsNameCache.byId;
     }
     const byId = new Map();
@@ -2667,6 +2695,22 @@ app.post('/api/config', async (req, res) => {
             });
         }
 
+        // Defence-in-depth against prototype pollution. JSON.parse already
+        // rejects __proto__ as a key on most engines, but a cooperating
+        // client could still attempt `constructor.prototype` etc. Strip
+        // those keys recursively before any spread/merge below.
+        const sanitizePollutionKeys = (obj) => {
+            if (!obj || typeof obj !== 'object') return obj;
+            for (const k of ['__proto__', 'constructor', 'prototype']) {
+                if (Object.prototype.hasOwnProperty.call(obj, k)) delete obj[k];
+            }
+            for (const v of Object.values(obj)) {
+                if (v && typeof v === 'object') sanitizePollutionKeys(v);
+            }
+            return obj;
+        };
+        sanitizePollutionKeys(req.body);
+
         const currentConfig = JSON.parse(await fs.readFile(CONFIG_PATH, 'utf8'));
         const newConfig = { ...currentConfig, ...req.body };
 
@@ -2915,14 +2959,31 @@ app.put('/api/groups/:id', async (req, res) => {
 // 9. Profile Photos
 app.get('/api/groups/:id/photo', async (req, res) => {
     const id = req.params.id;
+    // Telegram entity IDs are signed integers — anything else is suspicious
+    // (path-traversal attempts, control chars, NUL, etc.). Reject hard
+    // before we touch the filesystem.
+    if (!/^-?\d+$/.test(id)) return res.status(400).send('Invalid id');
     const photoPath = path.join(PHOTOS_DIR, `${id}.jpg`);
-    
-    if (existsSync(photoPath)) return res.sendFile(photoPath);
-    
+
+    // Realpath check defends against the case where PHOTOS_DIR or one of
+    // its descendants is a symlink that points outside the data dir.
+    const send = () => {
+        try {
+            const real = fsSync.realpathSync(photoPath);
+            const realRoot = fsSync.realpathSync(PHOTOS_DIR);
+            if (real !== realRoot && !real.startsWith(realRoot + path.sep)) {
+                return res.status(400).send('Path escape detected');
+            }
+            return res.sendFile(real);
+        } catch { return res.status(404).send('Not found'); }
+    };
+
+    if (existsSync(photoPath)) return send();
+
     // Try download if not exists
     const url = await downloadProfilePhoto(id);
-    if (url && existsSync(photoPath)) return res.sendFile(photoPath);
-    
+    if (url && existsSync(photoPath)) return send();
+
     res.status(404).send('Not found');
 });
 
@@ -3102,12 +3163,21 @@ async function connectTelegram() {
     return null;
 }
 
-// Entity & Photo Helpers
+// Entity & Photo Helpers — stores `{ entity, client, at }` (NOT bare entity).
+// Previous version stored `e` on insert but returned `{entity, client}` on
+// cache miss; subsequent cache-hit returns lacked the wrapper, so callers
+// reading `.entity` got `undefined` after the first lookup. Bounded by TTL +
+// hard cap so a long-running process doesn't grow this Map without bound.
 const entityCache = new Map();
+const ENTITY_CACHE_TTL_MS = 30 * 60 * 1000;
+const ENTITY_CACHE_MAX = 5000;
 
 /** Walk every loaded account looking for one that can resolve `idStr`. */
 async function resolveEntityAcrossAccounts(idStr) {
-    if (entityCache.has(idStr)) return entityCache.get(idStr);
+    const cached = entityCache.get(idStr);
+    if (cached && (Date.now() - cached.at) < ENTITY_CACHE_TTL_MS) {
+        return { entity: cached.entity, client: cached.client };
+    }
 
     let am;
     try { am = await getAccountManager(); } catch { am = null; }
@@ -3117,14 +3187,24 @@ async function resolveEntityAcrossAccounts(idStr) {
     const legacy = await connectTelegram();
     if (legacy && !candidates.includes(legacy)) candidates.push(legacy);
 
+    const cacheHit = (e, c) => {
+        // Hard-cap the cache by evicting the oldest entry on overflow.
+        if (entityCache.size >= ENTITY_CACHE_MAX) {
+            const firstKey = entityCache.keys().next().value;
+            if (firstKey !== undefined) entityCache.delete(firstKey);
+        }
+        entityCache.set(idStr, { entity: e, client: c, at: Date.now() });
+        return { entity: e, client: c };
+    };
+
     for (const c of candidates) {
         try {
             const e = await c.getEntity(idStr);
-            if (e) { entityCache.set(idStr, e); return { entity: e, client: c }; }
+            if (e) return cacheHit(e, c);
         } catch {}
         try {
             const e = await c.getEntity(BigInt(idStr));
-            if (e) { entityCache.set(idStr, e); return { entity: e, client: c }; }
+            if (e) return cacheHit(e, c);
         } catch {}
     }
     return null;
@@ -3180,6 +3260,17 @@ wss.on('connection', (ws) => {
 });
 
 const PORT = process.env.PORT || 3000;
+// Without this, EADDRINUSE made the container exit silently with no clue
+// where to look. Print a clear message + exit non-zero so docker-compose
+// surfaces the failure instead of looping a hidden restart.
+server.on('error', (e) => {
+    if (e.code === 'EADDRINUSE') {
+        console.error(`\n[fatal] Port ${PORT} is already in use. Stop the other process or set PORT=<free> in the environment.\n`);
+    } else {
+        console.error('[fatal] HTTP server error:', e?.message || e);
+    }
+    process.exit(1);
+});
 server.listen(PORT, async () => {
     // Backfill group names for existing records
     try {
