@@ -183,6 +183,37 @@
             }
         }
 
+        /* Compact view: bigger tiles, fewer per row — Telegram-style large grid. */
+        .media-grid.view-compact {
+            grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+        }
+        @media (min-width: 640px) {
+            .media-grid.view-compact { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); }
+        }
+
+        /* List view: a single column of full-width rows, Telegram media-list style. */
+        .media-grid.view-list {
+            grid-template-columns: 1fr;
+            gap: 2px;
+        }
+        .media-grid.view-list .media-item {
+            aspect-ratio: auto;
+            display: grid;
+            grid-template-columns: 64px 1fr auto;
+            align-items: center;
+            gap: 12px;
+            padding: 8px 12px;
+            background: var(--tg-panel, #17212B);
+            border-radius: 8px;
+        }
+        .media-grid.view-list .media-item img,
+        .media-grid.view-list .media-item video {
+            width: 64px;
+            height: 64px;
+            border-radius: 6px;
+            object-fit: cover;
+        }
+
         .media-item {
             position: relative;
             aspect-ratio: 1;

@@ -464,16 +464,65 @@ async function maintBrowseLogs() {
                     <div class="text-tg-text text-sm font-medium truncate">${escapeHtml(f.name)}</div>
                     <div class="text-tg-textSecondary text-xs">${formatBytesShort(f.size)} · ${escapeHtml(new Date(f.modified).toLocaleString())}</div>
                 </div>
-                <a class="tg-btn-secondary text-xs px-3 py-1 shrink-0" href="/api/maintenance/logs/download?name=${encodeURIComponent(f.name)}&lines=10000" download="${escapeHtml(f.name)}">
-                    ${escapeHtml(i18nT('maintenance.logs.download', 'Download'))}
-                </a>
+                <div class="flex items-center gap-2 shrink-0">
+                    <button class="tg-btn-secondary text-xs px-3 py-1" data-log-view="${escapeHtml(f.name)}">
+                        ${escapeHtml(i18nT('maintenance.logs.view', 'View'))}
+                    </button>
+                    <a class="tg-btn-secondary text-xs px-3 py-1" href="/api/maintenance/logs/download?name=${encodeURIComponent(f.name)}&lines=10000" download="${escapeHtml(f.name)}">
+                        ${escapeHtml(i18nT('maintenance.logs.download', 'Download'))}
+                    </a>
+                </div>
             </div>
         `).join('');
         openSheet({
-            title: i18nT('maintenance.logs.title', 'Download log file'),
-            content: `<div class="space-y-2">${items}</div>
+            title: i18nT('maintenance.logs.title', 'Log files'),
+            content: `<div class="space-y-2" id="maint-logs-list">${items}</div>
                       <p class="text-xs text-tg-textSecondary mt-3" data-i18n="maintenance.logs.tail_help">Last 10,000 lines per file.</p>`,
         });
+        // Wire the per-file "View" buttons inside the sheet — open a second
+        // sheet with the tail of the file in a <pre> for in-browser reading
+        // (no need to download + open a separate viewer).
+        setTimeout(() => {
+            document.querySelectorAll('#maint-logs-list [data-log-view]').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                    const name = btn.dataset.logView;
+                    btn.disabled = true;
+                    try {
+                        const res = await fetch(`/api/maintenance/logs/download?name=${encodeURIComponent(name)}&lines=10000`);
+                        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                        const text = await res.text();
+                        openSheet({
+                            title: name,
+                            content: `
+                                <div class="flex items-center justify-end gap-2 mb-2">
+                                    <button class="tg-btn-secondary text-xs px-3 py-1" id="log-copy-btn">${escapeHtml(i18nT('maintenance.logs.copy', 'Copy'))}</button>
+                                    <a class="tg-btn-secondary text-xs px-3 py-1" href="/api/maintenance/logs/download?name=${encodeURIComponent(name)}&lines=10000" download="${escapeHtml(name)}">${escapeHtml(i18nT('maintenance.logs.download', 'Download'))}</a>
+                                </div>
+                                <pre id="log-pre" class="bg-tg-bg/60 rounded-lg p-3 text-[11px] font-mono text-tg-text whitespace-pre overflow-auto max-h-[70vh] leading-snug">${escapeHtml(text || i18nT('maintenance.logs.empty_tail', '(empty)'))}</pre>`,
+                        });
+                        // Auto-scroll to the bottom — the tail is what users care about.
+                        // Copy-to-clipboard for the visible content.
+                        setTimeout(() => {
+                            const pre = document.getElementById('log-pre');
+                            if (pre) pre.scrollTop = pre.scrollHeight;
+                            const cp = document.getElementById('log-copy-btn');
+                            cp?.addEventListener('click', async () => {
+                                try {
+                                    await navigator.clipboard.writeText(text);
+                                    showToast(i18nT('maintenance.export.copied', 'Copied'), 'success');
+                                } catch {
+                                    showToast(i18nT('maintenance.export.copy_manual', 'Press Ctrl/Cmd+C to copy'), 'info');
+                                }
+                            });
+                        }, 50);
+                    } catch (e) {
+                        showToast(i18nTf('maintenance.failed', { msg: e.message }, `Failed: ${e.message}`), 'error');
+                    } finally {
+                        btn.disabled = false;
+                    }
+                });
+            });
+        }, 50);
     } catch (e) {
         showToast(i18nTf('maintenance.failed', { msg: e.message }, `Failed: ${e.message}`), 'error');
     }

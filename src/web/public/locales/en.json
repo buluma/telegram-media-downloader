@@ -464,10 +464,13 @@
     "maintenance.db_vacuum.running": "Running VACUUM…",
     "maintenance.db_vacuum.done": "VACUUM done — reclaimed {bytes}",
 
-    "maintenance.logs.title": "Download log file",
-    "maintenance.logs.help": "Grab the tail of any logfile under data/logs/ as a plain-text download. Useful when filing bug reports.",
+    "maintenance.logs.title": "Log files",
+    "maintenance.logs.help": "View or download the tail of any logfile under data/logs/ — handy for filing bug reports without SSHing into the container.",
     "maintenance.logs.action": "Browse",
     "maintenance.logs.empty": "No log files yet.",
+    "maintenance.logs.empty_tail": "(empty)",
+    "maintenance.logs.view": "View",
+    "maintenance.logs.copy": "Copy",
     "maintenance.logs.download": "Download",
     "maintenance.logs.tail_help": "Last 10,000 lines per file.",
 
