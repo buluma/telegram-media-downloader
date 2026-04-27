@@ -150,6 +150,9 @@ class Runtime extends EventEmitter {
             metrics.set('tgdl_queue_size', length);
         });
         this._downloader.on('progress', (p) => this.emit('event', { type: 'download_progress', payload: p }));
+        // Bridge per-key + global queue mutations so the IDM-style Queue
+        // page can re-render in lock-step (no polling required).
+        this._downloader.on('queue_changed', (info) => this.emit('event', { type: 'queue_changed', payload: info }));
 
         this._monitor.on('configReloaded', (newConfig) => {
             if (this._forwarder) this._forwarder.config = newConfig;
@@ -170,10 +173,13 @@ class Runtime extends EventEmitter {
         return {
             key: job.key,
             groupId: job.groupId,
+            groupName: job.groupName || null,
             messageId: job.message?.id,
             mediaType: job.mediaType,
+            fileName: job.fileName || (job.filePath ? job.filePath.split(/[\\/]/).pop() : null),
             filePath: job.filePath,
             fileSize: job.fileSize,
+            addedAt: job.addedAt || null,
         };
     }
 
