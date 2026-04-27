@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.23] — 2026-04-28
+
+### Fixed — hotfix for v2.3.22 regression
+- **Infinite recursion → "Maximum call stack size exceeded"** the moment the user clicked any sidebar nav. v2.3.22 added `navigateTo('viewer')` inside `showAllMedia()` to fix the "click does nothing on Settings page" bug. But `renderPage('viewer')` was *already* the caller of `showAllMedia()`, so the chain became: sidebar click → `showAllMedia` → `navigateTo` → `renderPage('viewer')` → `showAllMedia` → `navigateTo` → … → stack overflow → crash loop in the SPA. Guarded the navigation with `if (state.currentPage !== 'viewer') { navigateTo('viewer'); return; }` so renderPage re-enters the function exactly once with the page already visible, and never fires the loop.
+
+### Changed
+- **SW VERSION** bumped `'v22'` → `'v23'`.
+
 ## [2.3.22] — 2026-04-28
 
 ### Fixed
