@@ -1067,12 +1067,12 @@ app.delete('/api/accounts/:id', async (req, res) => {
 runtime.on('state', (s) => broadcast({ type: 'monitor_state', state: s.state, error: s.error }));
 runtime.on('event', (e) => broadcast({ type: 'monitor_event', ...e }));
 
-app.get('/api/monitor/status', async (req, res) => {
+// Build the monitor-status snapshot. Used by both the GET endpoint
+// (for the SPA's first paint / a manual refresh) AND the periodic
+// WS broadcaster below — keeping them on one code path so a future
+// field never lands in one place but not the other.
+async function _buildMonitorStatusSnapshot() {
     const status = runtime.status();
-    // Report on-disk session count even when the runtime is stopped, so the
-    // dashboard can tell the user "you have N accounts saved" before they
-    // hit Start. Fall back to a directory listing when the lazy AM can't be
-    // built (e.g. no API creds yet).
     if (status.accounts === 0) {
         try {
             const am = await getAccountManager();
@@ -1086,8 +1086,6 @@ app.get('/api/monitor/status', async (req, res) => {
             } catch { /* ignore */ }
         }
     }
-    // Surface the next-step hint so the SPA can render an empty-state
-    // call-to-action without re-deriving it from multiple endpoints.
     const config = await readConfigSafe();
     status.hint = !config.telegram?.apiId || !config.telegram?.apiHash
         ? 'configure-api'
@@ -1096,8 +1094,57 @@ app.get('/api/monitor/status', async (req, res) => {
             : (config.groups || []).filter(g => g.enabled).length === 0
                 ? 'enable-group'
                 : null;
-    res.json(status);
+    return status;
+}
+
+app.get('/api/monitor/status', async (req, res) => {
+    res.json(await _buildMonitorStatusSnapshot());
 });
+
+// Push the monitor-status snapshot every 3 s so the SPA's status-bar
+// queue / active counters update live without polling. Skip the
+// broadcast when nobody's connected (no WS clients) — saves a DB hit
+// the SPA wouldn't have asked for. Coalesces across overlapping
+// async builds via the in-flight flag.
+let _statusPushBusy = false;
+async function _pushMonitorStatus() {
+    if (_statusPushBusy || clients.size === 0) return;
+    _statusPushBusy = true;
+    try {
+        const snap = await _buildMonitorStatusSnapshot();
+        broadcast({ type: 'monitor_status_push', payload: snap });
+    } catch { /* best-effort */ }
+    finally { _statusPushBusy = false; }
+}
+const _monitorStatusTimer = setInterval(_pushMonitorStatus, 3000);
+_monitorStatusTimer.unref?.();
+
+// Push the gallery /api/stats snapshot every 30 s. Less frequent than
+// monitor/status because the numbers (total files, disk usage) only
+// change when downloads finish — and those events already trigger an
+// SPA refresh of their own. This is the safety net for a long-idle
+// session where the user wandered to another tab.
+let _statsPushBusy = false;
+async function _pushStats() {
+    if (_statsPushBusy || clients.size === 0) return;
+    _statsPushBusy = true;
+    try {
+        const dbStats = getDbStats();
+        const total = Number(dbStats.totalSize) || 0;
+        broadcast({
+            type: 'stats_push',
+            payload: {
+                totalFiles: dbStats.totalFiles,
+                totalSize: total,
+                diskUsage: total,
+                diskUsageFormatted: formatBytes(total),
+            },
+        });
+    } catch { /* best-effort */ }
+    finally { _statsPushBusy = false; }
+}
+const _statsPushTimer = setInterval(_pushStats, 30000);
+_statsPushTimer.unref?.();
 
 app.post('/api/monitor/start', async (req, res) => {
     try {
