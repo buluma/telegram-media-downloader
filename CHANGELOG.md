@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.24] — 2026-04-28
+
+### Changed — gallery feels smooth
+- **Pre-fetch the next page from 1200 px away.** The IntersectionObserver on `#load-more-sentinel` now uses `rootMargin: '1200px 0px 1200px 0px'`, so the next batch is requested while the user is still ~1200 px from the bottom of the current one. Combined with the bigger page size below, the visible scroll-stutter on a long gallery should be gone.
+- **`FILES_PER_PAGE: 50 → 100`.** Half the round trips for the same scroll distance.
+
+### Changed — `/api/monitor/status` and `/api/stats` now WS-push
+Per user request *"api/monitor/status กับ api/stats ไม่ใช้ ws ไปเลยหล่ะ"*. The 30 s + 60 s safety polls in `monitor-status.js` and `statusbar.js` are gone:
+
+- **Server**: `_pushMonitorStatus()` broadcasts `monitor_status_push` every 3 s with the full `/api/monitor/status` snapshot. `_pushStats()` broadcasts `stats_push` every 30 s with the full `/api/stats` payload. Both skip the build entirely when no WebSocket clients are connected, and coalesce overlapping async builds via an in-flight flag. The single GET endpoints stay on for the SPA's first paint + a manual refresh.
+- **SPA `monitor-status.js`**: dropped the 30 s `setInterval`, the visibilitychange-driven catch-up, and the timer machinery. One HTTP fetch on the first subscriber so the bar isn't blank for 3 s, then rides the WS push for the rest of the session. Re-fetches once on every WS reconnect (`__ws_open`) to fill the gap a disconnect window left.
+- **SPA `statusbar.js`**: dropped the 60 s stats poll. Listens for `stats_push` and applies the payload directly. Mutation events (`download_complete` / `file_deleted` / `bulk_delete` / `purge_all` / `group_purged`) still trigger an immediate refetch so the user sees their own delete / new download instantly, ahead of the next 30-second push.
+
+Net effect: on an idle dashboard with WS connected, server-side load + client-side wakeups for these two endpoints drop from ~3 calls/min to **0**.
+
+### SW
+- VERSION bumped `'v23'` → `'v24'`.
+
 ## [2.3.23] — 2026-04-28
 
 ### Fixed — hotfix for v2.3.22 regression

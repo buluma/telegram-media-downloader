@@ -652,7 +652,11 @@ function showAllMedia() {
 }
 
 // Per-page batch size for the All-Media + group infinite-scroll path.
-const FILES_PER_PAGE = 50;
+// Bumped 50 → 100 in v2.3.24 — fewer round trips before the next batch
+// arrives, smoother feel on a long scroll. The pre-fetch margin
+// (`rootMargin` on the IntersectionObserver below) means the next
+// batch is in flight LONG before the user can run out of rows.
+const FILES_PER_PAGE = 100;
 
 async function loadAllFiles() {
     state.loading = true;
@@ -1713,7 +1717,14 @@ function refreshCurrentPage() {
 function setupInfiniteScroll() {
     const sentinel = document.getElementById('load-more-sentinel');
     if (!sentinel) return;
-    
+
+    // `rootMargin: '1200px'` makes the IntersectionObserver fire when
+    // the sentinel is still ~1200 px BELOW the visible area, so the
+    // next batch is requested long before the user actually runs out
+    // of rows. Combined with FILES_PER_PAGE = 100, the gallery feels
+    // smooth even on a fast flick scroll: by the time the user nears
+    // the end of the current batch, the next 100 files have usually
+    // already arrived.
     const observer = new IntersectionObserver((entries) => {
         if (!entries[0].isIntersecting || state.loading || !state.hasMore) return;
         // currentGroupId === null on the All-Media surface — page through
@@ -1722,7 +1733,7 @@ function setupInfiniteScroll() {
         state.page++;
         if (state.currentGroupId) loadGroupFiles(state.currentGroupId);
         else loadAllFiles();
-    });
+    }, { rootMargin: '1200px 0px 1200px 0px' });
     observer.observe(sentinel);
 }
 

@@ -7,7 +7,6 @@ import { t as i18nT } from './i18n.js';
 import { subscribe as subscribeMonitorStatus, refreshNow as refreshMonitorStatus } from './monitor-status.js';
 
 const $ = (id) => document.getElementById(id);
-let statsPollHandle = null;
 
 function applyState(state) {
     const dot = $('status-dot');
@@ -147,16 +146,21 @@ export function initStatusBar() {
     // poller (one /api/monitor/status fetch, three subscribers).
     subscribeMonitorStatus(applyMonitor);
 
-    // Stats are heavier (disk walk + DB scan on the server). WS events
-    // (download_complete / file_deleted / bulk_delete / purge_*) push
-    // freshness already; the 60-second poll is just a safety net for
-    // missed events / WS disconnects.
+    // Stats — WS push only (v2.3.24). Server broadcasts `stats_push`
+    // every 30 s with the snapshot; we still fetch once on boot so
+    // the bar isn't blank for the first 30 s, and once on every
+    // WS reconnect so a disconnect-window's worth of new downloads
+    // shows up immediately. The mutation-events still trigger a
+    // refetch (download_complete etc.) so the user sees their own
+    // delete / new download instantly without waiting for the next
+    // 30-second push.
     refreshStats();
-    if (statsPollHandle) clearInterval(statsPollHandle);
-    statsPollHandle = setInterval(refreshStats, 60000);
-
-    // Refresh on every event that mutates the file/disk counters so we
-    // don't sit on stale numbers between safety-poll ticks.
+    ws.on('stats_push', (msg) => {
+        if (!msg?.payload) return;
+        const f = $('status-files'); if (f) f.textContent = msg.payload.totalFiles ?? 0;
+        const d = $('status-disk'); if (d) d.textContent = msg.payload.diskUsageFormatted || formatBytes(msg.payload.diskUsage || 0);
+    });
+    ws.on('__ws_open', () => refreshStats());
     const wsRefresh = () => refreshStats();
     ws.on('download_complete', wsRefresh);
     ws.on('file_deleted', wsRefresh);
