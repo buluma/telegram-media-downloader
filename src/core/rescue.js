@@ -13,6 +13,8 @@
  */
 import path from 'path';
 import fs from 'fs/promises';
+
+const ts = () => new Date().toISOString();
 import { fileURLToPath } from 'url';
 import {
     getExpiredPending,
@@ -87,7 +89,7 @@ export class RescueSweeper {
             this.sweep().catch((e) => console.warn('[rescue] sweep failed:', e.message));
         }, this._intervalMs);
         this._timer.unref?.();
-        console.log(`[rescue] sweeper started (every ${minutes} min)`);
+        console.log(`${ts()} [rescue] sweeper started (every ${minutes} min)`);
         return true;
     }
 

@@ -37,19 +37,19 @@ export class AutoForwarder {
             : this.client;
 
         const ts = new Date().toISOString();
-        console.log(colorize(`${ts} ➡️  [AutoForward] Processing for ${groupName}...`, 'cyan'));
+        console.log(colorize(`${ts} ➡️ [AutoForward] Processing for ${groupName}...`, 'cyan'));
 
         try {
             // 2. Resolve Destination
             let targetPeer = await this.resolveDestination(settings.destination, fwdClient);
             if (!targetPeer) {
-            console.log(colorize(`${ts} ⚠️  [AutoForward] Could not resolve destination. Skipping.`, 'yellow'));
+            console.log(colorize(`${ts} ⚠️ [AutoForward] Could not resolve destination. Skipping.`, 'yellow'));
                 return;
             }
 
             // 3. Prepare Caption with Message Link
             let caption = message?.message || message?.text || '';
-            
+
             // Generate message link
             // Format: t.me/c/CHANNEL_ID/MESSAGE_ID (private) or t.me/USERNAME/MESSAGE_ID (public)
             let messageLink = '';
@@ -59,7 +59,7 @@ export class AutoForwarder {
                 const cleanId = String(groupId).replace(/^-100/, '');
                 messageLink = `https://t.me/c/${cleanId}/${msgId}`;
             }
-            
+
             // Add source attribution with clickable link
             if (messageLink) {
                 caption += `\n\n📌 Source: [${groupName}](${messageLink})`;
@@ -90,9 +90,9 @@ export class AutoForwarder {
                 try {
                     await fs.unlink(filePath);
                     const ts = new Date().toISOString();
-                    console.log(colorize(`${ts} 🗑️  [AutoForward] Deleted local file: ${path.basename(filePath)}`, 'gray'));
+                    console.log(colorize(`${ts} 🗑️ [AutoForward] Deleted local file: ${path.basename(filePath)}`, 'gray'));
                 } catch (unlinkErr) {
-                    console.warn(colorize(`⚠️  [AutoForward] Forwarded but local delete failed for ${path.basename(filePath)}: ${unlinkErr.message}`, 'yellow'));
+                    console.warn(colorize(`⚠️ [AutoForward] Forwarded but local delete failed for ${path.basename(filePath)}: ${unlinkErr.message}`, 'yellow'));
                 }
             }
 
@@ -109,7 +109,7 @@ export class AutoForwarder {
         // Case A: Specific Destination
         if (destination && destination !== 'storage') {
             if (destination === 'me' || destination === 'saved') return 'me';
-            
+
             // Try to parse if it's an ID
             if (/^-?\d+$/.test(destination)) {
                 try {
@@ -145,7 +145,7 @@ export class AutoForwarder {
             }
 
             // Treat as username or phone
-            return destination; 
+            return destination;
         }
 
         // Case B: Auto Storage Channel (Single Channel)
@@ -155,7 +155,7 @@ export class AutoForwarder {
         try {
             const dialogs = await client.getDialogs({ limit: 100 });
             const found = dialogs.find(d => d.title === 'Telegram Downloader Storage');
-            
+
             if (found) {
                 this.storageChannelId = found.entity;
                 return this.storageChannelId;

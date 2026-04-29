@@ -13,6 +13,8 @@
 
 import fs from 'fs/promises';
 import path from 'path';
+
+const ts = () => new Date().toISOString();
 import { fileURLToPath } from 'url';
 import { getDb } from './db.js';
 
@@ -120,9 +122,9 @@ export function start({ broadcast, intervalMin = 60, batchSize = 64 } = {}) {
     setTimeout(() => {
         sweep().then(({ scanned, pruned }) => {
             if (pruned > 0) {
-                console.log(`[integrity] boot sweep — pruned ${pruned} dead rows out of ${scanned}`);
+                console.log(`${ts()} [integrity] boot sweep — pruned ${pruned} dead rows out of ${scanned}`);
             }
-        }).catch((e) => console.warn('[integrity] boot sweep failed:', e.message));
+        }).catch((e) => console.warn(`${ts()} [integrity] boot sweep failed:`, e.message));
     }, 30 * 1000);
     _timer = setInterval(() => {
         sweep().then(({ scanned, pruned }) => {
