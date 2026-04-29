@@ -17,7 +17,7 @@ services:
     container_name: telegram-downloader
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "${TGDL_PORT:-3003}:3000"
     volumes:
       - ./data:/app/data
     environment:
@@ -33,7 +33,7 @@ services:
 
 # First-time setup:
 #   docker compose up -d
-#   open http://localhost:3000 — set the dashboard password (only allowed
+#   open http://localhost:${TGDL_PORT:-3003} — set the dashboard password (only allowed
 #   from localhost on first run), then go to Settings → Telegram Accounts
 #   → Add account.
 #

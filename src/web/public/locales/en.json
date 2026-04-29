@@ -495,12 +495,12 @@
     "toast.monitor_start_failed": "Start failed: {msg}",
     "toast.monitor_stop_failed": "Stop failed: {msg}",
 
-    "notify.download_complete": "Download complete.",
+    "notify.download_complete": "Download Complete.",
     "notify.download_complete_file": "a file",
     "notify.batch_complete": "{n} downloads complete.",
 
     "status.idle": "Idle",
-    "status.monitor_running": "Monitor running",
+    "status.monitor_running": "Monitor Running",
     "status.starting": "Starting…",
     "status.stopping": "Stopping…",
     "status.error": "Error",

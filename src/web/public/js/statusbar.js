@@ -12,7 +12,7 @@ function applyState(state) {
     const dot = $('status-dot');
     const lbl = $('status-state');
     const map = {
-        running: { color: 'bg-tg-green', text: i18nT('status.monitor_running', 'Monitor running') },
+        running: { color: 'bg-tg-green', text: i18nT('status.monitor_running', 'Monitor Running') },
         starting: { color: 'bg-tg-blue', text: i18nT('status.starting', 'Starting…') },
         stopping: { color: 'bg-tg-orange', text: i18nT('status.stopping', 'Stopping…') },
         stopped: { color: 'bg-gray-500', text: i18nT('status.idle', 'Idle') },

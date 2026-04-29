@@ -102,7 +102,7 @@ export class AutoForwarder {
             if (settings.deleteAfterForward) {
                 try {
                     await fs.unlink(filePath);
-                    console.log(colorize(`${getTs()} 🗑️ [AutoForward] Deleted local file: ${path.basename(filePath)}`, 'gray'));
+                    console.log(colorize(`${getTs()} 🗑️ [AutoForward] Deleted local file: ${path.basename(filePath)}`, 'red'));
                 } catch (unlinkErr) {
                     console.warn(colorize(`⚠️ [AutoForward] Forwarded but local delete failed for ${path.basename(filePath)}: ${unlinkErr.message}`, 'yellow'));
                 }
