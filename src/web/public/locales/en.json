@@ -29,6 +29,8 @@
     "sidebar.all_media": "All Media",
     "sidebar.all_media_sub": "View all files",
     "sidebar.downloaded_groups": "Downloaded Groups",
+    "sidebar.downloaded_groups_expand": "Expand downloaded groups",
+    "sidebar.downloaded_groups_collapse": "Collapse downloaded groups",
     "sidebar.disk": "Disk",
     "sidebar.files": "Files",
 
@@ -363,6 +365,8 @@
     "viewer.section.older": "Older",
     "viewer.search.failed": "Search failed: {msg}",
     "viewer.selection.count": "{count} selected",
+    "viewer.selection.selectAll": "Select All",
+    "viewer.selection.unselectAll": "Unselect All",
     "viewer.selection.clear": "Clear",
     "viewer.selection.delete": "Delete",
     "viewer.bulk.title": "Delete selected files?",

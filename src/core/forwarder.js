@@ -8,6 +8,21 @@ import path from 'path';
 import { Api } from 'telegram';
 import { colorize } from '../cli/colors.js';
 
+function getTs() {
+    const d = new Date();
+    const opt = {
+        timeZone: 'Africa/Nairobi',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+    };
+    return new Intl.DateTimeFormat('en-KE', opt).format(d).replace(/,/, '');
+}
+
 export class AutoForwarder {
     constructor(client, config, accountManager = null) {
         this.client = client;
@@ -36,18 +51,13 @@ export class AutoForwarder {
             ? this.accountManager.getClient(groupConfig.forwardAccount)
             : this.client;
 
-        const getTs = () => {
-            const d = new Date();
-            const opt = { timeZone: 'Africa/Nairobi', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
-            return new Intl.DateTimeFormat('en-KE', opt).format(d).replace(/,/, '');
-        };
         console.log(colorize(`${getTs()} ➡️ [AutoForward] Processing for ${groupName}...`, 'cyan'));
 
         try {
             // 2. Resolve Destination
             let targetPeer = await this.resolveDestination(settings.destination, fwdClient);
             if (!targetPeer) {
-            console.log(colorize(`${getTs()} ⚠️ [AutoForward] Could not resolve destination. Skipping.`, 'yellow'));
+                console.log(colorize(`${getTs()} ⚠️ [AutoForward] Could not resolve destination. Skipping.`, 'yellow'));
                 return;
             }
 
@@ -177,12 +187,12 @@ export class AutoForwarder {
             // Access the created channel
             if (result.chats && result.chats[0]) {
                 this.storageChannelId = result.chats[0];
-                console.log(colorize(`${ts} ✅ [AutoForward] Created channel: Telegram Downloader Storage`, 'green'));
+                console.log(colorize(`${getTs()} ✅ [AutoForward] Created channel: Telegram Downloader Storage`, 'green'));
                 return this.storageChannelId;
             }
 
         } catch (e) {
-            console.log(colorize(`${ts} ❌ [AutoForward] Failed to create/find storage channel: ${e.message}`, 'red'));
+            console.log(colorize(`${getTs()} ❌ [AutoForward] Failed to create/find storage channel: ${e.message}`, 'red'));
         }
 
         return null;
