@@ -29,6 +29,8 @@
     "sidebar.all_media": "มีเดียทั้งหมด",
     "sidebar.all_media_sub": "ดูไฟล์ทั้งหมด",
     "sidebar.downloaded_groups": "กลุ่มที่ดาวน์โหลดแล้ว",
+    "sidebar.downloaded_groups_expand": "ขยายกลุ่มที่ดาวน์โหลดแล้ว",
+    "sidebar.downloaded_groups_collapse": "ย่อกลุ่มที่ดาวน์โหลดแล้ว",
     "sidebar.disk": "ดิสก์",
     "sidebar.files": "ไฟล์",
 
@@ -363,6 +365,8 @@
     "viewer.section.older": "เก่ากว่านั้น",
     "viewer.search.failed": "ค้นหาไม่สำเร็จ: {msg}",
     "viewer.selection.count": "เลือกแล้ว {count} รายการ",
+    "viewer.selection.selectAll": "เลือกทั้งหมด",
+    "viewer.selection.unselectAll": "ยกเลิกเลือกทั้งหมด",
     "viewer.selection.clear": "ล้าง",
     "viewer.selection.delete": "ลบ",
     "viewer.bulk.title": "ลบไฟล์ที่เลือกใช่หรือไม่",

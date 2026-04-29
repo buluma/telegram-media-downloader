@@ -38,6 +38,7 @@ import { showQueuePage, initQueue } from './queue.js';
 // each render function so distinct renders don't shadow each other.
 const _scheduledRenders = new Map(); // fn → { timer, frame }
 const RENDER_COALESCE_MS = 150;
+const SIDEBAR_GROUPS_COLLAPSED_KEY = 'tgdl-sidebar-groups-collapsed';
 
 function scheduleRender(fn) {
     if (_scheduledRenders.has(fn)) return;
@@ -419,6 +420,21 @@ function closeSidebar() {
     const overlay = document.getElementById('sidebar-overlay');
     if (sidebar) sidebar.classList.remove('open');
     if (overlay) overlay.classList.add('hidden');
+}
+
+function applyDownloadedGroupsCollapsed(collapsed) {
+    const body = document.getElementById('downloaded-groups-body');
+    const btn = document.getElementById('downloaded-groups-toggle');
+    const chevron = document.getElementById('downloaded-groups-chevron');
+    if (!body || !btn || !chevron) return;
+
+    body.classList.toggle('hidden', collapsed);
+    btn.setAttribute('aria-expanded', String(!collapsed));
+    chevron.classList.toggle('ri-arrow-up-s-line', !collapsed);
+    chevron.classList.toggle('ri-arrow-down-s-line', collapsed);
+    btn.dataset.i18nTitle = collapsed ? 'sidebar.downloaded_groups_expand' : 'sidebar.downloaded_groups_collapse';
+    btn.dataset.i18nAriaLabel = btn.dataset.i18nTitle;
+    applyI18n(btn);
 }
 
 // ============ Groups Logic ============
@@ -823,6 +839,10 @@ function renderMediaGrid() {
         state.imageObserver.disconnect();
         grid.querySelectorAll('img[data-src], video[data-src]').forEach(el => state.imageObserver.observe(el));
     }
+
+    // Keep selection bar/button state in sync when the visible subset changes
+    // due to filtering, search, or pagination.
+    updateSelectionBar();
 }
 
 /**
@@ -862,11 +882,41 @@ function toggleSelection(path) {
     renderMediaGrid();
 }
 
+function getSelectableMediaPaths() {
+    // Prefer what's currently rendered in the grid: this reflects the exact
+    // visible/loaded subset after search, tab filters, and pagination.
+    const fromGrid = Array.from(document.querySelectorAll('#media-grid .media-item[data-path]'))
+        .map(el => el.dataset.path)
+        .filter(Boolean);
+    if (fromGrid.length) return fromGrid;
+
+    // Fallback to loaded state when the grid isn't mounted yet.
+    return (state.files || [])
+        .filter(file => state.currentFilter === 'all' || file.type === state.currentFilter)
+        .map(file => file.fullPath || file.path)
+        .filter(Boolean);
+}
+
+function updateSelectAllButton() {
+    const btn = document.getElementById('selection-select-all');
+    if (!btn) return;
+    const selectable = getSelectableMediaPaths();
+    const selectedCount = selectable.filter(p => state.selected?.has(p)).length;
+    const allSelected = selectable.length > 0 && selectedCount === selectable.length;
+    btn.textContent = allSelected
+        ? i18nT('viewer.selection.unselectAll', 'Unselect All')
+        : i18nT('viewer.selection.selectAll', 'Select All');
+}
+
 function updateSelectionBar() {
     const bar = document.getElementById('selection-bar');
     const count = state.selected ? state.selected.size : 0;
     document.getElementById('selection-count').textContent = i18nTf('viewer.selection.count', { count }, `${count} selected`);
-    if (bar) bar.classList.toggle('hidden', count === 0);
+    updateSelectAllButton();
+    // Keep the bar available while selection mode is active so "Select All"
+    // is reachable without first manually selecting a tile.
+    const shouldShow = Boolean(state.selectMode) || count > 0;
+    if (bar) bar.classList.toggle('hidden', !shouldShow);
 }
 
 // Group files into Telegram-style time sections. Accepts an array of
@@ -969,10 +1019,6 @@ async function setupMediaSearch() {
     const input = document.getElementById('media-search');
     const clear = document.getElementById('media-search-clear');
     const selectBtn = document.getElementById('select-mode-btn');
-    const selBar = document.getElementById('selection-bar');
-    const selDel = document.getElementById('selection-delete');
-    const selClear = document.getElementById('selection-clear');
-    const selSelectAll = document.getElementById('selection-select-all');
     if (!input) return;
 
     let timer = null;
@@ -1017,35 +1063,6 @@ async function setupMediaSearch() {
         renderMediaGrid();
     });
 
-    selClear?.addEventListener('click', () => {
-        if (state.selected) state.selected.clear();
-        updateSelectionBar();
-        renderMediaGrid();
-    });
-
-    selDel?.addEventListener('click', async () => {
-        if (!state.selected || !state.selected.size) return;
-        const paths = Array.from(state.selected);
-        if (!(await confirmSheet({
-            title: i18nT('viewer.bulk.title', 'Delete selected files?'),
-            message: i18nTf('viewer.bulk.confirm', { count: paths.length }, `Delete ${paths.length} file(s)? This cannot be undone.`),
-            confirmLabel: i18nT('common.delete', 'Delete'),
-            danger: true,
-        }))) return;
-        try {
-            const r = await api.post('/api/downloads/bulk-delete', { paths });
-            showToast(i18nTf('viewer.bulk.deleted', { count: r.unlinked }, `Deleted ${r.unlinked} files`), 'success');
-            state.selected.clear();
-            // Drop deleted entries from the current view
-            const set = new Set(paths);
-            state.files = (state.files || []).filter(f => !set.has(f.fullPath));
-            if (state.savedFiles) state.savedFiles = state.savedFiles.filter(f => !set.has(f.fullPath));
-            updateSelectionBar();
-            renderMediaGrid();
-        } catch (e) {
-            showToast(i18nTf('viewer.bulk.failed', { msg: e.message }, `Delete failed: ${e.message}`), 'error');
-        }
-    });
 }
 
 // ============ Groups Config Page ============
@@ -1524,12 +1541,28 @@ function setupEventListeners() {
     
     document.getElementById('sidebar-close')?.addEventListener('click', closeSidebar);
     document.getElementById('sidebar-overlay')?.addEventListener('click', closeSidebar);
+
+    const groupsToggle = document.getElementById('downloaded-groups-toggle');
+    if (groupsToggle) {
+        const collapsed = localStorage.getItem(SIDEBAR_GROUPS_COLLAPSED_KEY) === '1';
+        applyDownloadedGroupsCollapsed(collapsed);
+        groupsToggle.addEventListener('click', () => {
+            const next = localStorage.getItem(SIDEBAR_GROUPS_COLLAPSED_KEY) !== '1';
+            try { localStorage.setItem(SIDEBAR_GROUPS_COLLAPSED_KEY, next ? '1' : '0'); } catch {}
+            applyDownloadedGroupsCollapsed(next);
+        });
+    }
     
     // Selection bar - Select All
     document.getElementById('selection-select-all')?.addEventListener('click', () => {
-        if (!state.files) return;
         if (!state.selected) state.selected = new Set();
-        state.files.forEach(f => state.selected.add(f.fullPath || f.path));
+        const paths = getSelectableMediaPaths();
+        const allSelected = paths.length > 0 && paths.every(p => state.selected.has(p));
+        if (allSelected) {
+            paths.forEach(p => state.selected.delete(p));
+        } else {
+            paths.forEach(p => state.selected.add(p));
+        }
         updateSelectionBar();
         renderMediaGrid();
     });
