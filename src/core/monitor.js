@@ -8,6 +8,8 @@ import { Api } from 'telegram';
 import { EventEmitter } from 'events';
 import { colorize } from '../cli/colors.js';
 import { sanitizeName } from './downloader.js';
+
+const ts = () => new Date().toISOString();
 import { markRescued } from './db.js';
 import { effectiveRescueMs } from './rescue.js';
 import fs from 'fs/promises';
@@ -143,7 +145,7 @@ export class RealtimeMonitor extends EventEmitter {
 
         // Initialize Last Message IDs for Polling
         this.lastIds = new Map();
-        console.log(colorize('🔄 Syncing state for Active Polling...', 'cyan'));
+        console.log(colorize(`${ts()} 🔄 Syncing state for Active Polling...`, 'cyan'));
 
         const enabledGroups = this.config.groups.filter(g => g.enabled);
         if (enabledGroups.length === 0) {
@@ -163,7 +165,7 @@ export class RealtimeMonitor extends EventEmitter {
             try {
                 const workingClient = await this.discoverClientForGroup(group);
                 if (!workingClient) {
-                    console.log(colorize(`⚠️ Skipping "${group.name}" — no account has access`, 'yellow'));
+                    console.log(colorize(`${ts()} ⚠️ Skipping "${group.name}" — no account has access`, 'yellow'));
                     group.enabled = false;
                     continue;
                 }
@@ -234,7 +236,7 @@ export class RealtimeMonitor extends EventEmitter {
             groups: enabledGroups.map(g => g.name)
         });
         
-        console.log(colorize('✅ Monitor Engine Active', 'green', 'bold'));
+        console.log(colorize(`${ts()} ✅ Monitor Engine Active`, 'green', 'bold'));
     }
 
     async startPollingLoop() {

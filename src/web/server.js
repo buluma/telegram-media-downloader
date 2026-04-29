@@ -13,6 +13,8 @@ import { createServer } from 'http';
 import fs from 'fs/promises';
 import fsSync, { existsSync } from 'fs';
 import path from 'path';
+
+const ts = () => new Date().toISOString();
 import { fileURLToPath } from 'url';
 import { TelegramClient } from 'telegram';
 import { StringSession } from 'telegram/sessions/index.js';
@@ -3643,11 +3645,11 @@ ${tip}
             const am = await getAccountManager().catch(() => null);
             if (am && am.count > 0) {
                 await runtime.start({ config: cfg, accountManager: am });
-                console.log('[monitor] auto-started on boot');
+                console.log(`${ts()} [monitor] auto-started on boot`);
             }
         }
     } catch (e) {
-        console.warn('[monitor] auto-start skipped:', e.message);
+        console.warn(`${ts()} [monitor] auto-start skipped:`, e.message);
     }
 });
 
