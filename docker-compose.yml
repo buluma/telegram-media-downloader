@@ -10,8 +10,9 @@
 
 services:
   telegram-downloader:
-    image: ghcr.io/botnick/telegram-media-downloader:latest
-    pull_policy: always
+    # image: ghcr.io/botnick/telegram-media-downloader:latest
+    # pull_policy: always
+    build: .
     # build: .
     container_name: telegram-downloader
     restart: unless-stopped
