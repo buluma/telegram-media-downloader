@@ -36,14 +36,18 @@ export class AutoForwarder {
             ? this.accountManager.getClient(groupConfig.forwardAccount)
             : this.client;
 
-        const ts = new Date().toISOString();
-        console.log(colorize(`${ts} ➡️ [AutoForward] Processing for ${groupName}...`, 'cyan'));
+        const getTs = () => {
+            const d = new Date();
+            const opt = { timeZone: 'Africa/Nairobi', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
+            return new Intl.DateTimeFormat('en-KE', opt).format(d).replace(/,/, '');
+        };
+        console.log(colorize(`${getTs()} ➡️ [AutoForward] Processing for ${groupName}...`, 'cyan'));
 
         try {
             // 2. Resolve Destination
             let targetPeer = await this.resolveDestination(settings.destination, fwdClient);
             if (!targetPeer) {
-            console.log(colorize(`${ts} ⚠️ [AutoForward] Could not resolve destination. Skipping.`, 'yellow'));
+            console.log(colorize(`${getTs()} ⚠️ [AutoForward] Could not resolve destination. Skipping.`, 'yellow'));
                 return;
             }
 
@@ -77,8 +81,7 @@ export class AutoForwarder {
             });
 
             const telegramMsgId = msg?.id || msg?.message?.id || msg?.messageId || 'unknown';
-            const ts = new Date().toISOString();
-            console.log(colorize(`${ts} ✅ [AutoForward] Sent to ${settings.destination || 'Storage Channel'} (TG msg #${telegramMsgId})`, 'green'));
+            console.log(colorize(`${getTs()} ✅ [AutoForward] Sent to ${settings.destination || 'Storage Channel'} (TG msg #${telegramMsgId})`, 'green'));
 
             // 5. Cleanup (if enabled). Isolate the unlink in its own
             // try/catch so a successful upload isn't reported as failed
@@ -89,15 +92,14 @@ export class AutoForwarder {
             if (settings.deleteAfterForward) {
                 try {
                     await fs.unlink(filePath);
-                    const ts = new Date().toISOString();
-                    console.log(colorize(`${ts} 🗑️ [AutoForward] Deleted local file: ${path.basename(filePath)}`, 'gray'));
+                    console.log(colorize(`${getTs()} 🗑️ [AutoForward] Deleted local file: ${path.basename(filePath)}`, 'gray'));
                 } catch (unlinkErr) {
                     console.warn(colorize(`⚠️ [AutoForward] Forwarded but local delete failed for ${path.basename(filePath)}: ${unlinkErr.message}`, 'yellow'));
                 }
             }
 
         } catch (error) {
-            console.log(colorize(`${ts} ❌ [AutoForward] Error: ${error.message}`, 'red'));
+            console.log(colorize(`${getTs()} ❌ [AutoForward] Error: ${error.message}`, 'red'));
         }
     }
 
@@ -162,8 +164,7 @@ export class AutoForwarder {
             }
 
             // Create new if not found
-            const ts = new Date().toISOString();
-            console.log(colorize(`${ts} 🛠️  [AutoForward] Creating storage channel...`, 'cyan'));
+            console.log(colorize(`${getTs()} 🛠️  [AutoForward] Creating storage channel...`, 'cyan'));
             const result = await client.invoke(
                 new Api.channels.CreateChannel({
                     title: 'Telegram Downloader Storage',

@@ -14,7 +14,12 @@
 import path from 'path';
 import fs from 'fs/promises';
 
-const ts = () => new Date().toISOString();
+// Kenyan local time (UTC+3) - readable format
+const ts = () => {
+    const d = new Date();
+    const opt = { timeZone: 'Africa/Nairobi', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
+    return new Intl.DateTimeFormat('en-KE', opt).format(d).replace(/,/, '');
+};
 import { fileURLToPath } from 'url';
 import {
     getExpiredPending,
