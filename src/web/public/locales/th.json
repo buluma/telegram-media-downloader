@@ -233,6 +233,7 @@
     "groups.page.subtitle": "ตั้งค่า monitor และตัวกรอง",
     "groups.tab.all": "ทุก dialog",
     "groups.tab.monitored": "เฉพาะที่ monitor",
+    "groups.tab.unmonitored": "ที่ไม่ได้ monitor",
     "groups.search_placeholder": "ค้นหากลุ่มหรือช่อง…",
     "groups.loading_dialogs": "กำลังโหลด dialog…",
     "groups.load_failed": "ไม่สามารถโหลด dialog ได้",
