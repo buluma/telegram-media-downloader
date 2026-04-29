@@ -36,13 +36,14 @@ export class AutoForwarder {
             ? this.accountManager.getClient(groupConfig.forwardAccount)
             : this.client;
 
-        console.log(colorize(`➡️  [AutoForward] Processing for ${groupName}...`, 'cyan'));
+        const ts = new Date().toISOString();
+        console.log(colorize(`${ts} ➡️  [AutoForward] Processing for ${groupName}...`, 'cyan'));
 
         try {
             // 2. Resolve Destination
             let targetPeer = await this.resolveDestination(settings.destination, fwdClient);
             if (!targetPeer) {
-                console.log(colorize(`⚠️  [AutoForward] Could not resolve destination. Skipping.`, 'yellow'));
+            console.log(colorize(`${ts} ⚠️  [AutoForward] Could not resolve destination. Skipping.`, 'yellow'));
                 return;
             }
 
@@ -96,7 +97,7 @@ export class AutoForwarder {
             }
 
         } catch (error) {
-            console.log(colorize(`❌ [AutoForward] Error: ${error.message}`, 'red'));
+            console.log(colorize(`${ts} ❌ [AutoForward] Error: ${error.message}`, 'red'));
         }
     }
 
@@ -161,7 +162,8 @@ export class AutoForwarder {
             }
 
             // Create new if not found
-            console.log(colorize(`🛠️  [AutoForward] Creating storage channel...`, 'cyan'));
+            const ts = new Date().toISOString();
+            console.log(colorize(`${ts} 🛠️  [AutoForward] Creating storage channel...`, 'cyan'));
             const result = await client.invoke(
                 new Api.channels.CreateChannel({
                     title: 'Telegram Downloader Storage',
@@ -174,12 +176,12 @@ export class AutoForwarder {
             // Access the created channel
             if (result.chats && result.chats[0]) {
                 this.storageChannelId = result.chats[0];
-                console.log(colorize(`✅ [AutoForward] Created channel: Telegram Downloader Storage`, 'green'));
+                console.log(colorize(`${ts} ✅ [AutoForward] Created channel: Telegram Downloader Storage`, 'green'));
                 return this.storageChannelId;
             }
 
         } catch (e) {
-            console.log(colorize(`❌ [AutoForward] Failed to create/find storage channel: ${e.message}`, 'red'));
+            console.log(colorize(`${ts} ❌ [AutoForward] Failed to create/find storage channel: ${e.message}`, 'red'));
         }
 
         return null;
