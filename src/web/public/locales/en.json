@@ -233,6 +233,7 @@
     "groups.page.subtitle": "Configure monitoring and filters",
     "groups.tab.all": "All Dialogs",
     "groups.tab.monitored": "Monitored Only",
+    "groups.tab.unmonitored": "Unmonitored",
     "groups.search_placeholder": "Search groups/channels…",
     "groups.loading_dialogs": "Loading dialogs…",
     "groups.load_failed": "Failed to load dialogs.",

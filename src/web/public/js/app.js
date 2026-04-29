@@ -1088,8 +1088,10 @@ function renderDialogsList(dialogs) {
     
     const tab = state.groupsTab || 'all';
     const filtered = tab === 'monitored' 
-        ? dialogs.filter(d => d.inConfig || d.enabled) 
-        : dialogs;
+        ? dialogs.filter(d => d.inConfig || d.enabled)
+        : tab === 'unmonitored'
+            ? dialogs.filter(d => !d.inConfig && !d.enabled)
+            : dialogs;
     
     if (filtered.length === 0) {
         list.innerHTML = `<div class="text-center py-8 text-tg-textSecondary">${escapeHtml(i18nT('groups.none_found', 'No groups found'))}</div>`;
@@ -1147,15 +1149,16 @@ function filterDialogs(query) {
 function switchGroupsTab(tab) {
     state.groupsTab = tab;
     
-    document.getElementById('groups-tab-all')?.classList.toggle('border-tg-blue', tab === 'all');
-    document.getElementById('groups-tab-all')?.classList.toggle('text-tg-blue', tab === 'all');
-    document.getElementById('groups-tab-all')?.classList.toggle('border-transparent', tab !== 'all');
-    document.getElementById('groups-tab-all')?.classList.toggle('text-tg-textSecondary', tab !== 'all');
-    
-    document.getElementById('groups-tab-monitored')?.classList.toggle('border-tg-blue', tab === 'monitored');
-    document.getElementById('groups-tab-monitored')?.classList.toggle('text-tg-blue', tab === 'monitored');
-    document.getElementById('groups-tab-monitored')?.classList.toggle('border-transparent', tab !== 'monitored');
-    document.getElementById('groups-tab-monitored')?.classList.toggle('text-tg-textSecondary', tab !== 'monitored');
+    const tabs = ['all', 'monitored', 'unmonitored'];
+    tabs.forEach(t => {
+        const el = document.getElementById(`groups-tab-${t}`);
+        if (!el) return;
+        const active = tab === t;
+        el.classList.toggle('border-tg-blue', active);
+        el.classList.toggle('text-tg-blue', active);
+        el.classList.toggle('border-transparent', !active);
+        el.classList.toggle('text-tg-textSecondary', !active);
+    });
     
     if (state.allDialogs) renderDialogsList(state.allDialogs);
 }
