@@ -186,10 +186,22 @@ app.use(helmet({
             'connect-src': ["'self'", 'ws:', 'wss:'],
             'object-src': ["'none'"],
             'frame-ancestors': ["'self'"],
+            // When the dashboard is served over plain HTTP (LAN/Tailscale),
+            // this default Helmet directive rewrites same-origin fetches to
+            // https://host which then fails with ERR_SSL_PROTOCOL_ERROR.
+            // Leave HTTPS enforcement to config.web.forceHttps / reverse proxy.
+            'upgrade-insecure-requests': null,
         },
     },
+    // COOP + OAC on non-trustworthy origins (plain IP http://) produce noisy
+    // browser warnings and can cause setup/login edge-cases during first run.
+    crossOriginOpenerPolicy: false,
     crossOriginEmbedderPolicy: false,
     crossOriginResourcePolicy: { policy: 'same-origin' },
+    originAgentCluster: false,
+    // Don't emit HSTS on plain HTTP listeners. If HTTPS is terminated by a
+    // reverse proxy, that layer should own HSTS.
+    strictTransportSecurity: false,
 }));
 
 // HTTP caching policy. Browsers (and intermediaries like Cloudflare) will
@@ -410,8 +422,11 @@ async function checkAuth(req, res, next) {
     const config = await readConfigSafe();
     const enabled = config.web?.enabled !== false; // default ON
 
+    // Explicit opt-out: allow open dashboard when auth is disabled.
+    if (!enabled) return next();
+
     // Fail-closed: dashboard is locked (or not yet configured).
-    if (!enabled || !isAuthConfigured(config.web)) {
+    if (!isAuthConfigured(config.web)) {
         if (req.path.startsWith('/api/') && !PUBLIC_API_PATHS.has(req.path)) {
             return res.status(503).json({
                 error: 'Web dashboard not initialised. Run `npm run auth` to set a password.',
@@ -788,12 +803,12 @@ app.get('/api/auth_check', async (req, res) => {
     const config = await readConfigSafe();
     const configured = isAuthConfigured(config.web);
     const enabled = config.web?.enabled !== false;
-    const authed = configured && enabled && validateSession(req.cookies['tg_dl_session']);
+    const authed = !enabled || (configured && validateSession(req.cookies['tg_dl_session']));
     res.json({
         configured,
         enabled,
         authenticated: !!authed,
-        setupRequired: !configured || !enabled,
+        setupRequired: enabled && !configured,
     });
 });
 
