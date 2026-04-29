@@ -975,15 +975,6 @@ async function setupMediaSearch() {
     const selSelectAll = document.getElementById('selection-select-all');
     if (!input) return;
 
-    // Select All handler
-    selSelectAll?.addEventListener('click', () => {
-        if (!state.files) return;
-        if (!state.selected) state.selected = new Set();
-        state.files.forEach(f => state.selected.add(f.fullPath || f.path));
-        updateSelectionBar();
-        renderMediaGrid();
-    });
-
     let timer = null;
     let lastQuery = '';
 
@@ -1533,6 +1524,43 @@ function setupEventListeners() {
     
     document.getElementById('sidebar-close')?.addEventListener('click', closeSidebar);
     document.getElementById('sidebar-overlay')?.addEventListener('click', closeSidebar);
+    
+    // Selection bar - Select All
+    document.getElementById('selection-select-all')?.addEventListener('click', () => {
+        if (!state.files) return;
+        if (!state.selected) state.selected = new Set();
+        state.files.forEach(f => state.selected.add(f.fullPath || f.path));
+        updateSelectionBar();
+        renderMediaGrid();
+    });
+
+    // Selection bar - Clear
+    document.getElementById('selection-clear')?.addEventListener('click', () => {
+        if (state.selected) state.selected.clear();
+        updateSelectionBar();
+        renderMediaGrid();
+    });
+
+    // Selection bar - Delete
+    document.getElementById('selection-delete')?.addEventListener('click', async () => {
+        if (!state.selected || !state.selected.size) return;
+        const paths = Array.from(state.selected);
+        if (!(await confirmSheet({
+            title: i18nT('viewer.bulk.title', 'Delete selected files?'),
+            message: i18nTf('viewer.bulk.confirm', { count: paths.length }, `Delete ${paths.length} file(s)? This cannot be undone.`),
+            confirmLabel: i18nT('common.delete', 'Delete'),
+            danger: true,
+        }))) return;
+        try {
+            const r = await api.post('/api/downloads/bulk-delete', { paths });
+            showToast(i18nTf('viewer.bulk.deleted', { count: r.unlinked }, `Deleted ${r.unlinked} files`), 'success');
+            state.selected.clear();
+            await loadStats();
+            await refreshCurrentPage();
+        } catch (e) {
+            showToast(e.message, 'error');
+        }
+    });
     
     // Sidebar quick-filter — matches the sidebar `.chat-row` markup that
     // renderGroupsList() actually produces. The legacy `.group-item`
