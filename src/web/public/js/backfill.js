@@ -26,6 +26,8 @@ import { t as i18nT, tf as i18nTf, applyToDOM as applyI18n } from './i18n.js';
 import { confirmSheet } from './sheet.js';
 
 const PRESETS = [
+    { value: 5, key: 'backfill.preset.last_5', fallback: 'Last 5' },
+    { value: 10, key: 'backfill.preset.last_10', fallback: 'Last 10' },
     { value: 100, key: 'backfill.preset.last_100', fallback: 'Last 100' },
     { value: 1000, key: 'backfill.preset.last_1k', fallback: 'Last 1k' },
     { value: 10000, key: 'backfill.preset.last_10k', fallback: 'Last 10k' },
