@@ -68,14 +68,15 @@ export class AutoForwarder {
 
             // 4. Upload & Send
             // We use sendFile to bypass restricted content forwarding
-            await fwdClient.sendFile(targetPeer, {
+            const msg = await fwdClient.sendFile(targetPeer, {
                 file: filePath,
                 caption: caption,
                 forceDocument: false,
                 workers: 1 // Safer for automated uploads
             });
 
-            console.log(colorize(`✅ [AutoForward] Sent to ${settings.destination || 'Storage Channel'}`, 'green'));
+            const telegramMsgId = msg?.id || msg?.message?.id || msg?.messageId || 'unknown';
+            console.log(colorize(`✅ [AutoForward] Sent to ${settings.destination || 'Storage Channel'} (TG msg #${telegramMsgId})`, 'green'));
 
             // 5. Cleanup (if enabled). Isolate the unlink in its own
             // try/catch so a successful upload isn't reported as failed
@@ -104,7 +105,7 @@ export class AutoForwarder {
         client = client || this.client;
         // Case A: Specific Destination
         if (destination && destination !== 'storage') {
-            if (destination === 'me') return 'me';
+            if (destination === 'me' || destination === 'saved') return 'me';
             
             // Try to parse if it's an ID
             if (/^-?\d+$/.test(destination)) {
@@ -116,7 +117,23 @@ export class AutoForwarder {
                          const entity = await client.getInputEntity(id);
                          return entity;
                     } catch (e) {
-                        // Fallback: maybe it's treated as a string username if no ID match (unlikely for digits)
+                        // Try different ID formats for channels
+                        try {
+                            // For channels: -100XXXXXXX -> inputPeerChannel
+                            let cleanId = String(destination).replace(/^-100/, '').replace(/^-/, '');
+                            const { Api } = require('telegram');
+                            if (String(destination).startsWith('-100')) {
+                                return new Api.InputPeerChannel({
+                                    channelId: BigInt(cleanId),
+                                    accessHash: BigInt(0)
+                                });
+                            } else if (String(destination).startsWith('-')) {
+                                return new Api.InputPeerChat({
+                                    chatId: BigInt(cleanId)
+                                });
+                            }
+                        } catch (e2) {}
+                        // Fallback: return as-is and let GramJS handle it
                         return destination;
                     }
                 } catch (e) {
