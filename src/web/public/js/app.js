@@ -972,7 +972,17 @@ async function setupMediaSearch() {
     const selBar = document.getElementById('selection-bar');
     const selDel = document.getElementById('selection-delete');
     const selClear = document.getElementById('selection-clear');
+    const selSelectAll = document.getElementById('selection-select-all');
     if (!input) return;
+
+    // Select All handler
+    selSelectAll?.addEventListener('click', () => {
+        if (!state.files) return;
+        if (!state.selected) state.selected = new Set();
+        state.files.forEach(f => state.selected.add(f.fullPath || f.path));
+        updateSelectionBar();
+        renderMediaGrid();
+    });
 
     let timer = null;
     let lastQuery = '';
