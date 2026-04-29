@@ -76,7 +76,8 @@ export class AutoForwarder {
             });
 
             const telegramMsgId = msg?.id || msg?.message?.id || msg?.messageId || 'unknown';
-            console.log(colorize(`✅ [AutoForward] Sent to ${settings.destination || 'Storage Channel'} (TG msg #${telegramMsgId})`, 'green'));
+            const ts = new Date().toISOString();
+            console.log(colorize(`${ts} ✅ [AutoForward] Sent to ${settings.destination || 'Storage Channel'} (TG msg #${telegramMsgId})`, 'green'));
 
             // 5. Cleanup (if enabled). Isolate the unlink in its own
             // try/catch so a successful upload isn't reported as failed
@@ -87,7 +88,8 @@ export class AutoForwarder {
             if (settings.deleteAfterForward) {
                 try {
                     await fs.unlink(filePath);
-                    console.log(colorize(`🗑️  [AutoForward] Deleted local file: ${path.basename(filePath)}`, 'gray'));
+                    const ts = new Date().toISOString();
+                    console.log(colorize(`${ts} 🗑️  [AutoForward] Deleted local file: ${path.basename(filePath)}`, 'gray'));
                 } catch (unlinkErr) {
                     console.warn(colorize(`⚠️  [AutoForward] Forwarded but local delete failed for ${path.basename(filePath)}: ${unlinkErr.message}`, 'yellow'));
                 }
