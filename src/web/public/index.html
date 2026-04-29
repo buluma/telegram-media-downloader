@@ -2330,9 +2330,11 @@
 
     <!-- Selection footer (shown when items are selected) -->
     <div id="selection-bar" class="hidden fixed bottom-8 left-1/2 -translate-x-1/2 bg-tg-panel border border-tg-border rounded-full px-4 py-2 shadow-xl z-40 flex items-center gap-3 text-sm">
+        <button id="selection-select-all" class="text-tg-textSecondary hover:text-tg-text" data-i18n="viewer.selection.selectAll">Select All</button>
+        <span class="text-tg-textSecondary">|</span>
         <span id="selection-count" class="text-tg-text">0 selected</span>
         <button id="selection-clear" class="text-tg-textSecondary hover:text-tg-text" data-i18n="viewer.selection.clear">Clear</button>
-        <button id="selection-delete" class="px-3 py-1 rounded bg-red-500/20 text-red-400 hover:bg-red-500/30">
+        <button id="selection-delete" class="px-3 py-1 rounded bg-red-500/20 text-red-400 hover:bg-red-500/30 font-medium">
             <i class="ri-delete-bin-line"></i> <span data-i18n="viewer.selection.delete">Delete</span>
         </button>
     </div>
