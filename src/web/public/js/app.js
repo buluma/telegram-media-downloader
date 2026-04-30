@@ -1369,7 +1369,6 @@ async function setupMediaSearch() {
             showToast(i18nTf('viewer.bulk.failed', { msg: e.message }, `Delete failed: ${e.message}`), 'error');
         }
     });
->>>>>>> upstream/main
 }
 
 // ============ Groups Config Page ============
