@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.35] — 2026-04-30
+
+### Changed — View modes: polished List + dropdown picker
+- **List mode** redesigned — proper grid columns (thumb · name+group · size · date · open), hover row highlight, divider between rows, responsive (collapses to thumb+name+open on mobile).
+- **Dropdown picker** replaces the cycle button — Grid / Compact / List shown together with active checkmark. No more clicking through to find the mode you want.
+- Tile markup unified across modes; switching is pure CSS (instant, no re-render, no scroll drift).
+
+### SW
+- VERSION bumped `'v34'` → `'v35'`.
+
 ## [2.3.34] — 2026-04-30
 
 ### Changed — Backfill: smart resume + auto-spawn
