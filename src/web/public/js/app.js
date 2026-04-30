@@ -20,6 +20,7 @@ import { openSheet, confirmSheet } from './sheet.js';
 import { renderChatRow, renderEmptyState, renderRowSkeletons, renderGallerySkeletons } from './components.js';
 import { formatRelativeTime } from './utils.js';
 import { attachLongPress, attachPullToRefresh } from './gestures.js';
+import { setupGallerySelect, exitSelectMode, repaintSelection } from './gallery-select.js';
 import { initI18n, setLang, getLang, applyToDOM as applyI18n, t as i18nT, tf as i18nTf } from './i18n.js';
 import { showBackfillPage, deepLinkFromModal as backfillDeepLink, stopBackfillPage } from './backfill.js';
 import * as Fonts from './fonts.js';
@@ -352,6 +353,17 @@ async function init() {
     setupMediaSearch();
     setupStoriesPanel();
     setupGalleryGestures();
+    // Desktop-grade gallery picker: drag-to-select (lasso), Ctrl/Cmd
+    // toggle, Shift range, Ctrl+A select-all, Esc exit, Delete bulk-delete.
+    // Wires once — handlers are bound on `document` + the grid in capture
+    // phase so they take precedence over app.js's per-tile delegation.
+    setupGallerySelect({
+        onChange: () => updateSelectionBar(),
+        deleteSelected: () => {
+            const btn = document.getElementById('selection-delete');
+            if (btn) btn.click();
+        },
+    });
     setupToggleA11y();
 
     // Initialise i18n + the language picker. The fall-through is English so
@@ -888,11 +900,15 @@ function renderMediaGrid(opts = {}) {
             ? `<h4 class="grid-section-header" style="grid-column: 1 / -1; padding: 16px 4px 8px; color: var(--tg-textSecondary, #8B9BAA); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;">${escapeHtml(label)}</h4>`
             : '';
         const tiles = items.map(({ file, originalIndex }) => {
-            const checked = state.selected.has(file.fullPath);
-            const checkBadge = state.selectMode
-                ? `<div class="select-badge absolute top-1 left-1 w-6 h-6 rounded-full ${checked ? 'bg-tg-blue text-white' : 'bg-black/40 text-transparent'} flex items-center justify-center text-sm"><i class="ri-check-line"></i></div>`
-                : '';
-            const ringClass = checked ? 'ring-2 ring-tg-blue' : '';
+            // CSS-driven selection visuals: `.media-grid.in-select-mode`
+            // reveals the badge on every tile, and `.media-item.is-selected`
+            // flips it to "checked". Both classes are toggled in place by
+            // gallery-select.js — no re-render needed for selection
+            // changes, which is what keeps the lasso smooth on a long
+            // gallery.
+            const checked = state.selected?.has(file.fullPath);
+            const selectedCls = checked ? 'is-selected' : '';
+            const checkBadge = `<div class="select-badge"><i class="ri-check-line"></i></div>`;
             // Rescue Mode badges. Rescued tiles win over pending (a row
             // shouldn't carry both, but if it does, "rescued" is the more
             // useful signal). Pending shows a remaining-hours estimate +
@@ -947,7 +963,7 @@ function renderMediaGrid(opts = {}) {
             const sizeLine = file.sizeFormatted || (file.size ? formatBytes(file.size) : '');
             const dateLine = file.modified ? formatRelativeTime(file.modified) : '';
             return `
-            <div class="media-item relative ${ringClass}" data-index="${originalIndex}" data-path="${escapeHtml(file.fullPath)}"${file.id != null ? ` data-id="${file.id}"` : ''}>
+            <div class="media-item relative ${selectedCls}" data-index="${originalIndex}" data-path="${escapeHtml(file.fullPath)}"${file.id != null ? ` data-id="${file.id}"` : ''}>
                 <div class="tile-thumb relative w-full h-full overflow-hidden">
                     ${thumbInner}
                     ${gridDocLabel}
@@ -988,6 +1004,10 @@ function renderMediaGrid(opts = {}) {
     // switches snappy on a thousand-tile grid.
     _wireMediaGridDelegation(grid);
     _attachLazyObservers(grid);
+    // Re-apply select-mode class + repaint .is-selected on tiles after
+    // any full or append render so the visual state survives mutations
+    // (e.g. infinite scroll, filter switch, file_deleted).
+    repaintSelection();
 }
 
 let _gridDelegated = false;
@@ -1070,12 +1090,19 @@ function renderRescueBadge(file) {
     return '';
 }
 
+// In-place selection toggle. Used by long-press (touch) and the
+// fallback select-mode click in app.js's grid delegation. Desktop
+// gestures (Ctrl/Shift/lasso/Ctrl+A) live in gallery-select.js and
+// flip the same state without going through here. No grid re-render —
+// just toggle `.is-selected` on the matching tile.
 function toggleSelection(path) {
     if (!state.selected) state.selected = new Set();
     if (state.selected.has(path)) state.selected.delete(path);
     else state.selected.add(path);
+    const grid = document.getElementById('media-grid');
+    const tile = grid?.querySelector(`.media-item[data-path="${CSS.escape(path)}"]`);
+    if (tile) tile.classList.toggle('is-selected', state.selected.has(path));
     updateSelectionBar();
-    renderMediaGrid();
 }
 
 function updateSelectionBar() {
@@ -1250,18 +1277,26 @@ async function setupMediaSearch() {
     clear?.addEventListener('click', () => { input.value = ''; lastQuery = ''; clear.classList.add('hidden'); runSearch(''); });
 
     selectBtn?.addEventListener('click', () => {
-        state.selectMode = !state.selectMode;
-        selectBtn.classList.toggle('bg-tg-blue', state.selectMode);
-        selectBtn.classList.toggle('text-white', state.selectMode);
-        if (!state.selectMode && state.selected) state.selected.clear();
+        if (state.selectMode) {
+            // Off → wipe selection + repaint via the shared helper so
+            // the in-place class toggles match the boot-time wiring.
+            exitSelectMode();
+        } else {
+            state.selectMode = true;
+            selectBtn.classList.add('bg-tg-blue', 'text-white');
+            const grid = document.getElementById('media-grid');
+            if (grid) grid.classList.add('in-select-mode');
+        }
         updateSelectionBar();
-        renderMediaGrid();
     });
 
     selClear?.addEventListener('click', () => {
         if (state.selected) state.selected.clear();
+        // Drop the visual checked-state in place — way cheaper than
+        // a full grid re-render.
+        const grid = document.getElementById('media-grid');
+        grid?.querySelectorAll('.is-selected').forEach(el => el.classList.remove('is-selected'));
         updateSelectionBar();
-        renderMediaGrid();
     });
 
     selDel?.addEventListener('click', async () => {
