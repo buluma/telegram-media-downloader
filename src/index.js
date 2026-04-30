@@ -54,10 +54,25 @@ function question(query) {
     });
 }
 
-async function main() {
-    resilience.init();
+function assertNodeCompatible() {
+    const major = Number(String(process.versions.node || '').split('.')[0]);
+    if (Number.isFinite(major) && major >= 20) return;
+    console.error(colorize(
+        `❌ Unsupported Node.js ${process.versions.node}. Use Node 20+ (see .nvmrc).`,
+        'red',
+        'bold',
+    ));
+    process.exit(1);
+}
 
+async function main() {
+    assertNodeCompatible();
     const command = process.argv[2];
+    const isWebMode = !command || command === 'web';
+    // The web server has its own unhandled-rejection policy in web/server.js.
+    // Keeping the CLI fatal trap active there makes transient async blips
+    // terminate the whole HTTP process.
+    if (!isWebMode) resilience.init();
 
     // Default behaviour with no subcommand: launch the web dashboard.
     // Everything (accounts, groups, history, monitor, settings, link

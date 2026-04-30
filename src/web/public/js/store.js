@@ -36,10 +36,13 @@ export const state = {
     observer: null,
     imageObserver: null,
     viewMode: 'grid',
+    // Thumbnail visibility toggle for gallery tiles.
+    thumbsVisible: false,
     searchQuery: '',
     // Canonical name cache — fed by /api/groups/refresh-info responses and
     // the WS `groups_refreshed` broadcast. Keyed by stringified id.
     groupNameCache: {},
+    downloadedGroupsQuery: '',
     // 'admin' | 'guest' | null — populated from /api/auth_check on boot.
     // Drives both router.js (admin-only routes redirect guests) and the
     // body[data-role] CSS gate that hides admin-only UI elements.

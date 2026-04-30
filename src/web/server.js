@@ -1107,23 +1107,6 @@ app.get('/metrics', (req, res) => {
 // behave identically to /files/*). Cache-Control: no-store keeps a
 // shared CDN/proxy from hijacking the bytes for the next visitor.
 //
-// Both windowMs and limit are passed as functions so a config_updated
-// broadcast that changes them takes effect on the next request without a
-// process restart.
-const shareLimiter = rateLimit({
-    windowMs: () => {
-        const ms = Number(_currentShareConfig().rateLimitWindowMs);
-        return Number.isFinite(ms) && ms > 0 ? ms : 60_000;
-    },
-    limit: () => {
-        const lim = Number(_currentShareConfig().rateLimitMax);
-        return Number.isFinite(lim) && lim > 0 ? lim : 60;
-    },
-    standardHeaders: 'draft-7',
-    legacyHeaders: false,
-    message: { error: 'Too many requests — slow down.' },
-});
-
 // Tiny cache around the last-loaded config so the rate-limit getters
 // don't sync-read disk on every share request. Refreshed by the
 // config_updated WS broadcast handler below + on first use.
@@ -1136,6 +1119,38 @@ function _currentShareConfig() {
     return _shareConfigCache;
 }
 function _invalidateShareConfigCache() { _shareConfigCache = null; }
+
+function _shareRateLimitWindowMs() {
+    const ms = Number(_currentShareConfig().rateLimitWindowMs);
+    return Number.isFinite(ms) && ms > 0 ? ms : 60_000;
+}
+
+function _shareRateLimitMax() {
+    const lim = Number(_currentShareConfig().rateLimitMax);
+    return Number.isFinite(lim) && lim > 0 ? lim : 60;
+}
+
+function _buildShareLimiter() {
+    return rateLimit({
+        // express-rate-limit expects a NUMBER for windowMs. Passing a
+        // function produces NaN at init-time and arms a near-1ms timer
+        // (TimeoutNaNWarning), which is a major stability hazard.
+        windowMs: _shareRateLimitWindowMs(),
+        limit: _shareRateLimitMax(),
+        standardHeaders: 'draft-7',
+        legacyHeaders: false,
+        message: { error: 'Too many requests — slow down.' },
+    });
+}
+
+let _shareLimiter = _buildShareLimiter();
+function shareLimiter(req, res, next) {
+    return _shareLimiter(req, res, next);
+}
+
+function _refreshShareLimiter() {
+    _shareLimiter = _buildShareLimiter();
+}
 
 app.get('/share/:linkId', shareLimiter, async (req, res, next) => {
     try {
@@ -2769,6 +2784,7 @@ app.get('/api/downloads/:groupId', async (req, res, next) => {
                 : `${groupFolder}/${typeFolder}/${row.file_name}`;
             
             return {
+                id: row.id,
                 name: row.file_name,
                 path: row.file_path,
                 fullPath,
@@ -4075,6 +4091,7 @@ app.post('/api/config', async (req, res) => {
         try {
             applyShareLimits(newConfig.advanced?.share || {});
             _invalidateShareConfigCache();
+            _refreshShareLimiter();
         } catch {}
 
         // Reset the lazy AccountManager singleton if Telegram credentials

@@ -2,11 +2,11 @@
 # Universal watchdog runner — POSIX equivalent of runner.js / watchdog.ps1.
 # Restarts the chosen subcommand with exponential backoff up to MAX_CRASHES.
 #
-#   ./runner.sh               # uses TGDL_RUN env (default: monitor)
+#   ./runner.sh               # uses TGDL_RUN env (default: dashboard/web mode)
 #   TGDL_RUN=history ./runner.sh
 
 set -u
-COMMAND=${TGDL_RUN:-monitor}
+COMMAND=${TGDL_RUN:-}
 MAX_CRASHES=10
 RESET_WINDOW=60
 LOG_DIR="data/logs"
@@ -16,8 +16,13 @@ mkdir -p "$LOG_DIR"
 count=0
 while true; do
     start=$(date +%s)
-    printf '\n\033[32m🚀 Launching (attempt #%d, command: %s)\033[0m\n' "$((count+1))" "$COMMAND"
-    node src/index.js $COMMAND
+    if [ -n "$COMMAND" ]; then
+        printf '\n\033[32m🚀 Launching (attempt #%d, command: %s)\033[0m\n' "$((count+1))" "$COMMAND"
+        node src/index.js $COMMAND
+    else
+        printf '\n\033[32m🚀 Launching (attempt #%d, command: <dashboard>)\033[0m\n' "$((count+1))"
+        node src/index.js
+    fi
     code=$?
     elapsed=$(( $(date +%s) - start ))
     if [ "$code" = "0" ]; then

@@ -1282,6 +1282,15 @@
                     <i id="downloaded-groups-chevron" class="ri-arrow-up-s-line text-base normal-case" aria-hidden="true"></i>
                 </button>
                 <div id="downloaded-groups-body">
+                    <div class="px-2 pb-2">
+                        <div class="relative">
+                            <i class="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-tg-textSecondary"></i>
+                            <input type="text" id="downloaded-groups-search"
+                                data-i18n-placeholder="sidebar.downloaded_groups_search"
+                                placeholder="Quick search groups…"
+                                class="tg-input pl-9 py-1.5 text-sm">
+                        </div>
+                    </div>
                     <div id="groups-list"></div>
                 </div>
             </div>
@@ -1600,6 +1609,9 @@
                         </div>
                         <button id="select-mode-btn" data-admin-only class="px-3 py-1.5 rounded-lg bg-tg-panel hover:bg-tg-hover text-sm text-tg-text" data-i18n-title="viewer.select_mode" title="Toggle selection mode">
                             <i class="ri-checkbox-multiple-line"></i>
+                        </button>
+                        <button id="thumbs-toggle-btn" class="px-3 py-1.5 rounded-lg bg-tg-panel hover:bg-tg-hover text-sm text-tg-text" title="Show thumbnails">
+                            <i class="ri-image-line"></i>
                         </button>
                     </div>
                     <div id="media-grid" class="media-grid"></div>
