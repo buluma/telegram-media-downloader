@@ -1461,10 +1461,15 @@
                             <button id="engine-stop" class="tg-btn-secondary flex-1 hidden"><i class="ri-stop-line mr-2"></i><span data-i18n="settings.engine.stop">Stop</span></button>
                         </div>
                         <p id="engine-error" class="text-red-400 text-xs mt-2 hidden"></p>
-                        <!-- Live downloads list — populated by engine.js when monitor is running. -->
-                        <div id="engine-active-list" class="mt-3 space-y-1.5 hidden">
-                            <div class="text-tg-textSecondary text-xs" data-i18n="settings.engine.live">Live downloads</div>
-                        </div>
+                        <!-- Per-row live download list lived here pre-v2.3.31; the
+                             Queue page covers it (sortable, filterable, paged) so
+                             the live list was redundant. The Engine card stays
+                             focused on monitor lifecycle + headline counters. -->
+                        <a href="#/queue" class="mt-3 inline-flex items-center gap-1 text-xs text-tg-blue hover:underline">
+                            <i class="ri-download-cloud-2-line"></i>
+                            <span data-i18n="settings.engine.view_queue">View full queue</span>
+                            <i class="ri-arrow-right-s-line"></i>
+                        </a>
                     </div>
 
                     <!-- Telegram Accounts -->
@@ -2380,13 +2385,17 @@
                             <span data-i18n="queue.col.status">Status</span>
                             <span class="text-right" data-i18n="queue.col.actions">Actions</span>
                         </div>
-                        <!-- Virtualiser viewport. The inner spacer takes the
-                             full unfiltered height; rows are absolutely
-                             positioned at row-index * 56 px so we only ever
-                             render visible + 5-row buffer. -->
-                        <div id="queue-viewport" class="relative overflow-y-auto" style="height: calc(100vh - 280px); min-height: 320px;">
-                            <div id="queue-spacer" class="relative" style="height: 0px;">
-                                <div id="queue-rows" class="absolute inset-x-0 top-0"></div>
+                        <!-- Append-only viewport. Each batch renders 50 rows
+                             plus a sentinel; an IntersectionObserver appends
+                             the next batch on scroll. WS progress events
+                             patch the matching DOM row in place (no
+                             re-render) so a 1000-job queue stays smooth
+                             even with dozens of concurrent downloads. -->
+                        <div id="queue-viewport" class="overflow-y-auto" style="height: calc(100vh - 280px); min-height: 320px;">
+                            <div id="queue-rows" class="divide-y divide-tg-border/30"></div>
+                            <div id="queue-load-more" class="flex items-center justify-center py-3 text-xs text-tg-textSecondary hidden">
+                                <i class="ri-loader-4-line animate-spin mr-2"></i>
+                                <span data-i18n="queue.loading_more">Loading more…</span>
                             </div>
                             <div id="queue-empty" class="hidden text-center py-12">
                                 <i class="ri-download-cloud-2-line text-4xl text-tg-textSecondary mb-2"></i>

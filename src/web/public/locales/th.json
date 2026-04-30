@@ -794,6 +794,8 @@
     "queue.col.status": "สถานะ",
     "queue.col.actions": "การดำเนินการ",
     "queue.empty.title": "Queue ว่างเปล่า",
+    "queue.loading_more": "กำลังโหลดเพิ่มเติม…",
+    "settings.engine.view_queue": "ดู queue ทั้งหมด",
     "queue.empty.body": "เริ่ม engine หรือเริ่ม backfill — การดาวน์โหลดทั้งหมดจะมาที่นี่",
     "queue.throttle.label": "ความเร็วสูงสุด",
     "queue.throttle.unlimited": "ไม่จำกัด",

@@ -21,8 +21,22 @@ import { getGroupName } from './store.js';
 import { confirmSheet } from './sheet.js';
 
 // ============ Constants ============
-const ROW_HEIGHT = 56;          // px — keeps the math trivial
-const OVERSCAN = 5;             // rows above + below the viewport
+//
+// Append-only rendering: we paint INITIAL_RENDER rows up front, then add
+// PAGE_SIZE more whenever the user scrolls past the load-more sentinel.
+// WS progress events for already-rendered rows patch the matching DOM
+// node in place (no full re-render), so a 1000-job queue with dozens of
+// concurrent downloads stays smooth.
+//
+// Why append-only over virtualization:
+//   - Predictable scroll: rows never jump (no scroll-position drift when
+//     the underlying list mutates mid-frame).
+//   - In-place patches keep progress bars buttery — the only DOM op per
+//     WS event is `el.style.width = '47%'`, no layout thrash.
+//   - "Loading more…" animation matches user mental model — gradual fill
+//     instead of "everything appears at once on heavy filter change".
+const INITIAL_RENDER = 50;
+const PAGE_SIZE = 50;
 const RENDER_COALESCE_MS = 60;  // collapse WS bursts into one rAF tick
 
 // Filter chip definitions. Order matters — also drives the keyboard tab order.
@@ -56,22 +70,46 @@ const view = {
     scrollTop: 0,
     booted: false,
     visible: false,
+    rendered: 0,         // how many rows of the filtered list are in the DOM
 };
+let _loadMoreObserver = null;
+// Keys whose rows landed in the DOM since the last full re-render. We
+// cap this so an indefinite-scroll session doesn't grow the Set forever.
+const _renderedKeys = new Set();
 
-// Render scheduling — collapse WS bursts into one rAF tick.
+// Render scheduling — collapse WS bursts into one rAF tick. Two paths:
+//   - `scheduleRender()`         → cheap, patches the rendered window
+//                                  rows in place + refreshes chips +
+//                                  aggregate. Used for live progress
+//                                  ticks.
+//   - `scheduleStructuralRender()` → full re-render of the rendered
+//                                    window. Used when the SHAPE of the
+//                                    list changes (filter, sort, search,
+//                                    or a brand-new job that may not
+//                                    appear in the current order).
 let _renderScheduled = false;
+let _renderStructural = false;
 function scheduleRender() {
     if (_renderScheduled) return;
     _renderScheduled = true;
     setTimeout(() => {
+        const structural = _renderStructural;
         _renderScheduled = false;
+        _renderStructural = false;
         requestAnimationFrame(() => {
-            if (view.visible) renderRows();
+            if (view.visible) {
+                if (structural) renderRows();
+                else patchRenderedRows();
+            }
             renderChips();
             renderAggregate();
             updateNavBadge();
         });
     }, RENDER_COALESCE_MS);
+}
+function scheduleStructuralRender() {
+    _renderStructural = true;
+    scheduleRender();
 }
 
 function bumpStatus(status, delta) {
@@ -143,7 +181,7 @@ async function loadSnapshot() {
         for (const j of snap.queued || []) upsert({ ...j });
         for (const j of snap.recent || []) upsert({ ...j });
         view.booted = true;
-        scheduleRender();
+        scheduleStructuralRender();
     } catch (e) {
         if (e.status !== 401) {
             showToast(i18nTf('queue.toast.snapshot_failed', { msg: e.message }, `Failed to load queue: ${e.message}`), 'error');
@@ -152,6 +190,10 @@ async function loadSnapshot() {
 }
 
 // ============ WS handlers ============
+//
+// Render-path rules of thumb:
+//   - structural change (add/remove a row, mass status flip)  → scheduleStructuralRender()
+//   - per-row update (progress, speed, single status change)   → scheduleRender() (in-place patch)
 function handleWs(msg) {
     if (msg.type === 'monitor_state') {
         engineRunning = msg.state === 'running';
@@ -160,32 +202,35 @@ function handleWs(msg) {
             for (const [k, v] of store) {
                 if (v.status === 'active' || v.status === 'queued' || v.status === 'paused') remove(k);
             }
+            scheduleStructuralRender();
+        } else {
+            scheduleRender();
         }
-        scheduleRender();
         return;
     }
     if (msg.type === 'queue_changed') {
         const p = msg.payload || {};
-        if (p.op === 'pause-all') { globalPaused = true; scheduleRender(); return; }
-        if (p.op === 'resume-all') { globalPaused = false; scheduleRender(); return; }
+        if (p.op === 'pause-all') { globalPaused = true; scheduleStructuralRender(); return; }
+        if (p.op === 'resume-all') { globalPaused = false; scheduleStructuralRender(); return; }
         if (p.op === 'cancel-all') {
             for (const [k, v] of store) {
                 if (v.status === 'queued' || v.status === 'paused') remove(k);
             }
-            scheduleRender();
+            scheduleStructuralRender();
             return;
         }
         if (p.op === 'clear-finished') {
             for (const [k, v] of store) if (v.status === 'done' || v.status === 'failed') remove(k);
-            scheduleRender();
+            scheduleStructuralRender();
             return;
         }
         if (!p.key) { scheduleRender(); return; }
         const cur = store.get(p.key);
         if (p.op === 'pause' && cur) { cur.status = 'paused'; bumpStatus('queued', -1); bumpStatus('active', -1); bumpStatus('paused', 1); }
         else if (p.op === 'resume' && cur) { cur.status = cur.received ? 'active' : 'queued'; bumpStatus('paused', -1); bumpStatus(cur.status, 1); }
-        else if (p.op === 'cancel') { remove(p.key); }
+        else if (p.op === 'cancel') { remove(p.key); scheduleStructuralRender(); return; }
         else if (p.op === 'retry' && cur) { cur.status = 'queued'; cur.error = null; cur.progress = 0; cur.received = 0; cur.bps = 0; cur.eta = null; bumpStatus('failed', -1); bumpStatus('queued', 1); }
+        // Single-row status flip — patcher detects + replaces just that row.
         scheduleRender();
         return;
     }
@@ -208,7 +253,8 @@ function handleWs(msg) {
             status: 'active',
             addedAt: p.addedAt || prev?.addedAt || Date.now(),
         });
-        scheduleRender();
+        // New job added → may not be in the rendered window yet → structural.
+        scheduleStructuralRender();
         return;
     }
     if (msg.type === 'download_progress' && msg.payload?.key) {
@@ -342,36 +388,47 @@ function renderChips() {
             const target = view.filter === 'all' ? '#/queue' : `#/queue/${encodeURIComponent(view.filter)}`;
             if (location.hash !== target) history.replaceState(null, '', target);
             renderChips();
+            // Filter changed → row set changed → full re-render. Reset
+            // the rendered window so the user sees the first page of
+            // the new filter, not a stale slice.
             renderRows();
+            // Scroll back to the top so the user lands on the start of
+            // the new filter rather than mid-list at the previous offset.
+            const vp = document.getElementById('queue-viewport');
+            if (vp) vp.scrollTop = 0;
         });
     });
 }
 
+// Full re-render — wipes the rows host, paints INITIAL_RENDER rows, and
+// arms the load-more sentinel for further pages. Called when the
+// filter/sort/search changes, or on the very first paint.
 function renderRows() {
     const viewport = document.getElementById('queue-viewport');
-    const spacer = document.getElementById('queue-spacer');
     const rowsHost = document.getElementById('queue-rows');
     const empty = document.getElementById('queue-empty');
-    if (!viewport || !spacer || !rowsHost) return;
+    const sentinel = document.getElementById('queue-load-more');
+    if (!viewport || !rowsHost) return;
 
     const rows = getFilteredSorted();
+    _renderedKeys.clear();
     if (rows.length === 0) {
-        spacer.style.height = '0px';
         rowsHost.innerHTML = '';
+        view.rendered = 0;
         if (empty) empty.classList.remove('hidden');
+        if (sentinel) sentinel.classList.add('hidden');
         return;
     }
     if (empty) empty.classList.add('hidden');
 
-    spacer.style.height = `${rows.length * ROW_HEIGHT}px`;
-    const scrollTop = viewport.scrollTop;
-    const visible = Math.ceil(viewport.clientHeight / ROW_HEIGHT);
-    const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
-    const end = Math.min(rows.length, start + visible + OVERSCAN * 2);
-    const slice = rows.slice(start, end);
-
-    rowsHost.style.transform = `translateY(${start * ROW_HEIGHT}px)`;
+    const initial = Math.min(INITIAL_RENDER, rows.length);
+    const slice = rows.slice(0, initial);
     rowsHost.innerHTML = slice.map(j => renderRow(j)).join('');
+    for (const j of slice) _renderedKeys.add(j.key);
+    view.rendered = initial;
+
+    _toggleSentinel(rows.length > view.rendered);
+    _ensureLoadMoreObserver();
 
     // Wire per-row interaction via event delegation. Doing it on the host
     // (rather than per-row addEventListener) keeps the cost O(1) per
@@ -423,6 +480,132 @@ function renderRows() {
             window.open(`/files/${encodeURIComponent(fp)}?inline=1`, '_blank');
         }
     };
+}
+
+// Append the next batch of rows to the current rendered window. Does NOT
+// re-paint the existing rows — just extends. Called by the
+// IntersectionObserver when the load-more sentinel scrolls into view.
+function appendNextPage() {
+    const rowsHost = document.getElementById('queue-rows');
+    if (!rowsHost) return;
+    const rows = getFilteredSorted();
+    if (view.rendered >= rows.length) {
+        _toggleSentinel(false);
+        return;
+    }
+    const slice = rows.slice(view.rendered, view.rendered + PAGE_SIZE);
+    if (slice.length === 0) {
+        _toggleSentinel(false);
+        return;
+    }
+    // Use insertAdjacentHTML for an O(N_appended) DOM insert that
+    // doesn't re-parse the existing rows — a `rowsHost.innerHTML += …`
+    // would re-parse the entire prior content, killing performance on
+    // a long queue.
+    rowsHost.insertAdjacentHTML('beforeend', slice.map(j => renderRow(j)).join(''));
+    for (const j of slice) _renderedKeys.add(j.key);
+    view.rendered += slice.length;
+    _toggleSentinel(view.rendered < rows.length);
+}
+
+function _toggleSentinel(show) {
+    const el = document.getElementById('queue-load-more');
+    if (!el) return;
+    el.classList.toggle('hidden', !show);
+}
+
+// Single shared IntersectionObserver. Re-armed across re-renders by the
+// fact that the observer keeps watching the same DOM node — only the
+// node's visibility property changes.
+function _ensureLoadMoreObserver() {
+    const sentinel = document.getElementById('queue-load-more');
+    const viewport = document.getElementById('queue-viewport');
+    if (!sentinel || !viewport) return;
+    if (_loadMoreObserver) return;
+    _loadMoreObserver = new IntersectionObserver((entries) => {
+        for (const e of entries) {
+            if (e.isIntersecting) {
+                appendNextPage();
+                break;
+            }
+        }
+    }, {
+        // root: the queue viewport (a scrollable element). 200 px
+        // pre-fetch margin so the next batch is in flight before the
+        // user actually reaches the bottom — no flash of "Loading…".
+        root: viewport,
+        rootMargin: '200px 0px 200px 0px',
+        threshold: 0,
+    });
+    _loadMoreObserver.observe(sentinel);
+}
+
+// Live progress patch — for every row currently in the DOM, look up the
+// fresh state in the store and update only the bits that change between
+// frames (progress bar width, transferred bytes, speed, ETA, status
+// pill). Avoids a full re-render so a 60-FPS download stream doesn't
+// thrash layout. Rows that were structurally added/removed are handled
+// by the structural-render path.
+function patchRenderedRows() {
+    const rowsHost = document.getElementById('queue-rows');
+    if (!rowsHost || _renderedKeys.size === 0) return;
+    // Detect newly-added jobs that AREN'T in the rendered window — if
+    // there are any (e.g. monitor just started a fresh download), force
+    // a structural re-render so they appear.
+    const filtered = getFilteredSorted();
+    const filteredKeys = new Set();
+    for (let i = 0; i < Math.min(filtered.length, view.rendered); i++) {
+        filteredKeys.add(filtered[i].key);
+    }
+    // If the rendered window's set of keys diverged from the filtered
+    // window (a new top-of-list job, a removal), do a structural pass.
+    if (filteredKeys.size !== _renderedKeys.size) {
+        renderRows();
+        return;
+    }
+    for (const k of _renderedKeys) {
+        if (!filteredKeys.has(k)) { renderRows(); return; }
+    }
+    // Patch in place. Each `[data-key]` row has a small set of named
+    // child nodes the patcher knows about; update only those.
+    for (const job of filtered.slice(0, view.rendered)) {
+        const rowEl = rowsHost.querySelector(`[data-key="${CSS.escape(job.key)}"]`);
+        if (!rowEl) continue;
+        _patchRowNode(rowEl, job);
+    }
+}
+
+function _patchRowNode(rowEl, job) {
+    const pct = Math.max(0, Math.min(100, job.progress || 0));
+    // Progress bar
+    const bar = rowEl.querySelector('[data-row-bar]');
+    if (bar) bar.style.width = pct + '%';
+    // Numeric progress label
+    const pctLbl = rowEl.querySelector('[data-row-pct]');
+    if (pctLbl) pctLbl.textContent = pct + '%';
+    // Transferred bytes / total / speed line
+    const meta = rowEl.querySelector('[data-row-meta]');
+    if (meta) {
+        const total = job.total || job.fileSize || 0;
+        const sizeLine = total
+            ? `${formatBytes(job.received || 0)} / ${formatBytes(total)}`
+            : (job.received ? formatBytes(job.received) : '');
+        const speed = job.bps ? `${formatBytes(job.bps)}/s` : '';
+        const eta = job.eta != null ? formatEta(job.eta) : '';
+        meta.textContent = [sizeLine, speed, eta].filter(Boolean).join(' · ');
+    }
+    // Status pill — only DOM-touch when the status actually changed
+    const pillEl = rowEl.querySelector('[data-row-status]');
+    if (pillEl && pillEl.dataset.status !== job.status) {
+        // Status change can flip the action set (active → done changes
+        // the per-row buttons). Cheapest correct fix: re-render this
+        // single row.
+        const next = renderRow(job);
+        const tmp = document.createElement('div');
+        tmp.innerHTML = next;
+        const newRow = tmp.firstElementChild;
+        if (newRow) rowEl.replaceWith(newRow);
+    }
 }
 
 function renderRow(j) {
@@ -509,10 +692,12 @@ function renderRow(j) {
     // stays meaningful.
     const pctLabel = isDone ? '' : (j.status === 'queued' ? '' : `${pct}%`);
 
+    // The hooks `data-row-bar`, `data-row-pct`, `data-row-meta`, and
+    // `data-row-status` let `_patchRowNode()` update only the changing
+    // bits on every WS progress tick (no full re-render of the row).
     return `
         <div data-key="${escapeHtml(j.key)}" ${rowAttrs}
-             class="grid grid-cols-[40px_minmax(0,2.5fr)_90px_minmax(140px,1.4fr)_80px_70px_90px_120px] items-center gap-2 px-3 border-b border-tg-border/40 hover:bg-tg-hover/40${rowExtraCls}"
-             style="height: ${ROW_HEIGHT}px;">
+             class="grid grid-cols-[40px_minmax(0,2.5fr)_90px_minmax(140px,1.4fr)_80px_70px_90px_120px] items-center gap-2 px-3 py-2 hover:bg-tg-hover/40${rowExtraCls}">
             ${thumb}
             <div class="min-w-0">
                 <div class="text-sm text-tg-text truncate" title="${escapeHtml(name)}">${escapeHtml(name)}</div>
@@ -521,13 +706,13 @@ function renderRow(j) {
             <div class="text-xs text-tg-textSecondary text-right tabular-nums">${escapeHtml(sizeStr)}</div>
             <div class="min-w-0">
                 <div class="h-1.5 bg-tg-bg/60 rounded overflow-hidden">
-                    <div class="h-full ${j.status === 'failed' ? 'bg-red-500' : isDone ? 'bg-tg-green' : 'bg-tg-blue'} transition-all" style="width: ${pct}%"></div>
+                    <div data-row-bar class="h-full ${j.status === 'failed' ? 'bg-red-500' : isDone ? 'bg-tg-green' : 'bg-tg-blue'} transition-all" style="width: ${pct}%"></div>
                 </div>
-                <div class="text-[10px] text-tg-textSecondary tabular-nums mt-0.5">${escapeHtml(pctLabel)}</div>
+                <div data-row-pct class="text-[10px] text-tg-textSecondary tabular-nums mt-0.5">${escapeHtml(pctLabel)}</div>
             </div>
-            <div class="text-xs text-tg-textSecondary text-right tabular-nums">${escapeHtml(speedStr)}</div>
+            <div data-row-meta class="text-xs text-tg-textSecondary text-right tabular-nums">${escapeHtml(speedStr)}</div>
             <div class="text-xs text-tg-textSecondary text-right tabular-nums">${escapeHtml(etaStr)}</div>
-            <div><span class="text-[11px] px-2 py-0.5 rounded-full ${pillCls}">${escapeHtml(pillLabel)}</span></div>
+            <div><span data-row-status data-status="${escapeHtml(j.status)}" class="text-[11px] px-2 py-0.5 rounded-full ${pillCls}">${escapeHtml(pillLabel)}</span></div>
             <div class="flex items-center justify-end gap-1">${actions.join('')}</div>
         </div>`;
 }
@@ -708,33 +893,40 @@ let _toolbarWired = false;
 function wireOnce() {
     if (_toolbarWired) return;
     _toolbarWired = true;
+    // Debounced search — fast typing should not re-render on every
+    // keystroke. 120 ms feels instant + drops 95 % of intermediate
+    // renders on a normal typing speed.
+    let _searchTimer = 0;
     document.getElementById('queue-search')?.addEventListener('input', (e) => {
-        view.search = e.target.value || '';
-        invalidateFilterCache();
-        renderRows();
+        const value = e.target.value || '';
+        clearTimeout(_searchTimer);
+        _searchTimer = setTimeout(() => {
+            view.search = value;
+            invalidateFilterCache();
+            renderRows();
+            const vp = document.getElementById('queue-viewport');
+            if (vp) vp.scrollTop = 0;
+        }, 120);
     });
     document.getElementById('queue-sort')?.addEventListener('change', (e) => {
         view.sort = e.target.value || 'addedAt';
         invalidateFilterCache();
         renderRows();
+        const vp = document.getElementById('queue-viewport');
+        if (vp) vp.scrollTop = 0;
     });
     document.getElementById('queue-pause-all')?.addEventListener('click', () => runGlobalAction('pause-all'));
     document.getElementById('queue-resume-all')?.addEventListener('click', () => runGlobalAction('resume-all'));
     document.getElementById('queue-cancel-all')?.addEventListener('click', () => runGlobalAction('cancel-all'));
     document.getElementById('queue-clear-finished')?.addEventListener('click', () => runGlobalAction('clear-finished'));
 
-    // Re-render rows on scroll for the virtualiser. Throttled via rAF
-    // so a fast scroll wheel never queues more than one render frame.
+    // Track scroll position so a navigation away and back lands at the
+    // same spot — the IntersectionObserver on `#queue-load-more` does
+    // the actual append-on-scroll work, no per-frame render needed here.
     const viewport = document.getElementById('queue-viewport');
     if (viewport) {
-        let scrollFrame = 0;
         viewport.addEventListener('scroll', () => {
-            if (scrollFrame) return;
-            scrollFrame = requestAnimationFrame(() => {
-                scrollFrame = 0;
-                view.scrollTop = viewport.scrollTop;
-                renderRows();
-            });
+            view.scrollTop = viewport.scrollTop;
         }, { passive: true });
     }
 
