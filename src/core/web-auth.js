@@ -78,18 +78,27 @@ function legacyCompare(a, b) {
 /**
  * Verify a login attempt against the config's web.* fields.
  * Returns:
- *   { ok: true,  upgrade?: true } on success (upgrade=true ⇒ caller should
- *                                  rehash and persist the new hash, drop legacy)
- *   { ok: false }                  on mismatch / not configured
+ *   { ok: true,  role: 'admin'|'guest', upgrade?: true }
+ *     upgrade=true ⇒ caller should rehash and persist the admin hash
+ *   { ok: false } on mismatch / not configured
+ *
+ * Admin hash is tried first. If the admin password also happens to match the
+ * guest hash (configured equal — rejected at set-time but possible if config
+ * is hand-edited), admin wins and the guest never logs in by accident.
  */
 export function loginVerify(plaintext, webConfig) {
     if (!webConfig) return { ok: false };
     if (webConfig.passwordHash) {
-        return { ok: verifyPassword(plaintext, webConfig.passwordHash) };
+        if (verifyPassword(plaintext, webConfig.passwordHash)) {
+            return { ok: true, role: 'admin' };
+        }
+    } else if (typeof webConfig.password === 'string' && webConfig.password.length > 0) {
+        if (legacyCompare(plaintext, webConfig.password)) {
+            return { ok: true, role: 'admin', upgrade: true };
+        }
     }
-    if (typeof webConfig.password === 'string' && webConfig.password.length > 0) {
-        const ok = legacyCompare(plaintext, webConfig.password);
-        return ok ? { ok: true, upgrade: true } : { ok: false };
+    if (isGuestEnabled(webConfig) && verifyPassword(plaintext, webConfig.guestPasswordHash)) {
+        return { ok: true, role: 'guest' };
     }
     return { ok: false };
 }
@@ -99,6 +108,12 @@ export function isAuthConfigured(webConfig) {
     if (webConfig.passwordHash) return true;
     if (typeof webConfig.password === 'string' && webConfig.password.length > 0) return true;
     return false;
+}
+
+export function isGuestEnabled(webConfig) {
+    if (!webConfig) return false;
+    if (!webConfig.guestPasswordHash) return false;
+    return webConfig.guestEnabled !== false;
 }
 
 // ---- session token store --------------------------------------------------
@@ -139,11 +154,17 @@ export function issueSession(opts = {}) {
     const ttlMs = Number.isFinite(opts.ttlMs) && opts.ttlMs > 0
         ? Math.floor(opts.ttlMs)
         : SESSION_TTL_MS;
-    sessions[token] = { createdAt: now, expiresAt: now + ttlMs };
+    const role = opts.role === 'guest' ? 'guest' : 'admin';
+    sessions[token] = { createdAt: now, expiresAt: now + ttlMs, role };
     persist();
-    return { token, maxAgeMs: ttlMs };
+    return { token, maxAgeMs: ttlMs, role };
 }
 
+/**
+ * Returns false if the session is invalid/expired, otherwise an object with
+ * `{ role }`. Sessions persisted before the role field existed default to
+ * `admin` so a config upgrade doesn't force every signed-in user to re-login.
+ */
 export function validateSession(token) {
     ensureLoaded();
     if (!token || typeof token !== 'string') return false;
@@ -154,7 +175,7 @@ export function validateSession(token) {
         persist();
         return false;
     }
-    return true;
+    return { role: meta.role === 'guest' ? 'guest' : 'admin' };
 }
 
 export function revokeSession(token) {
@@ -169,6 +190,15 @@ export function revokeAllSessions() {
     ensureLoaded();
     sessions = {};
     persist();
+}
+
+export function revokeAllGuestSessions() {
+    ensureLoaded();
+    let dirty = false;
+    for (const [tok, meta] of Object.entries(sessions)) {
+        if (meta?.role === 'guest') { delete sessions[tok]; dirty = true; }
+    }
+    if (dirty) persist();
 }
 
 // Periodic cleanup; safe to call repeatedly.

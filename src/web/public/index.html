@@ -1007,10 +1007,22 @@
         .chat-row .status-pill-active   { background: rgba(79,174,78,0.18);  color: #5BC55A; }
         .chat-row .status-pill-paused   { background: rgba(255,152,0,0.18);  color: #FFB54E; }
         .chat-row .status-pill-add      { background: rgba(255,255,255,0.06); color: var(--tg-textSecondary, #8B9BAA); }
+
+        /* Guest sessions hide every element marked admin-only. Single source
+           of truth so we don't have to thread `state.role` through every
+           render path. body[data-role] is set on boot in app.js init() from
+           /api/auth_check before any UI mounts. */
+        body[data-role="guest"] [data-admin-only] { display: none !important; }
+        /* Guest header role pill */
+        .role-pill { display: inline-flex; align-items: center; gap: 4px;
+            padding: 2px 8px; font-size: 11px; font-weight: 500;
+            border-radius: 999px; line-height: 1.4; letter-spacing: 0.02em; }
+        .role-pill.role-admin { background: rgba(42,171,238,0.15); color: var(--tg-blue, #2AABEE); }
+        .role-pill.role-guest { background: rgba(139,155,170,0.18); color: var(--tg-textSecondary, #8B9BAA); }
     </style>
 </head>
 
-<body class="h-screen overflow-hidden">
+<body class="h-screen overflow-hidden" data-role="">
 
     <div class="flex h-full">
         <!-- Mobile Overlay -->
@@ -1039,17 +1051,17 @@
                  "All Media" card below + the bottom-nav "Library" item
                  already cover it). -->
             <nav class="border-b border-tg-border">
-                <div class="nav-item flex items-center gap-3 p-3 cursor-pointer hover:bg-tg-hover" data-page="groups"
+                <div class="nav-item flex items-center gap-3 p-3 cursor-pointer hover:bg-tg-hover" data-page="groups" data-admin-only
                     onclick="navigateTo('groups')">
                     <i class="ri-group-line text-xl text-tg-textSecondary"></i>
                     <span class="text-tg-text" data-i18n="nav.groups">Groups</span>
                 </div>
-                <div class="nav-item flex items-center gap-3 p-3 cursor-pointer hover:bg-tg-hover" data-page="backfill"
+                <div class="nav-item flex items-center gap-3 p-3 cursor-pointer hover:bg-tg-hover" data-page="backfill" data-admin-only
                     onclick="navigateTo('backfill')">
                     <i class="ri-history-line text-xl text-tg-textSecondary"></i>
                     <span class="text-tg-text" data-i18n="nav.backfill">Backfill</span>
                 </div>
-                <div class="nav-item flex items-center gap-3 p-3 cursor-pointer hover:bg-tg-hover" data-page="queue"
+                <div class="nav-item flex items-center gap-3 p-3 cursor-pointer hover:bg-tg-hover" data-page="queue" data-admin-only
                     onclick="navigateTo('queue')">
                     <i class="ri-download-cloud-2-line text-xl text-tg-textSecondary"></i>
                     <span class="text-tg-text" data-i18n="nav.queue">Queue</span>
@@ -1315,16 +1327,17 @@
                         <h1 id="page-title" class="font-medium text-tg-text truncate" data-i18n="nav.viewer">Viewer</h1>
                         <p id="page-subtitle" class="text-xs text-tg-textSecondary" data-i18n="nav.viewer_sub">View downloaded files</p>
                     </div>
+                    <span id="role-pill" class="role-pill ml-2 hidden" aria-label="Account role"></span>
                 </div>
 
                 <div class="flex items-center gap-1">
-                    <button id="paste-url-btn" type="button"
+                    <button id="paste-url-btn" type="button" data-admin-only
                         class="w-10 h-10 min-w-[44px] min-h-[44px] rounded-full hover:bg-tg-hover flex items-center justify-center"
                         data-i18n-aria-label="header.paste_link" aria-label="Download from a Telegram link"
                         data-i18n-title="header.paste_link" title="Download from a Telegram link">
                         <i class="ri-link-m text-xl text-tg-textSecondary" aria-hidden="true"></i>
                     </button>
-                    <button id="stories-btn" type="button"
+                    <button id="stories-btn" type="button" data-admin-only
                         class="w-10 h-10 min-w-[44px] min-h-[44px] rounded-full hover:bg-tg-hover flex items-center justify-center"
                         data-i18n-aria-label="header.stories" aria-label="Download Telegram Stories"
                         data-i18n-title="header.stories" title="Download Telegram Stories">
@@ -1370,7 +1383,7 @@
                                 <i class="ri-close-line"></i>
                             </button>
                         </div>
-                        <button id="select-mode-btn" class="px-3 py-1.5 rounded-lg bg-tg-panel hover:bg-tg-hover text-sm text-tg-text" data-i18n-title="viewer.select_mode" title="Toggle selection mode">
+                        <button id="select-mode-btn" data-admin-only class="px-3 py-1.5 rounded-lg bg-tg-panel hover:bg-tg-hover text-sm text-tg-text" data-i18n-title="viewer.select_mode" title="Toggle selection mode">
                             <i class="ri-checkbox-multiple-line"></i>
                         </button>
                     </div>
@@ -1455,7 +1468,7 @@
                     </div>
 
                     <!-- Telegram Accounts -->
-                    <div class="bg-tg-panel rounded-xl p-4 mb-4">
+                    <div class="bg-tg-panel rounded-xl p-4 mb-4" data-admin-only>
                         <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
                             <i class="ri-user-line text-tg-blue"></i> <span data-i18n="settings.accounts">Telegram Accounts</span>
                             <a href="/add-account.html" class="ml-auto tg-btn-secondary text-xs px-3 py-1 inline-flex items-center gap-1">
@@ -1469,7 +1482,7 @@
                     </div>
 
                     <!-- Telegram API credentials -->
-                    <div class="bg-tg-panel rounded-xl p-4 mb-4">
+                    <div class="bg-tg-panel rounded-xl p-4 mb-4" data-admin-only>
                         <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
                             <i class="ri-key-2-line text-tg-blue"></i> <span data-i18n="settings.tg_api">Telegram API</span>
                         </h3>
@@ -1490,7 +1503,7 @@
                     </div>
 
                     <!-- Download Settings -->
-                    <div class="bg-tg-panel rounded-xl p-4 mb-4">
+                    <div class="bg-tg-panel rounded-xl p-4 mb-4" data-admin-only>
                         <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
                             <i class="ri-download-line text-tg-blue"></i> <span data-i18n="settings.download">Download</span>
                         </h3>
@@ -1646,7 +1659,7 @@
                     <!-- Rescue Mode (global default). Per-group rescueMode='auto'
                          follows this toggle; 'on'/'off' overrides it. The sweep
                          interval applies to every group with rescue active. -->
-                    <div class="bg-tg-panel rounded-xl p-4 mb-4" data-settings-section="rescue">
+                    <div class="bg-tg-panel rounded-xl p-4 mb-4" data-settings-section="rescue" data-admin-only>
                         <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
                             <i class="ri-lifebuoy-line text-tg-blue" aria-hidden="true"></i>
                             <span data-i18n="settings.rescue.title">Rescue mode</span>
@@ -1814,7 +1827,7 @@
                     </div>
 
                     <!-- Proxy -->
-                    <div class="bg-tg-panel rounded-xl p-4 mb-4">
+                    <div class="bg-tg-panel rounded-xl p-4 mb-4" data-admin-only>
                         <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
                             <i class="ri-shield-flash-line text-tg-blue"></i> <span data-i18n="settings.proxy.title">Proxy</span>
                         </h3>
@@ -1856,7 +1869,7 @@
                     </div>
 
                     <!-- Privacy / DM downloads -->
-                    <div class="bg-tg-panel rounded-xl p-4 mb-4">
+                    <div class="bg-tg-panel rounded-xl p-4 mb-4" data-admin-only>
                         <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
                             <i class="ri-shield-user-line text-tg-blue"></i> <span data-i18n="settings.privacy.title">Privacy</span>
                         </h3>
@@ -1870,7 +1883,7 @@
                     </div>
 
                     <!-- Quick Presets -->
-                    <div class="bg-tg-panel rounded-xl p-4 mb-4">
+                    <div class="bg-tg-panel rounded-xl p-4 mb-4" data-admin-only>
                         <h3 class="text-tg-text font-medium mb-3" data-i18n="settings.preset.title">Quick Presets</h3>
                         <div class="grid grid-cols-3 gap-2">
                             <button onclick="applyPreset('safe')"
@@ -1891,12 +1904,12 @@
                         </div>
                     </div>
 
-                    <button id="save-settings" class="tg-btn w-full">
+                    <button id="save-settings" class="tg-btn w-full" data-admin-only>
                         <i class="ri-save-line mr-2"></i><span data-i18n="settings.save">Save Settings</span>
                     </button>
 
                     <!-- Security (web auth) -->
-                    <div class="mt-6 bg-tg-panel rounded-xl p-4">
+                    <div class="mt-6 bg-tg-panel rounded-xl p-4" data-admin-only>
                         <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
                             <i class="ri-lock-2-line text-tg-blue"></i> <span data-i18n="settings.security">Dashboard security</span>
                         </h3>
@@ -1935,11 +1948,39 @@
                             <button id="logout-btn" class="tg-btn-secondary w-full text-sm">
                                 <i class="ri-logout-box-line mr-2"></i><span data-i18n="settings.security.signout">Sign out</span>
                             </button>
+
+                            <!-- Guest access (read-only role) -->
+                            <div class="mt-4 pt-4 border-t border-tg-border/50">
+                                <h4 class="text-tg-text text-sm font-medium mb-1 flex items-center gap-2">
+                                    <i class="ri-eye-line text-tg-blue"></i>
+                                    <span data-i18n="settings.security.guest_section">Guest access</span>
+                                </h4>
+                                <p class="text-xs text-tg-textSecondary mb-3" data-i18n="settings.security.guest_password_help">Guests can browse and watch media but cannot delete files, change settings, or manage Telegram accounts.</p>
+                                <div class="flex items-start justify-between gap-3 py-1">
+                                    <div class="min-w-0">
+                                        <div class="text-tg-text text-sm" data-i18n="settings.security.guest_enable">Enable guest access</div>
+                                        <p class="text-xs text-tg-textSecondary mt-0.5" id="guest-enable-status">—</p>
+                                    </div>
+                                    <div id="setting-guest-enabled" class="tg-toggle shrink-0 mt-0.5"></div>
+                                </div>
+                                <div class="mt-2">
+                                    <label for="setting-guest-password" class="text-tg-text text-sm block mb-1" data-i18n="settings.security.guest_password_label">Guest password (min 8)</label>
+                                    <input type="password" id="setting-guest-password" autocomplete="new-password" minlength="8" class="tg-input w-full text-sm" placeholder="••••••••">
+                                </div>
+                                <div class="grid grid-cols-2 gap-2 mt-2">
+                                    <button id="guest-set-btn" class="tg-btn-secondary w-full text-sm">
+                                        <i class="ri-key-line mr-2"></i><span data-i18n="settings.security.guest_set">Set guest password</span>
+                                    </button>
+                                    <button id="guest-clear-btn" class="tg-btn-secondary w-full text-sm">
+                                        <i class="ri-eraser-line mr-2"></i><span data-i18n="settings.security.guest_clear">Clear</span>
+                                    </button>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
                     <!-- Maintenance -->
-                    <div class="mt-6 bg-tg-panel rounded-xl p-4">
+                    <div class="mt-6 bg-tg-panel rounded-xl p-4" data-admin-only>
                         <h3 class="text-tg-text font-medium mb-1 flex items-center gap-2">
                             <i class="ri-tools-line text-tg-blue"></i> <span data-i18n="maintenance.title">Maintenance</span>
                         </h3>
@@ -1988,6 +2029,14 @@
 
                             <div class="flex items-start justify-between gap-3 py-1 border-t border-tg-border/50 pt-2">
                                 <div class="min-w-0">
+                                    <div class="text-tg-text text-sm" data-i18n="maintenance.dedup.title">Find duplicate files</div>
+                                    <p class="text-xs text-tg-textSecondary mt-0.5" data-i18n="maintenance.dedup.help">Computes SHA-256 for every file and groups byte-identical copies. First scan is slow on large libraries; subsequent scans only hash newly-downloaded files. You review the duplicates and pick which copies to keep before anything is deleted.</p>
+                                </div>
+                                <button id="maint-dedup-btn" class="tg-btn-secondary text-xs px-3 py-1.5 shrink-0" data-i18n="maintenance.dedup.action">Scan</button>
+                            </div>
+
+                            <div class="flex items-start justify-between gap-3 py-1 border-t border-tg-border/50 pt-2">
+                                <div class="min-w-0">
                                     <div class="text-tg-text text-sm" data-i18n="maintenance.logs.title">Download log file</div>
                                     <p class="text-xs text-tg-textSecondary mt-0.5" data-i18n="maintenance.logs.help">Grab the tail of any logfile under <code>data/logs/</code> as a plain-text download. Useful when filing bug reports.</p>
                                 </div>
@@ -2030,7 +2079,7 @@
                         main "Save Settings" button above. Server clamps every
                         value, so a typo can't brick the install.
                     -->
-                    <div class="mt-6 bg-tg-panel rounded-xl p-4">
+                    <div class="mt-6 bg-tg-panel rounded-xl p-4" data-admin-only>
                         <h3 class="text-tg-text font-medium mb-1 flex items-center gap-2">
                             <i class="ri-tools-fill text-tg-orange"></i> <span data-i18n="settings.advanced.title">Advanced</span>
                         </h3>
@@ -2145,7 +2194,7 @@
                     </div>
 
                     <!-- Danger Zone -->
-                    <div class="mt-6 bg-red-500/5 border border-red-500/20 rounded-xl p-4">
+                    <div class="mt-6 bg-red-500/5 border border-red-500/20 rounded-xl p-4" data-admin-only>
                         <h3 class="text-red-400 font-medium mb-2 flex items-center gap-2">
                             <i class="ri-error-warning-line"></i> <span data-i18n="settings.danger.title">Danger Zone</span>
                         </h3>
@@ -2224,10 +2273,15 @@
 
                     <!-- Card C — Recent jobs (last 30 days) -->
                     <section class="bg-tg-panel rounded-xl p-4">
-                        <h3 class="text-tg-text font-medium mb-3 flex items-center gap-2">
-                            <i class="ri-time-line text-tg-textSecondary"></i>
-                            <span data-i18n="backfill.recent.title">Recent backfills (30 days)</span>
-                        </h3>
+                        <div class="flex items-center justify-between mb-3 gap-2">
+                            <h3 class="text-tg-text font-medium flex items-center gap-2 min-w-0">
+                                <i class="ri-time-line text-tg-textSecondary"></i>
+                                <span class="truncate" data-i18n="backfill.recent.title">Recent backfills (30 days)</span>
+                            </h3>
+                            <button type="button" id="backfill-recent-clear" class="hidden text-xs px-2.5 py-1 rounded-md border border-tg-border text-tg-textSecondary hover:text-red-400 hover:border-red-400/60 transition-colors flex-shrink-0">
+                                <i class="ri-delete-bin-line mr-1"></i><span data-i18n="backfill.recent.clear_all">Clear all</span>
+                            </button>
+                        </div>
                         <div id="backfill-recent-list" class="space-y-2"></div>
                         <p id="backfill-recent-empty" class="hidden text-sm text-tg-textSecondary text-center py-4" data-i18n="backfill.recent.empty">No completed backfills yet.</p>
                     </section>
@@ -2534,7 +2588,7 @@
                         <p id="modal-meta" class="text-sm text-gray-300"></p>
                     </div>
                     <div class="flex items-center gap-2">
-                        <button id="modal-delete" onclick="confirmDeleteFile()"
+                        <button id="modal-delete" onclick="confirmDeleteFile()" data-admin-only
                             class="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg text-sm text-white flex items-center font-medium transition"
                             data-i18n-title="viewer.video.delete_title" title="Delete File">
                             <i class="ri-delete-bin-line mr-2"></i><span data-i18n="viewer.video.delete">Delete</span>
@@ -2571,17 +2625,17 @@
         <a class="bottom-nav-item" href="#/viewer" data-nav="viewer" data-i18n-aria-label="nav.library" aria-label="Library">
             <i class="ri-gallery-line" aria-hidden="true"></i><span data-i18n="nav.library">Library</span>
         </a>
-        <a class="bottom-nav-item" href="#/groups" data-nav="groups" data-i18n-aria-label="nav.chats" aria-label="Chats">
+        <a class="bottom-nav-item" href="#/groups" data-nav="groups" data-admin-only data-i18n-aria-label="nav.chats" aria-label="Chats">
             <i class="ri-chat-3-line" aria-hidden="true"></i><span data-i18n="nav.chats">Chats</span>
         </a>
-        <a class="bottom-nav-item" href="#/backfill" data-nav="backfill" data-i18n-aria-label="nav.backfill" aria-label="Backfill">
+        <a class="bottom-nav-item" href="#/backfill" data-nav="backfill" data-admin-only data-i18n-aria-label="nav.backfill" aria-label="Backfill">
             <i class="ri-history-line" aria-hidden="true"></i><span data-i18n="nav.backfill">Backfill</span>
         </a>
-        <a class="bottom-nav-item" href="#/queue" data-nav="queue" data-i18n-aria-label="nav.queue" aria-label="Queue">
+        <a class="bottom-nav-item" href="#/queue" data-nav="queue" data-admin-only data-i18n-aria-label="nav.queue" aria-label="Queue">
             <i class="ri-download-cloud-2-line" aria-hidden="true"></i><span data-i18n="nav.queue">Queue</span>
             <span id="queue-nav-badge" class="nav-badge hidden"></span>
         </a>
-        <a class="bottom-nav-item" href="#/engine" data-nav="engine" data-i18n-aria-label="nav.engine" aria-label="Engine">
+        <a class="bottom-nav-item" href="#/engine" data-nav="engine" data-admin-only data-i18n-aria-label="nav.engine" aria-label="Engine">
             <i class="ri-broadcast-line" aria-hidden="true"></i><span data-i18n="nav.engine">Engine</span>
             <span id="engine-nav-badge" class="nav-badge hidden"></span>
         </a>

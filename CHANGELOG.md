@@ -2,6 +2,48 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.26] — 2026-04-30
+
+### Added — Guest role (read-only viewer alongside admin)
+Per user request *"เพิ่มระบบ guest ให้คนที่ไม่ใช่ admin ... guests ดูได้เท่านั้น ลบไม่ได้"*. The dashboard now supports an opt-in **read-only "guest" role** alongside the admin password. Guests can browse media and watch videos but cannot delete files, change settings, or manage Telegram accounts. Their video player preferences (autoplay/volume/etc.) save to localStorage and are independent from admin's.
+
+- **`config.web.guestPasswordHash` + `config.web.guestEnabled`** — new optional config keys. If unset the dashboard behaves exactly as before.
+- **Sessions carry a role** — `data/web-sessions.json` records now include `role: 'admin' | 'guest'`. Legacy sessions (no role field) default to admin; no forced re-login on upgrade.
+- **Default-deny `/api` chokepoint for guests** — a single middleware after `checkAuth` consults an explicit allowlist (`GET /api/downloads*`, `GET /api/stats`, `GET /api/groups` (read), `GET /api/queue/snapshot`, `GET /api/monitor/status`, `GET /api/history*`, `POST /api/logout`). Anything not on the list returns `403 {adminRequired:true}`. New mutation routes are admin-gated for free.
+- **`POST /api/auth/guest-password`** (admin-only) — set/enable/disable/clear the guest password from Settings → Dashboard Security. Rejects equality with the admin password (would render the guest role unreachable). Disabling or clearing the password also revokes every active guest session immediately.
+- **SPA: `body[data-role]` CSS gate.** Every admin-only DOM node carries `data-admin-only`; a single CSS rule hides them when `state.role === 'guest'`. Sidebar nav (Backfill/Stories/Account add), Settings sections (everything except Video Player + Appearance), gallery delete buttons, queue mutation buttons — all gone for guests in one pass.
+- **SPA router** redirects guest sessions away from `#/groups`, `#/backfill`, `#/queue`, `#/engine`, `#/stories`, `#/account/add`, and any `#/settings/<section>` other than `video-player` / `appearance` to `#/viewer`.
+- **Header role pill** ("Guest") so the user always knows which role is active.
+- **`api.js` 403 interceptor** toasts `errors.admin_only` for the rare race where a stale guest tab fires an admin call.
+
+### Added — Recent backfills: per-row delete + Clear all
+Per user report *"Recent backfills ขอแบบลบได้ด้วย ตอนนี้อะ มันขึ้นเยอะ เกิน แล้วรก ๆ"*. The Recent backfills list (last 30 days) was display-only; once the list got long there was no way to tidy it up.
+
+- **`DELETE /api/history/:jobId`** — drops one finished entry from the in-memory map + on-disk `history-jobs.json`. Refuses to delete a running job (cancel first).
+- **`DELETE /api/history`** — clear every finished entry in one call. Running jobs are preserved.
+- **Per-row × button** + **Clear all** on Backfill → Recent. Cross-tab via WS `history_deleted` / `history_cleared` so other open tabs drop the row in real time.
+
+### Added — Checksum-based duplicate finder (Maintenance)
+Per user request *"ทำระบบ checksum ป้องกัน media ซ้ำ ... มีใน Maintenance ด้วย ... มีให้ confirm ในการลบไฟล์ และ preview ไฟล์ ว่า sum ซ้ำ"*. The `downloads.file_hash` column has been in the schema since v2 but was never populated.
+
+- **New `src/core/dedup.js`** — `findDuplicates()` walks every row missing `file_hash`, streams SHA-256 over the file, writes the digest back, then GROUPs BY hash for sets where COUNT > 1. First scan is O(bytes-on-disk); subsequent scans are nearly free.
+- **`POST /api/maintenance/dedup/scan`** — runs the catch-up + grouping. Broadcasts `dedup_progress` over WS for a determinate progress bar. Single in-flight guard: a second concurrent scan returns 409.
+- **`POST /api/maintenance/dedup/delete`** — body `{ ids: [...] }`. Deletes the selected files from disk AND drops their DB rows in one transactional sweep. Reports `{ removed, freedBytes, missingFiles }`.
+- **Maintenance UI** — new **Find duplicate files** button. Scans, then opens a sheet with every duplicate set: thumbnails, filenames, group, date, file URL preview link. Default selection deletes all but the **oldest** copy in each set; per-set **Keep oldest / Keep newest** shortcuts; per-row checkbox flips. Bottom of the sheet shows live "N selected · X MB will be freed" totals + an explicit destructive confirm before deletion.
+
+### Changed — Mobile gallery: smooth + working video previews
+Per user report *"ใน mobile ไม่ขึ้น vdo preview และแก้ให้ mobile แสดงแบบไม่ lagg ด้วย ลดการแสดงใน mobile ให้ mobile แสดงทีน้อย ๆ แยกกับ pc"*.
+
+- **`FILES_PER_PAGE` is now viewport-aware** — desktop stays at 100; mobile (`max-width: 768px`) drops to 50, matching the lower tile-per-row count so DOM size scales with screen size.
+- **Mobile video tiles use a poster-only render** — `<video preload="none">` is unreliable on mobile Safari (often paints a blank black tile) and high-memory across a 50-tile grid even when it works. Mobile now renders an icon + play badge inside a subtle gradient instead. Tap still opens the full viewer with the real `<video>`. Desktop keeps the existing lazy `<video>` for hover scrub.
+- `<img>` tiles gained `loading="lazy"` to avoid an iOS over-eager prefetch when the user scrolls fast.
+
+### Tests
+- 8 new tests in `tests/web-auth.test.js` covering the role-aware `loginVerify`, `isGuestEnabled`, `issueSession({ role })`, and `revokeAllGuestSessions`.
+
+### SW
+- VERSION bumped `'v25'` → `'v26'`.
+
 ## [2.3.25] — 2026-04-28
 
 ### Changed — backpressure abort window 5 min → 15 min
