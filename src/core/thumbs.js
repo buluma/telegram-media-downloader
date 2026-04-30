@@ -224,12 +224,9 @@ function _runFfmpeg(args) {
 }
 
 async function _generateVideoThumb(srcAbs, width, dstAbs) {
-    // Single-pass: seek with input-side -ss (fast keyframe seek), grab
-    // one frame, scale to target width, encode WebP — all inside ffmpeg.
-    // No intermediate JPEG → sharp transcode. The `-noautorotate`+`autorotate`
-    // pair makes sure portrait phone clips render upright. The seek tries
-    // 1 s first (skips opening titles); a fallback to 0 s handles ultra-
-    // short clips where seeking past the end yields no frame.
+    // Extract frame as JPEG, then use sharp to convert to WebP.
+    // This works even without libwebp in ffmpeg.
+    const tmpJpg = dstAbs + '.frame.jpg';
     const tryAt = async (sec) => {
         const args = [
             '-hide_banner', '-loglevel', 'error',
@@ -238,20 +235,25 @@ async function _generateVideoThumb(srcAbs, width, dstAbs) {
             '-frames:v', '1',
             '-an',
             '-vf', `scale='min(${width},iw)':-2:flags=fast_bilinear`,
-            '-c:v', 'libwebp',
-            '-quality', String(FFMPEG_WEBP_QUALITY),
-            '-compression_level', String(FFMPEG_WEBP_COMPRESSION),
+            '-q:v', '3',
             '-y',
-            dstAbs,
+            tmpJpg,
         ];
         await _runFfmpeg(args);
+        if (existsSync(tmpJpg)) {
+            await sharp(tmpJpg, { failOn: 'none' })
+                .rotate()
+                .webp({ quality: WEBP_QUALITY, effort: SHARP_EFFORT })
+                .toFile(dstAbs);
+        }
     };
     try {
         await tryAt(1);
         if (!existsSync(dstAbs)) await tryAt(0);
     } catch (_e) {
-        // First try failed (common on very short clips) — fall back to t=0.
         await tryAt(0);
+    } finally {
+        try { if (existsSync(tmpJpg)) await fs.unlink(tmpJpg); } catch {}
     }
 }
 
