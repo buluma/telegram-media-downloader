@@ -27,14 +27,16 @@ import { loadConfig } from '../config/manager.js';
 import { runtime } from '../core/runtime.js';
 import { getDiskRotator } from '../core/disk-rotator.js';
 import * as integrity from '../core/integrity.js';
+import { findDuplicates as dedupFindDuplicates, deleteByIds as dedupDeleteByIds } from '../core/dedup.js';
 import { getRescueSweeper } from '../core/rescue.js';
 import { getRescueStats } from '../core/db.js';
 import { parseTelegramUrl, parseUrlList, UrlParseError } from '../core/url-resolver.js';
 import { listUserStories, listAllStories, storyToJob } from '../core/stories.js';
 import { metrics } from '../core/metrics.js';
 import {
-    hashPassword, loginVerify, isAuthConfigured,
-    issueSession, validateSession, revokeSession, revokeAllSessions, startSessionGc,
+    hashPassword, verifyPassword, loginVerify, isAuthConfigured, isGuestEnabled,
+    issueSession, validateSession, revokeSession,
+    revokeAllSessions, revokeAllGuestSessions, startSessionGc,
 } from '../core/web-auth.js';
 import { suppressNoise, wrapConsoleMethod } from '../core/logger.js';
 
@@ -97,13 +99,18 @@ server.on('upgrade', async (req, socket, head) => {
         }
 
         const cookies = parseCookieHeader(req.headers.cookie);
-        if (!validateSession(cookies['tg_dl_session'])) {
+        const session = validateSession(cookies['tg_dl_session']);
+        if (!session) {
             socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
             socket.destroy();
             return;
         }
 
         wss.handleUpgrade(req, socket, head, (ws) => {
+            // Stamp the role on the WS so future per-event filtering
+            // (admin-only broadcasts) can reference it without a second
+            // session lookup.
+            ws.role = session.role;
             wss.emit('connection', ws, req);
         });
     } catch {
@@ -420,12 +427,57 @@ async function checkAuth(req, res, next) {
     if (isPublicPath(req.path)) return next();
 
     const token = req.cookies['tg_dl_session'];
-    if (validateSession(token)) return next();
+    const session = validateSession(token);
+    if (session) {
+        req.role = session.role;
+        return next();
+    }
 
     if (req.path.startsWith('/api/')) {
         return res.status(401).json({ error: 'Unauthorized' });
     }
     return res.redirect('/login.html');
+}
+
+// ---- Guest authorization ---------------------------------------------------
+//
+// Default-deny: guest sessions can ONLY hit the explicit allowlist below.
+// Anything else (including endpoints that don't exist yet) returns 403 with
+// `adminRequired: true`. This is intentionally a chokepoint instead of
+// per-route requireAdmin() — a future dev who adds a new mutation route
+// gets admin-gating for free; forgetting to add `requireAdmin` would leak
+// the route, which is a much worse failure mode than the occasional 403
+// when a new read endpoint forgets to ask for guest access.
+const GUEST_GET_ALLOW = [
+    '/api/auth_check', '/api/me', '/api/version', '/api/version/check',
+    '/api/downloads',          // and /:groupId, /all, /search via prefix
+    '/api/groups',             // GET only (list) — PUT/DELETE blocked below
+    '/api/stats',
+    '/api/monitor/status',
+    '/api/queue/snapshot',
+    '/api/rescue/stats',
+    '/api/history',            // GET past jobs only (POST = trigger backfill)
+    '/api/history/jobs',       // GET active jobs read-only
+];
+const GUEST_OTHER_ALLOW = new Set(['POST /api/logout']);
+
+function isGuestAllowed(req) {
+    if (req.method === 'GET') {
+        const p = req.path;
+        return GUEST_GET_ALLOW.some(pre => p === pre || p.startsWith(pre + '/'));
+    }
+    return GUEST_OTHER_ALLOW.has(`${req.method} ${req.path}`);
+}
+
+function guestGate(req, res, next) {
+    if (req.role === 'admin') return next();
+    if (req.role === 'guest' && isGuestAllowed(req)) return next();
+    if (req.role === 'guest') {
+        return res.status(403).json({ error: 'Admin only', adminRequired: true });
+    }
+    // No role on req → checkAuth let the request through as a public path,
+    // so don't second-guess it.
+    return next();
 }
 
 // Stricter rate limit for the login endpoint to slow brute-force attempts.
@@ -471,7 +523,10 @@ app.post('/api/login', loginLimiter, async (req, res) => {
         }
 
         const result = loginVerify(password, config.web);
-        metrics.inc('tgdl_login_total', 1, { result: result.ok ? 'ok' : 'fail' });
+        metrics.inc('tgdl_login_total', 1, {
+            result: result.ok ? 'ok' : 'fail',
+            role: result.ok ? result.role : 'none',
+        });
         if (!result.ok) return res.status(401).json({ error: 'Invalid password' });
 
         // Auto-upgrade legacy plaintext to scrypt hash on first successful login.
@@ -485,9 +540,11 @@ app.post('/api/login', loginLimiter, async (req, res) => {
             }
         }
 
-        const { token, maxAgeMs } = issueSession({ ttlMs: sessionTtlMsFromConfig(config) });
+        const { token, maxAgeMs } = issueSession({
+            ttlMs: sessionTtlMsFromConfig(config), role: result.role,
+        });
         res.cookie('tg_dl_session', token, { ...SESSION_COOKIE_OPTS, maxAge: maxAgeMs });
-        res.json({ success: true });
+        res.json({ success: true, role: result.role });
     } catch (e) {
         console.error('Login error:', e);
         res.status(500).json({ error: 'Internal error' });
@@ -535,7 +592,9 @@ app.post('/api/auth/setup', setupLimiter, async (req, res) => {
         delete config.web.password;
         await writeConfigAtomic(config);
 
-        const { token, maxAgeMs } = issueSession({ ttlMs: sessionTtlMsFromConfig(config) });
+        const { token, maxAgeMs } = issueSession({
+            ttlMs: sessionTtlMsFromConfig(config), role: 'admin',
+        });
         res.cookie('tg_dl_session', token, { ...SESSION_COOKIE_OPTS, maxAge: maxAgeMs });
         res.json({ success: true });
     } catch (e) {
@@ -553,8 +612,15 @@ app.post('/api/auth/setup', setupLimiter, async (req, res) => {
 // enforce its own auth check explicitly.
 app.post('/api/auth/change-password', loginLimiter, async (req, res) => {
     try {
-        if (!validateSession(req.cookies['tg_dl_session'])) {
+        const session = validateSession(req.cookies['tg_dl_session']);
+        if (!session) {
             return res.status(401).json({ error: 'Unauthorized' });
+        }
+        // Guests cannot change the admin password (and have no separate
+        // password of their own to change — admin manages the guest hash
+        // from the Dashboard Security panel).
+        if (session.role !== 'admin') {
+            return res.status(403).json({ error: 'Admin only', adminRequired: true });
         }
         const { currentPassword, newPassword } = req.body || {};
         if (typeof currentPassword !== 'string' || typeof newPassword !== 'string') {
@@ -567,8 +633,24 @@ app.post('/api/auth/change-password', loginLimiter, async (req, res) => {
         if (!isAuthConfigured(config.web)) {
             return res.status(409).json({ error: 'No password configured yet — use /api/auth/setup' });
         }
-        const verify = loginVerify(currentPassword, config.web);
-        if (!verify.ok) return res.status(401).json({ error: 'Current password is incorrect' });
+        // Match against the admin hash specifically (loginVerify also accepts
+        // a guest password, which would let a stolen guest cookie pivot to
+        // admin if we used the broad verifier here).
+        const adminMatches = config.web.passwordHash
+            ? verifyPassword(currentPassword, config.web.passwordHash)
+            : (typeof config.web.password === 'string'
+                && currentPassword === config.web.password);
+        if (!adminMatches) return res.status(401).json({ error: 'Current password is incorrect' });
+
+        // Reject collisions with the guest password — otherwise admin and
+        // guest become indistinguishable at the login form.
+        if (config.web.guestPasswordHash
+            && verifyPassword(newPassword, config.web.guestPasswordHash)) {
+            return res.status(400).json({
+                error: 'New password must differ from the guest password',
+                code: 'SAME_AS_GUEST',
+            });
+        }
 
         config.web.passwordHash = hashPassword(newPassword);
         delete config.web.password;
@@ -577,11 +659,97 @@ app.post('/api/auth/change-password', loginLimiter, async (req, res) => {
         // Issue a fresh session and let the SPA replace the old cookie. We
         // don't revoke other sessions automatically — the SPA exposes a
         // separate "Sign out everywhere" affordance that hits revokeAllSessions.
-        const { token, maxAgeMs } = issueSession({ ttlMs: sessionTtlMsFromConfig(config) });
+        const { token, maxAgeMs } = issueSession({
+            ttlMs: sessionTtlMsFromConfig(config), role: 'admin',
+        });
         res.cookie('tg_dl_session', token, { ...SESSION_COOKIE_OPTS, maxAge: maxAgeMs });
         res.json({ success: true });
     } catch (e) {
         console.error('change-password:', e);
+        res.status(500).json({ error: 'Internal error' });
+    }
+});
+
+// ====== Guest password (admin-managed) =====================================
+//
+// One slot for an optional read-only "guest" role alongside the admin
+// password. Stored under config.web.guestPasswordHash + config.web.guestEnabled.
+// Guests can browse the gallery and watch media but cannot mutate state
+// (the guestGate middleware enforces this server-side).
+//
+// Body (one field required):
+//   { password }    → hash + store, set guestEnabled=true
+//   { enabled }     → flip the guestEnabled flag (revokes all guest sessions
+//                     when turning off so existing guest cookies stop working
+//                     immediately)
+//   { clear: true } → wipe the hash + disable + revoke
+app.post('/api/auth/guest-password', async (req, res) => {
+    try {
+        // Registered before the global checkAuth middleware (same as all
+        // /api/auth/* routes), so enforce auth + admin role explicitly here.
+        const session = validateSession(req.cookies['tg_dl_session']);
+        if (!session) return res.status(401).json({ error: 'Unauthorized' });
+        if (session.role !== 'admin') {
+            return res.status(403).json({ error: 'Admin only', adminRequired: true });
+        }
+        const { password, enabled, clear } = req.body || {};
+        const config = await readConfigSafe();
+        if (!config.web) config.web = {};
+
+        if (clear === true) {
+            delete config.web.guestPasswordHash;
+            config.web.guestEnabled = false;
+            await writeConfigAtomic(config);
+            revokeAllGuestSessions();
+            broadcast({ type: 'config_updated' });
+            return res.json({ success: true, configured: false, enabled: false });
+        }
+
+        if (typeof password === 'string' && password.length > 0) {
+            if (password.length < 8) {
+                return res.status(400).json({ error: 'Guest password must be at least 8 characters' });
+            }
+            // Reject equality with the admin password — otherwise the guest
+            // role can never actually be reached from the login form.
+            const adminHash = config.web.passwordHash;
+            const adminMatches = adminHash
+                ? verifyPassword(password, adminHash)
+                : (typeof config.web.password === 'string'
+                    && password === config.web.password);
+            if (adminMatches) {
+                return res.status(400).json({
+                    error: 'Guest password must differ from the admin password',
+                    code: 'SAME_AS_ADMIN',
+                });
+            }
+            config.web.guestPasswordHash = hashPassword(password);
+            config.web.guestEnabled = true;
+            await writeConfigAtomic(config);
+            // Any guest signed in with the previous password should be
+            // bounced — same posture as admin password change.
+            revokeAllGuestSessions();
+            broadcast({ type: 'config_updated' });
+            return res.json({ success: true, configured: true, enabled: true });
+        }
+
+        if (typeof enabled === 'boolean') {
+            if (!config.web.guestPasswordHash && enabled) {
+                return res.status(400).json({ error: 'Set a guest password before enabling guest access' });
+            }
+            config.web.guestEnabled = enabled;
+            await writeConfigAtomic(config);
+            if (!enabled) revokeAllGuestSessions();
+            broadcast({ type: 'config_updated' });
+            return res.json({
+                success: true,
+                configured: !!config.web.guestPasswordHash,
+                enabled,
+            });
+        }
+
+        return res.status(400).json({ error: 'Provide one of: password, enabled, clear' });
+    } catch (e) {
+        console.error('guest-password:', e);
         res.status(500).json({ error: 'Internal error' });
     }
 });
@@ -659,7 +827,9 @@ app.post('/api/auth/reset/confirm', loginLimiter, async (req, res) => {
         // Revoke every existing session — if someone reset the password,
         // assume the previous owner is locked out and shouldn't be trusted.
         revokeAllSessions();
-        const { token: sessionTok, maxAgeMs } = issueSession({ ttlMs: sessionTtlMsFromConfig(config) });
+        const { token: sessionTok, maxAgeMs } = issueSession({
+            ttlMs: sessionTtlMsFromConfig(config), role: 'admin',
+        });
         res.cookie('tg_dl_session', sessionTok, { ...SESSION_COOKIE_OPTS, maxAge: maxAgeMs });
         res.json({ success: true });
     } catch (e) {
@@ -781,12 +951,18 @@ app.get('/api/auth_check', async (req, res) => {
     const config = await readConfigSafe();
     const configured = isAuthConfigured(config.web);
     const enabled = config.web?.enabled !== false;
-    const authed = configured && enabled && validateSession(req.cookies['tg_dl_session']);
+    const session = configured && enabled
+        ? validateSession(req.cookies['tg_dl_session'])
+        : false;
     res.json({
         configured,
         enabled,
-        authenticated: !!authed,
+        authenticated: !!session,
+        // Role surfaced so the SPA can mark `<body data-role>` and hide
+        // admin-only UI for guest sessions in a single source-of-truth pass.
+        role: session ? session.role : null,
         setupRequired: !configured || !enabled,
+        guestEnabled: isGuestEnabled(config.web),
     });
 });
 
@@ -845,6 +1021,9 @@ app.get('/metrics', (req, res) => {
 
 // Apply Auth Globally
 app.use(checkAuth);
+// Guest sessions: default-deny everything not on the explicit allowlist.
+// Mounted right after auth so every authenticated /api request is gated.
+app.use('/api', guestGate);
 
 // Serve static files AFTER auth
 // Asset cache-busting — append `?v=<APP_VERSION>` to every internal
@@ -1373,6 +1552,58 @@ app.get('/api/history/:jobId', (req, res) => {
     if (!job) return res.status(404).json({ error: 'Job not found' });
     const { _runner, ...safe } = job;
     res.json(safe);
+});
+
+// Remove a single finished history entry from the Recent backfills list.
+// Running jobs cannot be deleted — they have to be cancelled first.
+app.delete('/api/history/:jobId', async (req, res) => {
+    try {
+        const id = req.params.jobId;
+        const inMem = _historyJobs.get(id);
+        if (inMem && inMem.state === 'running') {
+            return res.status(409).json({ error: 'Cannot delete a running job — cancel first.' });
+        }
+        if (inMem) _historyJobs.delete(id);
+
+        // Drop from on-disk store too. Atomic write via fs.writeFile (the
+        // existing saveHistoryJobsToDisk pattern handles concurrency by
+        // reading + filtering + writing in one tick).
+        const onDisk = await loadHistoryJobsFromDisk();
+        const filtered = onDisk.filter(j => j.id !== id);
+        try {
+            await fs.mkdir(DATA_DIR, { recursive: true });
+            await fs.writeFile(HISTORY_JOBS_PATH, JSON.stringify(filtered, null, 2), 'utf-8');
+        } catch (e) {
+            console.error('history-jobs.json write failed:', e?.message || e);
+        }
+
+        broadcast({ type: 'history_deleted', jobId: id });
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Clear every finished entry from the Recent backfills list. Running jobs
+// are preserved — same posture as the per-row delete (cancel first).
+app.delete('/api/history', async (req, res) => {
+    try {
+        let removed = 0;
+        for (const [id, job] of Array.from(_historyJobs.entries())) {
+            if (job.state !== 'running') { _historyJobs.delete(id); removed++; }
+        }
+        // Wipe the on-disk store of finished jobs.
+        try {
+            await fs.mkdir(DATA_DIR, { recursive: true });
+            await fs.writeFile(HISTORY_JOBS_PATH, JSON.stringify([], null, 2), 'utf-8');
+        } catch (e) {
+            console.error('history-jobs.json wipe failed:', e?.message || e);
+        }
+        broadcast({ type: 'history_cleared' });
+        res.json({ success: true, removed });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
 });
 
 app.get('/api/history', (req, res) => {
@@ -2769,6 +3000,62 @@ app.post('/api/maintenance/db/vacuum', async (req, res) => {
             reclaimedBytes: Math.max(0, (Number(beforePages) - Number(afterPages)) * Number(pageSize)),
         });
     } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// ====== Duplicate finder (checksum-based) ==================================
+//
+// One-shot scan that:
+//   1. Computes SHA-256 for every download row missing a hash (the column
+//      has been in the schema since v2 but never populated).
+//   2. Groups by hash and returns sets where COUNT > 1.
+//
+// First scan is O(bytes-on-disk); subsequent scans are nearly free since
+// only newly-downloaded files lack a hash. Progress is broadcast over WS
+// (`dedup_progress`) so the UI can render a determinate bar.
+//
+// Two-step UX: scan returns the duplicate sets to the client, the user
+// picks which copies to keep, and the explicit /delete call removes the
+// rest. The endpoint never auto-deletes.
+let _dedupRunning = false;
+app.post('/api/maintenance/dedup/scan', async (req, res) => {
+    if (_dedupRunning) {
+        return res.status(409).json({ error: 'A dedup scan is already running' });
+    }
+    _dedupRunning = true;
+    try {
+        const result = await dedupFindDuplicates({
+            onProgress: (p) => {
+                try { broadcast({ type: 'dedup_progress', ...p }); } catch {}
+            },
+        });
+        res.json({ success: true, ...result });
+    } catch (e) {
+        console.error('dedup/scan:', e);
+        res.status(500).json({ error: e.message });
+    } finally {
+        _dedupRunning = false;
+    }
+});
+
+app.post('/api/maintenance/dedup/delete', async (req, res) => {
+    try {
+        const { ids } = req.body || {};
+        if (!Array.isArray(ids) || !ids.length) {
+            return res.status(400).json({ error: 'ids array required' });
+        }
+        // Coerce to integers and drop anything bogus.
+        const cleanIds = ids.map(n => Number(n)).filter(n => Number.isInteger(n) && n > 0);
+        if (!cleanIds.length) {
+            return res.status(400).json({ error: 'No valid ids supplied' });
+        }
+        const r = dedupDeleteByIds(cleanIds);
+        // Tell every open tab that some files vanished so galleries refresh.
+        try { broadcast({ type: 'bulk_delete', ids: cleanIds }); } catch {}
+        res.json({ success: true, ...r });
+    } catch (e) {
+        console.error('dedup/delete:', e);
         res.status(500).json({ error: e.message });
     }
 });
