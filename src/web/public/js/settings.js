@@ -570,6 +570,20 @@ function loadAdvanced(config) {
     set('setting-adv-backpressure-wait', h.backpressureMaxWaitMs);
     set('setting-adv-short-break',       h.shortBreakEveryN);
     set('setting-adv-long-break',        h.longBreakEveryN);
+    set('setting-adv-auto-first-limit',  Number.isFinite(h.autoFirstLimit) ? h.autoFirstLimit : 100);
+    set('setting-adv-batch-insert',      Number.isFinite(h.batchInsertSize) ? h.batchInsertSize : 50);
+    // Toggle widgets — flip on click, default to ON when undefined.
+    const _wireToggle = (id, current) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.classList.toggle('active', current !== false);
+        if (!el.dataset.wired) {
+            el.dataset.wired = '1';
+            el.addEventListener('click', (e) => { e.preventDefault(); el.classList.toggle('active'); });
+        }
+    };
+    _wireToggle('setting-adv-auto-first-backfill', h.autoFirstBackfill);
+    _wireToggle('setting-adv-auto-catchup',        h.autoCatchUp);
 
     const r = { ...ADVANCED_DEFAULTS.diskRotator, ...(adv.diskRotator || {}) };
     set('setting-adv-sweep-batch',       r.sweepBatch);
@@ -581,6 +595,24 @@ function loadAdvanced(config) {
 
     const w = { ...ADVANCED_DEFAULTS.web, ...(adv.web || {}) };
     set('setting-adv-session-days',      w.sessionTtlDays);
+
+    // NSFW review tool — opt-in toggle + threshold + concurrency. The
+    // toggle uses the existing `.tg-toggle` widget; click-to-flip is wired
+    // once below. Defaults match `core/nsfw.js` NSFW_DEFAULTS.
+    const ns = adv.nsfw || {};
+    const nsToggle = document.getElementById('setting-adv-nsfw-enabled');
+    if (nsToggle) {
+        nsToggle.classList.toggle('active', ns.enabled === true);
+        if (!nsToggle.dataset.wired) {
+            nsToggle.dataset.wired = '1';
+            nsToggle.addEventListener('click', (e) => {
+                e.preventDefault();
+                nsToggle.classList.toggle('active');
+            });
+        }
+    }
+    set('setting-adv-nsfw-threshold',   Number.isFinite(ns.threshold) ? ns.threshold : 0.6);
+    set('setting-adv-nsfw-concurrency', Number.isFinite(ns.concurrency) ? ns.concurrency : 1);
 }
 
 function gatherAdvanced() {
@@ -602,6 +634,10 @@ function gatherAdvanced() {
             backpressureMaxWaitMs:  num('setting-adv-backpressure-wait', ADVANCED_DEFAULTS.history.backpressureMaxWaitMs),
             shortBreakEveryN:       num('setting-adv-short-break',       ADVANCED_DEFAULTS.history.shortBreakEveryN),
             longBreakEveryN:        num('setting-adv-long-break',        ADVANCED_DEFAULTS.history.longBreakEveryN),
+            autoFirstBackfill:      document.getElementById('setting-adv-auto-first-backfill')?.classList.contains('active') !== false,
+            autoFirstLimit:         num('setting-adv-auto-first-limit',  100),
+            autoCatchUp:            document.getElementById('setting-adv-auto-catchup')?.classList.contains('active') !== false,
+            batchInsertSize:        num('setting-adv-batch-insert',      50),
         },
         diskRotator: {
             sweepBatch:         num('setting-adv-sweep-batch', ADVANCED_DEFAULTS.diskRotator.sweepBatch),
@@ -613,6 +649,11 @@ function gatherAdvanced() {
         },
         web: {
             sessionTtlDays: num('setting-adv-session-days', ADVANCED_DEFAULTS.web.sessionTtlDays),
+        },
+        nsfw: {
+            enabled: document.getElementById('setting-adv-nsfw-enabled')?.classList.contains('active') === true,
+            threshold: parseFloat(get('setting-adv-nsfw-threshold')) || 0.6,
+            concurrency: num('setting-adv-nsfw-concurrency', 1),
         },
     };
 }
@@ -879,6 +920,8 @@ function wireMaintenance() {
     once(document.getElementById('maint-thumbs-build-btn'), maintBuildThumbs);
     once(document.getElementById('maint-thumbs-rebuild-btn'), maintRebuildThumbs);
     once(document.getElementById('maint-update-btn'), maintInstallUpdate);
+    once(document.getElementById('maint-nsfw-scan-btn'), () => _nsfwModule().then(m => m.maintNsfwScan()));
+    once(document.getElementById('maint-nsfw-review-btn'), () => _nsfwModule().then(m => m.maintNsfwReview()));
     once(document.getElementById('maint-logs-btn'), maintBrowseLogs);
     once(document.getElementById('maint-config-btn'), maintViewConfig);
     once(document.getElementById('maint-export-btn'), maintExportSession);
@@ -887,6 +930,13 @@ function wireMaintenance() {
     // Refresh the cache stat line on first open + after each operation.
     refreshThumbsStats();
     refreshUpdateStatus();
+    _nsfwModule().then(m => m.refreshNsfwStatus()).catch(() => {});
+}
+
+let _nsfwModulePromise = null;
+function _nsfwModule() {
+    if (!_nsfwModulePromise) _nsfwModulePromise = import('./nsfw-ui.js');
+    return _nsfwModulePromise;
 }
 
 async function refreshThumbsStats() {

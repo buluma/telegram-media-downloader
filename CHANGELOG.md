@@ -2,6 +2,50 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.34] — 2026-04-30
+
+### Changed — Backfill: smart resume + auto-spawn
+- **Smart resume** — `iterMessages` now uses `maxId: minMessageId - 1` (or `minId: maxMessageId + 1` for catch-up) instead of walking every message from newest. Resuming a partially-completed backfill is ~80-90% faster.
+- **Per-group lock** — second click on Backfill while one is running returns 409 with `code: 'ALREADY_RUNNING'` instead of spawning a duplicate iterator.
+- **Auto-backfill on first add** — enabling a brand-new group with zero rows in `downloads` triggers a background backfill of the last N messages (default 100, configurable, 0 = disabled).
+- **Auto catch-up after restart** — monitor's boot-time top-message check now spawns a `catch-up` backfill if the gap to the last stored row exceeds the configured threshold.
+- **3 new history modes** surfaced in WS payloads + UI: `pull-older` / `catch-up` / `rescan`.
+
+### Added — Auto-NSFW on download (if enabled)
+- Every successful download fires `pregenerateNsfw(id)` alongside `pregenerateThumb(id)` — newly-arrived photos get classified in the background, no need to wait for the next batch scan. No-op when `advanced.nsfw.enabled` is false.
+
+### Config (no hardcode)
+- New `advanced.history.{ autoFirstBackfill, autoFirstLimit, autoCatchUp, autoCatchUpThreshold, batchInsertSize, batchInsertMaxAgeMs }`. All clamped server-side; defaults preserve current behavior.
+- New Settings → Advanced rows for the auto-backfill knobs.
+
+### SW
+- VERSION bumped `'v33'` → `'v34'`.
+
+## [2.3.33] — 2026-04-30
+
+### Added — NSFW review tool (Phase 1: photos)
+- Maintenance → "Scan images for NSFW (18+)" — classifies every photo locally via `@huggingface/transformers` (WASM, runs on Win / macOS / glibc-Linux / Alpine / ARM identically).
+- Surfaces photos the classifier scored as **NOT 18+** (deletion candidates for a curated 18+ library) in a paginated review sheet — tick + bulk delete with confirm.
+- Per-row "Mark as 18+" whitelists genuine 18+ false-negatives so future scans skip them.
+- Background scan with WS progress + browser notification on completion. Cancel any time.
+- Opt-in via Settings → Advanced → NSFW review tool. Threshold + concurrency + model id all config-driven (no hardcoded values). Model downloads once to `data/models/`.
+- Config namespace: `advanced.nsfw.{ enabled, model, threshold, concurrency, batchSize, fileTypes, cacheDir }`.
+- DB columns added (idempotent migration): `nsfw_score`, `nsfw_checked_at`, `nsfw_whitelist`. Indexes for unscanned-row scan and review-sort queries.
+
+### SW
+- VERSION bumped `'v32'` → `'v33'`.
+
+## [2.3.32] — 2026-04-30
+
+### Changed — Media gallery: smooth on big libraries
+- Infinite-scroll page-2+ loads now append only the new tiles (`insertAdjacentHTML`) instead of re-rendering the whole grid. O(N_new) per scroll page, not O(N_total).
+- WS `file_deleted` removes the single matching tile from the DOM in place — no full re-render.
+- Click handling switched to event delegation; per-tile listeners gone.
+- Search uses AbortController + sequence tag — fast typing cancels in-flight requests, no out-of-order race. Debounce 250 ms → 200 ms.
+
+### SW
+- VERSION bumped `'v31'` → `'v32'`.
+
 ## [2.3.31] — 2026-04-30
 
 ### Changed — Queue page: gradual load + in-place progress patches

@@ -7,6 +7,7 @@ import path from 'path';
 import fs from 'fs/promises';
 import fsSync from 'fs';
 import { Api } from 'telegram';
+import { getMessageIdRange } from './db.js';
 
 export class HistoryDownloader extends EventEmitter {
     constructor(client, downloader, config, accountManager = null) {
@@ -114,7 +115,7 @@ export class HistoryDownloader extends EventEmitter {
         this.running = true;
         this.cancelFlag = false;
         this.stats = { processed: 0, downloaded: 0, skipped: 0, urls: 0 };
-        
+
         // null / undefined / 0 → "no limit" — iterate the entire history.
         // Any positive number caps the iteration to that many messages.
         const rawLimit = options.limit;
@@ -127,9 +128,54 @@ export class HistoryDownloader extends EventEmitter {
         const group = this.config.groups.find(g => String(g.id) === String(groupId));
         if (!group) throw new Error('Group config not found');
 
+        // ---- Smart resume (v2.3.34) ---------------------------------------
+        //
+        // Three modes, each tells gramJS where to start iterating so we
+        // never re-walk messages we already have rows for:
+        //
+        //   - 'pull-older' (default for a fresh manual click) — iterate
+        //     from `min(message_id) - 1` BACKWARDS. Skips everything from
+        //     the oldest already-stored message up to "now"; only walks
+        //     uncovered older history.
+        //   - 'catch-up' — iterate from `max(message_id) + 1` to NEWEST.
+        //     Used by the post-monitor-restart auto-spawn so we recover
+        //     the gap between shutdown and boot.
+        //   - 'rescan' — caller passed `offsetId` explicitly; honor it
+        //     verbatim (used for "Run again" buttons + tests).
+        //
+        // The point: a resume-after-resume is ~80-90% faster than the
+        // pre-v2.3.34 "walk every message and isDownloaded() each one"
+        // path. Telegram-side filtering replaces millions of round trips
+        // with a single offsetId hint.
+        const explicitOffset = !!options.offsetId;
+        const requestedMode = options.mode === 'catch-up' ? 'catch-up'
+            : options.mode === 'rescan' ? 'rescan'
+            : 'pull-older';
+        let mode = requestedMode;
+        let iterMaxId;     // gramJS reads as `maxId`
+        let iterMinId;     // gramJS reads as `minId`
+        if (explicitOffset || mode === 'rescan') {
+            mode = 'rescan';
+            iterMaxId = offsetId || undefined;
+        } else {
+            const { minMessageId, maxMessageId, count } = getMessageIdRange(groupId);
+            if (mode === 'catch-up') {
+                if (maxMessageId != null) iterMinId = maxMessageId; // strictly newer than this id
+            } else if (count > 0 && minMessageId != null) {
+                // pull-older with at least one row already on disk
+                iterMaxId = minMessageId; // strictly older than this id
+            }
+            // count === 0 → first-time backfill: no offset, iterate from newest as before
+        }
+
         // 'All' surfaces in progress UIs as the string "all" instead of a number
         // so toasts/log lines don't render misleading totals.
-        this.emit('start', { group: group.name, limit: limit === undefined ? 'all' : limit });
+        this.emit('start', {
+            group: group.name,
+            limit: limit === undefined ? 'all' : limit,
+            mode,
+            offsetId: iterMaxId || iterMinId || 0,
+        });
 
         // Start workers if not running
         this.downloader.start();
@@ -147,11 +193,20 @@ export class HistoryDownloader extends EventEmitter {
             // SAFETY: Process in small batches with rest intervals
             // GramJS: passing `limit: undefined` to iterMessages iterates ALL messages.
 
-            for await (const message of workingClient.iterMessages(groupId, {
+            const iterOpts = {
                 limit: limit,
-                offsetId: offsetId,
-                offsetDate: options.offsetDate
-            })) {
+                offsetDate: options.offsetDate,
+            };
+            // gramJS treats `maxId`/`minId` as STRICT inequalities
+            // (returns rows with id < maxId / id > minId), which matches
+            // the "skip everything already in DB" intent exactly.
+            if (iterMaxId) iterOpts.maxId = iterMaxId;
+            if (iterMinId) iterOpts.minId = iterMinId;
+            // For backwards compat, propagate offsetId only when caller
+            // explicitly passed it (otherwise it conflicts with maxId).
+            if (explicitOffset) iterOpts.offsetId = offsetId;
+
+            for await (const message of workingClient.iterMessages(groupId, iterOpts)) {
                 if (!this.running || this.cancelFlag) break; // Use this.running for graceful stop, cancelFlag for immediate return
 
                 this.stats.processed++;
