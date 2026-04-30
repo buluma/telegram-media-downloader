@@ -358,6 +358,32 @@ export function isDownloaded(groupId, messageId) {
 }
 
 /**
+ * Min + max message_id for one group in the downloads table.
+ *
+ * Powers the v2.3.34 smart-resume path in the history backfill: we tell
+ * gramJS `iterMessages({ maxId: minMessageId - 1 })` so the iterator
+ * skips every message we already have on disk and resumes from the
+ * oldest hole. Same idea in reverse with `minId: maxMessageId + 1` for
+ * the post-monitor-restart catch-up flow.
+ *
+ * Returns `{ minMessageId: null, maxMessageId: null, count: 0 }` for an
+ * empty group so the caller can default to "first-time backfill" (no
+ * range filter, iterate from newest).
+ */
+export function getMessageIdRange(groupId) {
+    const r = getDb().prepare(`
+        SELECT MIN(message_id) AS min_id, MAX(message_id) AS max_id, COUNT(*) AS n
+          FROM downloads
+         WHERE group_id = ?
+    `).get(String(groupId));
+    return {
+        minMessageId: r?.min_id ?? null,
+        maxMessageId: r?.max_id ?? null,
+        count: r?.n ?? 0,
+    };
+}
+
+/**
  * All-Media query — same shape as getDownloads() but spans every group, with
  * the per-row group_id + group_name preserved so the gallery can paint the
  * right tile and the viewer can route back to the source chat. Powers the

@@ -158,7 +158,10 @@ export class RealtimeMonitor extends EventEmitter {
             this._origConsoleError.apply(console, args);
         };
 
-        // Auto-discover which client works for each group
+        // Auto-discover which client works for each group + capture the
+        // current top message id so the v2.3.34 catch-up hook below can
+        // detect gaps between the last DB row and Telegram's "now".
+        const _topPerGroup = new Map();
         for (const group of enabledGroups) {
             try {
                 const workingClient = await this.discoverClientForGroup(group);
@@ -170,6 +173,7 @@ export class RealtimeMonitor extends EventEmitter {
                 const history = await workingClient.getMessages(group.id, { limit: 1 });
                 if (history && history.length > 0) {
                     this.lastIds.set(group.id, history[0].id);
+                    _topPerGroup.set(String(group.id), history[0].id);
                 }
             } catch (e) {
                 if (e.errorMessage === 'CHANNEL_INVALID') {
@@ -177,6 +181,46 @@ export class RealtimeMonitor extends EventEmitter {
                     group.enabled = false;
                 }
             }
+        }
+
+        // ---- Catch-up backfill (v2.3.34) -------------------------------
+        //
+        // For every monitored group whose newest stored message_id lags
+        // Telegram's current top by more than `autoCatchUpThreshold`
+        // messages, schedule a `catch-up` backfill so the gap that
+        // accumulated while monitor was offline closes itself without
+        // manual intervention. Honors the same per-group lock as a
+        // user-triggered backfill (won't fight the user).
+        try {
+            const histCfg = this.config?.advanced?.history || {};
+            const enabled = histCfg.autoCatchUp !== false;          // default ON
+            const threshold = Math.max(1, Number(histCfg.autoCatchUpThreshold) || 5);
+            if (enabled) {
+                const { getMessageIdRange } = await import('./db.js');
+                for (const group of enabledGroups) {
+                    if (!group.enabled) continue;
+                    const top = _topPerGroup.get(String(group.id));
+                    if (!top) continue;
+                    const { maxMessageId, count } = getMessageIdRange(String(group.id));
+                    // count === 0 means a brand-new group; auto-first
+                    // backfill (POST /api/groups handler) covers that case
+                    // already, so don't fire again here.
+                    if (count === 0 || maxMessageId == null) continue;
+                    const gap = top - maxMessageId;
+                    if (gap >= threshold) {
+                        // Emit so server.js (the only place that owns the
+                        // history-job lifecycle) can spawn the backfill.
+                        // Decoupling means monitor.js stays small + the
+                        // CLI "monitor" command doesn't need a background
+                        // backfill orchestrator (the standalone use case
+                        // simply ignores this event).
+                        try { this.emit('catch_up_needed', { groupId: String(group.id), gap }); }
+                        catch (e) { console.warn('[catch-up] emit failed:', e?.message || e); }
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn('[catch-up] hook error:', e?.message || e);
         }
 
         // Start Polling Loop (Smart Recursive Mode)

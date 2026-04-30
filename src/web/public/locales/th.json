@@ -667,6 +667,16 @@
     "settings.advanced.nsfw_concurrency": "Concurrency (1–4)",
     "settings.advanced.nsfw_concurrency_help": "จำนวน inference ที่ทำพร้อมกัน ค่ายิ่งสูงยิ่งใช้ CPU/RAM มากขึ้นตอนสแกน ค่าเริ่มต้น 1",
 
+    "settings.advanced.auto_first_backfill": "Backfill อัตโนมัติเมื่อ Add กลุ่มใหม่",
+    "settings.advanced.auto_first_backfill_help": "เมื่อ add กลุ่มใหม่ ระบบจะดึง message ล่าสุด N รายการให้อัตโนมัติ เพื่อไม่ให้ gallery ว่างเปล่า ปิดได้ถ้าต้องการกด backfill เอง",
+    "settings.advanced.auto_first_limit": "จำนวน Backfill อัตโนมัติ",
+    "settings.advanced.auto_first_limit_help": "จำนวน message ที่ดึงตอน add กลุ่มใหม่ ค่า 0 = ปิด",
+    "settings.advanced.auto_catchup": "Catch-Up อัตโนมัติหลัง Restart",
+    "settings.advanced.auto_catchup_help": "หลัง container restart ระบบจะ spawn backfill อัตโนมัติเพื่อเก็บ message ที่หายไปช่วงที่ down อยู่",
+    "settings.advanced.batch_insert": "ขนาด Batch Insert",
+    "settings.advanced.batch_insert_help": "จำนวน row ที่เก็บไว้ก่อน commit ตอน backfill ค่ายิ่งสูง = ไวขึ้นกับไฟล์เล็ก ใช้ RAM เพิ่มเล็กน้อย",
+    "backfill.already_running": "มีการ backfill กลุ่มนี้ทำงานอยู่แล้ว",
+
     "maintenance.update.title": "ติดตั้งอัปเดต",
     "maintenance.update.help": "ดึง image ล่าสุดและสร้าง container ใหม่แทนที่ตัวเดิม volume ของ data และ config จะถูกเก็บไว้เช่นเดิม ฐานข้อมูล SQLite จะถูก snapshot ไว้ที่ data/backups/ ก่อน หน้าจอ dashboard จะเชื่อมต่อใหม่อัตโนมัติเมื่อ container ใหม่ผ่าน healthcheck",
     "maintenance.update.action": "ตรวจสอบ / ติดตั้ง",

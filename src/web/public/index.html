@@ -2194,6 +2194,32 @@
                                         <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.advanced.long_break_help">60-120s coffee break. 0 disables. Helps avoid bans.</p>
                                     </div>
                                 </div>
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+                                    <div class="flex items-start justify-between gap-3 py-1 sm:col-span-2">
+                                        <div class="min-w-0">
+                                            <div class="text-tg-text text-sm" data-i18n="settings.advanced.auto_first_backfill">Auto-backfill on first add</div>
+                                            <p class="text-[10px] text-tg-textSecondary mt-0.5" data-i18n="settings.advanced.auto_first_backfill_help">When you add a brand-new group, automatically pull the most recent N messages so the gallery isn't empty. Disable to keep the manual flow.</p>
+                                        </div>
+                                        <div id="setting-adv-auto-first-backfill" class="tg-toggle shrink-0 mt-0.5"></div>
+                                    </div>
+                                    <div>
+                                        <label for="setting-adv-auto-first-limit" class="text-tg-text text-xs block mb-1" data-i18n="settings.advanced.auto_first_limit">Auto-backfill limit</label>
+                                        <input id="setting-adv-auto-first-limit" type="number" min="0" max="10000" class="tg-input w-full text-sm" placeholder="100">
+                                        <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.advanced.auto_first_limit_help">Messages to pull on first add. 0 disables.</p>
+                                    </div>
+                                    <div class="flex items-start justify-between gap-3 py-1">
+                                        <div class="min-w-0">
+                                            <div class="text-tg-text text-sm" data-i18n="settings.advanced.auto_catchup">Auto catch-up after restart</div>
+                                            <p class="text-[10px] text-tg-textSecondary mt-0.5" data-i18n="settings.advanced.auto_catchup_help">After a container restart, auto-spawn a backfill for the gap between the last stored message and Telegram's current top.</p>
+                                        </div>
+                                        <div id="setting-adv-auto-catchup" class="tg-toggle shrink-0 mt-0.5"></div>
+                                    </div>
+                                    <div>
+                                        <label for="setting-adv-batch-insert" class="text-tg-text text-xs block mb-1" data-i18n="settings.advanced.batch_insert">Batch insert size</label>
+                                        <input id="setting-adv-batch-insert" type="number" min="1" max="500" class="tg-input w-full text-sm" placeholder="50">
+                                        <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.advanced.batch_insert_help">DB rows buffered before commit during backfill. Higher = faster on small files; uses a tiny bit more RAM.</p>
+                                    </div>
+                                </div>
                             </div>
 
                             <!-- Disk rotator -->

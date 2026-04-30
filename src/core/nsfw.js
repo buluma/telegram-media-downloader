@@ -22,7 +22,6 @@
 import path from 'path';
 import { existsSync, promises as fs } from 'fs';
 import { fileURLToPath } from 'url';
-import { sha256OfFile as _unused } from './checksum.js';   // eslint-disable-line no-unused-vars
 import { getDb, getUnscannedNsfwBatch, setNsfwResult, getNsfwStats } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -325,6 +324,97 @@ export function cancelScan() {
 
 export function isScanRunning() {
     return _scanRunning;
+}
+
+// Background single-row classifier — fired by the downloader's post-
+// download hook so newly-arrived files are scored without waiting for
+// the next batch scan. Best-effort:
+//   - Returns immediately when NSFW review is disabled in config.
+//   - Skips the row if the file_type isn't on the configured allowlist.
+//   - Honors the same per-kind concurrency cap as the batch scan via
+//     a shared semaphore (single classifier instance, single thread).
+//   - Failures are silent — the next manual scan will pick up unscored
+//     rows since `nsfw_checked_at` only gets set on success.
+const _bgQueue = [];
+let _bgRunning = false;
+
+export function pregenerateNsfw(downloadId) {
+    queueMicrotask(() => {
+        // Defer the actual work + cap queue depth so a 1000-file backfill
+        // doesn't pile up 1000 in-memory entries. The post-download hook
+        // is fire-and-forget; if we can't accept the work right now we
+        // simply skip — the next batch scan covers the row instead.
+        if (_bgQueue.length > 200) return;
+        _bgQueue.push(downloadId);
+        _drainBg();
+    });
+}
+
+async function _drainBg() {
+    if (_bgRunning) return;
+    _bgRunning = true;
+    try {
+        const { loadConfig } = await import('../config/manager.js');
+        // Re-resolve config every drain — picks up live changes without
+        // a server restart, same pattern as the WASM classifier itself.
+        let cfg;
+        try {
+            const live = loadConfig();
+            cfg = {
+                ...NSFW_DEFAULTS,
+                ...(live.advanced?.nsfw || {}),
+                enabled: live.advanced?.nsfw?.enabled === true,
+            };
+        } catch { cfg = { ...NSFW_DEFAULTS, enabled: false }; }
+        if (!cfg.enabled) { _bgQueue.length = 0; return; }
+
+        let classifier;
+        try { classifier = await _loadClassifier(cfg); }
+        catch { _bgQueue.length = 0; return; }
+
+        const db = getDb();
+        const lookupRow = db.prepare(`
+            SELECT id, file_path, file_type, nsfw_checked_at
+              FROM downloads
+             WHERE id = ?
+        `);
+        const fileTypeOk = new Set((cfg.fileTypes || NSFW_DEFAULTS.fileTypes).map(s => String(s).toLowerCase()));
+
+        while (_bgQueue.length) {
+            const id = _bgQueue.shift();
+            const row = lookupRow.get(Number(id));
+            if (!row) continue;
+            // Skip already-scored rows so a re-trigger (e.g. file_hash
+            // dedup that re-uses an existing row) never re-spends CPU.
+            if (row.nsfw_checked_at != null) continue;
+            if (!fileTypeOk.has(String(row.file_type || '').toLowerCase())) continue;
+
+            // Resolve absolute path the same way the batch scan does.
+            let abs = null;
+            if (row.file_path) {
+                if (path.isAbsolute(row.file_path) && existsSync(row.file_path)) {
+                    abs = row.file_path;
+                } else {
+                    let s = String(row.file_path).replace(/\\/g, '/');
+                    while (s.startsWith('data/downloads/')) s = s.slice('data/downloads/'.length);
+                    const candidate = path.join(DATA_DIR, 'downloads', s);
+                    if (existsSync(candidate)) abs = candidate;
+                    else if (existsSync(row.file_path)) abs = row.file_path;
+                }
+            }
+
+            let score = null;
+            if (abs) {
+                try {
+                    const r = await _classifyFile(classifier, abs);
+                    if (r) score = r.score;
+                } catch { /* per-file failure: leave score NULL but mark scanned */ }
+            }
+            try { setNsfwResult(id, score); } catch { /* best-effort */ }
+        }
+    } finally {
+        _bgRunning = false;
+    }
 }
 
 // Module-level cleanup on graceful shutdown — lets the host release
