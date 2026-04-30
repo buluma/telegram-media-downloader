@@ -13,20 +13,14 @@ import { createServer } from 'http';
 import fs from 'fs/promises';
 import fsSync, { existsSync } from 'fs';
 import path from 'path';
-
-// Kenyan local time (UTC+3) - readable format
-const ts = () => {
-    const d = new Date();
-    const opt = { timeZone: 'Africa/Nairobi', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
-    return new Intl.DateTimeFormat('en-KE', opt).format(d).replace(/,/, '');
-};
 import { fileURLToPath } from 'url';
 import { TelegramClient } from 'telegram';
 import { StringSession } from 'telegram/sessions/index.js';
 import crypto from 'crypto';
 
 import { getOrGenerateSecret } from '../core/secret.js';
-import { getDb, getDownloads, getAllDownloads, getStats as getDbStats, deleteGroupDownloads, deleteAllDownloads, backfillGroupNames, searchDownloads, deleteDownloadsBy } from '../core/db.js';
+import { getDb, getDownloads, getAllDownloads, getStats as getDbStats, deleteGroupDownloads, deleteAllDownloads, backfillGroupNames, searchDownloads, deleteDownloadsBy,
+    createShareLink, getShareLinkForServe, bumpShareLinkAccess, revokeShareLink, listShareLinks } from '../core/db.js';
 import { sanitizeName } from '../core/downloader.js';
 import { SecureSession } from '../core/security.js';
 import { AccountManager } from '../core/accounts.js';
@@ -34,14 +28,26 @@ import { loadConfig } from '../config/manager.js';
 import { runtime } from '../core/runtime.js';
 import { getDiskRotator } from '../core/disk-rotator.js';
 import * as integrity from '../core/integrity.js';
+import { findDuplicates as dedupFindDuplicates, deleteByIds as dedupDeleteByIds } from '../core/dedup.js';
+import { ensureShareSecret, verifyShareToken, buildShareUrlPath,
+    clampTtlSeconds, applyShareLimits } from '../core/share.js';
+import { getOrCreateThumb, purgeThumbsForDownload, purgeAllThumbs,
+    getThumbsCacheStats, buildAllThumbnails, hasFfmpeg,
+    ALLOWED_WIDTHS as THUMB_WIDTHS } from '../core/thumbs.js';
+import { startScan as nsfwStartScan, cancelScan as nsfwCancelScan,
+    isScanRunning as nsfwIsScanRunning, getScanState as nsfwGetScanState,
+    NSFW_DEFAULTS, getNsfwStats, getNsfwDeleteCandidates,
+    whitelistNsfw } from '../core/nsfw.js';
+import { runAutoUpdate, autoUpdateStatus } from '../core/updater.js';
 import { getRescueSweeper } from '../core/rescue.js';
 import { getRescueStats } from '../core/db.js';
 import { parseTelegramUrl, parseUrlList, UrlParseError } from '../core/url-resolver.js';
 import { listUserStories, listAllStories, storyToJob } from '../core/stories.js';
 import { metrics } from '../core/metrics.js';
 import {
-    hashPassword, loginVerify, isAuthConfigured,
-    issueSession, validateSession, revokeSession, revokeAllSessions, startSessionGc,
+    hashPassword, verifyPassword, loginVerify, isAuthConfigured, isGuestEnabled,
+    issueSession, validateSession, revokeSession,
+    revokeAllSessions, revokeAllGuestSessions, startSessionGc,
 } from '../core/web-auth.js';
 import { suppressNoise, wrapConsoleMethod } from '../core/logger.js';
 
@@ -104,13 +110,18 @@ server.on('upgrade', async (req, socket, head) => {
         }
 
         const cookies = parseCookieHeader(req.headers.cookie);
-        if (!validateSession(cookies['tg_dl_session'])) {
+        const session = validateSession(cookies['tg_dl_session']);
+        if (!session) {
             socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
             socket.destroy();
             return;
         }
 
         wss.handleUpgrade(req, socket, head, (ws) => {
+            // Stamp the role on the WS so future per-event filtering
+            // (admin-only broadcasts) can reference it without a second
+            // session lookup.
+            ws.role = session.role;
             wss.emit('connection', ws, req);
         });
     } catch {
@@ -186,22 +197,10 @@ app.use(helmet({
             'connect-src': ["'self'", 'ws:', 'wss:'],
             'object-src': ["'none'"],
             'frame-ancestors': ["'self'"],
-            // When the dashboard is served over plain HTTP (LAN/Tailscale),
-            // this default Helmet directive rewrites same-origin fetches to
-            // https://host which then fails with ERR_SSL_PROTOCOL_ERROR.
-            // Leave HTTPS enforcement to config.web.forceHttps / reverse proxy.
-            'upgrade-insecure-requests': null,
         },
     },
-    // COOP + OAC on non-trustworthy origins (plain IP http://) produce noisy
-    // browser warnings and can cause setup/login edge-cases during first run.
-    crossOriginOpenerPolicy: false,
     crossOriginEmbedderPolicy: false,
     crossOriginResourcePolicy: { policy: 'same-origin' },
-    originAgentCluster: false,
-    // Don't emit HSTS on plain HTTP listeners. If HTTPS is terminated by a
-    // reverse proxy, that layer should own HSTS.
-    strictTransportSecurity: false,
 }));
 
 // HTTP caching policy. Browsers (and intermediaries like Cloudflare) will
@@ -340,6 +339,27 @@ app.use((req, res, next) => {
 // process alive on shutdown.
 startSessionGc();
 
+// Bootstrap the share-link HMAC secret + apply runtime limits from
+// config. Lazy-generated secret on first boot, persisted to
+// config.web.shareSecret. Done inside an async IIFE so a missing config
+// file (very-first boot) doesn't crash module load — re-runs on the
+// next request that touches `readConfigSafe`.
+(async () => {
+    try {
+        const cfg = await readConfigSafe();
+        const { generated } = ensureShareSecret(cfg);
+        if (generated) {
+            await writeConfigAtomic(cfg);
+            console.log('[share] generated new HMAC secret (first boot or rotation).');
+        }
+        applyShareLimits(cfg.advanced?.share || {});
+    } catch (e) {
+        // Non-fatal — verifyShareToken will throw at first /share/* request
+        // and the user will see a 500. Better than crashing the whole web.
+        console.warn('[share] secret bootstrap deferred:', e?.message || e);
+    }
+})();
+
 // ============ AUTHENTICATION ============
 
 // Simple cookie parser middleware
@@ -394,6 +414,10 @@ async function writeConfigAtomic(config) {
 const PUBLIC_PATH_PREFIXES = [
     '/login', '/setup-needed', '/css/', '/js/', '/locales/', '/favicon', '/metrics',
     '/icons/', '/manifest.webmanifest', '/sw.js',
+    // Share-link public route — auth is the HMAC sig + DB row check inside
+    // the handler, NOT the dashboard cookie. Without this prefix, friends
+    // following a share URL would be redirected to /login.html.
+    '/share/',
 ];
 const PUBLIC_API_PATHS = new Set([
     '/api/login',
@@ -422,11 +446,8 @@ async function checkAuth(req, res, next) {
     const config = await readConfigSafe();
     const enabled = config.web?.enabled !== false; // default ON
 
-    // Explicit opt-out: allow open dashboard when auth is disabled.
-    if (!enabled) return next();
-
     // Fail-closed: dashboard is locked (or not yet configured).
-    if (!isAuthConfigured(config.web)) {
+    if (!enabled || !isAuthConfigured(config.web)) {
         if (req.path.startsWith('/api/') && !PUBLIC_API_PATHS.has(req.path)) {
             return res.status(503).json({
                 error: 'Web dashboard not initialised. Run `npm run auth` to set a password.',
@@ -442,12 +463,58 @@ async function checkAuth(req, res, next) {
     if (isPublicPath(req.path)) return next();
 
     const token = req.cookies['tg_dl_session'];
-    if (validateSession(token)) return next();
+    const session = validateSession(token);
+    if (session) {
+        req.role = session.role;
+        return next();
+    }
 
     if (req.path.startsWith('/api/')) {
         return res.status(401).json({ error: 'Unauthorized' });
     }
     return res.redirect('/login.html');
+}
+
+// ---- Guest authorization ---------------------------------------------------
+//
+// Default-deny: guest sessions can ONLY hit the explicit allowlist below.
+// Anything else (including endpoints that don't exist yet) returns 403 with
+// `adminRequired: true`. This is intentionally a chokepoint instead of
+// per-route requireAdmin() — a future dev who adds a new mutation route
+// gets admin-gating for free; forgetting to add `requireAdmin` would leak
+// the route, which is a much worse failure mode than the occasional 403
+// when a new read endpoint forgets to ask for guest access.
+const GUEST_GET_ALLOW = [
+    '/api/auth_check', '/api/me', '/api/version', '/api/version/check',
+    '/api/downloads',          // and /:groupId, /all, /search via prefix
+    '/api/groups',             // GET only (list) — PUT/DELETE blocked below
+    '/api/stats',
+    '/api/monitor/status',
+    '/api/queue/snapshot',
+    '/api/rescue/stats',
+    '/api/history',            // GET past jobs only (POST = trigger backfill)
+    '/api/history/jobs',       // GET active jobs read-only
+    '/api/thumbs',             // GET /api/thumbs/:id — read-only thumb stream
+];
+const GUEST_OTHER_ALLOW = new Set(['POST /api/logout']);
+
+function isGuestAllowed(req) {
+    if (req.method === 'GET') {
+        const p = req.path;
+        return GUEST_GET_ALLOW.some(pre => p === pre || p.startsWith(pre + '/'));
+    }
+    return GUEST_OTHER_ALLOW.has(`${req.method} ${req.path}`);
+}
+
+function guestGate(req, res, next) {
+    if (req.role === 'admin') return next();
+    if (req.role === 'guest' && isGuestAllowed(req)) return next();
+    if (req.role === 'guest') {
+        return res.status(403).json({ error: 'Admin only', adminRequired: true });
+    }
+    // No role on req → checkAuth let the request through as a public path,
+    // so don't second-guess it.
+    return next();
 }
 
 // Stricter rate limit for the login endpoint to slow brute-force attempts.
@@ -493,7 +560,10 @@ app.post('/api/login', loginLimiter, async (req, res) => {
         }
 
         const result = loginVerify(password, config.web);
-        metrics.inc('tgdl_login_total', 1, { result: result.ok ? 'ok' : 'fail' });
+        metrics.inc('tgdl_login_total', 1, {
+            result: result.ok ? 'ok' : 'fail',
+            role: result.ok ? result.role : 'none',
+        });
         if (!result.ok) return res.status(401).json({ error: 'Invalid password' });
 
         // Auto-upgrade legacy plaintext to scrypt hash on first successful login.
@@ -507,9 +577,11 @@ app.post('/api/login', loginLimiter, async (req, res) => {
             }
         }
 
-        const { token, maxAgeMs } = issueSession({ ttlMs: sessionTtlMsFromConfig(config) });
+        const { token, maxAgeMs } = issueSession({
+            ttlMs: sessionTtlMsFromConfig(config), role: result.role,
+        });
         res.cookie('tg_dl_session', token, { ...SESSION_COOKIE_OPTS, maxAge: maxAgeMs });
-        res.json({ success: true });
+        res.json({ success: true, role: result.role });
     } catch (e) {
         console.error('Login error:', e);
         res.status(500).json({ error: 'Internal error' });
@@ -557,7 +629,9 @@ app.post('/api/auth/setup', setupLimiter, async (req, res) => {
         delete config.web.password;
         await writeConfigAtomic(config);
 
-        const { token, maxAgeMs } = issueSession({ ttlMs: sessionTtlMsFromConfig(config) });
+        const { token, maxAgeMs } = issueSession({
+            ttlMs: sessionTtlMsFromConfig(config), role: 'admin',
+        });
         res.cookie('tg_dl_session', token, { ...SESSION_COOKIE_OPTS, maxAge: maxAgeMs });
         res.json({ success: true });
     } catch (e) {
@@ -575,8 +649,15 @@ app.post('/api/auth/setup', setupLimiter, async (req, res) => {
 // enforce its own auth check explicitly.
 app.post('/api/auth/change-password', loginLimiter, async (req, res) => {
     try {
-        if (!validateSession(req.cookies['tg_dl_session'])) {
+        const session = validateSession(req.cookies['tg_dl_session']);
+        if (!session) {
             return res.status(401).json({ error: 'Unauthorized' });
+        }
+        // Guests cannot change the admin password (and have no separate
+        // password of their own to change — admin manages the guest hash
+        // from the Dashboard Security panel).
+        if (session.role !== 'admin') {
+            return res.status(403).json({ error: 'Admin only', adminRequired: true });
         }
         const { currentPassword, newPassword } = req.body || {};
         if (typeof currentPassword !== 'string' || typeof newPassword !== 'string') {
@@ -589,8 +670,24 @@ app.post('/api/auth/change-password', loginLimiter, async (req, res) => {
         if (!isAuthConfigured(config.web)) {
             return res.status(409).json({ error: 'No password configured yet — use /api/auth/setup' });
         }
-        const verify = loginVerify(currentPassword, config.web);
-        if (!verify.ok) return res.status(401).json({ error: 'Current password is incorrect' });
+        // Match against the admin hash specifically (loginVerify also accepts
+        // a guest password, which would let a stolen guest cookie pivot to
+        // admin if we used the broad verifier here).
+        const adminMatches = config.web.passwordHash
+            ? verifyPassword(currentPassword, config.web.passwordHash)
+            : (typeof config.web.password === 'string'
+                && currentPassword === config.web.password);
+        if (!adminMatches) return res.status(401).json({ error: 'Current password is incorrect' });
+
+        // Reject collisions with the guest password — otherwise admin and
+        // guest become indistinguishable at the login form.
+        if (config.web.guestPasswordHash
+            && verifyPassword(newPassword, config.web.guestPasswordHash)) {
+            return res.status(400).json({
+                error: 'New password must differ from the guest password',
+                code: 'SAME_AS_GUEST',
+            });
+        }
 
         config.web.passwordHash = hashPassword(newPassword);
         delete config.web.password;
@@ -599,11 +696,97 @@ app.post('/api/auth/change-password', loginLimiter, async (req, res) => {
         // Issue a fresh session and let the SPA replace the old cookie. We
         // don't revoke other sessions automatically — the SPA exposes a
         // separate "Sign out everywhere" affordance that hits revokeAllSessions.
-        const { token, maxAgeMs } = issueSession({ ttlMs: sessionTtlMsFromConfig(config) });
+        const { token, maxAgeMs } = issueSession({
+            ttlMs: sessionTtlMsFromConfig(config), role: 'admin',
+        });
         res.cookie('tg_dl_session', token, { ...SESSION_COOKIE_OPTS, maxAge: maxAgeMs });
         res.json({ success: true });
     } catch (e) {
         console.error('change-password:', e);
+        res.status(500).json({ error: 'Internal error' });
+    }
+});
+
+// ====== Guest password (admin-managed) =====================================
+//
+// One slot for an optional read-only "guest" role alongside the admin
+// password. Stored under config.web.guestPasswordHash + config.web.guestEnabled.
+// Guests can browse the gallery and watch media but cannot mutate state
+// (the guestGate middleware enforces this server-side).
+//
+// Body (one field required):
+//   { password }    → hash + store, set guestEnabled=true
+//   { enabled }     → flip the guestEnabled flag (revokes all guest sessions
+//                     when turning off so existing guest cookies stop working
+//                     immediately)
+//   { clear: true } → wipe the hash + disable + revoke
+app.post('/api/auth/guest-password', async (req, res) => {
+    try {
+        // Registered before the global checkAuth middleware (same as all
+        // /api/auth/* routes), so enforce auth + admin role explicitly here.
+        const session = validateSession(req.cookies['tg_dl_session']);
+        if (!session) return res.status(401).json({ error: 'Unauthorized' });
+        if (session.role !== 'admin') {
+            return res.status(403).json({ error: 'Admin only', adminRequired: true });
+        }
+        const { password, enabled, clear } = req.body || {};
+        const config = await readConfigSafe();
+        if (!config.web) config.web = {};
+
+        if (clear === true) {
+            delete config.web.guestPasswordHash;
+            config.web.guestEnabled = false;
+            await writeConfigAtomic(config);
+            revokeAllGuestSessions();
+            broadcast({ type: 'config_updated' });
+            return res.json({ success: true, configured: false, enabled: false });
+        }
+
+        if (typeof password === 'string' && password.length > 0) {
+            if (password.length < 8) {
+                return res.status(400).json({ error: 'Guest password must be at least 8 characters' });
+            }
+            // Reject equality with the admin password — otherwise the guest
+            // role can never actually be reached from the login form.
+            const adminHash = config.web.passwordHash;
+            const adminMatches = adminHash
+                ? verifyPassword(password, adminHash)
+                : (typeof config.web.password === 'string'
+                    && password === config.web.password);
+            if (adminMatches) {
+                return res.status(400).json({
+                    error: 'Guest password must differ from the admin password',
+                    code: 'SAME_AS_ADMIN',
+                });
+            }
+            config.web.guestPasswordHash = hashPassword(password);
+            config.web.guestEnabled = true;
+            await writeConfigAtomic(config);
+            // Any guest signed in with the previous password should be
+            // bounced — same posture as admin password change.
+            revokeAllGuestSessions();
+            broadcast({ type: 'config_updated' });
+            return res.json({ success: true, configured: true, enabled: true });
+        }
+
+        if (typeof enabled === 'boolean') {
+            if (!config.web.guestPasswordHash && enabled) {
+                return res.status(400).json({ error: 'Set a guest password before enabling guest access' });
+            }
+            config.web.guestEnabled = enabled;
+            await writeConfigAtomic(config);
+            if (!enabled) revokeAllGuestSessions();
+            broadcast({ type: 'config_updated' });
+            return res.json({
+                success: true,
+                configured: !!config.web.guestPasswordHash,
+                enabled,
+            });
+        }
+
+        return res.status(400).json({ error: 'Provide one of: password, enabled, clear' });
+    } catch (e) {
+        console.error('guest-password:', e);
         res.status(500).json({ error: 'Internal error' });
     }
 });
@@ -681,7 +864,9 @@ app.post('/api/auth/reset/confirm', loginLimiter, async (req, res) => {
         // Revoke every existing session — if someone reset the password,
         // assume the previous owner is locked out and shouldn't be trusted.
         revokeAllSessions();
-        const { token: sessionTok, maxAgeMs } = issueSession({ ttlMs: sessionTtlMsFromConfig(config) });
+        const { token: sessionTok, maxAgeMs } = issueSession({
+            ttlMs: sessionTtlMsFromConfig(config), role: 'admin',
+        });
         res.cookie('tg_dl_session', sessionTok, { ...SESSION_COOKIE_OPTS, maxAge: maxAgeMs });
         res.json({ success: true });
     } catch (e) {
@@ -799,16 +984,55 @@ app.get('/api/version/check', async (req, res) => {
     res.json({ current, ...data, updateAvailable: _cmpSemver(latest.tag, current) > 0, cached: false });
 });
 
+// ====== Auto-update (Docker via watchtower sidecar) ========================
+//
+// `GET /api/update/status` — capability probe. Returns `{ available, …reasons }`
+// so the SPA can render either the active "Install update" button or a
+// disabled state with a help tooltip ("enable the auto-update profile in
+// docker-compose.yml…").
+//
+// `POST /api/update` — admin-only kickoff. Snapshots the SQLite DB into
+// `data/backups/`, then signals the watchtower sidecar to pull + recreate
+// this container. Returns 200 immediately; the actual swap happens out of
+// band moments later (the SPA's WS reconnect logic detects the cycle).
+app.get('/api/update/status', async (req, res) => {
+    res.json(autoUpdateStatus());
+});
+
+app.post('/api/update', async (req, res) => {
+    try {
+        const r = await runAutoUpdate();
+        // Heads-up to every open tab — fires BEFORE watchtower kills us so
+        // the toast shows up while the WS is still alive. The SPA's
+        // existing reconnect logic handles the gap; the new container's
+        // healthcheck has to pass before it's reachable.
+        try { broadcast({ type: 'update_started', backup: r.backup }); } catch {}
+        res.json({ success: true, backup: r.backup });
+    } catch (e) {
+        console.error('auto-update:', e);
+        const status = e.code === 'AUTO_UPDATE_UNAVAILABLE' ? 503
+            : e.code === 'BACKUP_FAILED' ? 500
+            : 500;
+        res.status(status).json({ error: e.message, code: e.code || 'UPDATE_FAILED' });
+    }
+});
+
 app.get('/api/auth_check', async (req, res) => {
     const config = await readConfigSafe();
     const configured = isAuthConfigured(config.web);
     const enabled = config.web?.enabled !== false;
-    const authed = !enabled || (configured && validateSession(req.cookies['tg_dl_session']));
+    const session = configured && enabled
+        ? validateSession(req.cookies['tg_dl_session'])
+        : false;
     res.json({
         configured,
         enabled,
-        authenticated: !!authed,
-        setupRequired: enabled && !configured,
+        authenticated: !!session,
+        // Role surfaced so the SPA can mark `<body data-role>` and hide
+        // admin-only UI for guest sessions in a single source-of-truth pass.
+        role: session ? session.role : null,
+        setupRequired: !configured || !enabled,
+        guestEnabled: isGuestEnabled(config.web),
     });
 });
 
@@ -865,8 +1089,127 @@ app.get('/metrics', (req, res) => {
     res.type('text/plain; version=0.0.4').send(metrics.render());
 });
 
+// ====== Public share-link route (HMAC-gated, no dashboard cookie) ==========
+//
+// Registered BEFORE the global checkAuth so a friend with a valid /share
+// URL never sees a /login redirect. Three independent gates protect the
+// route:
+//   1. shareLimiter      — per-IP rate limit (configurable via
+//                          config.advanced.share.rateLimit{Window,Max})
+//   2. verifyShareToken  — HMAC-SHA256, timing-safe constant-time compare
+//   3. getShareLinkForServe — DB row check (revoked? expired?)
+//
+// Only after all three pass do we delegate to safeResolveDownload + the
+// existing file-streaming code (so Range requests and Content-Type
+// behave identically to /files/*). Cache-Control: no-store keeps a
+// shared CDN/proxy from hijacking the bytes for the next visitor.
+//
+// Both windowMs and limit are passed as functions so a config_updated
+// broadcast that changes them takes effect on the next request without a
+// process restart.
+const shareLimiter = rateLimit({
+    windowMs: () => {
+        const ms = Number(_currentShareConfig().rateLimitWindowMs);
+        return Number.isFinite(ms) && ms > 0 ? ms : 60_000;
+    },
+    limit: () => {
+        const lim = Number(_currentShareConfig().rateLimitMax);
+        return Number.isFinite(lim) && lim > 0 ? lim : 60;
+    },
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { error: 'Too many requests — slow down.' },
+});
+
+// Tiny cache around the last-loaded config so the rate-limit getters
+// don't sync-read disk on every share request. Refreshed by the
+// config_updated WS broadcast handler below + on first use.
+let _shareConfigCache = null;
+function _currentShareConfig() {
+    if (!_shareConfigCache) {
+        try { _shareConfigCache = (loadConfig().advanced?.share) || {}; }
+        catch { _shareConfigCache = {}; }
+    }
+    return _shareConfigCache;
+}
+function _invalidateShareConfigCache() { _shareConfigCache = null; }
+
+app.get('/share/:linkId', shareLimiter, async (req, res, next) => {
+    try {
+        const linkId = parseInt(req.params.linkId, 10);
+        const exp = parseInt(req.query.exp, 10);
+        const sig = req.query.sig;
+        if (!Number.isInteger(linkId) || linkId <= 0
+            || !Number.isInteger(exp) || exp <= 0
+            || typeof sig !== 'string' || !sig) {
+            return res.status(400).type('text/plain').send('Invalid share link');
+        }
+
+        // Sig + expiry checks are independent so an attacker can't tell from
+        // the response *which* check failed (timing/shape leak ≈ none).
+        // Both fail with a generic 401.
+        const sigOk = verifyShareToken(linkId, exp, sig);
+        const lookup = getShareLinkForServe(linkId, Math.floor(Date.now() / 1000));
+        if (!sigOk || !lookup || lookup.reason) {
+            // Distinguish reasons in the BODY (UI shows a user-friendly
+            // message) but always return 401 so external scanners can't
+            // enumerate which links exist vs are merely revoked.
+            const code = !sigOk ? 'bad_sig'
+                : lookup?.reason === 'revoked' ? 'revoked'
+                : lookup?.reason === 'expired' ? 'expired'
+                : 'bad_sig';
+            return res.status(401).json({ error: 'Share link is not valid', code });
+        }
+
+        const row = lookup.row;
+        const r = await safeResolveDownload(row.file_path);
+        if (!r.ok) {
+            // File row exists but disk file is gone — surface as 404 so the
+            // friend doesn't think the link is wrong.
+            return res.status(404).type('text/plain').send('File not found');
+        }
+
+        // Bump access counter — cheap, non-blocking on errors.
+        bumpShareLinkAccess(linkId);
+
+        // Anti-CDN cache + don't allow shared caches to cache. Bytes are
+        // gated per-token; if the token is later revoked, no cache layer
+        // should keep handing the file out.
+        res.setHeader('Cache-Control', 'private, no-store, no-cache, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        // Block clickjacking-style framing of the raw stream from a third
+        // party site (defence-in-depth — bytes themselves rarely matter
+        // here, but a video tag in an iframe could fingerprint the user).
+        res.setHeader('X-Frame-Options', 'DENY');
+        res.setHeader('Referrer-Policy', 'no-referrer');
+
+        // Force download when ?download=1, otherwise let the browser pick
+        // (mirrors /files/* semantics so an image/video plays inline by
+        // default and a generic file goes to the download tray).
+        const forceDl = req.query.download === '1' || req.query.download === 'true';
+        const safeName = (row.file_name || `file-${linkId}`).replace(/[\r\n"]/g, '_');
+        const disp = forceDl ? 'attachment' : 'inline';
+        // RFC 5987 filename* for non-ASCII filenames + ASCII fallback.
+        res.setHeader('Content-Disposition',
+            `${disp}; filename="${safeName.replace(/[^\x20-\x7e]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(safeName)}`);
+
+        // Hand off to express's static-style sendFile which supports Range.
+        // sendFile sets Content-Type from the extension, which is what we
+        // want — sniff-protection lives in helmet's nosniff header.
+        return res.sendFile(r.real, (err) => {
+            if (err && !res.headersSent) next(err);
+        });
+    } catch (e) {
+        console.error('share serve:', e);
+        if (!res.headersSent) res.status(500).type('text/plain').send('Internal error');
+    }
+});
+
 // Apply Auth Globally
 app.use(checkAuth);
+// Guest sessions: default-deny everything not on the explicit allowlist.
+// Mounted right after auth so every authenticated /api request is gated.
+app.use('/api', guestGate);
 
 // Serve static files AFTER auth
 // Asset cache-busting — append `?v=<APP_VERSION>` to every internal
@@ -1089,6 +1432,26 @@ app.delete('/api/accounts/:id', async (req, res) => {
 runtime.on('state', (s) => broadcast({ type: 'monitor_state', state: s.state, error: s.error }));
 runtime.on('event', (e) => broadcast({ type: 'monitor_event', ...e }));
 
+// Catch-up backfill — fired by monitor when boot-time inspection finds a
+// group whose newest stored message_id lags Telegram's current top by
+// more than `advanced.history.autoCatchUpThreshold`. We spawn an
+// internal backfill in `catch-up` mode so the gap that built up while
+// the container was down closes itself with no user action required.
+runtime.on('catch_up_needed', ({ groupId, gap }) => {
+    const histCfg = loadConfig().advanced?.history || {};
+    // Bound the catch-up size — a group that fell weeks behind could
+    // need ~10000s of messages, so cap at a sane ceiling. Falls back
+    // to "unlimited" when autoFirstLimit is 0 (operator opt-in for
+    // long catch-ups).
+    const ceiling = Number(histCfg.autoFirstLimit ?? 100);
+    const limit = ceiling > 0 ? Math.min(ceiling * 10, 50000) : null;
+    _spawnInternalBackfill({
+        groupId, limit, mode: 'catch-up', reason: 'auto-catch-up',
+    }).then(jobId => {
+        if (jobId) console.log(`[catch-up] gap=${gap} → spawned backfill ${jobId} (limit=${limit ?? 'all'})`);
+    }).catch((e) => console.warn('[catch-up] spawn failed:', e?.message || e));
+});
+
 // Build the monitor-status snapshot. Used by both the GET endpoint
 // (for the SPA's first paint / a manual refresh) AND the periodic
 // WS broadcaster below — keeping them on one code path so a future
@@ -1208,7 +1571,18 @@ app.post('/api/monitor/stop', async (req, res) => {
 // considered the source of truth for anything older.
 
 const HISTORY_JOBS_PATH = path.join(DATA_DIR, 'history-jobs.json');
-const HISTORY_RETENTION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+// Resolved from config.advanced.history.retentionDays at every call so a
+// `config_updated` save changes the prune cutoff without a restart.
+// Spec default = 30 days.
+function historyRetentionMs() {
+    try {
+        const days = Number(loadConfig().advanced?.history?.retentionDays);
+        if (Number.isFinite(days) && days >= 1 && days <= 3650) {
+            return days * 24 * 60 * 60 * 1000;
+        }
+    } catch {}
+    return 30 * 24 * 60 * 60 * 1000;
+}
 
 // jobId → { id, state, processed, downloaded, error, group, groupId, limit,
 //           startedAt, finishedAt, cancelled, _runner }
@@ -1220,7 +1594,7 @@ async function loadHistoryJobsFromDisk() {
         const raw = await fs.readFile(HISTORY_JOBS_PATH, 'utf-8');
         const parsed = JSON.parse(raw);
         if (!Array.isArray(parsed)) return [];
-        const cutoff = Date.now() - HISTORY_RETENTION_MS;
+        const cutoff = Date.now() - historyRetentionMs();
         return parsed.filter(j => j && (j.finishedAt || j.startedAt || 0) >= cutoff);
     } catch {
         return [];
@@ -1237,7 +1611,7 @@ async function saveHistoryJobsToDisk() {
     const byId = new Map();
     for (const j of onDisk) byId.set(j.id, j);
     for (const j of finished) byId.set(j.id, j);
-    const cutoff = Date.now() - HISTORY_RETENTION_MS;
+    const cutoff = Date.now() - historyRetentionMs();
     const all = Array.from(byId.values())
         .filter(j => (j.finishedAt || j.startedAt || 0) >= cutoff)
         .sort((a, b) => (b.finishedAt || b.startedAt || 0) - (a.finishedAt || a.startedAt || 0));
@@ -1249,10 +1623,26 @@ async function saveHistoryJobsToDisk() {
     }
 }
 
+// Module-level guard: at most ONE backfill per groupId at any time.
+// Without this, a fast double-click on Backfill spawns two HistoryDownloader
+// instances against the same group → two parallel iterations of the same
+// Telegram timeline, two streams of `getMessages` calls, doubled FloodWait
+// risk. The instances would still produce no duplicate downloads (the DB's
+// UNIQUE(group_id, message_id) catches them), but the API churn is wasted.
+const _activeBackfillsByGroup = new Map(); // groupId(string) → jobId(string)
+
 app.post('/api/history', async (req, res) => {
     try {
-        const { groupId, limit = 100, offsetId = 0 } = req.body || {};
+        const { groupId, limit = 100, offsetId = 0, mode } = req.body || {};
         if (!groupId) return res.status(400).json({ error: 'groupId required' });
+        const groupKey = String(groupId);
+        if (_activeBackfillsByGroup.has(groupKey)) {
+            return res.status(409).json({
+                error: 'A backfill is already running for this group',
+                code: 'ALREADY_RUNNING',
+                jobId: _activeBackfillsByGroup.get(groupKey),
+            });
+        }
         // limit === 0 (or "0") means "no limit" → backfill the entire history.
         // Anything else is clamped into a sane positive range.
         const limRaw = parseInt(limit, 10);
@@ -1298,6 +1688,7 @@ app.post('/api/history', async (req, res) => {
             _runner: history,
         };
         _historyJobs.set(jobId, job);
+        _activeBackfillsByGroup.set(groupKey, jobId);
 
         history.on('progress', (s) => {
             job.processed = s.processed; job.downloaded = s.downloaded;
@@ -1308,10 +1699,18 @@ app.post('/api/history', async (req, res) => {
                 groupId: job.groupId,
                 limit: job.limit,
                 startedAt: job.startedAt,
+                mode: job.mode || 'pull-older',
             });
         });
+        // Mirror the chosen mode onto the job so the UI shows it ("pull
+        // older" / "catch up" / "rescan") even after the worker exits.
+        history.on('start', (s) => { if (s?.mode) job.mode = s.mode; });
 
-        history.downloadHistory(groupId, { limit: lim ?? undefined, offsetId: parseInt(offsetId, 10) || 0 })
+        history.downloadHistory(groupId, {
+            limit: lim ?? undefined,
+            offsetId: parseInt(offsetId, 10) || 0,
+            mode: mode === 'catch-up' || mode === 'rescan' ? mode : 'pull-older',
+        })
             .then(() => {
                 job.state = job.cancelled ? 'cancelled' : 'done';
                 job.finishedAt = Date.now();
@@ -1323,6 +1722,10 @@ app.post('/api/history', async (req, res) => {
                 broadcast({ type: evt, jobId, group: group.name, ...job });
                 if (standalone) downloader.stop().catch(() => {});
                 saveHistoryJobsToDisk().catch(() => {});
+                // Release the per-group lock so a new backfill can spawn.
+                if (_activeBackfillsByGroup.get(groupKey) === jobId) {
+                    _activeBackfillsByGroup.delete(groupKey);
+                }
                 // Drop the in-memory entry after a grace window so the UI has
                 // time to grab it via /api/history/jobs.
                 setTimeout(() => _historyJobs.delete(jobId), 5 * 60 * 1000);
@@ -1335,9 +1738,12 @@ app.post('/api/history', async (req, res) => {
                 broadcast({ type: 'history_error', jobId, error: job.error, group: group.name, groupId: job.groupId });
                 if (standalone) downloader.stop().catch(() => {});
                 saveHistoryJobsToDisk().catch(() => {});
+                if (_activeBackfillsByGroup.get(groupKey) === jobId) {
+                    _activeBackfillsByGroup.delete(groupKey);
+                }
             });
 
-        res.json({ success: true, jobId, group: group.name, limit: lim });
+        res.json({ success: true, jobId, group: group.name, limit: lim, mode: job.mode || 'pull-older' });
     } catch (e) {
         console.error('POST /api/history:', e);
         res.status(500).json({ error: e.message });
@@ -1395,6 +1801,58 @@ app.get('/api/history/:jobId', (req, res) => {
     if (!job) return res.status(404).json({ error: 'Job not found' });
     const { _runner, ...safe } = job;
     res.json(safe);
+});
+
+// Remove a single finished history entry from the Recent backfills list.
+// Running jobs cannot be deleted — they have to be cancelled first.
+app.delete('/api/history/:jobId', async (req, res) => {
+    try {
+        const id = req.params.jobId;
+        const inMem = _historyJobs.get(id);
+        if (inMem && inMem.state === 'running') {
+            return res.status(409).json({ error: 'Cannot delete a running job — cancel first.' });
+        }
+        if (inMem) _historyJobs.delete(id);
+
+        // Drop from on-disk store too. Atomic write via fs.writeFile (the
+        // existing saveHistoryJobsToDisk pattern handles concurrency by
+        // reading + filtering + writing in one tick).
+        const onDisk = await loadHistoryJobsFromDisk();
+        const filtered = onDisk.filter(j => j.id !== id);
+        try {
+            await fs.mkdir(DATA_DIR, { recursive: true });
+            await fs.writeFile(HISTORY_JOBS_PATH, JSON.stringify(filtered, null, 2), 'utf-8');
+        } catch (e) {
+            console.error('history-jobs.json write failed:', e?.message || e);
+        }
+
+        broadcast({ type: 'history_deleted', jobId: id });
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Clear every finished entry from the Recent backfills list. Running jobs
+// are preserved — same posture as the per-row delete (cancel first).
+app.delete('/api/history', async (req, res) => {
+    try {
+        let removed = 0;
+        for (const [id, job] of Array.from(_historyJobs.entries())) {
+            if (job.state !== 'running') { _historyJobs.delete(id); removed++; }
+        }
+        // Wipe the on-disk store of finished jobs.
+        try {
+            await fs.mkdir(DATA_DIR, { recursive: true });
+            await fs.writeFile(HISTORY_JOBS_PATH, JSON.stringify([], null, 2), 'utf-8');
+        } catch (e) {
+            console.error('history-jobs.json wipe failed:', e?.message || e);
+        }
+        broadcast({ type: 'history_cleared' });
+        res.json({ success: true, removed });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
 });
 
 app.get('/api/history', (req, res) => {
@@ -2240,6 +2698,7 @@ app.get('/api/downloads/all', async (req, res) => {
                 ? stored
                 : `${fallbackFolder}/${typeFolder}/${row.file_name}`;
             return {
+                id: row.id,
                 name: row.file_name,
                 path: row.file_path,
                 fullPath,
@@ -2462,6 +2921,12 @@ app.post('/api/downloads/bulk-delete', async (req, res) => {
             }
         }
         const dbDeleted = deleteDownloadsBy({ ids: idList, filePaths: pathList });
+        // Drop cached thumbnails for every id we just removed — without
+        // this, the cache would keep handing out a stale WebP for an id
+        // whose source file no longer exists.
+        for (const id of idList) {
+            try { await purgeThumbsForDownload(id); } catch {}
+        }
         broadcast({ type: 'bulk_delete', unlinked, dbDeleted });
         res.json({ success: true, unlinked, dbDeleted });
     } catch (e) {
@@ -2486,9 +2951,17 @@ app.delete('/api/file', async (req, res) => {
         console.log(`🗑️ Deleted: ${filePath}`);
 
         // Remove from DB (by basename — the DB stores filenames, not paths).
+        // Capture matching ids first so we can wipe their cached thumbnails;
+        // a stale thumb pointing at a deleted file would otherwise serve
+        // bytes from cache until the next "Rebuild thumbnails".
         const db = getDb();
         const fileName = path.basename(r.real);
+        const matchingIds = db.prepare('SELECT id FROM downloads WHERE file_name = ?')
+            .all(fileName).map(row => row.id);
         db.prepare('DELETE FROM downloads WHERE file_name = ?').run(fileName);
+        for (const id of matchingIds) {
+            try { await purgeThumbsForDownload(id); } catch {}
+        }
 
         broadcast({ type: 'file_deleted', path: filePath });
         res.json({ success: true });
@@ -2795,6 +3268,439 @@ app.post('/api/maintenance/db/vacuum', async (req, res) => {
     }
 });
 
+// ====== Duplicate finder (checksum-based) ==================================
+//
+// One-shot scan that:
+//   1. Computes SHA-256 for every download row missing a hash (the column
+//      has been in the schema since v2 but never populated).
+//   2. Groups by hash and returns sets where COUNT > 1.
+//
+// First scan is O(bytes-on-disk); subsequent scans are nearly free since
+// only newly-downloaded files lack a hash. Progress is broadcast over WS
+// (`dedup_progress`) so the UI can render a determinate bar.
+//
+// Two-step UX: scan returns the duplicate sets to the client, the user
+// picks which copies to keep, and the explicit /delete call removes the
+// rest. The endpoint never auto-deletes.
+let _dedupRunning = false;
+app.post('/api/maintenance/dedup/scan', async (req, res) => {
+    if (_dedupRunning) {
+        return res.status(409).json({ error: 'A dedup scan is already running' });
+    }
+    _dedupRunning = true;
+    try {
+        const result = await dedupFindDuplicates({
+            onProgress: (p) => {
+                try { broadcast({ type: 'dedup_progress', ...p }); } catch {}
+            },
+        });
+        res.json({ success: true, ...result });
+    } catch (e) {
+        console.error('dedup/scan:', e);
+        res.status(500).json({ error: e.message });
+    } finally {
+        _dedupRunning = false;
+    }
+});
+
+app.post('/api/maintenance/dedup/delete', async (req, res) => {
+    try {
+        const { ids } = req.body || {};
+        if (!Array.isArray(ids) || !ids.length) {
+            return res.status(400).json({ error: 'ids array required' });
+        }
+        // Coerce to integers and drop anything bogus.
+        const cleanIds = ids.map(n => Number(n)).filter(n => Number.isInteger(n) && n > 0);
+        if (!cleanIds.length) {
+            return res.status(400).json({ error: 'No valid ids supplied' });
+        }
+        const r = dedupDeleteByIds(cleanIds);
+        // Drop cached thumbnails for every removed id so the cache doesn't
+        // keep handing out stale WebPs after the source file is gone.
+        for (const id of cleanIds) {
+            try { await purgeThumbsForDownload(id); } catch {}
+        }
+        // Tell every open tab that some files vanished so galleries refresh.
+        try { broadcast({ type: 'bulk_delete', ids: cleanIds }); } catch {}
+        res.json({ success: true, ...r });
+    } catch (e) {
+        console.error('dedup/delete:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// ====== Thumbnails =========================================================
+//
+// `GET /api/thumbs/:id?w=240` returns a small WebP thumbnail for an
+// image or video download row. Cache-first: hits stat in microseconds
+// and stream from disk; misses fork sharp / ffmpeg once and the result
+// lives in `data/thumbs/`. The frontend uses these for every gallery
+// tile (replacing the previous full-resolution `/files/*?inline=1` for
+// images and the `<video preload="none">` for desktop video tiles)
+// — much smaller transfers, no decoder pressure on the client.
+//
+// Returns 404 when the source is not thumbnailable (audio/document) so
+// the SPA's <img onerror> fallback can kick in and render an icon.
+app.get('/api/thumbs/:id', async (req, res) => {
+    try {
+        const id = parseInt(req.params.id, 10);
+        if (!Number.isInteger(id) || id <= 0) {
+            return res.status(400).type('text/plain').send('Bad id');
+        }
+        const thumb = await getOrCreateThumb(id, req.query.w);
+        if (!thumb) return res.status(404).type('text/plain').send('No thumb');
+
+        res.setHeader('Content-Type', 'image/webp');
+        // Aggressive cache — the URL embeds id+width which is content-
+        // stable. If the source is replaced, purgeThumbsForDownload()
+        // wipes the cache entry so the next request regenerates.
+        res.setHeader('Cache-Control', 'public, max-age=86400, immutable');
+        // Mtime makes browser If-Modified-Since round trips cheap.
+        const lastMod = new Date(thumb.mtime).toUTCString();
+        res.setHeader('Last-Modified', lastMod);
+        if (req.headers['if-modified-since'] === lastMod) {
+            return res.status(304).end();
+        }
+        return res.sendFile(thumb.path, (err) => {
+            if (err && !res.headersSent) res.status(500).end();
+        });
+    } catch (e) {
+        console.error('thumb serve:', e);
+        if (!res.headersSent) res.status(500).type('text/plain').send('Internal error');
+    }
+});
+
+// Maintenance — wipe the entire thumbnail cache. Used by the
+// "Rebuild thumbnails" UI to force regeneration (e.g. after a quality
+// tweak or a corruption scare). On-demand generation refills the cache
+// on the next gallery scroll, gated by the thumbs.js semaphores.
+app.post('/api/maintenance/thumbs/rebuild', async (req, res) => {
+    try {
+        const removed = await purgeAllThumbs();
+        res.json({ success: true, removed });
+    } catch (e) {
+        console.error('thumbs/rebuild:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Maintenance — generate thumbnails for every download row that doesn't
+// already have one cached at the default width. Covers downloads that
+// landed before pre-generation existed. Honours the per-kind concurrency
+// caps in thumbs.js so the gallery stays responsive while the sweep
+// runs. Single in-flight guard.
+let _thumbBuildRunning = false;
+app.post('/api/maintenance/thumbs/build-all', async (req, res) => {
+    if (_thumbBuildRunning) {
+        return res.status(409).json({ error: 'A thumbnail build is already running' });
+    }
+    _thumbBuildRunning = true;
+    try {
+        const r = await buildAllThumbnails({
+            onProgress: (p) => {
+                try { broadcast({ type: 'thumbs_progress', ...p }); } catch {}
+            },
+        });
+        res.json({ success: true, ...r });
+    } catch (e) {
+        console.error('thumbs/build-all:', e);
+        res.status(500).json({ error: e.message });
+    } finally {
+        _thumbBuildRunning = false;
+    }
+});
+
+// Maintenance — cache footprint (count + bytes) and capability check
+// (whether ffmpeg is present). Drives the "Thumbnail cache" admin panel
+// + grays out the video / audio-cover capabilities when ffmpeg is
+// missing on this host.
+app.get('/api/maintenance/thumbs/stats', async (req, res) => {
+    try {
+        const r = await getThumbsCacheStats();
+        res.json({
+            success: true,
+            ffmpegAvailable: hasFfmpeg(),
+            allowedWidths: THUMB_WIDTHS,
+            ...r,
+        });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// ====== NSFW review tool (Phase 1: photos only) ===========================
+//
+// Curated 18+ libraries get noise from auto-download — non-18+ photos
+// that snuck in. The classifier flags low-score rows (likely NOT 18+)
+// for admin review + manual delete. High-score rows (the genuine 18+
+// content) are kept untouched.
+//
+// All endpoints are admin-only via the v2.3.26 chokepoint. Status +
+// candidate listing is read-only and cheap; scan + delete + whitelist
+// guard against concurrent calls / missing config.
+
+function _nsfwCfg() {
+    try {
+        const cfg = loadConfig().advanced?.nsfw || {};
+        return {
+            enabled: cfg.enabled === true,
+            model: cfg.model || NSFW_DEFAULTS.model,
+            threshold: Number.isFinite(cfg.threshold) ? cfg.threshold : NSFW_DEFAULTS.threshold,
+            concurrency: Number.isFinite(cfg.concurrency) ? cfg.concurrency : NSFW_DEFAULTS.concurrency,
+            batchSize: Number.isFinite(cfg.batchSize) ? cfg.batchSize : NSFW_DEFAULTS.batchSize,
+            fileTypes: (Array.isArray(cfg.fileTypes) && cfg.fileTypes.length)
+                ? cfg.fileTypes : NSFW_DEFAULTS.fileTypes,
+            cacheDir: cfg.cacheDir || NSFW_DEFAULTS.cacheDir,
+        };
+    } catch {
+        return { ...NSFW_DEFAULTS, enabled: false };
+    }
+}
+
+app.get('/api/maintenance/nsfw/status', async (req, res) => {
+    try {
+        const cfg = _nsfwCfg();
+        const state = nsfwGetScanState(cfg);
+        res.json({
+            enabled: cfg.enabled,
+            running: state.running,
+            scanned: state.scanned,
+            total: state.total,
+            candidates: state.candidates,
+            keep: state.keep,
+            whitelisted: state.whitelisted,
+            totalEligible: state.totalEligible,
+            lastCheckedAt: state.lastCheckedAt,
+            startedAt: state.startedAt,
+            finishedAt: state.finishedAt,
+            error: state.error,
+            model: cfg.model,
+            threshold: cfg.threshold,
+            fileTypes: cfg.fileTypes,
+        });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/maintenance/nsfw/scan', async (req, res) => {
+    try {
+        const cfg = _nsfwCfg();
+        if (!cfg.enabled) {
+            return res.status(503).json({
+                error: 'NSFW review is disabled. Enable it in Settings → Advanced first.',
+                code: 'NSFW_DISABLED',
+            });
+        }
+        if (nsfwIsScanRunning()) {
+            return res.status(409).json({ error: 'A scan is already running', code: 'ALREADY_RUNNING' });
+        }
+        const r = await nsfwStartScan(cfg,
+            (p) => { try { broadcast({ type: 'nsfw_progress', ...p }); } catch {} },
+            (p) => { try { broadcast({ type: 'nsfw_done', ...p }); } catch {} },
+            (p) => { try { broadcast({ type: 'nsfw_model_downloading', ...p }); } catch {} },
+        );
+        res.json({ success: true, ...r });
+    } catch (e) {
+        console.error('nsfw/scan:', e);
+        const status = e.code === 'NSFW_LIB_MISSING' ? 503 : 500;
+        res.status(status).json({ error: e.message, code: e.code || 'UNKNOWN' });
+    }
+});
+
+app.post('/api/maintenance/nsfw/scan/cancel', async (req, res) => {
+    const ok = nsfwCancelScan();
+    res.json({ success: true, cancelled: ok });
+});
+
+app.get('/api/maintenance/nsfw/results', async (req, res) => {
+    try {
+        const cfg = _nsfwCfg();
+        const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+        const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
+        const r = getNsfwDeleteCandidates({
+            fileTypes: cfg.fileTypes,
+            threshold: cfg.threshold,
+            page,
+            limit,
+        });
+        res.json({
+            success: true,
+            ...r,
+            threshold: cfg.threshold,
+        });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Delete reviewed candidates. Reuses the dedup-delete pathway (which
+// removes file from disk + DB row) and purges the corresponding
+// thumbnail cache entries so a stale WebP doesn't keep serving.
+app.post('/api/maintenance/nsfw/delete', async (req, res) => {
+    try {
+        const { ids } = req.body || {};
+        if (!Array.isArray(ids) || !ids.length) {
+            return res.status(400).json({ error: 'ids array required' });
+        }
+        const cleanIds = ids.map(Number).filter(n => Number.isInteger(n) && n > 0);
+        if (!cleanIds.length) {
+            return res.status(400).json({ error: 'No valid ids supplied' });
+        }
+        const r = dedupDeleteByIds(cleanIds);
+        for (const id of cleanIds) {
+            try { await purgeThumbsForDownload(id); } catch {}
+        }
+        try { broadcast({ type: 'bulk_delete', ids: cleanIds }); } catch {}
+        try { broadcast({ type: 'nsfw_progress', ..._nsfwStateLight() }); } catch {}
+        res.json({ success: true, ...r });
+    } catch (e) {
+        console.error('nsfw/delete:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Mark rows as admin-confirmed-18+ (keep, never re-flag). Use when the
+// classifier produced a false negative — i.e. the photo IS 18+ but
+// scored low. Future scans skip these rows entirely.
+app.post('/api/maintenance/nsfw/whitelist', async (req, res) => {
+    try {
+        const { ids } = req.body || {};
+        if (!Array.isArray(ids) || !ids.length) {
+            return res.status(400).json({ error: 'ids array required' });
+        }
+        const cleanIds = ids.map(Number).filter(n => Number.isInteger(n) && n > 0);
+        if (!cleanIds.length) {
+            return res.status(400).json({ error: 'No valid ids supplied' });
+        }
+        const updated = whitelistNsfw(cleanIds);
+        try { broadcast({ type: 'nsfw_progress', ..._nsfwStateLight() }); } catch {}
+        res.json({ success: true, updated });
+    } catch (e) {
+        console.error('nsfw/whitelist:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+function _nsfwStateLight() {
+    try {
+        const cfg = _nsfwCfg();
+        const s = getNsfwStats(cfg.fileTypes, cfg.threshold);
+        return { ...s, running: nsfwIsScanRunning() };
+    } catch { return {}; }
+}
+
+// ====== Share-link admin API ===============================================
+//
+// Admin-only by virtue of the chokepoint (the path isn't on either
+// guest allowlist). Each call returns the canonical URL the SPA shows in
+// the Share sheet — built from the request's own host+protocol so it
+// works behind reverse proxies (helmet trust-proxy is set elsewhere).
+function _shareUrlFor(req, linkId, expSec) {
+    const proto = req.protocol;
+    const host = req.get('host');
+    return `${proto}://${host}${buildShareUrlPath(linkId, expSec)}`;
+}
+
+function _shareLinkPayload(req, row) {
+    const expSec = Math.floor((row.expires_at ?? row.expiresAt ?? 0));
+    const linkId = row.id;
+    return {
+        id: linkId,
+        downloadId: row.download_id ?? row.downloadId,
+        createdAt: row.created_at ?? row.createdAt,
+        expiresAt: expSec,
+        revokedAt: row.revoked_at ?? null,
+        label: row.label ?? null,
+        accessCount: row.access_count ?? 0,
+        lastAccessedAt: row.last_accessed_at ?? null,
+        fileName: row.file_name,
+        fileType: row.file_type,
+        fileSize: row.file_size,
+        groupId: row.group_id,
+        groupName: row.group_name,
+        url: _shareUrlFor(req, linkId, expSec),
+    };
+}
+
+// Mint a new share link for a single download row. Body:
+//   { downloadId, ttlSeconds?, label? }
+// ttlSeconds is clamped to [60, 90 days]; default 7 days.
+app.post('/api/share/links', async (req, res) => {
+    try {
+        const { downloadId, ttlSeconds, label } = req.body || {};
+        const did = parseInt(downloadId, 10);
+        if (!Number.isInteger(did) || did <= 0) {
+            return res.status(400).json({ error: 'downloadId required' });
+        }
+        // Confirm the download row exists — otherwise the link would
+        // perpetually 404, and we'd be storing useless rows.
+        const exists = getDb().prepare('SELECT id FROM downloads WHERE id = ?').get(did);
+        if (!exists) return res.status(404).json({ error: 'Download not found' });
+
+        // Pass through whatever the caller sent (including null/undefined).
+        // clampTtlSeconds resolves "missing" → the *current* configured
+        // default — pulling it back out via getShareLimits() here would
+        // race with config_updated. The clamp handles 0 (never expires)
+        // and negative / NaN inputs internally.
+        const ttl = clampTtlSeconds(ttlSeconds);
+        // ttl === 0 = "never expires" sentinel — store expires_at = 0
+        // (the verifier skips the time gate; revocation still works).
+        const expSec = ttl === 0 ? 0 : Math.floor(Date.now() / 1000) + ttl;
+        // Defensive label hygiene — keep labels short and free of control
+        // chars so they render safely in the admin UI without escaping.
+        const cleanLabel = typeof label === 'string'
+            ? label.replace(/[\r\n\t]/g, ' ').trim().slice(0, 80) || null
+            : null;
+
+        const { id } = createShareLink({ downloadId: did, expiresAt: expSec, label: cleanLabel });
+
+        // Re-load with the joined download metadata so the response is the
+        // same shape as the list endpoint (UI doesn't have to re-fetch).
+        const list = listShareLinks({ downloadId: did, limit: 1000 });
+        const row = list.find(r => r.id === id);
+        res.json({ success: true, link: row ? _shareLinkPayload(req, row) : null });
+    } catch (e) {
+        console.error('share/links create:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// List share-links — `?downloadId=…` filters to one file (Share sheet);
+// no filter returns ALL links across the library (Maintenance sheet).
+app.get('/api/share/links', async (req, res) => {
+    try {
+        const downloadId = req.query.downloadId
+            ? parseInt(req.query.downloadId, 10)
+            : null;
+        const includeRevoked = req.query.includeRevoked !== '0';
+        const rows = listShareLinks({ downloadId, includeRevoked });
+        res.json({
+            success: true,
+            links: rows.map(r => _shareLinkPayload(req, r)),
+        });
+    } catch (e) {
+        console.error('share/links list:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Revoke a single share-link by id. Idempotent — revoking an already-
+// revoked link returns success: true with revoked: false.
+app.delete('/api/share/links/:id', async (req, res) => {
+    try {
+        const id = parseInt(req.params.id, 10);
+        if (!Number.isInteger(id) || id <= 0) {
+            return res.status(400).json({ error: 'Invalid id' });
+        }
+        const did = revokeShareLink(id);
+        res.json({ success: true, revoked: did });
+    } catch (e) {
+        console.error('share/links revoke:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // List logfiles under data/logs/ with size + mtime — used by the SPA to
 // populate the "Download log" picker.
 app.get('/api/maintenance/logs', async (req, res) => {
@@ -3061,6 +3967,14 @@ app.post('/api/config', async (req, res) => {
                     ...(cur.web || {}),
                     ...(inc.web || {}),
                 },
+                share: {
+                    ...(cur.share || {}),
+                    ...(inc.share || {}),
+                },
+                nsfw: {
+                    ...(cur.nsfw || {}),
+                    ...(inc.nsfw || {}),
+                },
             };
             // Clamp every numeric so a typo can't ban the user from logging
             // in (sessionTtlDays=0) or hose the downloader (minConcurrency=0).
@@ -3077,6 +3991,49 @@ app.post('/api/config', async (req, res) => {
             h.backpressureMaxWaitMs   = clampInt(h.backpressureMaxWaitMs, 5000, 3600000, 900000);
             h.shortBreakEveryN        = clampInt(h.shortBreakEveryN,         0, 100000, 100);
             h.longBreakEveryN         = clampInt(h.longBreakEveryN,          0, 1000000, 1000);
+            // Recent-backfills retention. Anything older than this gets
+            // pruned at next read of `data/history-jobs.json`. 1-3650 days.
+            h.retentionDays           = clampInt(h.retentionDays,            1, 3650, 30);
+            // v2.3.34 — auto-backfill knobs
+            h.autoFirstBackfill       = h.autoFirstBackfill !== false;       // default ON
+            h.autoFirstLimit          = clampInt(h.autoFirstLimit,           0, 10000, 100);
+            h.autoCatchUp             = h.autoCatchUp !== false;             // default ON
+            h.autoCatchUpThreshold    = clampInt(h.autoCatchUpThreshold,     1, 100000, 5);
+            h.batchInsertSize         = clampInt(h.batchInsertSize,          1, 500, 50);
+            h.batchInsertMaxAgeMs     = clampInt(h.batchInsertMaxAgeMs,    100, 60000, 1000);
+
+            const sh = merged.share;
+            // 1 second floor / 10 years ceiling. Defaults match the spec
+            // values share.js uses pre-config (60 / 90d / 7d).
+            sh.ttlMinSec       = clampInt(sh.ttlMinSec,        1, 315360000, 60);
+            sh.ttlMaxSec       = clampInt(sh.ttlMaxSec, sh.ttlMinSec, 315360000, 7776000);
+            // ttlDefault must lie inside [min, max] — clamped here so the
+            // SPA can't ship an out-of-range default that fails the picker.
+            sh.ttlDefaultSec   = clampInt(sh.ttlDefaultSec, sh.ttlMinSec, sh.ttlMaxSec, 604800);
+            sh.rateLimitWindowMs = clampInt(sh.rateLimitWindowMs, 1000, 3600000, 60000);
+            sh.rateLimitMax      = clampInt(sh.rateLimitMax,         1, 100000,    60);
+
+            // NSFW review tool. All values are config-driven — no hardcoded
+            // model id, threshold, or concurrency in code.
+            const ns = merged.nsfw;
+            ns.enabled    = ns.enabled === true;          // explicit opt-in only
+            // Threshold is on a 0-1 score axis; clamped via integer math by
+            // multiplying through so the same clampInt helper works.
+            const tInt = Math.round((Number(ns.threshold) || NSFW_DEFAULTS.threshold) * 1000);
+            ns.threshold  = clampInt(tInt, 100, 990, 600) / 1000;
+            ns.concurrency = clampInt(ns.concurrency, 1, 4, NSFW_DEFAULTS.concurrency);
+            ns.batchSize   = clampInt(ns.batchSize,  10, 500, NSFW_DEFAULTS.batchSize);
+            // Model id + cache dir + fileTypes are strings/arrays — light
+            // validation only (string coerce, allowlist-strip).
+            ns.model = (typeof ns.model === 'string' && ns.model.trim())
+                ? ns.model.trim() : NSFW_DEFAULTS.model;
+            ns.cacheDir = (typeof ns.cacheDir === 'string' && ns.cacheDir.trim())
+                ? ns.cacheDir.trim() : NSFW_DEFAULTS.cacheDir;
+            const ALLOWED_TYPES = ['photo', 'video', 'sticker', 'document'];
+            ns.fileTypes = (Array.isArray(ns.fileTypes) ? ns.fileTypes : NSFW_DEFAULTS.fileTypes)
+                .map(s => String(s).toLowerCase())
+                .filter(s => ALLOWED_TYPES.includes(s));
+            if (!ns.fileTypes.length) ns.fileTypes = NSFW_DEFAULTS.fileTypes.slice();
 
             const r = merged.diskRotator;
             r.sweepBatch         = clampInt(r.sweepBatch,         1,   1000, 50);
@@ -3110,6 +4067,12 @@ app.post('/api/config', async (req, res) => {
         await fs.writeFile(tmpPath, JSON.stringify(newConfig, null, 4));
         await fs.rename(tmpPath, CONFIG_PATH);
         invalidateConfigCache();
+        // Re-apply runtime knobs that depend on advanced.share / advanced.history
+        // so a save takes effect immediately without a process restart.
+        try {
+            applyShareLimits(newConfig.advanced?.share || {});
+            _invalidateShareConfigCache();
+        } catch {}
 
         // Reset the lazy AccountManager singleton if Telegram credentials
         // changed — a stale instance would still be wired to the old apiId.
@@ -3236,11 +4199,116 @@ app.put('/api/groups/:id', async (req, res) => {
         
         await writeConfigAtomic(config);
         broadcast({ type: 'config_updated', config });
+
+        // Auto-backfill on first add (v2.3.34) — when a group transitions
+        // from "never seen / disabled" → "enabled" AND has zero rows in
+        // downloads yet, kick off a background backfill of the last N
+        // messages so the user gets immediate gallery content without
+        // having to navigate to the Backfill page. Bounded by config so
+        // operators who don't want this behavior can disable it.
+        try {
+            if (req.body.enabled === true && !_activeBackfillsByGroup.has(String(group.id))) {
+                const histCfg = config.advanced?.history || {};
+                const autoOn = histCfg.autoFirstBackfill !== false;     // default ON
+                const autoLim = Number(histCfg.autoFirstLimit ?? 100);  // default 100
+                if (autoOn && autoLim > 0) {
+                    const { count } = (await import('../core/db.js')).getMessageIdRange(String(group.id));
+                    if (count === 0) {
+                        // Fire-and-forget — POST /api/history would be the
+                        // ideal way but we'd need to invoke it as an
+                        // internal call. Calling our handler logic directly
+                        // keeps everything in one process without an HTTP
+                        // hop. Failures are non-fatal: the user can always
+                        // trigger backfill manually from the Backfill page.
+                        _spawnInternalBackfill({
+                            groupId: String(group.id),
+                            limit: Math.max(1, Math.min(10000, autoLim)),
+                            mode: 'pull-older',
+                            reason: 'auto-first',
+                        }).catch((e) => console.warn('[auto-backfill] first-add failed:', e?.message || e));
+                    }
+                }
+            }
+        } catch (e) {
+            // Non-fatal — group save still succeeded.
+            console.warn('[auto-backfill] hook error:', e?.message || e);
+        }
+
         res.json({ success: true, group: config.groups[groupIndex] });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
+
+/**
+ * Internal helper — spawn a backfill job exactly as POST /api/history
+ * would, without going through the HTTP layer. Used by:
+ *   - Auto-backfill on first group add (PUT /api/groups/:id new+enabled)
+ *   - Catch-up backfill after monitor restart (monitor.js boot hook)
+ *
+ * Resolves once the job is *registered* (not when the actual download
+ * finishes) so callers don't block. Returns the new jobId.
+ */
+async function _spawnInternalBackfill({ groupId, limit, mode = 'pull-older', reason = 'internal' }) {
+    const groupKey = String(groupId);
+    if (_activeBackfillsByGroup.has(groupKey)) return null;
+    const am = await getAccountManager();
+    if (am.count === 0) throw new Error('No Telegram accounts loaded');
+    const config = loadConfig();
+    const group = (config.groups || []).find(g => String(g.id) === groupKey);
+    if (!group) throw new Error('Group not configured');
+
+    const { HistoryDownloader } = await import('../core/history.js');
+    const { DownloadManager } = await import('../core/downloader.js');
+    const { RateLimiter } = await import('../core/security.js');
+    const standalone = !runtime._downloader;
+    const downloader = runtime._downloader || new DownloadManager(
+        am.getDefaultClient(), config, new RateLimiter(config.rateLimits),
+    );
+    if (standalone) { await downloader.init(); downloader.start(); }
+    const history = new HistoryDownloader(am.getDefaultClient(), downloader, config, am);
+
+    const jobId = crypto.randomBytes(6).toString('hex');
+    const lim = (limit === null || limit === 0) ? null : Math.max(1, Math.min(50000, Number(limit) || 100));
+    const job = {
+        id: jobId, state: 'running', processed: 0, downloaded: 0, error: null,
+        group: group.name, groupId: groupKey, limit: lim,
+        startedAt: Date.now(), finishedAt: null, cancelled: false,
+        mode, reason, _runner: history,
+    };
+    _historyJobs.set(jobId, job);
+    _activeBackfillsByGroup.set(groupKey, jobId);
+    history.on('progress', (s) => {
+        job.processed = s.processed; job.downloaded = s.downloaded;
+        broadcast({ type: 'history_progress', jobId, ...s,
+            group: group.name, groupId: groupKey, limit: job.limit,
+            startedAt: job.startedAt, mode: job.mode });
+    });
+    history.on('start', (s) => { if (s?.mode) job.mode = s.mode; });
+    history.downloadHistory(groupKey, { limit: lim ?? undefined, mode })
+        .then(() => {
+            job.state = job.cancelled ? 'cancelled' : 'done';
+            job.finishedAt = Date.now();
+            delete job._runner;
+            const evt = job.cancelled ? 'history_cancelled' : 'history_done';
+            broadcast({ type: evt, jobId, group: group.name, ...job });
+            if (standalone) downloader.stop().catch(() => {});
+            saveHistoryJobsToDisk().catch(() => {});
+            if (_activeBackfillsByGroup.get(groupKey) === jobId) _activeBackfillsByGroup.delete(groupKey);
+            setTimeout(() => _historyJobs.delete(jobId), 5 * 60 * 1000);
+        })
+        .catch((err) => {
+            job.state = 'error';
+            job.error = err?.message || String(err);
+            job.finishedAt = Date.now();
+            delete job._runner;
+            broadcast({ type: 'history_error', jobId, error: job.error, group: group.name, groupId: groupKey });
+            if (standalone) downloader.stop().catch(() => {});
+            saveHistoryJobsToDisk().catch(() => {});
+            if (_activeBackfillsByGroup.get(groupKey) === jobId) _activeBackfillsByGroup.delete(groupKey);
+        });
+    return jobId;
+}
 
 // 9. Profile Photos
 app.get('/api/groups/:id/photo', async (req, res) => {
@@ -3665,11 +4733,11 @@ ${tip}
             const am = await getAccountManager().catch(() => null);
             if (am && am.count > 0) {
                 await runtime.start({ config: cfg, accountManager: am });
-                console.log(`${ts()} [monitor] auto-started on boot`);
+                console.log('[monitor] auto-started on boot');
             }
         }
     } catch (e) {
-        console.warn(`${ts()} [monitor] auto-start skipped:`, e.message);
+        console.warn('[monitor] auto-start skipped:', e.message);
     }
 });
 

@@ -2087,6 +2087,23 @@
 
                             <div class="flex items-start justify-between gap-3 py-1 border-t border-tg-border/50 pt-2">
                                 <div class="min-w-0">
+                                    <div class="text-tg-text text-sm flex items-center gap-2">
+                                        <span data-i18n="maintenance.nsfw.title">Scan images for NSFW (18+)</span>
+                                        <span id="maint-nsfw-badge" class="hidden text-[11px] px-1.5 py-0.5 rounded-full bg-tg-orange/20 text-tg-orange tabular-nums"></span>
+                                    </div>
+                                    <p class="text-xs text-tg-textSecondary mt-0.5"><span data-i18n="maintenance.nsfw.help">Scans every photo in the library and flags ones the classifier thinks are NOT 18+ — likely false matches that need to be purged. Runs locally (no upload). The model downloads once on first use (~80 MB).</span> <span id="maint-nsfw-status" class="text-tg-textSecondary"></span></p>
+                                    <div id="maint-nsfw-progress" class="hidden mt-1.5 h-1 bg-tg-bg/60 rounded overflow-hidden">
+                                        <div id="maint-nsfw-progress-bar" class="h-full bg-tg-blue transition-all" style="width: 0%"></div>
+                                    </div>
+                                </div>
+                                <div class="flex items-center gap-1 shrink-0">
+                                    <button id="maint-nsfw-review-btn" class="hidden tg-btn-secondary text-xs px-3 py-1.5" data-i18n="maintenance.nsfw.review">Review</button>
+                                    <button id="maint-nsfw-scan-btn" class="tg-btn-secondary text-xs px-3 py-1.5" data-i18n="maintenance.nsfw.action">Scan</button>
+                                </div>
+                            </div>
+
+                            <div class="flex items-start justify-between gap-3 py-1 border-t border-tg-border/50 pt-2">
+                                <div class="min-w-0">
                                     <div class="text-tg-text text-sm" data-i18n="maintenance.logs.title">Download log file</div>
                                     <p class="text-xs text-tg-textSecondary mt-0.5" data-i18n="maintenance.logs.help">Grab the tail of any logfile under <code>data/logs/</code> as a plain-text download. Useful when filing bug reports.</p>
                                 </div>
@@ -2193,6 +2210,32 @@
                                         <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.advanced.long_break_help">60-120s coffee break. 0 disables. Helps avoid bans.</p>
                                     </div>
                                 </div>
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+                                    <div class="flex items-start justify-between gap-3 py-1 sm:col-span-2">
+                                        <div class="min-w-0">
+                                            <div class="text-tg-text text-sm" data-i18n="settings.advanced.auto_first_backfill">Auto-backfill on first add</div>
+                                            <p class="text-[10px] text-tg-textSecondary mt-0.5" data-i18n="settings.advanced.auto_first_backfill_help">When you add a brand-new group, automatically pull the most recent N messages so the gallery isn't empty. Disable to keep the manual flow.</p>
+                                        </div>
+                                        <div id="setting-adv-auto-first-backfill" class="tg-toggle shrink-0 mt-0.5"></div>
+                                    </div>
+                                    <div>
+                                        <label for="setting-adv-auto-first-limit" class="text-tg-text text-xs block mb-1" data-i18n="settings.advanced.auto_first_limit">Auto-backfill limit</label>
+                                        <input id="setting-adv-auto-first-limit" type="number" min="0" max="10000" class="tg-input w-full text-sm" placeholder="100">
+                                        <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.advanced.auto_first_limit_help">Messages to pull on first add. 0 disables.</p>
+                                    </div>
+                                    <div class="flex items-start justify-between gap-3 py-1">
+                                        <div class="min-w-0">
+                                            <div class="text-tg-text text-sm" data-i18n="settings.advanced.auto_catchup">Auto catch-up after restart</div>
+                                            <p class="text-[10px] text-tg-textSecondary mt-0.5" data-i18n="settings.advanced.auto_catchup_help">After a container restart, auto-spawn a backfill for the gap between the last stored message and Telegram's current top.</p>
+                                        </div>
+                                        <div id="setting-adv-auto-catchup" class="tg-toggle shrink-0 mt-0.5"></div>
+                                    </div>
+                                    <div>
+                                        <label for="setting-adv-batch-insert" class="text-tg-text text-xs block mb-1" data-i18n="settings.advanced.batch_insert">Batch insert size</label>
+                                        <input id="setting-adv-batch-insert" type="number" min="1" max="500" class="tg-input w-full text-sm" placeholder="50">
+                                        <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.advanced.batch_insert_help">DB rows buffered before commit during backfill. Higher = faster on small files; uses a tiny bit more RAM.</p>
+                                    </div>
+                                </div>
                             </div>
 
                             <!-- Disk rotator -->
@@ -2237,6 +2280,34 @@
                                         <label for="setting-adv-session-days" class="text-tg-text text-xs block mb-1" data-i18n="settings.advanced.session_days">Session lifetime (days)</label>
                                         <input id="setting-adv-session-days" type="number" min="1" max="365" class="tg-input w-full text-sm" placeholder="7">
                                         <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.advanced.session_days_help">New login cookies expire after this many days. Existing sessions keep their original expiry.</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- NSFW review tool -->
+                            <div class="mt-4 pt-4 border-t border-tg-border/30">
+                                <h4 class="text-tg-text text-sm font-medium mb-2 flex items-center gap-2">
+                                    <i class="ri-alert-line text-tg-orange"></i>
+                                    <span data-i18n="settings.advanced.nsfw">NSFW review tool</span>
+                                </h4>
+                                <p class="text-[11px] text-tg-textSecondary mb-3" data-i18n="settings.advanced.nsfw_help">Off by default. Enable to surface a Maintenance button that scans every photo, classifies 18+ vs not-18+, and lists the not-18+ rows for admin review + delete. Runs entirely on this server (no external service); the model downloads once on first scan.</p>
+                                <div class="flex items-start justify-between gap-3 py-1">
+                                    <div class="min-w-0">
+                                        <div class="text-tg-text text-sm" data-i18n="settings.advanced.nsfw_enable">Enable NSFW review</div>
+                                        <p class="text-[11px] text-tg-textSecondary mt-0.5" data-i18n="settings.advanced.nsfw_enable_help">Adds the "Scan images for NSFW" button to Maintenance.</p>
+                                    </div>
+                                    <div id="setting-adv-nsfw-enabled" class="tg-toggle shrink-0 mt-0.5"></div>
+                                </div>
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+                                    <div>
+                                        <label for="setting-adv-nsfw-threshold" class="text-tg-text text-xs block mb-1" data-i18n="settings.advanced.nsfw_threshold">Threshold (0.10–0.99)</label>
+                                        <input id="setting-adv-nsfw-threshold" type="number" min="0.10" max="0.99" step="0.05" class="tg-input w-full text-sm" placeholder="0.60">
+                                        <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.advanced.nsfw_threshold_help">Score &gt;= this counts as 18+ (kept). Below = surfaced for review. Higher = stricter (more rows surfaced as &quot;possibly not 18+&quot;).</p>
+                                    </div>
+                                    <div>
+                                        <label for="setting-adv-nsfw-concurrency" class="text-tg-text text-xs block mb-1" data-i18n="settings.advanced.nsfw_concurrency">Concurrency (1–4)</label>
+                                        <input id="setting-adv-nsfw-concurrency" type="number" min="1" max="4" class="tg-input w-full text-sm" placeholder="1">
+                                        <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.advanced.nsfw_concurrency_help">Parallel inferences. Higher uses more CPU/RAM during scan; defaults to 1 to keep the server responsive.</p>
                                     </div>
                                 </div>
                             </div>

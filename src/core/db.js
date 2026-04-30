@@ -73,6 +73,17 @@ function initSchema() {
         // and pending_until is cleared, keeping the file forever).
         'ALTER TABLE downloads ADD COLUMN pending_until INTEGER',
         'ALTER TABLE downloads ADD COLUMN rescued_at INTEGER',
+        // NSFW review (Phase 1: photos only).
+        //   nsfw_score        — REAL 0..1 from the classifier (NULL = never scanned).
+        //   nsfw_checked_at   — unix-ms of the last successful classification;
+        //                       set even when score is NULL (e.g. file missing on
+        //                       disk) so we don't keep retrying forever.
+        //   nsfw_whitelist    — admin clicked "Mark as not 18+"; persistent so
+        //                       re-scans skip the row and the review sheet
+        //                       hides it.
+        'ALTER TABLE downloads ADD COLUMN nsfw_score REAL',
+        'ALTER TABLE downloads ADD COLUMN nsfw_checked_at INTEGER',
+        'ALTER TABLE downloads ADD COLUMN nsfw_whitelist INTEGER DEFAULT 0',
     ];
     for (const sql of migrations) {
         try { db.exec(sql); } catch { /* column already exists */ }
@@ -82,6 +93,11 @@ function initSchema() {
     // markRescued lookup. Both are cheap CREATE-IF-NOT-EXISTS calls.
     try { db.exec('CREATE INDEX IF NOT EXISTS idx_pending_until ON downloads(pending_until) WHERE pending_until IS NOT NULL'); } catch {}
     try { db.exec('CREATE INDEX IF NOT EXISTS idx_group_message ON downloads(group_id, message_id)'); } catch {}
+    // Indexes that drive the NSFW review sheet's hot queries:
+    //   - "what's left to scan" (file_type='photo' AND nsfw_checked_at IS NULL)
+    //   - "show flagged sorted by score desc" (whitelist=0 AND score >= threshold)
+    try { db.exec('CREATE INDEX IF NOT EXISTS idx_nsfw_unscanned ON downloads(file_type, nsfw_checked_at) WHERE nsfw_checked_at IS NULL'); } catch {}
+    try { db.exec('CREATE INDEX IF NOT EXISTS idx_nsfw_review ON downloads(nsfw_score, nsfw_whitelist) WHERE nsfw_score IS NOT NULL'); } catch {}
 
     // Smoke-test every column the rest of the code path depends on. The
     // ALTER TABLE migrations above swallow "column already exists" so they
@@ -90,7 +106,7 @@ function initSchema() {
     // halfway through a download — as a generic "no such column" runtime
     // error. Forcing the SELECT here makes us fail at boot instead.
     try {
-        db.prepare('SELECT pinned, pending_until, rescued_at, ttl_seconds, file_hash FROM downloads LIMIT 0').all();
+        db.prepare('SELECT pinned, pending_until, rescued_at, ttl_seconds, file_hash, nsfw_score, nsfw_checked_at, nsfw_whitelist FROM downloads LIMIT 0').all();
     } catch (e) {
         throw new Error(`DB schema migration incomplete — column missing after ALTER TABLE: ${e.message}. Inspect data/db.sqlite or restore from backup.`);
     }
@@ -342,6 +358,32 @@ export function isDownloaded(groupId, messageId) {
 }
 
 /**
+ * Min + max message_id for one group in the downloads table.
+ *
+ * Powers the v2.3.34 smart-resume path in the history backfill: we tell
+ * gramJS `iterMessages({ maxId: minMessageId - 1 })` so the iterator
+ * skips every message we already have on disk and resumes from the
+ * oldest hole. Same idea in reverse with `minId: maxMessageId + 1` for
+ * the post-monitor-restart catch-up flow.
+ *
+ * Returns `{ minMessageId: null, maxMessageId: null, count: 0 }` for an
+ * empty group so the caller can default to "first-time backfill" (no
+ * range filter, iterate from newest).
+ */
+export function getMessageIdRange(groupId) {
+    const r = getDb().prepare(`
+        SELECT MIN(message_id) AS min_id, MAX(message_id) AS max_id, COUNT(*) AS n
+          FROM downloads
+         WHERE group_id = ?
+    `).get(String(groupId));
+    return {
+        minMessageId: r?.min_id ?? null,
+        maxMessageId: r?.max_id ?? null,
+        count: r?.n ?? 0,
+    };
+}
+
+/**
  * All-Media query — same shape as getDownloads() but spans every group, with
  * the per-row group_id + group_name preserved so the gallery can paint the
  * right tile and the viewer can route back to the source chat. Powers the
@@ -528,4 +570,156 @@ export function backfillGroupNames(groups) {
     });
     tx();
     return updated;
+}
+
+// ---- NSFW review (Phase 1: photos only) -----------------------------------
+//
+// IMPORTANT — semantic note on this whole subsystem:
+//
+// The library is a curated 18+ collection. The classifier's job is to find
+// photos that are NOT 18+ (mistakes that snuck in via auto-download) so the
+// admin can purge them. So:
+//
+//   nsfw_score                          = classifier's "is this 18+" score (0-1)
+//   nsfw_score >= threshold             = KEEP (it really is 18+)
+//   nsfw_score <  threshold             = DELETE CANDIDATE (likely not 18+)
+//   nsfw_whitelist = 1                  = admin manually approved as "really IS 18+, do not surface again"
+//
+// Don't mix this up — the review sheet and `candidates` count surface
+// the LOW-score rows, not the high ones.
+
+/**
+ * Headline counts for the Maintenance "Scan images for NSFW" status line.
+ *
+ * @param {string[]} fileTypes  Telegram file_type values to count over
+ *                              (`['photo']` for Phase 1).
+ * @param {number}   threshold  Score >= this is treated as 18+ (keep);
+ *                              < this is treated as deletion-candidate.
+ * @returns {{ totalEligible:number, scanned:number, candidates:number,
+ *             keep:number, whitelisted:number, lastCheckedAt:number|null }}
+ */
+export function getNsfwStats(fileTypes, threshold) {
+    const types = (Array.isArray(fileTypes) && fileTypes.length) ? fileTypes : ['photo'];
+    const placeholders = types.map(() => '?').join(',');
+    const db = getDb();
+    const total = db.prepare(
+        `SELECT COUNT(*) AS n FROM downloads WHERE file_type IN (${placeholders})`
+    ).get(...types).n;
+    const scanned = db.prepare(
+        `SELECT COUNT(*) AS n FROM downloads WHERE file_type IN (${placeholders}) AND nsfw_checked_at IS NOT NULL`
+    ).get(...types).n;
+    // candidates = LOW-score rows (likely not 18+) — what the admin reviews.
+    const candidates = db.prepare(
+        `SELECT COUNT(*) AS n FROM downloads
+         WHERE file_type IN (${placeholders})
+           AND nsfw_score IS NOT NULL
+           AND nsfw_score < ?
+           AND nsfw_whitelist = 0`
+    ).get(...types, Number(threshold)).n;
+    // keep = HIGH-score rows (likely 18+) — the curated content stays put.
+    const keep = db.prepare(
+        `SELECT COUNT(*) AS n FROM downloads
+         WHERE file_type IN (${placeholders})
+           AND nsfw_score IS NOT NULL
+           AND nsfw_score >= ?`
+    ).get(...types, Number(threshold)).n;
+    const whitelisted = db.prepare(
+        `SELECT COUNT(*) AS n FROM downloads WHERE nsfw_whitelist = 1`
+    ).get().n;
+    const lastCheckedAt = db.prepare(
+        `SELECT MAX(nsfw_checked_at) AS t FROM downloads WHERE file_type IN (${placeholders})`
+    ).get(...types).t;
+    return { totalEligible: total, scanned, candidates, keep, whitelisted, lastCheckedAt };
+}
+
+/**
+ * Pull a batch of rows that haven't been classified yet. Whitelisted rows
+ * are skipped — admin already approved them. Sorted oldest-first so the
+ * resume-after-restart path picks up backlog rather than newly-arrived
+ * downloads.
+ */
+export function getUnscannedNsfwBatch(fileTypes, limit = 50) {
+    const types = (Array.isArray(fileTypes) && fileTypes.length) ? fileTypes : ['photo'];
+    const placeholders = types.map(() => '?').join(',');
+    return getDb().prepare(`
+        SELECT id, group_id, group_name, file_name, file_path, file_type, file_size, created_at
+          FROM downloads
+         WHERE file_type IN (${placeholders})
+           AND nsfw_checked_at IS NULL
+           AND nsfw_whitelist = 0
+         ORDER BY created_at ASC
+         LIMIT ?
+    `).all(...types, Math.max(1, Math.min(500, Number(limit) || 50)));
+}
+
+/**
+ * Persist a classification result. `score` may be NULL when the file
+ * couldn't be read (missing on disk, decode failure) — we still set
+ * `nsfw_checked_at` so the scan loop doesn't keep retrying the same
+ * unreadable row forever.
+ */
+export function setNsfwResult(id, score, now = Date.now()) {
+    const s = score == null ? null : Math.max(0, Math.min(1, Number(score)));
+    return getDb().prepare(`
+        UPDATE downloads
+           SET nsfw_score = ?, nsfw_checked_at = ?
+         WHERE id = ?
+    `).run(s, Math.floor(now), Number(id)).changes;
+}
+
+/**
+ * Deletion-candidate rows for the review sheet. Returns photos with a
+ * LOW NSFW score (i.e. classifier thinks they're NOT 18+), which is
+ * exactly what the admin wants to purge from a curated 18+ library.
+ *
+ * Excludes whitelisted rows (admin already confirmed they really are
+ * 18+ despite the low score — false negative override). Sorted by
+ * score ASC so the "most clearly not 18+" rows surface first.
+ *
+ * @returns {{ rows: object[], total: number, page: number, totalPages: number }}
+ */
+export function getNsfwDeleteCandidates({ fileTypes, threshold, page = 1, limit = 50 }) {
+    const types = (Array.isArray(fileTypes) && fileTypes.length) ? fileTypes : ['photo'];
+    const placeholders = types.map(() => '?').join(',');
+    const t = Number(threshold);
+    const p = Math.max(1, Number(page) || 1);
+    const lim = Math.max(1, Math.min(200, Number(limit) || 50));
+    const offset = (p - 1) * lim;
+    const db = getDb();
+    const totalRow = db.prepare(`
+        SELECT COUNT(*) AS n FROM downloads
+         WHERE file_type IN (${placeholders})
+           AND nsfw_score IS NOT NULL
+           AND nsfw_score < ?
+           AND nsfw_whitelist = 0
+    `).get(...types, t);
+    const rows = db.prepare(`
+        SELECT id, group_id, group_name, file_name, file_path, file_type, file_size,
+               created_at, nsfw_score, nsfw_checked_at
+          FROM downloads
+         WHERE file_type IN (${placeholders})
+           AND nsfw_score IS NOT NULL
+           AND nsfw_score < ?
+           AND nsfw_whitelist = 0
+         ORDER BY nsfw_score ASC, id ASC
+         LIMIT ? OFFSET ?
+    `).all(...types, t, lim, offset);
+    const total = totalRow.n;
+    return { rows, total, page: p, totalPages: Math.max(1, Math.ceil(total / lim)) };
+}
+
+/**
+ * Mark rows as admin-confirmed-18+. They're hidden from the review
+ * sheet forever (until manually un-whitelisted). Use when the
+ * classifier's score is misleadingly low for a genuinely 18+ image
+ * — admin overrides the false negative.
+ */
+export function whitelistNsfw(ids) {
+    if (!Array.isArray(ids) || !ids.length) return 0;
+    const cleanIds = ids.map(Number).filter(n => Number.isInteger(n) && n > 0);
+    if (!cleanIds.length) return 0;
+    const ph = cleanIds.map(() => '?').join(',');
+    return getDb().prepare(
+        `UPDATE downloads SET nsfw_whitelist = 1 WHERE id IN (${ph})`
+    ).run(...cleanIds).changes;
 }
