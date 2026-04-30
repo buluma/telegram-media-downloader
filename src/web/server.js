@@ -342,8 +342,13 @@ startSessionGc();
 // Bootstrap the share-link HMAC secret + apply runtime limits from
 // config. Lazy-generated secret on first boot, persisted to
 // config.web.shareSecret. Done inside an async IIFE so a missing config
-// file (very-first boot) doesn't crash module load — re-runs on the
-// next request that touches `readConfigSafe`.
+// In-process cache for config.json — must be declared before the share
+// bootstrap IIFE below so it's available when readConfigSafe() runs.
+let _configCache = { at: 0, value: null };
+
+// Share secret bootstrap — runs immediately on module load. If config.json
+// doesn't exist yet the error is caught so it doesn't crash module load.
+// Re-runs on the next request that touches `readConfigSafe`.
 (async () => {
     try {
         const cfg = await readConfigSafe();
@@ -376,14 +381,12 @@ app.use((req, res, next) => {
     next();
 });
 
-// In-process cache for config.json. checkAuth + the force-https +
-// rate-limit middlewares all call readConfigSafe() on every request —
-// during a video playback, the browser issues many 64 KB range GETs to
-// /files/* and each one used to disk-read + JSON.parse the config. The
-// 2-second TTL is short enough that toggle changes feel instant in the
-// settings UI but long enough to fold the per-clip request burst into
-// a single read.
-let _configCache = { at: 0, value: null };
+// checkAuth + the force-https + rate-limit middlewares all call
+// readConfigSafe() on every request — during a video playback, the browser
+// issues many 64 KB range GETs to /files/* and each one used to disk-read
+// + JSON.parse the config. The 2-second TTL is short enough that toggle
+// changes feel instant in the settings UI but long enough to fold the
+// per-clip request burst into a single read.
 async function readConfigSafe() {
     const now = Date.now();
     if (_configCache.value && now - _configCache.at < 2000) return _configCache.value;
