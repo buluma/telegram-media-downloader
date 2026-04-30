@@ -1262,6 +1262,9 @@ async function setupMediaSearch() {
     const input = document.getElementById('media-search');
     const clear = document.getElementById('media-search-clear');
     const selectBtn = document.getElementById('select-mode-btn');
+    const selBar = document.getElementById('selection-bar');
+    const selDel = document.getElementById('selection-delete');
+    const selClear = document.getElementById('selection-clear');
     if (!input) return;
 
     let timer = null;
