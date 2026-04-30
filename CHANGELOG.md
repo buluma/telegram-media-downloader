@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.36] — 2026-04-30
+
+### Added — Gallery picker: desktop-grade gestures
+- **Drag-to-select (lasso)** — rubber-band rectangle selects every overlapping tile.
+- **Ctrl / Cmd + click** — toggle one tile, auto-enables select mode.
+- **Shift + click** — range-select from the last anchor to here.
+- **Ctrl / Cmd + A** — select all visible tiles.
+- **Esc** — exit select mode + clear.
+- **Delete / Backspace** — bulk-delete the current selection.
+- All updates are in-place — toggling `.is-selected` on the matching tile, no full grid re-render. Lasso stays smooth on 1000-tile galleries.
+- Long-press on touch (existing) still works.
+
+### SW
+- VERSION bumped `'v35'` → `'v36'`.
+
 ## [2.3.35] — 2026-04-30
 
 ### Changed — View modes: polished List + dropdown picker

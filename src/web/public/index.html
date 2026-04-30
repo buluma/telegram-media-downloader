@@ -484,6 +484,69 @@
             background: #242F3D;
         }
 
+        /* ===== Selection mode (v2.3.36) =================================
+           Click → toggle one
+           Ctrl/Cmd + click → toggle one (auto-enables select mode)
+           Shift + click → range from last anchor
+           Drag from empty space → lasso rectangle (multi-select by overlap)
+           Ctrl/Cmd + A → select all visible
+           Esc → exit select mode
+           Long-press (touch) → enter select mode + toggle (existing)
+
+           In-place: toggling .is-selected on a tile flips the ring + ✓
+           with no re-render of the surrounding grid.
+        */
+        .media-item .select-badge {
+            position: absolute;
+            top: 6px; left: 6px;
+            width: 22px; height: 22px;
+            border-radius: 50%;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+            background: rgba(0, 0, 0, 0.45);
+            color: rgba(255, 255, 255, 0.6);
+            border: 1.5px solid rgba(255, 255, 255, 0.4);
+            transition: background 0.12s ease, color 0.12s ease, transform 0.12s ease;
+            z-index: 2;
+            pointer-events: none;
+        }
+        .media-grid.in-select-mode .media-item .select-badge { display: flex; }
+        .media-item.is-selected {
+            outline: 2px solid var(--tg-blue, #2AABEE);
+            outline-offset: -2px;
+        }
+        .media-item.is-selected .select-badge {
+            background: var(--tg-blue, #2AABEE);
+            color: #fff;
+            border-color: var(--tg-blue, #2AABEE);
+            transform: scale(1.05);
+        }
+        /* During an active lasso drag, prevent text selection on the grid
+           so the rectangle doesn't accidentally highlight text. */
+        .media-grid.lasso-active { user-select: none; -webkit-user-select: none; }
+        .media-grid.lasso-active .media-item { cursor: default; }
+
+        /* The rubber-band lasso rectangle. Position: fixed so it tracks
+           the mouse in viewport coordinates regardless of scroll. */
+        #gallery-lasso {
+            position: fixed;
+            display: none;
+            background: rgba(42, 171, 238, 0.16);
+            border: 1px solid var(--tg-blue, #2AABEE);
+            border-radius: 2px;
+            pointer-events: none;
+            z-index: 40;
+        }
+        #gallery-lasso.visible { display: block; }
+        /* Subtle highlight while a tile is in the rectangle but the
+           drag hasn't been committed yet. */
+        .media-item.is-marquee {
+            outline: 2px dashed rgba(42, 171, 238, 0.7);
+            outline-offset: -2px;
+        }
+
         /* View-mode picker dropdown (header) */
         .view-mode-menu {
             position: absolute;
@@ -1514,6 +1577,11 @@
                         </button>
                     </div>
                     <div id="media-grid" class="media-grid"></div>
+                    <!-- Drag-to-select rubber-band rectangle. Single shared
+                         element managed by gallery-select.js — kept outside
+                         the grid so it can extend past the grid bounds
+                         without altering layout. -->
+                    <div id="gallery-lasso" aria-hidden="true"></div>
                     <div id="empty-state"
                         class="hidden flex flex-col items-center justify-center h-64 text-center px-4">
                         <i class="ri-image-line text-5xl text-tg-textSecondary mb-4"></i>
