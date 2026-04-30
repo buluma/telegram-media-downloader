@@ -95,8 +95,13 @@ async function init() {
     ws.on('purge_all', () => { loadGroups(); loadStats(); });
     // Auto-prune / disk-rotator / rescue sweeper all broadcast file_deleted —
     // drop the matching tile from the open gallery if any, otherwise just
-    // refresh stats so disk-usage / file-count chip stay current. Without
-    // this the gallery shows ghost thumbnails until the next manual reload.
+    // refresh stats so disk-usage / file-count chip stay current. We do
+    // this in two surgical moves to avoid a full grid re-render (which on
+    // a thousand-tile gallery is a visible jank): mutate state.files +
+    // remove the single matching DOM node by data-path. The originalIndex
+    // attribute on remaining tiles stays valid because we never re-index
+    // after removal — the viewer's index lookup falls back to filename
+    // resolution if it ever becomes stale.
     const dropFileFromView = (m) => {
         const droppedPath = m?.path;
         const droppedId = m?.id;
@@ -108,7 +113,8 @@ async function init() {
                 return true;
             });
             if (state.files.length !== before && state.currentPage === 'viewer') {
-                renderMediaGrid();
+                _removeTileFromGrid({ path: droppedPath, id: droppedId });
+                _renderedFileCount = state.files.length;
             }
         }
         loadStats();
@@ -706,9 +712,11 @@ async function loadAllFiles() {
         const res = await api.get(`/api/downloads/all?page=${state.page}&limit=${FILES_PER_PAGE}&type=${encodeURIComponent(type)}`);
         const newFiles = res?.files || [];
 
+        let appendFromIndex = 0;
         if (state.page === 1) {
             state.files = newFiles;
         } else {
+            appendFromIndex = state.files.length;
             state.files = state.files.concat(newFiles);
         }
         // Off-by-one safety: hasMore ALSO requires that the running total
@@ -718,7 +726,11 @@ async function loadAllFiles() {
         const total = Number(res?.total) || state.files.length;
         state.hasMore = newFiles.length === FILES_PER_PAGE && state.files.length < total;
 
-        renderMediaGrid();
+        // Append-only render on page 2+; full render on page 1. Append
+        // is O(N_new) instead of O(N_total) so a 1000-tile gallery scroll
+        // stays smooth right to the end of the list.
+        if (state.page > 1) renderMediaGrid({ append: true, fromIndex: appendFromIndex });
+        else renderMediaGrid();
         document.getElementById('page-subtitle').textContent = i18nTf(
             'viewer.subtitle.files',
             { count: total },
@@ -749,9 +761,11 @@ async function loadGroupFiles(groupId) {
         const res = await api.get(`/api/downloads/${encodeURIComponent(groupId)}?page=${state.page}&limit=${FILES_PER_PAGE}&type=${encodeURIComponent(type)}`);
         const newFiles = res.files || [];
 
+        let appendFromIndex = 0;
         if (state.page === 1) {
             state.files = newFiles;
         } else {
+            appendFromIndex = state.files.length;
             state.files = state.files.concat(newFiles);
         }
 
@@ -759,7 +773,8 @@ async function loadGroupFiles(groupId) {
         // longer keeps pagination armed forever.
         const total = Number(res.total) || state.files.length;
         state.hasMore = newFiles.length === FILES_PER_PAGE && state.files.length < total;
-        renderMediaGrid();
+        if (state.page > 1) renderMediaGrid({ append: true, fromIndex: appendFromIndex });
+        else renderMediaGrid();
         document.getElementById('page-subtitle').textContent = i18nTf('viewer.subtitle.files', { count: total }, `${total} files`);
     } catch (e) {
         showToast(i18nT('viewer.error.load', 'Error loading files'), 'error');
@@ -768,35 +783,48 @@ async function loadGroupFiles(groupId) {
     }
 }
 
-function renderMediaGrid() {
+// Track how many state.files entries are already painted as tiles in the
+// DOM. Append-only on infinite scroll: page-2+ loads add only the new
+// tail to the grid via insertAdjacentHTML rather than re-rendering the
+// whole thing. Reset on every full re-render (filter/group change).
+let _renderedFileCount = 0;
+
+function renderMediaGrid(opts = {}) {
     const grid = document.getElementById('media-grid');
     const empty = document.getElementById('empty-state');
     if (!grid) return;
 
+    const append = opts.append === true;
+    const fromIndex = append ? (opts.fromIndex ?? _renderedFileCount) : 0;
+
     if (state.files.length === 0) {
         grid.innerHTML = '';
+        _renderedFileCount = 0;
         if (empty) empty.classList.remove('hidden');
         return;
     }
     if (empty) empty.classList.add('hidden');
 
-    // Walk state.files once, keep each file's index in the unfiltered
-    // list as `originalIndex`. The viewer uses state.files[index] so the
-    // tile must hand it the index in *that* list — using the filtered
-    // index would jump to the wrong file once any filter is applied.
+    if (!state.selected) state.selected = new Set();
+
+    // Walk only the slice we need (full list on full render, tail on
+    // append). Each file's index in the UNFILTERED list (`originalIndex`)
+    // is preserved so the viewer's `state.files[idx]` lookup stays
+    // correct under filter.
+    const slice = state.files.slice(fromIndex);
     const filteredWithIndex = [];
-    state.files.forEach((file, originalIndex) => {
+    slice.forEach((file, sliceIdx) => {
         if (state.currentFilter === 'all' || file.type === state.currentFilter) {
-            filteredWithIndex.push({ file, originalIndex });
+            filteredWithIndex.push({ file, originalIndex: fromIndex + sliceIdx });
         }
     });
 
-    if (!state.selected) state.selected = new Set();
-
-    // Time-group the items into Today / Yesterday / This week / Older.
-    // Headers are rendered as grid-column: 1 / -1 children so the existing
-    // CSS Grid layout keeps each section as a row of full-width tiles.
-    const sections = groupFilesByTime(filteredWithIndex);
+    // On append, skip the time-section banding entirely — the existing
+    // headers up the page stay correct visually, and re-bucketing the
+    // tail in isolation can't produce sensible relative labels anyway.
+    const sections = append
+        ? [['', filteredWithIndex]]
+        : groupFilesByTime(filteredWithIndex);
 
     const html = sections.map(([label, items]) => {
         // Sticky inside a CSS Grid was clipping the trailing media tiles
@@ -862,23 +890,73 @@ function renderMediaGrid() {
         return headerHtml + tiles;
     }).join('');
 
-    grid.innerHTML = html;
+    if (append) {
+        // Tail-append. insertAdjacentHTML doesn't re-parse the existing
+        // children — O(N_appended) instead of O(N_total) per scroll page,
+        // which is the difference between buttery scroll and stutter on
+        // a 1000-tile gallery.
+        grid.insertAdjacentHTML('beforeend', html);
+    } else {
+        grid.innerHTML = html;
+    }
+    _renderedFileCount = state.files.length;
 
-    grid.querySelectorAll('.media-item[data-index]').forEach(el => {
-        el.addEventListener('click', (ev) => {
-            const idx = parseInt(el.dataset.index, 10);
-            if (state.selectMode || ev.shiftKey) {
-                toggleSelection(el.dataset.path);
-                ev.preventDefault();
-                return;
-            }
-            Viewer.openMediaViewer(idx);
-        });
+    // Click handling lives on the grid itself via event delegation
+    // (wired once below). Per-tile addEventListener was the second-
+    // biggest cost on a full re-render — eliminating it keeps tab
+    // switches snappy on a thousand-tile grid.
+    _wireMediaGridDelegation(grid);
+    _attachLazyObservers(grid);
+}
+
+let _gridDelegated = false;
+function _wireMediaGridDelegation(grid) {
+    if (_gridDelegated) return;
+    _gridDelegated = true;
+    grid.addEventListener('click', (ev) => {
+        const el = ev.target.closest('.media-item[data-index]');
+        if (!el) return;
+        const idx = parseInt(el.dataset.index, 10);
+        if (state.selectMode || ev.shiftKey) {
+            toggleSelection(el.dataset.path);
+            ev.preventDefault();
+            return;
+        }
+        Viewer.openMediaViewer(idx);
     });
+}
 
-    if (state.imageObserver) {
-        state.imageObserver.disconnect();
-        grid.querySelectorAll('img[data-src], video[data-src]').forEach(el => state.imageObserver.observe(el));
+// Lazy <img>/<video> observer hookup — runs after every render (full or
+// append) so newly-added tiles are picked up by the same IntersectionObserver
+// that swaps `data-src` → `src` when the tile scrolls into view. Idempotent
+// — `observer.observe(el)` is a no-op for an already-observed node.
+function _attachLazyObservers(grid) {
+    if (!state.imageObserver) return;
+    grid.querySelectorAll('img[data-src], video[data-src]').forEach(el => state.imageObserver.observe(el));
+}
+
+// Remove a single tile from the grid in place. Saves the full
+// renderMediaGrid() pass when a WS file_deleted lands — important on a
+// big gallery, where re-painting 1000 tiles to drop one shows up as a
+// visible scroll-stutter. Falls through to a no-op if no tile matches
+// (the tile was already removed, or the gallery doesn't have it cached).
+function _removeTileFromGrid({ path, id }) {
+    const grid = document.getElementById('media-grid');
+    if (!grid) return;
+    let el = null;
+    if (path) {
+        // CSS.escape is required because file paths can carry quotes /
+        // brackets / colons that would otherwise break the selector.
+        el = grid.querySelector(`.media-item[data-path="${CSS.escape(path)}"]`);
+    }
+    if (!el && id != null) {
+        el = grid.querySelector(`.media-item[data-id="${CSS.escape(String(id))}"]`);
+    }
+    if (el) el.remove();
+    // Surface the empty-state when the last tile disappears.
+    if (state.files.length === 0) {
+        const empty = document.getElementById('empty-state');
+        if (empty) empty.classList.remove('hidden');
     }
 }
 
@@ -1033,24 +1111,47 @@ async function setupMediaSearch() {
 
     let timer = null;
     let lastQuery = '';
+    let inflight = null;
+    let _searchSeq = 0;          // monotonically-increasing tag — last write wins
 
     const runSearch = async (q) => {
+        // Race-safety: bump the sequence + abort any in-flight request
+        // BEFORE issuing the new one. Without this, fast typing produces
+        // out-of-order responses and the slow one wins the render
+        // ("flickers back to a stale result" bug).
+        const myTag = ++_searchSeq;
+        if (inflight) { try { inflight.abort(); } catch {} }
+
         if (!q) {
             state.searchActive = false;
-            // Re-render whatever was loaded for the current group
+            inflight = null;
             if (state.savedFiles) state.files = state.savedFiles;
             renderMediaGrid();
             return;
         }
+        const ctrl = new AbortController();
+        inflight = ctrl;
         try {
-            const r = await api.get(`/api/downloads/search?q=${encodeURIComponent(q)}&limit=200`);
-            // Keep a snapshot of pre-search files so clearing restores them
+            const res = await fetch(`/api/downloads/search?q=${encodeURIComponent(q)}&limit=200`, {
+                signal: ctrl.signal,
+                credentials: 'same-origin',
+            });
+            if (myTag !== _searchSeq) return; // a newer search has already started
+            if (!res.ok) {
+                throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+            }
+            const r = await res.json();
+            if (myTag !== _searchSeq) return;
             if (!state.searchActive) state.savedFiles = state.files;
             state.searchActive = true;
             state.files = r.files;
             renderMediaGrid();
         } catch (e) {
+            if (e.name === 'AbortError') return;        // superseded — silent
+            if (myTag !== _searchSeq) return;
             showToast(i18nTf('viewer.search.failed', { msg: e.message }, `Search failed: ${e.message}`), 'error');
+        } finally {
+            if (inflight === ctrl) inflight = null;
         }
     };
 
@@ -1060,7 +1161,10 @@ async function setupMediaSearch() {
         if (q === lastQuery) return;
         lastQuery = q;
         clearTimeout(timer);
-        timer = setTimeout(() => runSearch(q), 250);
+        // 200 ms hits the sweet spot — fast enough to feel instant on a
+        // "I just stopped typing" pause, slow enough that a 5-keystroke
+        // word fires one HTTP call instead of five.
+        timer = setTimeout(() => runSearch(q), 200);
     });
     clear?.addEventListener('click', () => { input.value = ''; lastQuery = ''; clear.classList.add('hidden'); runSearch(''); });
 

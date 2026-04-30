@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.32] — 2026-04-30
+
+### Changed — Media gallery: smooth on big libraries
+- Infinite-scroll page-2+ loads now append only the new tiles (`insertAdjacentHTML`) instead of re-rendering the whole grid. O(N_new) per scroll page, not O(N_total).
+- WS `file_deleted` removes the single matching tile from the DOM in place — no full re-render.
+- Click handling switched to event delegation; per-tile listeners gone.
+- Search uses AbortController + sequence tag — fast typing cancels in-flight requests, no out-of-order race. Debounce 250 ms → 200 ms.
+
+### SW
+- VERSION bumped `'v31'` → `'v32'`.
+
 ## [2.3.31] — 2026-04-30
 
 ### Changed — Queue page: gradual load + in-place progress patches
