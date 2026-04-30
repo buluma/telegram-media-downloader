@@ -166,6 +166,10 @@ class Runtime extends EventEmitter {
         // 'event' bus relays it through the WS broadcaster as { type:
         // 'rescued', groupId, messageId } so the SPA can flip the badge.
         this._monitor.on('rescued', (p) => this.emit('event', { type: 'rescued', payload: p }));
+        // v2.3.34 — monitor detected a gap between its last seen DB row
+        // and Telegram's current top → relay so server.js can spawn a
+        // catch-up backfill via _spawnInternalBackfill.
+        this._monitor.on('catch_up_needed', (p) => this.emit('catch_up_needed', p));
     }
 
     _serializeJob(job) {

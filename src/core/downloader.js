@@ -12,6 +12,7 @@ import { DebugLogger } from './logger.js';
 import { getDb, insertDownload, isDownloaded as dbIsDownloaded } from './db.js';
 import { sha256OfFile } from './checksum.js';
 import { pregenerateThumb } from './thumbs.js';
+import { pregenerateNsfw } from './nsfw.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, '../../data');
@@ -900,7 +901,11 @@ export class DownloadManager extends EventEmitter {
             // try again later.
             const newId = insertResult?.lastInsertRowid;
             if (newId) {
+                // Background, fire-and-forget. Both are no-ops when their
+                // respective features are disabled; thumbs is always-on,
+                // NSFW is opt-in via config.advanced.nsfw.enabled.
                 try { pregenerateThumb(newId); } catch {}
+                try { pregenerateNsfw(newId); } catch {}
             }
         } catch(e) {
             console.error('DB Insert Error', e);

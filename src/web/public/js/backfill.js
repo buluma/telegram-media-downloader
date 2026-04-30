@@ -532,7 +532,16 @@ async function startBackfill() {
             renderActive();
         }
     } catch (e) {
-        showToast(i18nTf('group.backfill.failed', { msg: e.message }, `History failed: ${e.message}`), 'error');
+        // The per-group lock returns 409 with code:'ALREADY_RUNNING' when
+        // a backfill for the same group is in flight. Surface a clearer
+        // toast in that case so the user understands why their click
+        // didn't spawn a new job.
+        if (e?.status === 409 && e?.data?.code === 'ALREADY_RUNNING') {
+            showToast(i18nT('backfill.already_running',
+                'A backfill is already running for this group'), 'warning');
+        } else {
+            showToast(i18nTf('group.backfill.failed', { msg: e.message }, `History failed: ${e.message}`), 'error');
+        }
     } finally {
         if (btn) {
             btn.disabled = false;

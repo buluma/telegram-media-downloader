@@ -667,6 +667,16 @@
     "settings.advanced.nsfw_concurrency": "Concurrency (1–4)",
     "settings.advanced.nsfw_concurrency_help": "Parallel inferences. Higher uses more CPU/RAM during scan; defaults to 1.",
 
+    "settings.advanced.auto_first_backfill": "Auto-backfill on First Add",
+    "settings.advanced.auto_first_backfill_help": "When you add a brand-new group, automatically pull the most recent N messages so the gallery isn't empty. Disable to keep the manual flow.",
+    "settings.advanced.auto_first_limit": "Auto-Backfill Limit",
+    "settings.advanced.auto_first_limit_help": "Messages to pull on first add. 0 disables.",
+    "settings.advanced.auto_catchup": "Auto Catch-Up After Restart",
+    "settings.advanced.auto_catchup_help": "After a container restart, auto-spawn a backfill for the gap between the last stored message and Telegram's current top.",
+    "settings.advanced.batch_insert": "Batch Insert Size",
+    "settings.advanced.batch_insert_help": "DB rows buffered before commit during backfill. Higher = faster on small files; uses a tiny bit more RAM.",
+    "backfill.already_running": "A backfill is already running for this group",
+
     "maintenance.update.title": "Install Update",
     "maintenance.update.help": "Pulls the latest container image and recreates the container in place. The data volume and config are preserved; the SQLite database is snapshotted to data/backups/ first. The dashboard reconnects automatically once the new container is healthy.",
     "maintenance.update.action": "Check / install",

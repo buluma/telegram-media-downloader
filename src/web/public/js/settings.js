@@ -559,6 +559,20 @@ function loadAdvanced(config) {
     set('setting-adv-backpressure-wait', h.backpressureMaxWaitMs);
     set('setting-adv-short-break',       h.shortBreakEveryN);
     set('setting-adv-long-break',        h.longBreakEveryN);
+    set('setting-adv-auto-first-limit',  Number.isFinite(h.autoFirstLimit) ? h.autoFirstLimit : 100);
+    set('setting-adv-batch-insert',      Number.isFinite(h.batchInsertSize) ? h.batchInsertSize : 50);
+    // Toggle widgets — flip on click, default to ON when undefined.
+    const _wireToggle = (id, current) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.classList.toggle('active', current !== false);
+        if (!el.dataset.wired) {
+            el.dataset.wired = '1';
+            el.addEventListener('click', (e) => { e.preventDefault(); el.classList.toggle('active'); });
+        }
+    };
+    _wireToggle('setting-adv-auto-first-backfill', h.autoFirstBackfill);
+    _wireToggle('setting-adv-auto-catchup',        h.autoCatchUp);
 
     const r = { ...ADVANCED_DEFAULTS.diskRotator, ...(adv.diskRotator || {}) };
     set('setting-adv-sweep-batch',       r.sweepBatch);
@@ -609,6 +623,10 @@ function gatherAdvanced() {
             backpressureMaxWaitMs:  num('setting-adv-backpressure-wait', ADVANCED_DEFAULTS.history.backpressureMaxWaitMs),
             shortBreakEveryN:       num('setting-adv-short-break',       ADVANCED_DEFAULTS.history.shortBreakEveryN),
             longBreakEveryN:        num('setting-adv-long-break',        ADVANCED_DEFAULTS.history.longBreakEveryN),
+            autoFirstBackfill:      document.getElementById('setting-adv-auto-first-backfill')?.classList.contains('active') !== false,
+            autoFirstLimit:         num('setting-adv-auto-first-limit',  100),
+            autoCatchUp:            document.getElementById('setting-adv-auto-catchup')?.classList.contains('active') !== false,
+            batchInsertSize:        num('setting-adv-batch-insert',      50),
         },
         diskRotator: {
             sweepBatch:         num('setting-adv-sweep-batch', ADVANCED_DEFAULTS.diskRotator.sweepBatch),

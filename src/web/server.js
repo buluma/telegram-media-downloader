@@ -1432,6 +1432,26 @@ app.delete('/api/accounts/:id', async (req, res) => {
 runtime.on('state', (s) => broadcast({ type: 'monitor_state', state: s.state, error: s.error }));
 runtime.on('event', (e) => broadcast({ type: 'monitor_event', ...e }));
 
+// Catch-up backfill — fired by monitor when boot-time inspection finds a
+// group whose newest stored message_id lags Telegram's current top by
+// more than `advanced.history.autoCatchUpThreshold`. We spawn an
+// internal backfill in `catch-up` mode so the gap that built up while
+// the container was down closes itself with no user action required.
+runtime.on('catch_up_needed', ({ groupId, gap }) => {
+    const histCfg = loadConfig().advanced?.history || {};
+    // Bound the catch-up size — a group that fell weeks behind could
+    // need ~10000s of messages, so cap at a sane ceiling. Falls back
+    // to "unlimited" when autoFirstLimit is 0 (operator opt-in for
+    // long catch-ups).
+    const ceiling = Number(histCfg.autoFirstLimit ?? 100);
+    const limit = ceiling > 0 ? Math.min(ceiling * 10, 50000) : null;
+    _spawnInternalBackfill({
+        groupId, limit, mode: 'catch-up', reason: 'auto-catch-up',
+    }).then(jobId => {
+        if (jobId) console.log(`[catch-up] gap=${gap} → spawned backfill ${jobId} (limit=${limit ?? 'all'})`);
+    }).catch((e) => console.warn('[catch-up] spawn failed:', e?.message || e));
+});
+
 // Build the monitor-status snapshot. Used by both the GET endpoint
 // (for the SPA's first paint / a manual refresh) AND the periodic
 // WS broadcaster below — keeping them on one code path so a future
@@ -1603,10 +1623,26 @@ async function saveHistoryJobsToDisk() {
     }
 }
 
+// Module-level guard: at most ONE backfill per groupId at any time.
+// Without this, a fast double-click on Backfill spawns two HistoryDownloader
+// instances against the same group → two parallel iterations of the same
+// Telegram timeline, two streams of `getMessages` calls, doubled FloodWait
+// risk. The instances would still produce no duplicate downloads (the DB's
+// UNIQUE(group_id, message_id) catches them), but the API churn is wasted.
+const _activeBackfillsByGroup = new Map(); // groupId(string) → jobId(string)
+
 app.post('/api/history', async (req, res) => {
     try {
-        const { groupId, limit = 100, offsetId = 0 } = req.body || {};
+        const { groupId, limit = 100, offsetId = 0, mode } = req.body || {};
         if (!groupId) return res.status(400).json({ error: 'groupId required' });
+        const groupKey = String(groupId);
+        if (_activeBackfillsByGroup.has(groupKey)) {
+            return res.status(409).json({
+                error: 'A backfill is already running for this group',
+                code: 'ALREADY_RUNNING',
+                jobId: _activeBackfillsByGroup.get(groupKey),
+            });
+        }
         // limit === 0 (or "0") means "no limit" → backfill the entire history.
         // Anything else is clamped into a sane positive range.
         const limRaw = parseInt(limit, 10);
@@ -1652,6 +1688,7 @@ app.post('/api/history', async (req, res) => {
             _runner: history,
         };
         _historyJobs.set(jobId, job);
+        _activeBackfillsByGroup.set(groupKey, jobId);
 
         history.on('progress', (s) => {
             job.processed = s.processed; job.downloaded = s.downloaded;
@@ -1662,10 +1699,18 @@ app.post('/api/history', async (req, res) => {
                 groupId: job.groupId,
                 limit: job.limit,
                 startedAt: job.startedAt,
+                mode: job.mode || 'pull-older',
             });
         });
+        // Mirror the chosen mode onto the job so the UI shows it ("pull
+        // older" / "catch up" / "rescan") even after the worker exits.
+        history.on('start', (s) => { if (s?.mode) job.mode = s.mode; });
 
-        history.downloadHistory(groupId, { limit: lim ?? undefined, offsetId: parseInt(offsetId, 10) || 0 })
+        history.downloadHistory(groupId, {
+            limit: lim ?? undefined,
+            offsetId: parseInt(offsetId, 10) || 0,
+            mode: mode === 'catch-up' || mode === 'rescan' ? mode : 'pull-older',
+        })
             .then(() => {
                 job.state = job.cancelled ? 'cancelled' : 'done';
                 job.finishedAt = Date.now();
@@ -1677,6 +1722,10 @@ app.post('/api/history', async (req, res) => {
                 broadcast({ type: evt, jobId, group: group.name, ...job });
                 if (standalone) downloader.stop().catch(() => {});
                 saveHistoryJobsToDisk().catch(() => {});
+                // Release the per-group lock so a new backfill can spawn.
+                if (_activeBackfillsByGroup.get(groupKey) === jobId) {
+                    _activeBackfillsByGroup.delete(groupKey);
+                }
                 // Drop the in-memory entry after a grace window so the UI has
                 // time to grab it via /api/history/jobs.
                 setTimeout(() => _historyJobs.delete(jobId), 5 * 60 * 1000);
@@ -1689,9 +1738,12 @@ app.post('/api/history', async (req, res) => {
                 broadcast({ type: 'history_error', jobId, error: job.error, group: group.name, groupId: job.groupId });
                 if (standalone) downloader.stop().catch(() => {});
                 saveHistoryJobsToDisk().catch(() => {});
+                if (_activeBackfillsByGroup.get(groupKey) === jobId) {
+                    _activeBackfillsByGroup.delete(groupKey);
+                }
             });
 
-        res.json({ success: true, jobId, group: group.name, limit: lim });
+        res.json({ success: true, jobId, group: group.name, limit: lim, mode: job.mode || 'pull-older' });
     } catch (e) {
         console.error('POST /api/history:', e);
         res.status(500).json({ error: e.message });
@@ -3942,6 +3994,13 @@ app.post('/api/config', async (req, res) => {
             // Recent-backfills retention. Anything older than this gets
             // pruned at next read of `data/history-jobs.json`. 1-3650 days.
             h.retentionDays           = clampInt(h.retentionDays,            1, 3650, 30);
+            // v2.3.34 — auto-backfill knobs
+            h.autoFirstBackfill       = h.autoFirstBackfill !== false;       // default ON
+            h.autoFirstLimit          = clampInt(h.autoFirstLimit,           0, 10000, 100);
+            h.autoCatchUp             = h.autoCatchUp !== false;             // default ON
+            h.autoCatchUpThreshold    = clampInt(h.autoCatchUpThreshold,     1, 100000, 5);
+            h.batchInsertSize         = clampInt(h.batchInsertSize,          1, 500, 50);
+            h.batchInsertMaxAgeMs     = clampInt(h.batchInsertMaxAgeMs,    100, 60000, 1000);
 
             const sh = merged.share;
             // 1 second floor / 10 years ceiling. Defaults match the spec
@@ -4140,11 +4199,116 @@ app.put('/api/groups/:id', async (req, res) => {
         
         await writeConfigAtomic(config);
         broadcast({ type: 'config_updated', config });
+
+        // Auto-backfill on first add (v2.3.34) — when a group transitions
+        // from "never seen / disabled" → "enabled" AND has zero rows in
+        // downloads yet, kick off a background backfill of the last N
+        // messages so the user gets immediate gallery content without
+        // having to navigate to the Backfill page. Bounded by config so
+        // operators who don't want this behavior can disable it.
+        try {
+            if (req.body.enabled === true && !_activeBackfillsByGroup.has(String(group.id))) {
+                const histCfg = config.advanced?.history || {};
+                const autoOn = histCfg.autoFirstBackfill !== false;     // default ON
+                const autoLim = Number(histCfg.autoFirstLimit ?? 100);  // default 100
+                if (autoOn && autoLim > 0) {
+                    const { count } = (await import('../core/db.js')).getMessageIdRange(String(group.id));
+                    if (count === 0) {
+                        // Fire-and-forget — POST /api/history would be the
+                        // ideal way but we'd need to invoke it as an
+                        // internal call. Calling our handler logic directly
+                        // keeps everything in one process without an HTTP
+                        // hop. Failures are non-fatal: the user can always
+                        // trigger backfill manually from the Backfill page.
+                        _spawnInternalBackfill({
+                            groupId: String(group.id),
+                            limit: Math.max(1, Math.min(10000, autoLim)),
+                            mode: 'pull-older',
+                            reason: 'auto-first',
+                        }).catch((e) => console.warn('[auto-backfill] first-add failed:', e?.message || e));
+                    }
+                }
+            }
+        } catch (e) {
+            // Non-fatal — group save still succeeded.
+            console.warn('[auto-backfill] hook error:', e?.message || e);
+        }
+
         res.json({ success: true, group: config.groups[groupIndex] });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
+
+/**
+ * Internal helper — spawn a backfill job exactly as POST /api/history
+ * would, without going through the HTTP layer. Used by:
+ *   - Auto-backfill on first group add (PUT /api/groups/:id new+enabled)
+ *   - Catch-up backfill after monitor restart (monitor.js boot hook)
+ *
+ * Resolves once the job is *registered* (not when the actual download
+ * finishes) so callers don't block. Returns the new jobId.
+ */
+async function _spawnInternalBackfill({ groupId, limit, mode = 'pull-older', reason = 'internal' }) {
+    const groupKey = String(groupId);
+    if (_activeBackfillsByGroup.has(groupKey)) return null;
+    const am = await getAccountManager();
+    if (am.count === 0) throw new Error('No Telegram accounts loaded');
+    const config = loadConfig();
+    const group = (config.groups || []).find(g => String(g.id) === groupKey);
+    if (!group) throw new Error('Group not configured');
+
+    const { HistoryDownloader } = await import('../core/history.js');
+    const { DownloadManager } = await import('../core/downloader.js');
+    const { RateLimiter } = await import('../core/security.js');
+    const standalone = !runtime._downloader;
+    const downloader = runtime._downloader || new DownloadManager(
+        am.getDefaultClient(), config, new RateLimiter(config.rateLimits),
+    );
+    if (standalone) { await downloader.init(); downloader.start(); }
+    const history = new HistoryDownloader(am.getDefaultClient(), downloader, config, am);
+
+    const jobId = crypto.randomBytes(6).toString('hex');
+    const lim = (limit === null || limit === 0) ? null : Math.max(1, Math.min(50000, Number(limit) || 100));
+    const job = {
+        id: jobId, state: 'running', processed: 0, downloaded: 0, error: null,
+        group: group.name, groupId: groupKey, limit: lim,
+        startedAt: Date.now(), finishedAt: null, cancelled: false,
+        mode, reason, _runner: history,
+    };
+    _historyJobs.set(jobId, job);
+    _activeBackfillsByGroup.set(groupKey, jobId);
+    history.on('progress', (s) => {
+        job.processed = s.processed; job.downloaded = s.downloaded;
+        broadcast({ type: 'history_progress', jobId, ...s,
+            group: group.name, groupId: groupKey, limit: job.limit,
+            startedAt: job.startedAt, mode: job.mode });
+    });
+    history.on('start', (s) => { if (s?.mode) job.mode = s.mode; });
+    history.downloadHistory(groupKey, { limit: lim ?? undefined, mode })
+        .then(() => {
+            job.state = job.cancelled ? 'cancelled' : 'done';
+            job.finishedAt = Date.now();
+            delete job._runner;
+            const evt = job.cancelled ? 'history_cancelled' : 'history_done';
+            broadcast({ type: evt, jobId, group: group.name, ...job });
+            if (standalone) downloader.stop().catch(() => {});
+            saveHistoryJobsToDisk().catch(() => {});
+            if (_activeBackfillsByGroup.get(groupKey) === jobId) _activeBackfillsByGroup.delete(groupKey);
+            setTimeout(() => _historyJobs.delete(jobId), 5 * 60 * 1000);
+        })
+        .catch((err) => {
+            job.state = 'error';
+            job.error = err?.message || String(err);
+            job.finishedAt = Date.now();
+            delete job._runner;
+            broadcast({ type: 'history_error', jobId, error: job.error, group: group.name, groupId: groupKey });
+            if (standalone) downloader.stop().catch(() => {});
+            saveHistoryJobsToDisk().catch(() => {});
+            if (_activeBackfillsByGroup.get(groupKey) === jobId) _activeBackfillsByGroup.delete(groupKey);
+        });
+    return jobId;
+}
 
 // 9. Profile Photos
 app.get('/api/groups/:id/photo', async (req, res) => {
