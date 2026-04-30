@@ -618,6 +618,17 @@
     "maintenance.dedup.confirm_btn": "Delete",
     "maintenance.dedup.deleted": "Removed {removed} files — freed {freed}.",
 
+    "maintenance.thumbs.title": "Build Thumbnails for Older Files",
+    "maintenance.thumbs.help": "Generates compact WebP previews for every file in the library. New downloads are thumbnailed automatically; this sweep covers anything that landed before the feature shipped.",
+    "maintenance.thumbs.action": "Build",
+    "maintenance.thumbs.building": "Building…",
+    "maintenance.thumbs.done": "Built {built}, {skipped} already cached out of {scanned}.",
+    "maintenance.thumbs.rebuild_title": "Rebuild thumbnail cache?",
+    "maintenance.thumbs.rebuild_body": "Wipes every cached thumbnail. The next gallery scroll regenerates them on demand. Useful when previews look stale or after a quality tweak.",
+    "maintenance.thumbs.rebuild_confirm": "Wipe cache",
+    "maintenance.thumbs.rebuilt": "Wiped {removed} cached thumbnails.",
+    "maintenance.thumbs.no_ffmpeg": "ffmpeg unavailable — image-only",
+
     "maintenance.shares.title": "Active Share Links",
     "maintenance.shares.help": "View, search, and revoke every shareable media link issued from this dashboard. Share links let a friend stream or download a file without logging in.",
     "maintenance.shares.action": "Manage",

@@ -11,6 +11,7 @@ import { Api } from 'telegram';
 import { DebugLogger } from './logger.js';
 import { getDb, insertDownload, isDownloaded as dbIsDownloaded } from './db.js';
 import { sha256OfFile } from './checksum.js';
+import { pregenerateThumb } from './thumbs.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, '../../data');
@@ -875,7 +876,7 @@ export class DownloadManager extends EventEmitter {
             else if (['.mp4', '.mov', '.avi', '.mkv'].includes(ext)) type = 'video';
             else if (['.mp3', '.ogg', '.wav', '.m4a'].includes(ext)) type = 'audio';
 
-            insertDownload({
+            const insertResult = insertDownload({
                 groupId: String(groupId),
                 groupName: job.groupName || null,
                 messageId: msgId,
@@ -891,6 +892,16 @@ export class DownloadManager extends EventEmitter {
                 // it first).
                 pendingUntil: job.pendingUntil || null,
             });
+            // Pre-generate the default-width thumbnail in the background so
+            // the FIRST gallery scroll already finds the WebP in cache. The
+            // generator queues behind the per-kind concurrency caps so this
+            // never starves on-demand requests; failures (no cover art,
+            // unreadable container) are silent and the on-demand path will
+            // try again later.
+            const newId = insertResult?.lastInsertRowid;
+            if (newId) {
+                try { pregenerateThumb(newId); } catch {}
+            }
         } catch(e) {
             console.error('DB Insert Error', e);
         }

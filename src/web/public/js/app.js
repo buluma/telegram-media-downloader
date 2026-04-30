@@ -818,26 +818,28 @@ function renderMediaGrid() {
             // useful signal). Pending shows a remaining-hours estimate +
             // tooltip with the local-time deadline.
             const rescueBadge = renderRescueBadge(file);
-            // Mobile: render a poster-only video tile instead of a real
-            // <video> element. <video preload="none"> is unreliable on
-            // mobile Safari (shows a blank black tile) and even when it
-            // works it has high memory overhead on a 50-tile grid.
-            // Desktop keeps the lazy <video> for the hover-scrub feel.
-            const _mobile = _isMobileViewport();
-            const videoTileMobile = `
-                <div class="relative w-full h-full bg-gradient-to-br from-tg-panel to-tg-bg flex items-center justify-center">
-                    <i class="ri-vidicon-line text-3xl text-tg-textSecondary"></i>
+            // Server-side WebP thumbnails. One ~10-30 KB image per tile
+            // — replaces both the previous full-resolution image source
+            // and the mobile-vs-desktop branching. Width snaps to one of
+            // the allowed sizes (240 covers grid + compact); the server
+            // caches the result so subsequent scrolls are pure HTTP-304s.
+            // Falls back to a typed-icon placeholder if the source isn't
+            // thumbnailable (audio / document / dead source).
+            const thumbW = _isMobileViewport() ? 240 : 320;
+            const thumbUrl = file.id != null
+                ? `/api/thumbs/${encodeURIComponent(file.id)}?w=${thumbW}`
+                : null;
+            // Onerror falls back to displaying nothing (the panel
+            // background shows through), which is the desired graceful
+            // degradation for a missing/dead file.
+            const imgFallback = `<img loading="lazy" decoding="async" class="w-full h-full object-cover" alt="" `
+                + (thumbUrl ? `src="${escapeHtml(thumbUrl)}"` : '')
+                + ` onerror="this.style.display='none'">`;
+            const videoTile = `
+                <div class="relative w-full h-full bg-black">
+                    ${thumbUrl ? imgFallback : ''}
                     <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
                         <div class="w-10 h-10 rounded-full bg-black/55 flex items-center justify-center">
-                            <i class="ri-play-fill text-white text-xl ml-0.5"></i>
-                        </div>
-                    </div>
-                </div>`;
-            const videoTileDesktop = `
-                <div class="relative w-full h-full bg-black">
-                    <video data-src="/files/${encodeURIComponent(file.fullPath)}?inline=1" class="w-full h-full object-cover" preload="none" muted playsinline></video>
-                    <div class="absolute inset-0 flex items-center justify-center">
-                        <div class="w-10 h-10 rounded-full bg-black/60 flex items-center justify-center">
                             <i class="ri-play-fill text-white text-xl ml-0.5"></i>
                         </div>
                     </div>
@@ -845,9 +847,9 @@ function renderMediaGrid() {
             return `
             <div class="media-item relative aspect-square bg-tg-panel rounded overflow-hidden cursor-pointer ${ringClass}" data-index="${originalIndex}" data-path="${escapeHtml(file.fullPath)}">
                 ${file.type === 'images' ?
-                    `<img data-src="/files/${encodeURIComponent(file.fullPath)}?inline=1" class="w-full h-full object-cover" loading="lazy" onerror="this.style.display='none'" alt="">` :
+                    imgFallback :
                     file.type === 'videos' ?
-                    (_mobile ? videoTileMobile : videoTileDesktop) :
+                    videoTile :
                     `<div class="w-full h-full flex flex-col items-center justify-center">
                         <i class="${getFileIcon(file.extension)} text-3xl text-tg-textSecondary"></i>
                         <span class="text-xs text-tg-textSecondary mt-1 truncate px-2 w-full text-center">${escapeHtml(file.name || '')}</span>

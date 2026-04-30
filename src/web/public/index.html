@@ -2045,6 +2045,19 @@
 
                             <div class="flex items-start justify-between gap-3 py-1 border-t border-tg-border/50 pt-2">
                                 <div class="min-w-0">
+                                    <div class="text-tg-text text-sm" data-i18n="maintenance.thumbs.title">Build thumbnails for older files</div>
+                                    <p class="text-xs text-tg-textSecondary mt-0.5"><span data-i18n="maintenance.thumbs.help">Generates compact WebP previews for every file in the library. New downloads are thumbnailed automatically; this sweep covers anything that landed before the feature shipped.</span> <span id="maint-thumbs-stats" class="text-tg-textSecondary"></span></p>
+                                </div>
+                                <div class="flex items-center gap-1 shrink-0">
+                                    <button id="maint-thumbs-build-btn" class="tg-btn-secondary text-xs px-3 py-1.5" data-i18n="maintenance.thumbs.action">Build</button>
+                                    <button id="maint-thumbs-rebuild-btn" class="tg-btn-secondary text-xs px-3 py-1.5" data-i18n-title="maintenance.thumbs.rebuild_title" title="Wipe the thumbnail cache and let it regenerate on demand">
+                                        <i class="ri-refresh-line"></i>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="flex items-start justify-between gap-3 py-1 border-t border-tg-border/50 pt-2">
+                                <div class="min-w-0">
                                     <div class="text-tg-text text-sm" data-i18n="maintenance.logs.title">Download log file</div>
                                     <p class="text-xs text-tg-textSecondary mt-0.5" data-i18n="maintenance.logs.help">Grab the tail of any logfile under <code>data/logs/</code> as a plain-text download. Useful when filing bug reports.</p>
                                 </div>
