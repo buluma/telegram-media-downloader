@@ -2,6 +2,47 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.29] — 2026-04-30
+
+### Added — Server-side WebP thumbnails for the gallery
+
+The gallery used to load full-size source files into every grid tile (or skip the preview entirely on mobile video). It now serves compact, server-generated WebP thumbnails — far smaller transfers, no decoder pressure on the client, and previews work consistently across image, video, and audio-with-cover-art on every viewport.
+
+- **`src/core/thumbs.js`** — single helper exposing `getOrCreateThumb(id, w)`.
+  - Image source → sharp resize → WebP (quality 70, effort 6). Honors EXIF orientation.
+  - Video source → ffmpeg seeks 1 s in, scales + encodes to WebP in a **single pass** (no intermediate JPEG → sharp transcode), reading nothing past the first keyframe. ~10× faster than grab-then-resize.
+  - Audio source → extracts the embedded cover-art (`attached_pic` stream) when present.
+  - Cache lives at `data/thumbs/<sha-of-id+w>.webp`. Atomic publish via `.tmp → final` rename — a crash mid-write never produces a poisoned cache hit.
+- **`GET /api/thumbs/:id?w=240`** (auth-gated, allowed for guest sessions) — cache-first, sends `Cache-Control: public, max-age=86400, immutable` + `Last-Modified` so the browser HTTP cache absorbs subsequent grid scrolls. Width snaps to `[120, 200, 240, 320, 480]` so a hostile caller can't fork a generation per pixel.
+- **Concurrency**: image jobs run 8 in parallel (sharp is libvips C, RAM-bound); video jobs run 3 in parallel (ffmpeg pins a CPU core). Both env-overridable. In-flight de-duplication collapses 50 simultaneous requests for the same `(id, w)` into a single generation, so a fast scroll never spawns a job storm.
+- **Auto-generation on download** — `pregenerateThumb(id)` fires from `registerDownload` after every successful insert (background, non-blocking, queues behind the same per-kind semaphores). The first gallery scroll already finds the WebP in cache.
+- **Cache invalidation** — single-file delete, bulk-delete, and dedup-delete all call `purgeThumbsForDownload(id)` so a stale thumb never keeps serving bytes after the source file is gone.
+- **Maintenance UI**:
+  - **Build thumbnails for older files** — sweeps every download row that lacks a default-width thumb and queues generation. Honours the per-kind concurrency caps; broadcasts `thumbs_progress` over WS for a determinate progress bar. Single in-flight guard.
+  - **Wipe cache** (refresh icon next to Build) — drops every cached WebP. Useful after a quality tweak or corruption scare; on-demand generation refills the cache on the next scroll.
+  - Cache stat line ("N cached, X MB · ffmpeg unavailable — image-only" when applicable) sits under the row.
+
+### Cross-platform install — no setup required
+
+Out-of-the-box on every supported platform:
+
+- **Standalone Win / macOS / glibc-Linux** — `npm install` pulls `sharp` (musl + glibc prebuilts) plus the optional `@ffmpeg-installer/ffmpeg` (bundles a static binary per platform). Zero manual setup.
+- **Docker (alpine/musl)** — Dockerfile now `apk add --no-cache ffmpeg` so the system binary is on PATH. The npm `@ffmpeg-installer/ffmpeg` is moved to `optionalDependencies` so its glibc-only postinstall never fails the alpine `npm ci`.
+- **Resolver order** — `process.env.FFMPEG_PATH` → `/usr/bin/ffmpeg` → `/usr/local/bin/ffmpeg` → `@ffmpeg-installer/ffmpeg` → bare `ffmpeg`. All exposed via `hasFfmpeg()` so the `/api/maintenance/thumbs/stats` payload tells the UI when video / audio-cover thumbs are unavailable on this host.
+
+### Frontend
+
+- Gallery tiles for images and videos render `<img loading="lazy" decoding="async" src="/api/thumbs/<id>?w=…">`. Mobile and desktop share the same code path — no more "blank black tile" on iOS Safari for video posters.
+- Dedup-sheet preview thumbnails switched from `/files/<path>?inline=1` (full file) to `/api/thumbs/<id>?w=120` (~5-15 KB).
+- SW bypass for `/api/thumbs/` so the SW cache doesn't balloon for libraries with thousands of tiles; the browser HTTP cache + `immutable` Cache-Control handles repeat fetches efficiently.
+
+### CPU/GPU note
+
+All generation is CPU-side (sharp via libvips, ffmpeg via libwebp). No GPU acceleration — keeps the deployment story zero-config across every host.
+
+### SW
+- VERSION bumped `'v28'` → `'v29'`.
+
 ## [2.3.28] — 2026-04-30
 
 ### Changed — Share-link limits and history retention are now config-driven

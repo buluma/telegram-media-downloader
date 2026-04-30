@@ -16,7 +16,7 @@
 // Bump on every meaningful release. The activate handler clears any cache
 // whose key doesn't match the current pair, so old shell + asset caches
 // get evicted automatically when this string changes.
-const VERSION = 'v28';
+const VERSION = 'v29';
 const SHELL_CACHE = `tgdl-shell-${VERSION}`;
 const ASSET_CACHE = `tgdl-assets-${VERSION}`;
 
@@ -50,6 +50,11 @@ const BYPASS_PREFIXES = [
     // every request — caching them would let revoked links keep serving
     // bytes from the SW, defeating the revoke flow.
     '/share/',
+    // Thumbnails are content-addressed by (id, width); the browser HTTP
+    // cache + Cache-Control: max-age=86400, immutable on the server is
+    // enough. Caching them in the SW too would balloon the SW cache for
+    // libraries with thousands of tiles for no real win.
+    '/api/thumbs/',
 ];
 
 function isBypass(url) {

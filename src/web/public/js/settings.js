@@ -865,10 +865,69 @@ function wireMaintenance() {
     once(document.getElementById('maint-verify-btn'), maintVerifyFiles);
     once(document.getElementById('maint-dedup-btn'), maintFindDuplicates);
     once(document.getElementById('maint-shares-btn'), maintManageShares);
+    once(document.getElementById('maint-thumbs-build-btn'), maintBuildThumbs);
+    once(document.getElementById('maint-thumbs-rebuild-btn'), maintRebuildThumbs);
     once(document.getElementById('maint-logs-btn'), maintBrowseLogs);
     once(document.getElementById('maint-config-btn'), maintViewConfig);
     once(document.getElementById('maint-export-btn'), maintExportSession);
     once(document.getElementById('maint-signout-all-btn'), maintRevokeAllSessions);
+
+    // Refresh the cache stat line on first open + after each operation.
+    refreshThumbsStats();
+}
+
+async function refreshThumbsStats() {
+    const el = document.getElementById('maint-thumbs-stats');
+    if (!el) return;
+    try {
+        const r = await api.get('/api/maintenance/thumbs/stats');
+        const mb = r.bytes ? (r.bytes / (1024 * 1024)).toFixed(1) : '0';
+        const noFf = r.ffmpegAvailable === false
+            ? ' · ' + i18nT('maintenance.thumbs.no_ffmpeg', 'ffmpeg unavailable — image-only')
+            : '';
+        el.textContent = `· ${r.count} cached, ${mb} MB${noFf}`;
+    } catch { /* ignore */ }
+}
+
+async function maintBuildThumbs() {
+    const btn = document.getElementById('maint-thumbs-build-btn');
+    if (btn) { btn.disabled = true; btn.textContent = i18nT('maintenance.thumbs.building', 'Building…'); }
+    try {
+        const r = await api.post('/api/maintenance/thumbs/build-all', {});
+        showToast(i18nTf('maintenance.thumbs.done',
+            { built: r.built, skipped: r.skipped, scanned: r.scanned },
+            `Built ${r.built}, ${r.skipped} already cached out of ${r.scanned}`),
+            'success');
+        refreshThumbsStats();
+    } catch (e) {
+        showToast(e?.data?.error || e.message || 'Failed', 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = i18nT('maintenance.thumbs.action', 'Build'); }
+    }
+}
+
+async function maintRebuildThumbs() {
+    const ok = await confirmSheet({
+        title: i18nT('maintenance.thumbs.rebuild_title', 'Rebuild thumbnail cache?'),
+        body: i18nT('maintenance.thumbs.rebuild_body', 'Wipes every cached thumbnail. The next gallery scroll regenerates them on demand. Useful when previews look stale or after a quality tweak.'),
+        confirmText: i18nT('maintenance.thumbs.rebuild_confirm', 'Wipe cache'),
+        destructive: true,
+    });
+    if (!ok) return;
+    const btn = document.getElementById('maint-thumbs-rebuild-btn');
+    if (btn) btn.disabled = true;
+    try {
+        const r = await api.post('/api/maintenance/thumbs/rebuild', {});
+        showToast(i18nTf('maintenance.thumbs.rebuilt',
+            { removed: r.removed },
+            `Wiped ${r.removed} cached thumbnails`),
+            'success');
+        refreshThumbsStats();
+    } catch (e) {
+        showToast(e?.data?.error || e.message || 'Failed', 'error');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
 }
 
 async function maintManageShares() {
@@ -932,10 +991,15 @@ async function openDedupSheet(sets) {
     const renderRow = (file, set) => {
         const isThumb = _isImage(file.fileType);
         const isVideo = _isVideo(file.fileType);
+        // Server-side WebP thumbnail — way smaller than the full file and
+        // works for video previews too (first-frame extraction).
         const fileUrl = `/files/${encodeURIComponent(file.filePath || '')}?inline=1`;
-        const thumb = isThumb
-            ? `<img loading="lazy" class="w-12 h-12 object-cover rounded-md bg-tg-bg/40" src="${escapeHtml(fileUrl)}" alt="" onerror="this.style.display='none'">`
-            : `<div class="w-12 h-12 rounded-md bg-tg-bg/60 flex items-center justify-center text-tg-textSecondary"><i class="${isVideo ? 'ri-vidicon-line' : 'ri-file-line'} text-xl"></i></div>`;
+        const thumbUrl = (isThumb || isVideo)
+            ? `/api/thumbs/${encodeURIComponent(file.id)}?w=120`
+            : null;
+        const thumb = thumbUrl
+            ? `<img loading="lazy" decoding="async" class="w-12 h-12 object-cover rounded-md bg-tg-bg/40" src="${escapeHtml(thumbUrl)}" alt="" onerror="this.style.display='none'">`
+            : `<div class="w-12 h-12 rounded-md bg-tg-bg/60 flex items-center justify-center text-tg-textSecondary"><i class="ri-file-line text-xl"></i></div>`;
         const when = file.createdAt ? new Date(file.createdAt).toLocaleString() : '—';
         const checked = selected.has(file.id) ? 'checked' : '';
         return `

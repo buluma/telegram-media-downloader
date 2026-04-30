@@ -618,6 +618,17 @@
     "maintenance.dedup.confirm_btn": "ยืนยันลบ",
     "maintenance.dedup.deleted": "ลบเรียบร้อย {removed} ไฟล์ — คืนพื้นที่ได้ {freed}",
 
+    "maintenance.thumbs.title": "สร้าง Thumbnail สำหรับไฟล์ก่อนหน้า",
+    "maintenance.thumbs.help": "สร้างภาพ preview แบบ WebP ขนาดเล็กให้กับไฟล์ทุกรายการในคลัง ไฟล์ที่ดาวน์โหลดใหม่จะสร้าง thumbnail อัตโนมัติ ปุ่มนี้ใช้สำหรับสร้างให้ไฟล์ที่ดาวน์โหลดมาก่อนเปิดใช้งาน feature นี้",
+    "maintenance.thumbs.action": "สร้าง",
+    "maintenance.thumbs.building": "กำลังสร้าง…",
+    "maintenance.thumbs.done": "สร้างใหม่ {built} รายการ มีอยู่แล้ว {skipped} จากทั้งหมด {scanned}",
+    "maintenance.thumbs.rebuild_title": "ล้างแคช thumbnail ?",
+    "maintenance.thumbs.rebuild_body": "การยืนยันนี้จะล้าง thumbnail ที่แคชไว้ทั้งหมด ระบบจะสร้างใหม่ตามที่เลื่อนดู gallery ใช้เมื่อ preview ดูแปลก ๆ หรือหลังปรับคุณภาพการบีบอัด",
+    "maintenance.thumbs.rebuild_confirm": "ยืนยันล้างแคช",
+    "maintenance.thumbs.rebuilt": "ล้าง thumbnail ที่แคชไว้แล้ว {removed} รายการ",
+    "maintenance.thumbs.no_ffmpeg": "ไม่พบ ffmpeg — ใช้ได้เฉพาะรูปภาพ",
+
     "maintenance.shares.title": "ลิงก์แชร์ที่ใช้งานอยู่",
     "maintenance.shares.help": "ดู ค้นหา และเพิกถอนลิงก์แชร์ media ทุกลิงก์ที่ออกจาก dashboard นี้ ลิงก์แชร์ทำให้เพื่อนสามารถเปิดดูหรือดาวน์โหลดไฟล์ได้โดยไม่ต้องเข้าสู่ระบบ",
     "maintenance.shares.action": "จัดการ",

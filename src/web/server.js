@@ -31,6 +31,9 @@ import * as integrity from '../core/integrity.js';
 import { findDuplicates as dedupFindDuplicates, deleteByIds as dedupDeleteByIds } from '../core/dedup.js';
 import { ensureShareSecret, verifyShareToken, buildShareUrlPath,
     clampTtlSeconds, applyShareLimits } from '../core/share.js';
+import { getOrCreateThumb, purgeThumbsForDownload, purgeAllThumbs,
+    getThumbsCacheStats, buildAllThumbnails, hasFfmpeg,
+    ALLOWED_WIDTHS as THUMB_WIDTHS } from '../core/thumbs.js';
 import { getRescueSweeper } from '../core/rescue.js';
 import { getRescueStats } from '../core/db.js';
 import { parseTelegramUrl, parseUrlList, UrlParseError } from '../core/url-resolver.js';
@@ -486,6 +489,7 @@ const GUEST_GET_ALLOW = [
     '/api/rescue/stats',
     '/api/history',            // GET past jobs only (POST = trigger backfill)
     '/api/history/jobs',       // GET active jobs read-only
+    '/api/thumbs',             // GET /api/thumbs/:id — read-only thumb stream
 ];
 const GUEST_OTHER_ALLOW = new Set(['POST /api/logout']);
 
@@ -2827,6 +2831,12 @@ app.post('/api/downloads/bulk-delete', async (req, res) => {
             }
         }
         const dbDeleted = deleteDownloadsBy({ ids: idList, filePaths: pathList });
+        // Drop cached thumbnails for every id we just removed — without
+        // this, the cache would keep handing out a stale WebP for an id
+        // whose source file no longer exists.
+        for (const id of idList) {
+            try { await purgeThumbsForDownload(id); } catch {}
+        }
         broadcast({ type: 'bulk_delete', unlinked, dbDeleted });
         res.json({ success: true, unlinked, dbDeleted });
     } catch (e) {
@@ -2851,9 +2861,17 @@ app.delete('/api/file', async (req, res) => {
         console.log(`🗑️ Deleted: ${filePath}`);
 
         // Remove from DB (by basename — the DB stores filenames, not paths).
+        // Capture matching ids first so we can wipe their cached thumbnails;
+        // a stale thumb pointing at a deleted file would otherwise serve
+        // bytes from cache until the next "Rebuild thumbnails".
         const db = getDb();
         const fileName = path.basename(r.real);
+        const matchingIds = db.prepare('SELECT id FROM downloads WHERE file_name = ?')
+            .all(fileName).map(row => row.id);
         db.prepare('DELETE FROM downloads WHERE file_name = ?').run(fileName);
+        for (const id of matchingIds) {
+            try { await purgeThumbsForDownload(id); } catch {}
+        }
 
         broadcast({ type: 'file_deleted', path: filePath });
         res.json({ success: true });
@@ -3207,11 +3225,115 @@ app.post('/api/maintenance/dedup/delete', async (req, res) => {
             return res.status(400).json({ error: 'No valid ids supplied' });
         }
         const r = dedupDeleteByIds(cleanIds);
+        // Drop cached thumbnails for every removed id so the cache doesn't
+        // keep handing out stale WebPs after the source file is gone.
+        for (const id of cleanIds) {
+            try { await purgeThumbsForDownload(id); } catch {}
+        }
         // Tell every open tab that some files vanished so galleries refresh.
         try { broadcast({ type: 'bulk_delete', ids: cleanIds }); } catch {}
         res.json({ success: true, ...r });
     } catch (e) {
         console.error('dedup/delete:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// ====== Thumbnails =========================================================
+//
+// `GET /api/thumbs/:id?w=240` returns a small WebP thumbnail for an
+// image or video download row. Cache-first: hits stat in microseconds
+// and stream from disk; misses fork sharp / ffmpeg once and the result
+// lives in `data/thumbs/`. The frontend uses these for every gallery
+// tile (replacing the previous full-resolution `/files/*?inline=1` for
+// images and the `<video preload="none">` for desktop video tiles)
+// — much smaller transfers, no decoder pressure on the client.
+//
+// Returns 404 when the source is not thumbnailable (audio/document) so
+// the SPA's <img onerror> fallback can kick in and render an icon.
+app.get('/api/thumbs/:id', async (req, res) => {
+    try {
+        const id = parseInt(req.params.id, 10);
+        if (!Number.isInteger(id) || id <= 0) {
+            return res.status(400).type('text/plain').send('Bad id');
+        }
+        const thumb = await getOrCreateThumb(id, req.query.w);
+        if (!thumb) return res.status(404).type('text/plain').send('No thumb');
+
+        res.setHeader('Content-Type', 'image/webp');
+        // Aggressive cache — the URL embeds id+width which is content-
+        // stable. If the source is replaced, purgeThumbsForDownload()
+        // wipes the cache entry so the next request regenerates.
+        res.setHeader('Cache-Control', 'public, max-age=86400, immutable');
+        // Mtime makes browser If-Modified-Since round trips cheap.
+        const lastMod = new Date(thumb.mtime).toUTCString();
+        res.setHeader('Last-Modified', lastMod);
+        if (req.headers['if-modified-since'] === lastMod) {
+            return res.status(304).end();
+        }
+        return res.sendFile(thumb.path, (err) => {
+            if (err && !res.headersSent) res.status(500).end();
+        });
+    } catch (e) {
+        console.error('thumb serve:', e);
+        if (!res.headersSent) res.status(500).type('text/plain').send('Internal error');
+    }
+});
+
+// Maintenance — wipe the entire thumbnail cache. Used by the
+// "Rebuild thumbnails" UI to force regeneration (e.g. after a quality
+// tweak or a corruption scare). On-demand generation refills the cache
+// on the next gallery scroll, gated by the thumbs.js semaphores.
+app.post('/api/maintenance/thumbs/rebuild', async (req, res) => {
+    try {
+        const removed = await purgeAllThumbs();
+        res.json({ success: true, removed });
+    } catch (e) {
+        console.error('thumbs/rebuild:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Maintenance — generate thumbnails for every download row that doesn't
+// already have one cached at the default width. Covers downloads that
+// landed before pre-generation existed. Honours the per-kind concurrency
+// caps in thumbs.js so the gallery stays responsive while the sweep
+// runs. Single in-flight guard.
+let _thumbBuildRunning = false;
+app.post('/api/maintenance/thumbs/build-all', async (req, res) => {
+    if (_thumbBuildRunning) {
+        return res.status(409).json({ error: 'A thumbnail build is already running' });
+    }
+    _thumbBuildRunning = true;
+    try {
+        const r = await buildAllThumbnails({
+            onProgress: (p) => {
+                try { broadcast({ type: 'thumbs_progress', ...p }); } catch {}
+            },
+        });
+        res.json({ success: true, ...r });
+    } catch (e) {
+        console.error('thumbs/build-all:', e);
+        res.status(500).json({ error: e.message });
+    } finally {
+        _thumbBuildRunning = false;
+    }
+});
+
+// Maintenance — cache footprint (count + bytes) and capability check
+// (whether ffmpeg is present). Drives the "Thumbnail cache" admin panel
+// + grays out the video / audio-cover capabilities when ffmpeg is
+// missing on this host.
+app.get('/api/maintenance/thumbs/stats', async (req, res) => {
+    try {
+        const r = await getThumbsCacheStats();
+        res.json({
+            success: true,
+            ffmpegAvailable: hasFfmpeg(),
+            allowedWidths: THUMB_WIDTHS,
+            ...r,
+        });
+    } catch (e) {
         res.status(500).json({ error: e.message });
     }
 });
