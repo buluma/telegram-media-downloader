@@ -794,6 +794,8 @@
     "queue.col.status": "Status",
     "queue.col.actions": "Actions",
     "queue.empty.title": "Queue is empty",
+    "queue.loading_more": "Loading more…",
+    "settings.engine.view_queue": "View full queue",
     "queue.empty.body": "Start the engine or kick off a backfill — every download flows through here.",
     "queue.throttle.label": "Max Speed",
     "queue.throttle.unlimited": "Unlimited",

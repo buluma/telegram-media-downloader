@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.31] — 2026-04-30
+
+### Changed — Queue page: gradual load + in-place progress patches
+- Append-only rendering: 50 rows on first paint, 50 more appended via IntersectionObserver as you scroll.
+- Live progress events patch the matching row in place — no full re-render per WS tick.
+- Search input debounced 120 ms; filter / sort / search reset scroll to top.
+- Replaces the prior absolute-positioning virtualiser; smoother on large queues.
+
+### Removed — Live downloads list from the Engine card
+- The per-row live list duplicated the Queue page; replaced with a "View full queue" link.
+- Engine card now focuses on monitor lifecycle + headline counters.
+
+### SW
+- VERSION bumped `'v30'` → `'v31'`.
+
 ## [2.3.30] — 2026-04-30
 
 ### Added — One-click in-dashboard auto-update (Docker)
