@@ -2,6 +2,69 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.30] — 2026-04-30
+
+### Added — One-click in-dashboard auto-update (Docker)
+
+A new **Install update** button in Settings → Maintenance (and on the status-bar update pill) pulls the latest container image and recreates the running container in place — same effect as `docker compose pull && docker compose up -d` but triggered from the UI. The data volume, config, and Telegram sessions are preserved verbatim; the SQLite database is snapshotted to `data/backups/` before the swap.
+
+#### Security model — dashboard never touches `/var/run/docker.sock`
+
+The web process intentionally does not get the Docker socket. Instead, the swap is performed by an opt-in `containrrr/watchtower:1.7.1` sidecar that:
+
+- Has a **read-only** mount of `/var/run/docker.sock`.
+- Runs with `WATCHTOWER_LABEL_ENABLE=true`, scoping operations to ONLY the container carrying the `com.centurylinklabs.watchtower.enable=true` label (added to `telegram-downloader` in `docker-compose.yml`). Even if compromised, watchtower cannot touch unrelated apps on the same host.
+- Exposes its HTTP API behind a bearer token (`WATCHTOWER_HTTP_API_TOKEN`) that lives in `.env` and never enters `config.json`.
+
+A hypothetical RCE in the dashboard cannot escalate to host root because the dashboard never sees the socket — it can only POST to watchtower's `/v1/update`, which is bounded to "pull and recreate the labeled container".
+
+#### Data preservation
+
+- The downloads volume (`./data:/app/data`) is bind-mounted; container recreation never touches it.
+- `data/config.json`, `data/web-sessions.json`, `data/sessions/*.enc`, and `data/db.sqlite` all live under that mount.
+- Before triggering watchtower the server runs `PRAGMA wal_checkpoint(TRUNCATE)` and copies the DB to `data/backups/db-pre-update-<utc-stamp>.sqlite` (most-recent 5 snapshots kept).
+- Schema migrations (`CREATE TABLE IF NOT EXISTS`, `ALTER TABLE ADD COLUMN`) in `core/db.js` are idempotent and forward-compatible — older databases are upgraded transparently on first boot of the new image.
+
+#### Setup (opt-in)
+
+Existing installs continue to work unchanged. To enable the button:
+
+1. Generate a token: `openssl rand -hex 32`.
+2. Put it in `.env` next to `docker-compose.yml`:
+
+   ```
+   WATCHTOWER_HTTP_API_TOKEN=<hex>
+   ```
+
+3. Boot with the new profile:
+
+   ```
+   docker compose --profile auto-update up -d
+   ```
+
+Without the token (or without the profile) the dashboard renders an explanatory tooltip and falls back to linking the GitHub release page.
+
+#### UI
+
+- **Status-bar update pill** — clicking it now opens a chooser sheet with two actions: **Install vX.Y.Z** (one-click swap) and **View release notes** (GitHub).
+- **Settings → Maintenance → Install update** — same chooser, plus a status line showing whether auto-update is ready, requires the profile, or is in standalone mode.
+- **Full-screen "Updating…" overlay** appears the moment the swap is initiated, so the operator knows the imminent disconnect is intentional.
+- **Auto-reconnect + auto-reload** — the SPA's existing WS reconnect logic re-establishes the connection once the new container's healthcheck passes; a version-change check then reloads the page so the new SPA bundle is live.
+
+#### New endpoints
+
+- `GET /api/update/status` — capability probe (`{ available, inDocker, watchtowerConfigured }`). Drives the disabled/help states in the UI.
+- `POST /api/update` (admin-only) — snapshots the DB, calls watchtower, broadcasts `update_started` over WS, returns 200 with the snapshot path. Returns 503 with `code: 'AUTO_UPDATE_UNAVAILABLE'` and an actionable message when the sidecar isn't reachable.
+
+#### Files
+
+- `src/core/updater.js` — capability probe + DB snapshot + watchtower client.
+- `docker-compose.yml` — opt-in `watchtower` service under the `auto-update` profile, with the label allowlist + HTTP API enabled.
+- `.env.example` — new file documenting `WATCHTOWER_HTTP_API_TOKEN` (gitignored via existing `.env*` rule).
+
+### SW
+- VERSION bumped `'v29'` → `'v30'`.
+
 ## [2.3.29] — 2026-04-30
 
 ### Added — Server-side WebP thumbnails for the gallery

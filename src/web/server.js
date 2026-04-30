@@ -34,6 +34,7 @@ import { ensureShareSecret, verifyShareToken, buildShareUrlPath,
 import { getOrCreateThumb, purgeThumbsForDownload, purgeAllThumbs,
     getThumbsCacheStats, buildAllThumbnails, hasFfmpeg,
     ALLOWED_WIDTHS as THUMB_WIDTHS } from '../core/thumbs.js';
+import { runAutoUpdate, autoUpdateStatus } from '../core/updater.js';
 import { getRescueSweeper } from '../core/rescue.js';
 import { getRescueStats } from '../core/db.js';
 import { parseTelegramUrl, parseUrlList, UrlParseError } from '../core/url-resolver.js';
@@ -977,6 +978,39 @@ app.get('/api/version/check', async (req, res) => {
     };
     _updateCache = { fetchedAt: now, data };
     res.json({ current, ...data, updateAvailable: _cmpSemver(latest.tag, current) > 0, cached: false });
+});
+
+// ====== Auto-update (Docker via watchtower sidecar) ========================
+//
+// `GET /api/update/status` — capability probe. Returns `{ available, …reasons }`
+// so the SPA can render either the active "Install update" button or a
+// disabled state with a help tooltip ("enable the auto-update profile in
+// docker-compose.yml…").
+//
+// `POST /api/update` — admin-only kickoff. Snapshots the SQLite DB into
+// `data/backups/`, then signals the watchtower sidecar to pull + recreate
+// this container. Returns 200 immediately; the actual swap happens out of
+// band moments later (the SPA's WS reconnect logic detects the cycle).
+app.get('/api/update/status', async (req, res) => {
+    res.json(autoUpdateStatus());
+});
+
+app.post('/api/update', async (req, res) => {
+    try {
+        const r = await runAutoUpdate();
+        // Heads-up to every open tab — fires BEFORE watchtower kills us so
+        // the toast shows up while the WS is still alive. The SPA's
+        // existing reconnect logic handles the gap; the new container's
+        // healthcheck has to pass before it's reachable.
+        try { broadcast({ type: 'update_started', backup: r.backup }); } catch {}
+        res.json({ success: true, backup: r.backup });
+    } catch (e) {
+        console.error('auto-update:', e);
+        const status = e.code === 'AUTO_UPDATE_UNAVAILABLE' ? 503
+            : e.code === 'BACKUP_FAILED' ? 500
+            : 500;
+        res.status(status).json({ error: e.message, code: e.code || 'UPDATE_FAILED' });
+    }
 });
 
 app.get('/api/auth_check', async (req, res) => {
