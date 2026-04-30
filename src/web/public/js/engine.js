@@ -1,10 +1,16 @@
 // Engine (monitor runtime) controller — drives the Engine card in Settings.
+//
+// As of v2.3.31 the per-row Live downloads list that used to live in this
+// card is gone — the Queue page (sortable, filterable, paged) does that
+// job in one canonical place. The Engine card focuses on monitor lifecycle
+// (start/stop, error banner) and headline counters (queue / active /
+// downloaded / uptime). The "View full queue" link beneath the buttons
+// hands the user off to the dedicated page when they want detail.
 
 import { api } from './api.js';
-import { showToast, formatBytes, escapeHtml } from './utils.js';
+import { showToast } from './utils.js';
 import { t as i18nT, tf as i18nTf } from './i18n.js';
 import { subscribe as subscribeMonitorStatus, refreshNow as refreshMonitorStatus } from './monitor-status.js';
-import { getGroupName } from './store.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -16,58 +22,6 @@ function formatUptime(ms) {
     if (m < 60) return `${m}m ${s % 60}s`;
     const h = Math.floor(m / 60);
     return `${h}h ${m % 60}m`;
-}
-
-// Live in-flight downloads, keyed by job.key. Updated from WS
-// download_progress events; entries auto-expire 8 s after their last update so
-// a stuck job doesn't sit forever.
-const activeJobs = new Map();
-const ACTIVE_TTL = 8000;
-let activeRenderTimer = null;
-
-function pruneActive() {
-    const cutoff = Date.now() - ACTIVE_TTL;
-    for (const [k, v] of activeJobs) if (v.ts < cutoff) activeJobs.delete(k);
-}
-
-function renderActive() {
-    pruneActive();
-    const host = $('engine-active-list');
-    if (!host) return;
-    const liveLbl = i18nT('settings.engine.live', 'Live downloads');
-    if (activeJobs.size === 0) {
-        host.classList.add('hidden');
-        host.innerHTML = `<div class="text-tg-textSecondary text-xs">${escapeHtml(liveLbl)}</div>`;
-        return;
-    }
-    host.classList.remove('hidden');
-    const rows = Array.from(activeJobs.values())
-        .sort((a, b) => b.ts - a.ts)
-        .slice(0, 6)
-        .map(j => {
-            const pct = Math.max(0, Math.min(100, j.progress || 0));
-            const sizeLine = j.total
-                ? `${formatBytes(j.received || 0)} / ${formatBytes(j.total)}`
-                : (j.received ? formatBytes(j.received) : '');
-            const speed = j.bps ? `${formatBytes(j.bps)}/s` : '';
-            return `
-                <div class="bg-tg-bg/40 rounded p-2 text-xs">
-                    <div class="flex items-center justify-between gap-2">
-                        <span class="text-tg-text truncate">${escapeHtml(getGroupName(j.groupId, { fallback: j.groupName || '?' }))} <span class="text-tg-textSecondary">· ${escapeHtml(j.mediaType || '')} #${j.messageId ?? ''}</span></span>
-                        <span class="text-tg-textSecondary tabular-nums">${pct}%${speed ? ' · ' + speed : ''}</span>
-                    </div>
-                    <div class="mt-1 h-1 bg-tg-bg rounded overflow-hidden">
-                        <div class="h-full bg-tg-blue transition-all" style="width: ${pct}%"></div>
-                    </div>
-                    <div class="text-[10px] text-tg-textSecondary mt-1">${escapeHtml(sizeLine)}</div>
-                </div>`;
-        }).join('');
-    host.innerHTML = `<div class="text-tg-textSecondary text-xs">${escapeHtml(liveLbl)}</div>` + rows;
-}
-
-function scheduleRender() {
-    if (activeRenderTimer) return;
-    activeRenderTimer = setTimeout(() => { activeRenderTimer = null; renderActive(); }, 200);
 }
 
 function applyStatus(status) {
@@ -161,10 +115,6 @@ export function handleEngineWsMessage(msg) {
     if (msg.type === 'monitor_state') {
         applyStatus({ state: msg.state, error: msg.error });
         setTimeout(refresh, 100);
-        if (msg.state === 'stopped' || msg.state === 'error') {
-            activeJobs.clear();
-            renderActive();
-        }
         return;
     }
     if (msg.type === 'history_progress' || msg.type === 'history_done'
@@ -175,21 +125,11 @@ export function handleEngineWsMessage(msg) {
     // server.js does `broadcast({type:'monitor_event', ...e})` where `e` is
     // `{type, payload}` — the spread overwrites the outer type, so engine
     // events arrive at the WS as `{type:'download_progress', payload:{...}}`
-    // (or _complete / _error / _start, etc.). Handle them directly.
-    if (msg.type === 'download_progress' && msg.payload?.key) {
-        const j = activeJobs.get(msg.payload.key) || {};
-        Object.assign(j, msg.payload, { ts: Date.now() });
-        activeJobs.set(msg.payload.key, j);
-        scheduleRender();
-        return;
-    }
-    if (msg.type === 'download_complete') {
-        if (msg.payload?.key) activeJobs.delete(msg.payload.key);
-        scheduleRender();
-        refresh();
-        return;
-    }
-    if (msg.type === 'download_start' || msg.type === 'download_error' || msg.type === 'queue_length') {
+    // (or _complete / _error / _start, etc.). The Engine card's headline
+    // counters are refreshed via the shared monitor-status poller, so we
+    // only need to forward lifecycle/queue-length deltas here.
+    if (msg.type === 'download_complete' || msg.type === 'download_start'
+        || msg.type === 'download_error' || msg.type === 'queue_length') {
         refresh();
     }
 }

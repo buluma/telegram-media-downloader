@@ -3,8 +3,9 @@
 import { api } from './api.js';
 import { ws } from './ws.js';
 import { formatBytes, showToast } from './utils.js';
-import { t as i18nT } from './i18n.js';
+import { t as i18nT, tf as i18nTf } from './i18n.js';
 import { subscribe as subscribeMonitorStatus, refreshNow as refreshMonitorStatus } from './monitor-status.js';
+import { openSheet, confirmSheet } from './sheet.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -98,8 +99,14 @@ async function paintUpdateBadge() {
 
         const latest = r.latest;
         badge.textContent = `${i18nT('update.available', 'Update available')} → ${latest}`;
-        badge.title = i18nT('update.click_for_release', 'v{version} is out — click to view release notes').replace('{version}', latest);
+        badge.title = i18nT('update.click_to_install', 'v{version} is out — click for install / release notes').replace('{version}', latest);
+        // Click opens a tiny chooser sheet so admins can pick between
+        // one-click install (when configured) and the release-notes link.
         badge.href = r.releaseUrl || `https://github.com/botnick/telegram-media-downloader/releases/tag/${latest}`;
+        badge.onclick = (e) => {
+            e.preventDefault();
+            _openUpdateChooser(latest, r.releaseUrl).catch(() => {});
+        };
         badge.classList.remove('hidden');
         if (dismiss) {
             dismiss.classList.remove('hidden');
@@ -199,4 +206,130 @@ export function initStatusBar() {
             refreshStats();
         }
     });
+
+    // Auto-update — server fires this right BEFORE watchtower kills the
+    // container. We surface a full-screen overlay so the operator knows
+    // the disconnect that's about to happen is intentional, not a crash.
+    // The browser's WS reconnect loop handles getting back in once the
+    // new image is up; on reconnect we sniff the version and reload to
+    // pick up the new SPA bundle.
+    ws.on('update_started', () => _showUpdateOverlay());
+    let _versionAtBoot = null;
+    api.get('/api/version').then(r => { _versionAtBoot = r?.version || null; }).catch(() => {});
+    ws.on('__ws_open', async () => {
+        // Only check after a real reconnect (we have the boot version
+        // cached). If the version changed we reload — the new SPA bundle
+        // is live in the new container.
+        if (!_versionAtBoot) return;
+        try {
+            const r = await api.get('/api/version');
+            if (r?.version && r.version !== _versionAtBoot) {
+                showToast(i18nTf('update.completed', { version: r.version },
+                    `Updated to v${r.version} — reloading`), 'success', 3000);
+                setTimeout(() => location.reload(), 1500);
+            }
+        } catch { /* ignore — overlay will time out */ }
+    });
 }
+
+// ---- Update chooser sheet --------------------------------------------------
+//
+// Triggered by clicking the "Update available" pill. Two paths:
+//   1. Install update — calls /api/update if the watchtower sidecar is up,
+//                        otherwise opens a help section explaining how to
+//                        enable the auto-update profile.
+//   2. View release notes — opens the GitHub release page in a new tab.
+
+export async function _openUpdateChooser(latest, releaseUrl) {
+    let status = { available: false };
+    try { status = await api.get('/api/update/status'); } catch { /* ignore */ }
+
+    const installButtonHtml = status.available
+        ? `<button id="upd-install-btn" class="tg-btn w-full flex items-center justify-center gap-2">
+              <i class="ri-download-cloud-2-line"></i><span>${i18nTf('update.install_now',
+                { version: latest }, `Install v${latest}`)}</span>
+           </button>`
+        : `<button class="tg-btn-secondary w-full flex items-center justify-center gap-2 opacity-60 cursor-not-allowed" disabled
+                   title="${(!status.inDocker
+                       ? i18nT('update.not_docker', 'Auto-update only works inside Docker.')
+                       : i18nT('update.no_watchtower', 'Watchtower sidecar is not configured. See docker-compose.yml comments to enable the auto-update profile.'))}">
+              <i class="ri-download-cloud-2-line"></i><span>${i18nT('update.install_disabled', 'Install (unavailable)')}</span>
+           </button>`;
+
+    const helpHtml = !status.available
+        ? `<div class="mt-3 p-3 rounded-lg bg-tg-bg/40 border border-tg-border/40 text-xs text-tg-textSecondary">
+            ${(!status.inDocker
+                ? i18nT('update.help_not_docker', 'You are running outside Docker — pull the latest source and restart manually.')
+                : i18nT('update.help_no_watchtower_html', 'To enable: <code>docker compose --profile auto-update up -d</code> after setting <code>WATCHTOWER_HTTP_API_TOKEN</code> in <code>.env</code>. See <code>docker-compose.yml</code> for the full setup.'))}
+        </div>`
+        : '';
+
+    const sheet = openSheet({
+        title: i18nTf('update.sheet_title', { version: latest }, `Update available — v${latest}`),
+        size: 'sm',
+        content: `
+            <p class="text-xs text-tg-textSecondary mb-3">${i18nT('update.sheet_help',
+                'Installing pulls the new image and recreates this container. Your data volume and config are preserved; the SQLite database is snapshotted to data/backups/ first. The dashboard reconnects automatically once the new container passes its healthcheck.')}</p>
+            <div class="space-y-2">
+                ${installButtonHtml}
+                <a class="tg-btn-secondary w-full flex items-center justify-center gap-2"
+                   href="${releaseUrl || `https://github.com/botnick/telegram-media-downloader/releases/tag/${latest}`}"
+                   target="_blank" rel="noopener">
+                    <i class="ri-github-line"></i><span>${i18nT('update.view_release', 'View release notes')}</span>
+                </a>
+            </div>
+            ${helpHtml}`,
+    });
+
+    const installBtn = sheet?.body?.querySelector('#upd-install-btn');
+    if (installBtn) {
+        installBtn.addEventListener('click', async () => {
+            const ok = await confirmSheet({
+                title: i18nT('update.confirm_title', 'Install update now?'),
+                body: i18nT('update.confirm_body', 'The dashboard will go offline briefly while the new image swaps in (~30 seconds). This page will reconnect automatically.'),
+                confirmText: i18nT('update.confirm_btn', 'Install update'),
+            });
+            if (!ok) return;
+            installBtn.disabled = true;
+            installBtn.innerHTML = `<i class="ri-loader-4-line animate-spin"></i><span>${i18nT('update.starting', 'Starting…')}</span>`;
+            try {
+                await api.post('/api/update', {});
+                _showUpdateOverlay();
+                sheet?.close?.();
+            } catch (e) {
+                installBtn.disabled = false;
+                installBtn.innerHTML = `<i class="ri-download-cloud-2-line"></i><span>${i18nTf('update.install_now',
+                    { version: latest }, `Install v${latest}`)}</span>`;
+                showToast(e?.data?.error || e.message || 'Update failed', 'error');
+            }
+        });
+    }
+}
+
+// ---- Full-screen "Updating…" overlay --------------------------------------
+//
+// Shown while the new container is being pulled / started. Covers the
+// entire viewport so the operator doesn't poke at a stale UI mid-swap.
+// Auto-removed when the WS reconnects to the new container (the
+// reconnect handler above reloads the page if the version changed).
+function _showUpdateOverlay() {
+    if (document.getElementById('tgdl-update-overlay')) return;
+    const div = document.createElement('div');
+    div.id = 'tgdl-update-overlay';
+    div.style.cssText = `
+        position: fixed; inset: 0; z-index: 100000;
+        background: rgba(15, 23, 42, 0.92);
+        display: flex; align-items: center; justify-content: center;
+        backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+    `;
+    div.innerHTML = `
+        <div style="text-align: center; color: #E2E8F0; max-width: 440px; padding: 32px;">
+            <div style="display: inline-block; width: 48px; height: 48px; border: 4px solid rgba(255,255,255,0.18); border-top-color: #2AABEE; border-radius: 50%; animation: tgdl-spin 1s linear infinite; margin-bottom: 20px;"></div>
+            <h2 style="font-size: 18px; font-weight: 600; margin-bottom: 8px;">${i18nT('update.overlay_title', 'Updating…')}</h2>
+            <p style="font-size: 13px; opacity: 0.8; line-height: 1.5;">${i18nT('update.overlay_body',
+                'Pulling the new image and restarting the container. The dashboard will reconnect automatically once the new version passes its healthcheck.')}</p>
+        </div>
+        <style>@keyframes tgdl-spin { to { transform: rotate(360deg); } }</style>`;
+    document.body.appendChild(div);
+}
+

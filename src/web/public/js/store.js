@@ -40,6 +40,10 @@ export const state = {
     // Canonical name cache — fed by /api/groups/refresh-info responses and
     // the WS `groups_refreshed` broadcast. Keyed by stringified id.
     groupNameCache: {},
+    // 'admin' | 'guest' | null — populated from /api/auth_check on boot.
+    // Drives both router.js (admin-only routes redirect guests) and the
+    // body[data-role] CSS gate that hides admin-only UI elements.
+    role: null,
 };
 
 /** True for "missing / placeholder / numeric-id-as-name" inputs. */

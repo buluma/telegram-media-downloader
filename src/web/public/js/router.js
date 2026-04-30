@@ -21,6 +21,33 @@ let beforeNav = null;
 let activeRoute = null;
 let listening = false;
 
+// Routes that require admin role. When a guest session navigates to one of
+// these, the dispatcher rewrites the hash to `#/viewer` instead of running
+// the handler. Settings deep-links are special-cased: only video-player and
+// appearance survive — everything else is admin-only.
+const ADMIN_ROUTE_PREFIXES = [
+    '/groups', '/backfill', '/queue', '/engine', '/stories', '/account/add',
+];
+const GUEST_SETTINGS_SECTIONS = new Set(['video-player', 'appearance']);
+
+function isAdminRoute(path) {
+    if (ADMIN_ROUTE_PREFIXES.some(p => path === p || path.startsWith(p + '/'))) return true;
+    if (path === '/settings') return true;
+    if (path.startsWith('/settings/')) {
+        const section = path.slice('/settings/'.length).split('/')[0];
+        return !GUEST_SETTINGS_SECTIONS.has(section);
+    }
+    return false;
+}
+
+function getCurrentRole() {
+    // Lazy lookup so the router module doesn't need to import store.js
+    // (which would create a cycle).
+    try {
+        return (typeof window !== 'undefined' && window.__tgdlRole) || null;
+    } catch { return null; }
+}
+
 function compile(pattern) {
     const paramNames = [];
     const re = pattern
@@ -50,6 +77,14 @@ function parseHash(raw) {
 
 function dispatch() {
     const { path, query } = parseHash();
+
+    // Guest sessions are bounced from admin-only routes to the viewer.
+    // Done here (before route lookup) so deep-links pasted into the URL
+    // bar also redirect, not just nav clicks.
+    if (getCurrentRole() === 'guest' && isAdminRoute(path)) {
+        if (path !== '/viewer') return navigate('#/viewer', { replace: true });
+    }
+
     for (const r of routes) {
         const m = r.regex.exec(path);
         if (!m) continue;

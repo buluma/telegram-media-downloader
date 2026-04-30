@@ -24,6 +24,18 @@ services:
       - NODE_ENV=production
       - TZ=${TZ:-UTC}
       - TGDL_DEBUG=${TGDL_DEBUG:-}
+      # Auto-update wiring — only consulted when the `auto-update` profile
+      # is enabled. With these set, Settings → Maintenance shows an
+      # **Install update** button that hands the swap off to the watchtower
+      # sidecar below. Tokens read from .env (see .env.example).
+      - WATCHTOWER_URL=${WATCHTOWER_URL:-http://watchtower:8080}
+      - WATCHTOWER_HTTP_API_TOKEN=${WATCHTOWER_HTTP_API_TOKEN:-}
+    labels:
+      # Marks this container as eligible for watchtower management. With
+      # WATCHTOWER_LABEL_ENABLE=true on the watchtower service, ONLY
+      # containers carrying this label can be touched — so the sidecar
+      # can never accidentally recreate an unrelated app on the same host.
+      - "com.centurylinklabs.watchtower.enable=true"
     healthcheck:
       test: ["CMD", "node", "scripts/healthcheck.js"]
       interval: 30s
@@ -31,14 +43,56 @@ services:
       retries: 3
       start_period: 15s
 
+  # Optional one-click updater. ENABLE WITH:
+  #   docker compose --profile auto-update up -d
+  # Without the `--profile` flag the sidecar isn't started and the dashboard
+  # falls back to "click the GitHub link and run docker compose up -d".
+  #
+  # Security model:
+  #   - watchtower is the ONLY container that touches /var/run/docker.sock.
+  #     The main app calls watchtower over the internal docker network via
+  #     an HTTP token; it never sees the socket itself, so a hypothetical
+  #     RCE in the dashboard cannot escalate to host root.
+  #   - WATCHTOWER_LABEL_ENABLE=true scopes operations to ONLY the labeled
+  #     telegram-downloader container — watchtower can't sweep up
+  #     unrelated apps even if it wanted to.
+  #   - HTTP API requires WATCHTOWER_HTTP_API_TOKEN (random hex). Set this
+  #     in .env BEFORE first boot of the profile; absence disables the
+  #     dashboard button entirely.
+  watchtower:
+    image: containrrr/watchtower:1.7.1
+    profiles: ["auto-update"]
+    container_name: telegram-downloader-updater
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - WATCHTOWER_HTTP_API_UPDATE=true
+      - WATCHTOWER_HTTP_API_TOKEN=${WATCHTOWER_HTTP_API_TOKEN:-}
+      - WATCHTOWER_HTTP_API_PERIODIC_POLLS=false
+      - WATCHTOWER_LABEL_ENABLE=true
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_INCLUDE_RESTARTING=true
+      - WATCHTOWER_NO_STARTUP_MESSAGE=true
+      - TZ=${TZ:-UTC}
+
 # First-time setup:
 #   docker compose up -d
 #   open http://localhost:${TGDL_PORT:-3003} — set the dashboard password (only allowed
 #   from localhost on first run), then go to Settings → Telegram Accounts
 #   → Add account.
 #
-# Upgrade:
+# Upgrade (manual):
 #   docker compose up -d        # `pull_policy: always` re-pulls latest
+#
+# Upgrade (one-click in dashboard) — opt-in:
+#   1. Generate a token:
+#        openssl rand -hex 32   # or: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+#   2. Add to .env (next to docker-compose.yml):
+#        WATCHTOWER_HTTP_API_TOKEN=<the random token>
+#   3. Boot with the auto-update profile:
+#        docker compose --profile auto-update up -d
+#   4. Settings → Maintenance → "Install update" — does the rest.
 #
 # Headless monitor (instead of web dashboard):
 #   docker compose run --rm \
