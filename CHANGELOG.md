@@ -2,17 +2,32 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.28] — 2026-04-30
+
+### Changed — Share-link limits and history retention are now config-driven
+Removed the hardcoded TTL bounds, rate-limit thresholds, and history retention window introduced in earlier 2.3.x releases. Operators can now tune these via `config.advanced` without recompiling.
+
+- **`advanced.share`** (new namespace) — `ttlMinSec`, `ttlMaxSec`, `ttlDefaultSec`, `rateLimitWindowMs`, `rateLimitMax`. Defaults preserve the previous behavior (60s / 90d / 7d / 60s / 60). Each field is clamped on save and applied immediately on `config_updated` (no restart). The share-link rate-limit middleware reads the current values per-request via function-form `windowMs` / `limit`.
+- **`advanced.history.retentionDays`** (new) — was hardcoded to 30; now configurable, range 1-3650. Resolved at every read of the on-disk job list so a save takes effect on the next prune.
+- `share.js` exports `applyShareLimits()` and `getShareLimits()`; the original `TTL_*_SEC` constants stay exported as `*_DEFAULT` aliases for callers (and the test suite) that want the spec values.
+
+### Tests
+6 new tests covering `applyShareLimits` / `getShareLimits` (default revert, range clamping, inverted-bounds rejection, 10-year ceiling cap, NEVER sentinel preserved). Full suite: 99 / 99 passing.
+
+### SW
+- VERSION bumped `'v27'` → `'v28'`.
+
 ## [2.3.27] — 2026-04-30
 
 ### Added — Token-based shareable media links
-Per user request *"ลิงก์ media ทั้งหมด ขอรูปแบบใช้ token base ในการ auth เลยจะได้ใช้เอาลิงก์ไปใช้ภายนอกได้แบบ ส่งลิงก์ vdo ให้เพื่อนโหลดได้ โดยเพื่อนไม่ต้อง login"*. Admin can now mint signed share-URLs that let a non-user (e.g. a friend) stream or download a single media file without logging into the dashboard.
+Admins can mint signed share-URLs that let a non-user (e.g. a friend) stream or download a single media file without logging into the dashboard.
 
 - **HMAC-SHA256 signed URLs** — `/share/<linkId>?exp=<epoch>&sig=<43-char-base64url>`. The sig binds `linkId|exp` so flipping either invalidates it. Verified with `crypto.timingSafeEqual` (length-checked first to avoid early-return timing leaks).
-- **Per-server secret** in `config.web.shareSecret` — 32 random bytes, lazy-generated on first boot, persisted via the existing atomic config writer. Rotating it invalidates every outstanding link (documented as a feature).
+- **Per-server secret** in `config.web.shareSecret` — 32 random bytes, lazy-generated on first boot, persisted via the existing atomic config writer. Rotating it invalidates every outstanding link.
 - **`share_links` table** is the source of truth for revocation + audit (`access_count`, `last_accessed_at`, optional `label`). FK `ON DELETE CASCADE` on `download_id` so deleting/purging a file kills every outstanding link automatically. `PRAGMA foreign_keys = ON` set per-connection for the cascade to fire.
-- **Public `GET /share/:linkId`** — registered BEFORE `checkAuth` and added to `PUBLIC_PATH_PREFIXES`. Three independent gates: rate limiter (60/min/IP), HMAC verify, then DB row check (revoked/expired). All failure modes return 401 with a body code (`bad_sig` / `revoked` / `expired`) so an external scanner can't enumerate which links exist. Hands off to `safeResolveDownload` + `res.sendFile` so **Range requests work** end-to-end (friend can scrub videos). `Cache-Control: no-store` + `X-Frame-Options: DENY` + `Referrer-Policy: no-referrer`.
+- **Public `GET /share/:linkId`** — registered BEFORE `checkAuth` and added to `PUBLIC_PATH_PREFIXES`. Three independent gates: rate limiter (60/min/IP), HMAC verify, then DB row check (revoked/expired). All failure modes return 401 with a body code (`bad_sig` / `revoked` / `expired`) so an external scanner can't enumerate which links exist. Hands off to `safeResolveDownload` + `res.sendFile` so **Range requests work** end-to-end (videos can be scrubbed). `Cache-Control: no-store` + `X-Frame-Options: DENY` + `Referrer-Policy: no-referrer`.
 - **Admin API `/api/share/links*`** (admin-only via the chokepoint added in v2.3.26):
-  - `POST /api/share/links` — body `{ downloadId, ttlSeconds?, label? }` → returns `{ url, expiresAt, id }`. TTL clamped to `[60s, 90 days]`. **`ttlSeconds: 0`** = "never expires" (per *"ขอแบบไม่มีวันหมดอายุด้วยดิ share"*) — sentinel honored end-to-end (DB stores `expires_at = 0`, verifier skips the time gate, frontend renders "Never expires").
+  - `POST /api/share/links` — body `{ downloadId, ttlSeconds?, label? }` → returns `{ url, expiresAt, id }`. TTL clamped to `[60s, 90 days]`. **`ttlSeconds: 0` = "never expires"** — sentinel honored end-to-end (DB stores `expires_at = 0`, verifier skips the time gate, frontend renders "Never expires").
   - `GET /api/share/links?downloadId=…` — list links for one file (Share sheet) or all (Maintenance sheet).
   - `DELETE /api/share/links/:id` — revoke. Idempotent.
 - **UI: Share button in viewer modal** (next to Delete/Download, marked `data-admin-only`). Opens a sheet with TTL radio (1h / 24h / 7d / 30d / 90d / Never), optional label, "Create share link" button (auto-copies on success), and a list of existing links with per-row Copy / Revoke + access counter.
@@ -20,9 +35,9 @@ Per user request *"ลิงก์ media ทั้งหมด ขอรูป�
 - **Service Worker bypass** for `/share/*` — never cache, so a revoked link can't keep serving from the SW.
 
 ### Added — Download-time deduplication (no-duplicate writes)
-Per user request *"make sure ต้องใช้ระบบ check sum เหมือนกันทั้งหมดที่มีการ download อะไม่เก็บที่ซ้ำ"*. The downloader now hashes every file the moment it lands on disk and folds duplicates into the existing copy.
+The downloader now hashes every file the moment it lands on disk and folds duplicates into the existing copy.
 
-- **`src/core/checksum.js`** — single canonical `sha256OfFile(absPath)` helper. Per *"ทุกอย่างที่ check sum ต้องมาตรฐานเดียวกันทั้งหมด"*: every code path that hashes media (the post-write check in `downloader.js`, the on-demand catch-up scan in `dedup.js`, any future verification flow) imports this one function. Same algorithm (SHA-256), same encoding (lowercase hex, 64 chars), same streaming read strategy. `dedup.js`'s previous local `hashFile` is now a thin alias.
+- **`src/core/checksum.js`** — single canonical `sha256OfFile(absPath)` helper. Every code path that hashes media (the post-write check in `downloader.js`, the on-demand catch-up scan in `dedup.js`, any future verification flow) imports this one function. Same algorithm (SHA-256), same encoding (lowercase hex, 64 chars), same streaming read strategy. `dedup.js`'s previous local `hashFile` is now a thin alias.
 - **Downloader** computes the SHA-256 right after the atomic `.part → final` rename, then queries the DB for an existing row with the same `file_hash` AND `file_size`. If one exists AND its file is still present on disk:
   - The new copy is `unlink`ed.
   - The new DB row is inserted with `file_path` pointing at the existing file (so the gallery shows the file in this group too without storing duplicate bytes).
@@ -39,7 +54,7 @@ Per user request *"make sure ต้องใช้ระบบ check sum เห�
 ## [2.3.26] — 2026-04-30
 
 ### Added — Guest role (read-only viewer alongside admin)
-Per user request *"เพิ่มระบบ guest ให้คนที่ไม่ใช่ admin ... guests ดูได้เท่านั้น ลบไม่ได้"*. The dashboard now supports an opt-in **read-only "guest" role** alongside the admin password. Guests can browse media and watch videos but cannot delete files, change settings, or manage Telegram accounts. Their video player preferences (autoplay/volume/etc.) save to localStorage and are independent from admin's.
+The dashboard now supports an opt-in **read-only "guest" role** alongside the admin password. Guests can browse media and watch videos but cannot delete files, change settings, or manage Telegram accounts. Their video player preferences (autoplay/volume/etc.) save to localStorage and are independent from admin's.
 
 - **`config.web.guestPasswordHash` + `config.web.guestEnabled`** — new optional config keys. If unset the dashboard behaves exactly as before.
 - **Sessions carry a role** — `data/web-sessions.json` records now include `role: 'admin' | 'guest'`. Legacy sessions (no role field) default to admin; no forced re-login on upgrade.
@@ -51,14 +66,14 @@ Per user request *"เพิ่มระบบ guest ให้คนที่ไ
 - **`api.js` 403 interceptor** toasts `errors.admin_only` for the rare race where a stale guest tab fires an admin call.
 
 ### Added — Recent backfills: per-row delete + Clear all
-Per user report *"Recent backfills ขอแบบลบได้ด้วย ตอนนี้อะ มันขึ้นเยอะ เกิน แล้วรก ๆ"*. The Recent backfills list (last 30 days) was display-only; once the list got long there was no way to tidy it up.
+The Recent backfills list (last 30 days) was display-only; long lists could not be tidied up.
 
 - **`DELETE /api/history/:jobId`** — drops one finished entry from the in-memory map + on-disk `history-jobs.json`. Refuses to delete a running job (cancel first).
 - **`DELETE /api/history`** — clear every finished entry in one call. Running jobs are preserved.
 - **Per-row × button** + **Clear all** on Backfill → Recent. Cross-tab via WS `history_deleted` / `history_cleared` so other open tabs drop the row in real time.
 
 ### Added — Checksum-based duplicate finder (Maintenance)
-Per user request *"ทำระบบ checksum ป้องกัน media ซ้ำ ... มีใน Maintenance ด้วย ... มีให้ confirm ในการลบไฟล์ และ preview ไฟล์ ว่า sum ซ้ำ"*. The `downloads.file_hash` column has been in the schema since v2 but was never populated.
+The `downloads.file_hash` column has been in the schema since v2 but was never populated. Maintenance now exposes a one-shot scan that hashes every file, groups byte-identical copies, and lets the admin pick which to keep.
 
 - **New `src/core/dedup.js`** — `findDuplicates()` walks every row missing `file_hash`, streams SHA-256 over the file, writes the digest back, then GROUPs BY hash for sets where COUNT > 1. First scan is O(bytes-on-disk); subsequent scans are nearly free.
 - **`POST /api/maintenance/dedup/scan`** — runs the catch-up + grouping. Broadcasts `dedup_progress` over WS for a determinate progress bar. Single in-flight guard: a second concurrent scan returns 409.
@@ -66,7 +81,6 @@ Per user request *"ทำระบบ checksum ป้องกัน media ซ�
 - **Maintenance UI** — new **Find duplicate files** button. Scans, then opens a sheet with every duplicate set: thumbnails, filenames, group, date, file URL preview link. Default selection deletes all but the **oldest** copy in each set; per-set **Keep oldest / Keep newest** shortcuts; per-row checkbox flips. Bottom of the sheet shows live "N selected · X MB will be freed" totals + an explicit destructive confirm before deletion.
 
 ### Changed — Mobile gallery: smooth + working video previews
-Per user report *"ใน mobile ไม่ขึ้น vdo preview และแก้ให้ mobile แสดงแบบไม่ lagg ด้วย ลดการแสดงใน mobile ให้ mobile แสดงทีน้อย ๆ แยกกับ pc"*.
 
 - **`FILES_PER_PAGE` is now viewport-aware** — desktop stays at 100; mobile (`max-width: 768px`) drops to 50, matching the lower tile-per-row count so DOM size scales with screen size.
 - **Mobile video tiles use a poster-only render** — `<video preload="none">` is unreliable on mobile Safari (often paints a blank black tile) and high-memory across a 50-tile grid even when it works. Mobile now renders an icon + play badge inside a subtle gradient instead. Tap still opens the full viewer with the real `<video>`. Desktop keeps the existing lazy `<video>` for hover scrub.
@@ -81,7 +95,7 @@ Per user report *"ใน mobile ไม่ขึ้น vdo preview และแ�
 ## [2.3.25] — 2026-04-28
 
 ### Changed — backpressure abort window 5 min → 15 min
-User report: *"History backpressure: downloader made no progress for 5min (pending=513, cap=500). Check Engine card for FloodWait or stalled workers."* — the abort fired with the pending count just barely (513 vs 500) over the cap.
+The history-backfill backpressure was aborting jobs whose pending queue sat just barely above the cap (e.g. 513 vs 500), even when the downloader was healthy.
 
 Why it fired: a single bad-luck job that hits FloodWait every retry can stall for `MAX_FLOOD_RETRIES × delay` = 8 × 60 s = **8 min** before the downloader gives up and emits an `error` event. The backfill abort at 5 min therefore guaranteed a kill in this scenario, even though the downloader was healthy and would have recovered.
 
@@ -98,7 +112,7 @@ Why it fired: a single bad-luck job that hits FloodWait every retry can stall fo
 - **`FILES_PER_PAGE: 50 → 100`.** Half the round trips for the same scroll distance.
 
 ### Changed — `/api/monitor/status` and `/api/stats` now WS-push
-Per user request *"api/monitor/status กับ api/stats ไม่ใช้ ws ไปเลยหล่ะ"*. The 30 s + 60 s safety polls in `monitor-status.js` and `statusbar.js` are gone:
+The 30 s + 60 s safety polls in `monitor-status.js` and `statusbar.js` are replaced with WebSocket broadcasts:
 
 - **Server**: `_pushMonitorStatus()` broadcasts `monitor_status_push` every 3 s with the full `/api/monitor/status` snapshot. `_pushStats()` broadcasts `stats_push` every 30 s with the full `/api/stats` payload. Both skip the build entirely when no WebSocket clients are connected, and coalesce overlapping async builds via an in-flight flag. The single GET endpoints stay on for the SPA's first paint + a manual refresh.
 - **SPA `monitor-status.js`**: dropped the 30 s `setInterval`, the visibilitychange-driven catch-up, and the timer machinery. One HTTP fetch on the first subscriber so the bar isn't blank for 3 s, then rides the WS push for the rest of the session. Re-fetches once on every WS reconnect (`__ws_open`) to fill the gap a disconnect window left.
@@ -180,7 +194,7 @@ The combined effect: a fresh release flips every internal asset URL automaticall
 ## [2.3.17] — 2026-04-28
 
 ### Removed
-- **Help paragraph under the Font picker.** The text was stuck at "All ten options support Thai" since v2.3.14, never updated when v2.3.15 added the 10 Latin-only fonts (and would have grown stale again next time the registry expands). User asked to drop it. Picker is self-explanatory — `<optgroup>` labels already say "Thai-capable", "Latin (Thai falls back)", and "No webfont".
+- **Help paragraph under the Font picker.** The text was stuck at "All ten options support Thai" since v2.3.14, never updated when v2.3.15 added the 10 Latin-only fonts (and would have grown stale again next time the registry expands). Removed entirely — the picker is self-explanatory because the `<optgroup>` labels already say "Thai-capable", "Latin (Thai falls back)", and "No webfont".
 - Dropped i18n keys `settings.font_help` (en + th). 637 → **636 keys total** (parity preserved).
 
 ### Changed
@@ -231,9 +245,8 @@ The combined effect: a fresh release flips every internal asset URL automaticall
 ## [2.3.13] — 2026-04-28
 
 ### Changed — locale tone + casing pass
-Per user request: "ทำภาษาไทยให้ดูเป็นทางการหน่อยครับ ตัวอักษรอังกฤษพิมพ์เล็กใหญ่ให้เหมาะสมหน่อย".
 
-- **`th.json` rewritten in formal-but-readable Thai** — the tone a Thai-language SaaS product (Notion Thai, Microsoft Thai) would ship. Removed casual particles ("นะ" / "อะ" / "ดิ" / "ไอ้สัส"), used proper polite constructions ("โปรด…", "ใช่หรือไม่"), replaced slangy translations ("เซฟ" → "บันทึก", "หน้าตา" → "รูปลักษณ์", "หลุดจาก server เลย" → "ขาดการเชื่อมต่อกับเซิร์ฟเวอร์"). No trailing periods on Thai sentences (Thai punctuation convention). Tech terms still in English where Thai devs say them that way (`monitor`, `queue`, `session`, `proxy`, `gramJS`, `MTProxy`, `WebSocket`, `dashboard`, `container`, `Stories`, `release notes`, `PiP`, `fullscreen`, `Backfill`, `Rescue`).
+- **`th.json` rewritten in formal-but-readable Thai** — the tone a Thai-language SaaS product (Notion Thai, Microsoft Thai) would ship. Removed casual particles, used polite constructions, replaced slangy translations ("เซฟ" → "บันทึก", "หน้าตา" → "รูปลักษณ์", "หลุดจาก server เลย" → "ขาดการเชื่อมต่อกับเซิร์ฟเวอร์"). No trailing periods on Thai sentences (Thai punctuation convention). Tech terms kept in English where Thai devs say them that way (`monitor`, `queue`, `session`, `proxy`, `gramJS`, `MTProxy`, `WebSocket`, `dashboard`, `container`, `Stories`, `release notes`, `PiP`, `fullscreen`, `Backfill`, `Rescue`).
 - **`en.json` recapped to proper English casing**:
   - **Buttons / form labels / nav items / tab names** → Title Case (`Save Credentials`, `Add Account`, `Browse Chats`, `Run Again`, `Restart Monitor`, `Telegram API`).
   - **Help text / descriptions / toasts / confirmations** → sentence case with terminal periods.
@@ -254,7 +267,7 @@ Per user request: "ทำภาษาไทยให้ดูเป็นทา�
 
 ### Changed
 - **Sidebar "Viewer" entry removed** — was a third redundant entry-point to the same `#/viewer` page (the "All Media" card right below + the bottom-nav "Library" item already cover it). Cleaner sidebar; no functional change.
-- **Update-check cache TTL: 1 h → 10 min**, in response to "I'm on v2.3.7 with no update pill while v2.3.10 has been live for hours". Cache is shared across all clients of one instance, so 6 upstream calls per hour total is comfortably under GitHub's 60-req-per-hour-per-IP unauthenticated rate limit.
+- **Update-check cache TTL: 1 h → 10 min** to shorten the window between a release going live and the dashboard showing the update pill. Cache is shared across all clients of one instance, so 6 upstream calls per hour total is comfortably under GitHub's 60-req-per-hour-per-IP unauthenticated rate limit.
 - **Service-worker cache** bumped `'v11'` → `'v12'` to flush the older cached JS for users upgrading through this release.
 
 ### i18n
@@ -264,7 +277,7 @@ Per user request: "ทำภาษาไทยให้ดูเป็นทา�
 
 ### Fixed
 - **Service-worker cache was holding stale `settings.js` + `index.html` for users who pulled v2.3.5–v2.3.10.** SW `VERSION` was last bumped to `'v3'` in v2.3.4 and never since (despite the comment "Going forward, this string bumps with every meaningful release" — sorry). Result: a user pulled v2.3.7 → v2.3.10, the new HTML loaded fine (network-first for navigation), but `/js/settings.js` stayed cached (cache-first for static assets) so the new Video Player toggles rendered with no behaviour wired. Bumped to `'v11'`; the activate handler purges every non-matching cache key on first hit, so the upgrade is one reload.
-- **Update-check cache was 6 hours.** A user reported sitting on v2.3.7 with no update pill while v2.3.10 had been live for hours. TTL lowered to **1 hour**; additionally the cache is **bypassed when the running container is at-or-newer than the cached `latest`** (means we just rolled forward and a release was probably published in the window — re-fetch instead of trusting the stale "no update" answer).
+- **Update-check cache was 6 hours.** That window meant a fresh release could be live for hours before the dashboard's update pill appeared. TTL lowered to **1 hour**; additionally the cache is **bypassed when the running container is at-or-newer than the cached `latest`** (means we just rolled forward and a release was probably published in the window — re-fetch instead of trusting the stale "no update" answer).
 
 ### Added
 - **IBM Plex Sans + IBM Plex Mono + IBM Plex Sans Thai** as the primary UI / mono / Thai fonts. Thai users get a font that ships proper Thai letterforms instead of falling back to the system; mono digits in the time block / queue size column / log viewer become consistent across browsers. Roboto kept in the fallback stack so an offline session that already cached it still renders cleanly.
@@ -308,10 +321,10 @@ Per user request: "ทำภาษาไทยให้ดูเป็นทา�
 
 ## [2.3.6] — 2026-04-28
 
-A blocker fix the user spotted (gallery showing 209 of 2454 files), plus the priority items from a third audit pass — silent FloodWait loops, Windows-reserved filenames, downloader/rotator races, queue UX overhaul, and the avatar flicker.
+A blocker fix in the gallery (libraries with thousands of files were capped at ~209 visible), plus the priority items from a third audit pass — silent FloodWait loops, Windows-reserved filenames, downloader/rotator races, queue UX overhaul, and the avatar flicker.
 
 ### Fixed — blocker
-- **All Media was capped at ~400 files.** `loadAllFiles()` was hard-coded to fetch the first 20 groups × 20 files each, with no pagination and no infinite-scroll. With 2454 files in the user's library, the gallery showed ~209 (and Photos / Videos tabs ~30–50 each). New endpoint `GET /api/downloads/all?page&limit&type` orders by `created_at DESC` across every group, the SPA's existing `setupInfiniteScroll` sentinel pages it, and the per-tab type filter is now a server-side `?type=` query so the count under each tab is accurate. Also fixed an off-by-one where a perfectly-packed last page kept pagination armed forever.
+- **All Media was capped at ~400 files.** `loadAllFiles()` was hard-coded to fetch the first 20 groups × 20 files each, with no pagination and no infinite-scroll. A library with 2454 files would render only ~209 in the gallery (and Photos / Videos tabs ~30–50 each). New endpoint `GET /api/downloads/all?page&limit&type` orders by `created_at DESC` across every group, the SPA's existing `setupInfiniteScroll` sentinel pages it, and the per-tab type filter is now a server-side `?type=` query so the count under each tab is accurate. Also fixed an off-by-one where a perfectly-packed last page kept pagination armed forever.
 
 ### Fixed — critical
 - **FloodWait retry was a tight infinite loop.** `downloader.js:717` called `return this.download(job, attempt)` *without* incrementing `attempt`, so a sustained throttle would re-enter forever. Now tracks FloodWait retries on a separate counter (`MAX_FLOOD_RETRIES = 8`); the normal retry budget stays untouched but a persistent flood gives up cleanly.
@@ -357,7 +370,7 @@ Last items from the multi-pass audit. Closes the remaining "deferred" tasks: WS 
 
 ## [2.3.3] — 2026-04-28
 
-Second-pass audit + four more user-reported defects. Fixes a real entity-cache shape bug and a path-traversal hole in the profile-photo endpoint that the first audit missed.
+Second-pass audit plus four additional defects surfaced in production. Fixes a real entity-cache shape bug and a path-traversal hole in the profile-photo endpoint that the first audit missed.
 
 ### Fixed — security
 - **Path traversal in `/api/groups/:id/photo`** — `req.params.id` was interpolated straight into a filesystem path with no validation. A request like `/api/groups/..%2F..%2Fetc%2Fpasswd/photo` could escape `PHOTOS_DIR`. Now requires `id` to match `/^-?\d+$/` (signed Telegram ID) and runs a `fs.realpathSync` check before `sendFile`.
@@ -402,7 +415,7 @@ Audit-driven defect sweep — fixes uncovered while reviewing v2.3.1 in detail. 
 
 ### Added — i18n
 - **7 keys that the code referenced but were absent from the locale files** (rendered as raw key strings or fallback text in the UI): `backfill.row.cancel_title`, `purge.all.title`, `purge.all.title2`, `purge.group.title`, `settings.size.total_disk_help`, `viewer.bulk.title`, `viewer.delete.title`.
-- **Thai locale fully humanized.** All 591 strings rewritten in natural conversational Thai instead of stiff machine-translation tone. Tech terms (`monitor`, `queue`, `download`, `session`, `proxy`, `worker`, `dashboard`, `cookie`, `Stories`, `Backfill`, `FloodWait`, `gramJS`, `Maintenance`, `Rescue`, `VACUUM`, …) kept in English where that's how Thai users actually say them. Confirmations made direct ("แน่ใจนะ? กู้คืนไม่ได้นะ"), help text rewritten like a friend explaining what each setting does, possessive `ของคุณ` spam removed, every `{placeholder}` token preserved.
+- **Thai locale fully humanized.** All 591 strings rewritten in natural conversational Thai instead of stiff machine-translation tone. Tech terms (`monitor`, `queue`, `download`, `session`, `proxy`, `worker`, `dashboard`, `cookie`, `Stories`, `Backfill`, `FloodWait`, `gramJS`, `Maintenance`, `Rescue`, `VACUUM`, …) kept in English where that's how Thai users actually say them. Confirmations made direct, help text rewritten in a friendly explanatory tone, possessive `ของคุณ` spam removed, every `{placeholder}` token preserved.
 
 ## [2.3.1] — 2026-04-28
 

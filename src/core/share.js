@@ -139,28 +139,72 @@ export function buildShareUrlPath(linkId, expEpochSeconds) {
 
 // ---- TTL clamp -------------------------------------------------------------
 
-export const TTL_MIN_SEC = 60;                // 1 minute floor — anything less is misuse
-export const TTL_MAX_SEC = 90 * 24 * 3600;    // 90 days ceiling — caps long-lived shares
-export const TTL_DEFAULT_SEC = 7 * 24 * 3600; // 7 days default
+// Spec defaults — used when config.advanced.share isn't set. The mutable
+// `_ttl*` variables below shadow them once the server applies a config.
+// Importers that want the *current* effective limits should call
+// `getShareLimits()` rather than reading these constants directly.
+export const TTL_MIN_SEC_DEFAULT = 60;                 // 1 minute floor
+export const TTL_MAX_SEC_DEFAULT = 90 * 24 * 3600;     // 90 days ceiling
+export const TTL_DEFAULT_SEC_DEFAULT = 7 * 24 * 3600;  // 7 days
+// Backwards-compat aliases. Existing callers (and the test suite) read
+// these as plain constants; they keep returning the spec default values.
+export const TTL_MIN_SEC = TTL_MIN_SEC_DEFAULT;
+export const TTL_MAX_SEC = TTL_MAX_SEC_DEFAULT;
+export const TTL_DEFAULT_SEC = TTL_DEFAULT_SEC_DEFAULT;
 // Sentinel: caller passed `0` (or the literal string '0' / null after the
 // Number() coerce) → "never expires". The DB stores expires_at = 0 and
 // the verifier skips the time-based check entirely. The HMAC still binds
 // `exp=0` so the URL is just as tamper-resistant as a TTL'd one.
 export const TTL_NEVER = 0;
 
+let _ttlMin = TTL_MIN_SEC_DEFAULT;
+let _ttlMax = TTL_MAX_SEC_DEFAULT;
+let _ttlDefault = TTL_DEFAULT_SEC_DEFAULT;
+
+/**
+ * Update the runtime TTL limits from `config.advanced.share`. Called by
+ * the server on boot and after every config_updated broadcast. Each
+ * field is clamped to a sane range so a hand-edited config can't disable
+ * the floor or invert min/max.
+ *
+ * @param {{ ttlMinSec?: number, ttlMaxSec?: number, ttlDefaultSec?: number }} cfg
+ */
+export function applyShareLimits(cfg = {}) {
+    const minIn = Number(cfg.ttlMinSec);
+    const maxIn = Number(cfg.ttlMaxSec);
+    const defIn = Number(cfg.ttlDefaultSec);
+    // Floor: at least 1 second; can't go below 1 or the URL is meaningless.
+    const min = Number.isFinite(minIn) && minIn >= 1
+        ? Math.floor(minIn) : TTL_MIN_SEC_DEFAULT;
+    // Ceiling: at most 10 years (defensive — keeps signed-integer epoch
+    // math comfortably inside JS safe range).
+    const TEN_YEARS_SEC = 10 * 365 * 24 * 3600;
+    const max = Number.isFinite(maxIn) && maxIn >= min
+        ? Math.min(TEN_YEARS_SEC, Math.floor(maxIn)) : TTL_MAX_SEC_DEFAULT;
+    const def = Number.isFinite(defIn)
+        ? Math.max(min, Math.min(max, Math.floor(defIn))) : TTL_DEFAULT_SEC_DEFAULT;
+    _ttlMin = min;
+    _ttlMax = max;
+    _ttlDefault = def;
+}
+
+export function getShareLimits() {
+    return { ttlMinSec: _ttlMin, ttlMaxSec: _ttlMax, ttlDefaultSec: _ttlDefault };
+}
+
 export function clampTtlSeconds(input) {
     // null / undefined = "not specified" → default. Done BEFORE the 0
     // sentinel because Number(null) === 0 would otherwise be misread as
     // an explicit "never expires".
-    if (input == null) return TTL_DEFAULT_SEC;
+    if (input == null) return _ttlDefault;
     // Explicit "never" passes through untouched. Useful for an admin
     // sharing a link that should outlive any reasonable retention window
     // (e.g. a personal cloud-style permanent link to a video).
     if (input === 0 || input === '0') return TTL_NEVER;
     const n = Number(input);
-    if (!Number.isFinite(n) || n < 0) return TTL_DEFAULT_SEC;
+    if (!Number.isFinite(n) || n < 0) return _ttlDefault;
     if (n === 0) return TTL_NEVER;
-    return Math.max(TTL_MIN_SEC, Math.min(TTL_MAX_SEC, Math.floor(n)));
+    return Math.max(_ttlMin, Math.min(_ttlMax, Math.floor(n)));
 }
 
 /**

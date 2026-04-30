@@ -4,6 +4,8 @@ import {
     signShareToken, verifyShareToken, buildShareUrlPath,
     clampTtlSeconds, maskSigInLog,
     TTL_MIN_SEC, TTL_MAX_SEC, TTL_DEFAULT_SEC, TTL_NEVER,
+    TTL_MIN_SEC_DEFAULT, TTL_MAX_SEC_DEFAULT, TTL_DEFAULT_SEC_DEFAULT,
+    applyShareLimits, getShareLimits,
     getShareSecretFingerprint,
 } from '../src/core/share.js';
 
@@ -137,6 +139,61 @@ describe('clampTtlSeconds', () => {
         expect(clampTtlSeconds(0)).toBe(TTL_NEVER);
         expect(clampTtlSeconds('0')).toBe(TTL_NEVER);
         expect(TTL_NEVER).toBe(0);
+    });
+});
+
+describe('applyShareLimits / getShareLimits', () => {
+    // Reset to defaults before each test so the suite stays order-independent.
+    beforeEach(() => applyShareLimits({}));
+
+    it('reverts to spec defaults when called with an empty object', () => {
+        applyShareLimits({ ttlMinSec: 10, ttlMaxSec: 200, ttlDefaultSec: 50 });
+        applyShareLimits({});
+        expect(getShareLimits()).toEqual({
+            ttlMinSec: TTL_MIN_SEC_DEFAULT,
+            ttlMaxSec: TTL_MAX_SEC_DEFAULT,
+            ttlDefaultSec: TTL_DEFAULT_SEC_DEFAULT,
+        });
+    });
+
+    it('honors a valid override and clampTtlSeconds picks up the new range', () => {
+        applyShareLimits({ ttlMinSec: 30, ttlMaxSec: 600, ttlDefaultSec: 120 });
+        expect(getShareLimits()).toEqual({ ttlMinSec: 30, ttlMaxSec: 600, ttlDefaultSec: 120 });
+        // Below the new floor → snapped up.
+        expect(clampTtlSeconds(5)).toBe(30);
+        // Above the new ceiling → snapped down.
+        expect(clampTtlSeconds(9999)).toBe(600);
+        // Default applies when no input is given.
+        expect(clampTtlSeconds(undefined)).toBe(120);
+    });
+
+    it('rejects an inverted max < min by reverting that field to the default', () => {
+        applyShareLimits({ ttlMinSec: 1000, ttlMaxSec: 500 });
+        const cur = getShareLimits();
+        // min took, max fell back to default which is >= min (so the
+        // floor invariant `min <= max` still holds).
+        expect(cur.ttlMinSec).toBe(1000);
+        expect(cur.ttlMaxSec).toBe(TTL_MAX_SEC_DEFAULT);
+        expect(cur.ttlMaxSec).toBeGreaterThanOrEqual(cur.ttlMinSec);
+    });
+
+    it('clamps a default that lies outside [min, max] back inside the range', () => {
+        applyShareLimits({ ttlMinSec: 100, ttlMaxSec: 300, ttlDefaultSec: 9999 });
+        expect(getShareLimits().ttlDefaultSec).toBe(300);
+        applyShareLimits({ ttlMinSec: 100, ttlMaxSec: 300, ttlDefaultSec: 1 });
+        expect(getShareLimits().ttlDefaultSec).toBe(100);
+    });
+
+    it('caps the ceiling at 10 years for safety', () => {
+        applyShareLimits({ ttlMaxSec: 9_999_999_999 });
+        const TEN_YEARS = 10 * 365 * 24 * 3600;
+        expect(getShareLimits().ttlMaxSec).toBe(TEN_YEARS);
+    });
+
+    it('still honors the NEVER sentinel after applying custom limits', () => {
+        applyShareLimits({ ttlMinSec: 30, ttlMaxSec: 600, ttlDefaultSec: 120 });
+        expect(clampTtlSeconds(0)).toBe(TTL_NEVER);
+        expect(clampTtlSeconds('0')).toBe(TTL_NEVER);
     });
 });
 
