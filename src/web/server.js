@@ -30,7 +30,7 @@ import { getDiskRotator } from '../core/disk-rotator.js';
 import * as integrity from '../core/integrity.js';
 import { findDuplicates as dedupFindDuplicates, deleteByIds as dedupDeleteByIds } from '../core/dedup.js';
 import { ensureShareSecret, verifyShareToken, buildShareUrlPath,
-    clampTtlSeconds, TTL_DEFAULT_SEC } from '../core/share.js';
+    clampTtlSeconds, applyShareLimits } from '../core/share.js';
 import { getRescueSweeper } from '../core/rescue.js';
 import { getRescueStats } from '../core/db.js';
 import { parseTelegramUrl, parseUrlList, UrlParseError } from '../core/url-resolver.js';
@@ -331,10 +331,11 @@ app.use((req, res, next) => {
 // process alive on shutdown.
 startSessionGc();
 
-// Bootstrap the share-link HMAC secret. Lazy-generated on first boot,
-// persisted to config.web.shareSecret. Done inside an async IIFE so a
-// missing config file (very-first boot) doesn't crash module load —
-// re-runs on the next request that touches `readConfigSafe`.
+// Bootstrap the share-link HMAC secret + apply runtime limits from
+// config. Lazy-generated secret on first boot, persisted to
+// config.web.shareSecret. Done inside an async IIFE so a missing config
+// file (very-first boot) doesn't crash module load — re-runs on the
+// next request that touches `readConfigSafe`.
 (async () => {
     try {
         const cfg = await readConfigSafe();
@@ -343,6 +344,7 @@ startSessionGc();
             await writeConfigAtomic(cfg);
             console.log('[share] generated new HMAC secret (first boot or rotation).');
         }
+        applyShareLimits(cfg.advanced?.share || {});
     } catch (e) {
         // Non-fatal — verifyShareToken will throw at first /share/* request
         // and the user will see a 500. Better than crashing the whole web.
@@ -1050,7 +1052,8 @@ app.get('/metrics', (req, res) => {
 // Registered BEFORE the global checkAuth so a friend with a valid /share
 // URL never sees a /login redirect. Three independent gates protect the
 // route:
-//   1. shareLimiter      — 60 req/min per IP, slows brute-forcing the sig
+//   1. shareLimiter      — per-IP rate limit (configurable via
+//                          config.advanced.share.rateLimit{Window,Max})
 //   2. verifyShareToken  — HMAC-SHA256, timing-safe constant-time compare
 //   3. getShareLinkForServe — DB row check (revoked? expired?)
 //
@@ -1058,13 +1061,36 @@ app.get('/metrics', (req, res) => {
 // existing file-streaming code (so Range requests and Content-Type
 // behave identically to /files/*). Cache-Control: no-store keeps a
 // shared CDN/proxy from hijacking the bytes for the next visitor.
+//
+// Both windowMs and limit are passed as functions so a config_updated
+// broadcast that changes them takes effect on the next request without a
+// process restart.
 const shareLimiter = rateLimit({
-    windowMs: 60 * 1000,
-    limit: 60,
+    windowMs: () => {
+        const ms = Number(_currentShareConfig().rateLimitWindowMs);
+        return Number.isFinite(ms) && ms > 0 ? ms : 60_000;
+    },
+    limit: () => {
+        const lim = Number(_currentShareConfig().rateLimitMax);
+        return Number.isFinite(lim) && lim > 0 ? lim : 60;
+    },
     standardHeaders: 'draft-7',
     legacyHeaders: false,
     message: { error: 'Too many requests — slow down.' },
 });
+
+// Tiny cache around the last-loaded config so the rate-limit getters
+// don't sync-read disk on every share request. Refreshed by the
+// config_updated WS broadcast handler below + on first use.
+let _shareConfigCache = null;
+function _currentShareConfig() {
+    if (!_shareConfigCache) {
+        try { _shareConfigCache = (loadConfig().advanced?.share) || {}; }
+        catch { _shareConfigCache = {}; }
+    }
+    return _shareConfigCache;
+}
+function _invalidateShareConfigCache() { _shareConfigCache = null; }
 
 app.get('/share/:linkId', shareLimiter, async (req, res, next) => {
     try {
@@ -1483,7 +1509,18 @@ app.post('/api/monitor/stop', async (req, res) => {
 // considered the source of truth for anything older.
 
 const HISTORY_JOBS_PATH = path.join(DATA_DIR, 'history-jobs.json');
-const HISTORY_RETENTION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+// Resolved from config.advanced.history.retentionDays at every call so a
+// `config_updated` save changes the prune cutoff without a restart.
+// Spec default = 30 days.
+function historyRetentionMs() {
+    try {
+        const days = Number(loadConfig().advanced?.history?.retentionDays);
+        if (Number.isFinite(days) && days >= 1 && days <= 3650) {
+            return days * 24 * 60 * 60 * 1000;
+        }
+    } catch {}
+    return 30 * 24 * 60 * 60 * 1000;
+}
 
 // jobId → { id, state, processed, downloaded, error, group, groupId, limit,
 //           startedAt, finishedAt, cancelled, _runner }
@@ -1495,7 +1532,7 @@ async function loadHistoryJobsFromDisk() {
         const raw = await fs.readFile(HISTORY_JOBS_PATH, 'utf-8');
         const parsed = JSON.parse(raw);
         if (!Array.isArray(parsed)) return [];
-        const cutoff = Date.now() - HISTORY_RETENTION_MS;
+        const cutoff = Date.now() - historyRetentionMs();
         return parsed.filter(j => j && (j.finishedAt || j.startedAt || 0) >= cutoff);
     } catch {
         return [];
@@ -1512,7 +1549,7 @@ async function saveHistoryJobsToDisk() {
     const byId = new Map();
     for (const j of onDisk) byId.set(j.id, j);
     for (const j of finished) byId.set(j.id, j);
-    const cutoff = Date.now() - HISTORY_RETENTION_MS;
+    const cutoff = Date.now() - historyRetentionMs();
     const all = Array.from(byId.values())
         .filter(j => (j.finishedAt || j.startedAt || 0) >= cutoff)
         .sort((a, b) => (b.finishedAt || b.startedAt || 0) - (a.finishedAt || a.startedAt || 0));
@@ -3227,7 +3264,12 @@ app.post('/api/share/links', async (req, res) => {
         const exists = getDb().prepare('SELECT id FROM downloads WHERE id = ?').get(did);
         if (!exists) return res.status(404).json({ error: 'Download not found' });
 
-        const ttl = clampTtlSeconds(ttlSeconds ?? TTL_DEFAULT_SEC);
+        // Pass through whatever the caller sent (including null/undefined).
+        // clampTtlSeconds resolves "missing" → the *current* configured
+        // default — pulling it back out via getShareLimits() here would
+        // race with config_updated. The clamp handles 0 (never expires)
+        // and negative / NaN inputs internally.
+        const ttl = clampTtlSeconds(ttlSeconds);
         // ttl === 0 = "never expires" sentinel — store expires_at = 0
         // (the verifier skips the time gate; revocation still works).
         const expSec = ttl === 0 ? 0 : Math.floor(Date.now() / 1000) + ttl;
@@ -3551,6 +3593,10 @@ app.post('/api/config', async (req, res) => {
                     ...(cur.web || {}),
                     ...(inc.web || {}),
                 },
+                share: {
+                    ...(cur.share || {}),
+                    ...(inc.share || {}),
+                },
             };
             // Clamp every numeric so a typo can't ban the user from logging
             // in (sessionTtlDays=0) or hose the downloader (minConcurrency=0).
@@ -3567,6 +3613,20 @@ app.post('/api/config', async (req, res) => {
             h.backpressureMaxWaitMs   = clampInt(h.backpressureMaxWaitMs, 5000, 3600000, 900000);
             h.shortBreakEveryN        = clampInt(h.shortBreakEveryN,         0, 100000, 100);
             h.longBreakEveryN         = clampInt(h.longBreakEveryN,          0, 1000000, 1000);
+            // Recent-backfills retention. Anything older than this gets
+            // pruned at next read of `data/history-jobs.json`. 1-3650 days.
+            h.retentionDays           = clampInt(h.retentionDays,            1, 3650, 30);
+
+            const sh = merged.share;
+            // 1 second floor / 10 years ceiling. Defaults match the spec
+            // values share.js uses pre-config (60 / 90d / 7d).
+            sh.ttlMinSec       = clampInt(sh.ttlMinSec,        1, 315360000, 60);
+            sh.ttlMaxSec       = clampInt(sh.ttlMaxSec, sh.ttlMinSec, 315360000, 7776000);
+            // ttlDefault must lie inside [min, max] — clamped here so the
+            // SPA can't ship an out-of-range default that fails the picker.
+            sh.ttlDefaultSec   = clampInt(sh.ttlDefaultSec, sh.ttlMinSec, sh.ttlMaxSec, 604800);
+            sh.rateLimitWindowMs = clampInt(sh.rateLimitWindowMs, 1000, 3600000, 60000);
+            sh.rateLimitMax      = clampInt(sh.rateLimitMax,         1, 100000,    60);
 
             const r = merged.diskRotator;
             r.sweepBatch         = clampInt(r.sweepBatch,         1,   1000, 50);
@@ -3600,6 +3660,12 @@ app.post('/api/config', async (req, res) => {
         await fs.writeFile(tmpPath, JSON.stringify(newConfig, null, 4));
         await fs.rename(tmpPath, CONFIG_PATH);
         invalidateConfigCache();
+        // Re-apply runtime knobs that depend on advanced.share / advanced.history
+        // so a save takes effect immediately without a process restart.
+        try {
+            applyShareLimits(newConfig.advanced?.share || {});
+            _invalidateShareConfigCache();
+        } catch {}
 
         // Reset the lazy AccountManager singleton if Telegram credentials
         // changed — a stale instance would still be wired to the old apiId.
