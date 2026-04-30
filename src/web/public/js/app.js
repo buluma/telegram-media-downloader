@@ -40,6 +40,35 @@ import { showQueuePage, initQueue } from './queue.js';
 const _scheduledRenders = new Map(); // fn → { timer, frame }
 const RENDER_COALESCE_MS = 150;
 const SIDEBAR_GROUPS_COLLAPSED_KEY = 'tgdl-sidebar-groups-collapsed';
+const THUMBS_VISIBLE_KEY = 'tgdl-thumbs-visible';
+
+function _loadThumbsVisiblePref() {
+    try {
+        const raw = localStorage.getItem(THUMBS_VISIBLE_KEY);
+        if (raw == null) return false; // default: hidden until user enables
+        return raw === '1';
+    } catch {
+        return false;
+    }
+}
+
+function _applyThumbsVisible(visible, { persist = true, rerender = false } = {}) {
+    state.thumbsVisible = !!visible;
+    if (persist) {
+        try { localStorage.setItem(THUMBS_VISIBLE_KEY, state.thumbsVisible ? '1' : '0'); } catch {}
+    }
+    const btn = document.getElementById('thumbs-toggle-btn');
+    if (btn) {
+        btn.classList.toggle('bg-tg-blue', state.thumbsVisible);
+        btn.classList.toggle('text-white', state.thumbsVisible);
+        btn.classList.toggle('bg-tg-panel', !state.thumbsVisible);
+        btn.classList.toggle('text-tg-text', !state.thumbsVisible);
+        btn.title = state.thumbsVisible ? 'Hide thumbnails' : 'Show thumbnails';
+        const icon = btn.querySelector('i');
+        if (icon) icon.className = state.thumbsVisible ? 'ri-image-line' : 'ri-eye-off-line';
+    }
+    if (rerender && state.currentPage === 'viewer') renderMediaGrid();
+}
 
 function scheduleRender(fn) {
     if (_scheduledRenders.has(fn)) return;
@@ -55,6 +84,8 @@ function scheduleRender(fn) {
 
 // ============ Initialization ============
 async function init() {
+    _applyThumbsVisible(_loadThumbsVisiblePref(), { persist: false, rerender: false });
+
     // Resolve the session role BEFORE the SPA registers any UI — it drives
     // the body[data-role] CSS gate (admin-only DOM) and the router redirect
     // for guest sessions trying to deep-link into admin routes. Falls back
@@ -582,6 +613,15 @@ function renderGroupsList() {
     });
     
     const sorted = Array.from(map.values());
+    const q = String(state.downloadedGroupsQuery || '').trim().toLowerCase();
+    const filtered = q
+        ? sorted.filter((g) => {
+            const id = String(g.downloadId || g.id || '');
+            const name = getGroupName(id, { fallback: g.name || '' });
+            const hay = `${name} ${id}`.toLowerCase();
+            return hay.includes(q);
+        })
+        : sorted;
 
     if (sorted.length === 0) {
         list.innerHTML = renderEmptyState({
@@ -593,10 +633,18 @@ function renderGroupsList() {
         });
         return;
     }
+    if (filtered.length === 0) {
+        list.innerHTML = renderEmptyState({
+            icon: 'ri-search-line',
+            title: i18nT('groups.empty.search_title', 'No matching groups'),
+            body: i18nT('groups.empty.search_body', 'Try a different group name or id.'),
+        });
+        return;
+    }
 
     state.activeRings = state.activeRings || new Set();
     let needsResolve = false;
-    const html = sorted.map(g => {
+    const html = filtered.map(g => {
         const id = String(g.downloadId || g.id || g.name);
         // Route every render through the canonical lookup so a name set by
         // the WS `groups_refreshed` handler propagates without a reload.
@@ -938,7 +986,7 @@ function renderMediaGrid(opts = {}) {
             // Falls back to a typed-icon placeholder if the source isn't
             // thumbnailable (audio / document / dead source).
             const thumbW = _isMobileViewport() ? 240 : 320;
-            const thumbUrl = file.id != null
+            const thumbUrl = (state.thumbsVisible && file.id != null)
                 ? `/api/thumbs/${encodeURIComponent(file.id)}?w=${thumbW}`
                 : null;
             // Onerror falls back to displaying nothing (the panel
@@ -946,7 +994,7 @@ function renderMediaGrid(opts = {}) {
             // degradation for a missing/dead file.
             const imgFallback = `<img loading="lazy" decoding="async" class="w-full h-full object-cover" alt="" `
                 + (thumbUrl ? `src="${escapeHtml(thumbUrl)}"` : '')
-                + ` onerror="this.style.display='none'">`;
+                + ` onload="this.classList.add('loaded')" onerror="this.style.display='none'">`;
             const docFallback = `<div class="w-full h-full flex flex-col items-center justify-center">
                 <i class="${getFileIcon(file.extension)} text-3xl text-tg-textSecondary"></i>
             </div>`;
@@ -1256,6 +1304,7 @@ async function setupMediaSearch() {
     const input = document.getElementById('media-search');
     const clear = document.getElementById('media-search-clear');
     const selectBtn = document.getElementById('select-mode-btn');
+    const thumbsBtn = document.getElementById('thumbs-toggle-btn');
     const selBar = document.getElementById('selection-bar');
     const selDel = document.getElementById('selection-delete');
     const selClear = document.getElementById('selection-clear');
@@ -1332,6 +1381,11 @@ async function setupMediaSearch() {
             if (grid) grid.classList.add('in-select-mode');
         }
         updateSelectionBar();
+    });
+
+    _applyThumbsVisible(state.thumbsVisible, { persist: false, rerender: false });
+    thumbsBtn?.addEventListener('click', () => {
+        _applyThumbsVisible(!state.thumbsVisible, { persist: true, rerender: true });
     });
 
     selClear?.addEventListener('click', () => {
@@ -1917,6 +1971,11 @@ function setupEventListeners() {
             const idMatch = id && id.toLowerCase().includes(query);
             item.style.display = (!query || text.includes(query) || idMatch) ? '' : 'none';
         });
+    });
+
+    document.getElementById('downloaded-groups-search')?.addEventListener('input', (e) => {
+        state.downloadedGroupsQuery = e.target.value || '';
+        renderGroupsList();
     });
     
     // Media tabs

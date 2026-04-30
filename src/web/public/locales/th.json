@@ -31,6 +31,7 @@
     "sidebar.downloaded_groups": "กลุ่มที่ดาวน์โหลดแล้ว",
     "sidebar.downloaded_groups_expand": "ขยายกลุ่มที่ดาวน์โหลดแล้ว",
     "sidebar.downloaded_groups_collapse": "ย่อกลุ่มที่ดาวน์โหลดแล้ว",
+    "sidebar.downloaded_groups_search": "ค้นหากลุ่มแบบด่วน…",
     "sidebar.disk": "ดิสก์",
     "sidebar.files": "ไฟล์",
 
@@ -246,6 +247,8 @@
     "groups.empty.title": "ยังไม่มีกลุ่ม",
     "groups.empty.body": "เพิ่มแชต Telegram จากหน้าแชตเพื่อเริ่มดาวน์โหลด",
     "groups.empty.cta": "เลือกแชต",
+    "groups.empty.search_title": "ไม่พบกลุ่มที่ตรงกัน",
+    "groups.empty.search_body": "ลองค้นหาด้วยชื่อกลุ่มหรือไอดีอื่น",
     "groups.unknown_chat": "แชตไม่ทราบชื่อ",
     "groups.resolving": "กำลังระบุข้อมูล… · {count} ไฟล์",
     "groups.files_size": "{count} ไฟล์ · {size}",
