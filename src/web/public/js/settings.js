@@ -867,6 +867,7 @@ function wireMaintenance() {
     once(document.getElementById('maint-shares-btn'), maintManageShares);
     once(document.getElementById('maint-thumbs-build-btn'), maintBuildThumbs);
     once(document.getElementById('maint-thumbs-rebuild-btn'), maintRebuildThumbs);
+    once(document.getElementById('maint-update-btn'), maintInstallUpdate);
     once(document.getElementById('maint-logs-btn'), maintBrowseLogs);
     once(document.getElementById('maint-config-btn'), maintViewConfig);
     once(document.getElementById('maint-export-btn'), maintExportSession);
@@ -874,6 +875,7 @@ function wireMaintenance() {
 
     // Refresh the cache stat line on first open + after each operation.
     refreshThumbsStats();
+    refreshUpdateStatus();
 }
 
 async function refreshThumbsStats() {
@@ -904,6 +906,48 @@ async function maintBuildThumbs() {
     } finally {
         if (btn) { btn.disabled = false; btn.textContent = i18nT('maintenance.thumbs.action', 'Build'); }
     }
+}
+
+async function maintInstallUpdate() {
+    // Reuse the chooser sheet from statusbar.js so there's one canonical
+    // install flow (same confirm step, same overlay, same WS handling).
+    // We pass `latest` if we know it, otherwise the chooser falls back
+    // to "Install" with the version unspecified.
+    let latest = null;
+    let releaseUrl = null;
+    try {
+        const v = await api.get('/api/version/check');
+        latest = v?.latest || null;
+        releaseUrl = v?.releaseUrl || null;
+    } catch { /* ignore */ }
+    if (!latest) {
+        showToast(i18nT('maintenance.update.up_to_date',
+            'Already running the latest release.'), 'success');
+        return;
+    }
+    try {
+        const m = await import('./statusbar.js');
+        if (typeof m._openUpdateChooser === 'function') {
+            await m._openUpdateChooser(latest, releaseUrl);
+        }
+    } catch (e) {
+        showToast(e?.message || 'Failed to open update sheet', 'error');
+    }
+}
+
+async function refreshUpdateStatus() {
+    const el = document.getElementById('maint-update-status');
+    if (!el) return;
+    try {
+        const s = await api.get('/api/update/status');
+        if (s.available) {
+            el.textContent = '· ' + i18nT('maintenance.update.ready', 'auto-update ready');
+        } else if (!s.inDocker) {
+            el.textContent = '· ' + i18nT('maintenance.update.not_docker', 'standalone install — manual update only');
+        } else {
+            el.textContent = '· ' + i18nT('maintenance.update.no_watchtower', 'enable the auto-update profile to use this');
+        }
+    } catch { /* leave blank */ }
 }
 
 async function maintRebuildThumbs() {
