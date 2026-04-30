@@ -1272,16 +1272,16 @@
 
             <!-- Groups List -->
             <div class="flex-1 overflow-y-auto overscroll-contain">
-                <button id="downloaded-groups-toggle" type="button"
-                    class="w-full px-2 py-2 text-xs text-tg-textSecondary uppercase tracking-wide flex items-center justify-between hover:bg-tg-hover transition-colors"
-                    aria-expanded="true"
-                    data-i18n-aria-label="sidebar.downloaded_groups_collapse"
-                    data-i18n-title="sidebar.downloaded_groups_collapse"
-                    title="Collapse downloaded groups">
-                    <span data-i18n="sidebar.downloaded_groups">Downloaded Groups</span>
-                    <i id="downloaded-groups-chevron" class="ri-arrow-up-s-line text-base normal-case" aria-hidden="true"></i>
-                </button>
-                <div id="downloaded-groups-body">
+                <div class="sticky top-0 bg-tg-bg z-20">
+                    <button id="downloaded-groups-toggle" type="button"
+                        class="w-full px-2 py-2 text-xs text-tg-textSecondary uppercase tracking-wide flex items-center justify-between hover:bg-tg-hover transition-colors"
+                        aria-expanded="true"
+                        data-i18n-aria-label="sidebar.downloaded_groups_collapse"
+                        data-i18n-title="sidebar.downloaded_groups_collapse"
+                        title="Collapse downloaded groups">
+                        <span data-i18n="sidebar.downloaded_groups">Downloaded Groups</span>
+                        <i id="downloaded-groups-chevron" class="ri-arrow-up-s-line text-base normal-case" aria-hidden="true"></i>
+                    </button>
                     <div class="px-2 pb-2">
                         <div class="relative">
                             <i class="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-tg-textSecondary"></i>
@@ -1291,8 +1291,8 @@
                                 class="tg-input pl-9 py-1.5 text-sm">
                         </div>
                     </div>
-                    <div id="groups-list"></div>
                 </div>
+                <div id="groups-list"></div>
             </div>
 
             <!-- Footer Stats -->
@@ -1300,9 +1300,7 @@
                 <div class="flex items-center justify-between text-sm">
                     <span class="text-tg-textSecondary" data-i18n="sidebar.disk">Disk</span>
                     <span id="disk-usage" class="text-tg-text">--</span>
-                </div>
-                <div class="flex items-center justify-between text-sm mt-2">
-                    <span class="text-tg-textSecondary" data-i18n="sidebar.files">Files</span>
+                    <span class="text-tg-textSecondary mx-4" data-i18n="sidebar.files">Files</span>
                     <span id="total-files" class="text-tg-text">--</span>
                 </div>
             </div>
