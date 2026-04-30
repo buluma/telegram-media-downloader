@@ -685,6 +685,10 @@
     "settings.advanced.batch_insert": "ขนาด Batch Insert",
     "settings.advanced.batch_insert_help": "จำนวน row ที่เก็บไว้ก่อน commit ตอน backfill ค่ายิ่งสูง = ไวขึ้นกับไฟล์เล็ก ใช้ RAM เพิ่มเล็กน้อย",
     "backfill.already_running": "มีการ backfill กลุ่มนี้ทำงานอยู่แล้ว",
+    "header.view_mode.grid": "ตาราง",
+    "header.view_mode.compact": "ตารางย่อ",
+    "header.view_mode.list": "รายการ",
+    "viewer.open": "เปิด",
 
     "maintenance.update.title": "ติดตั้งอัปเดต",
     "maintenance.update.help": "ดึง image ล่าสุดและสร้าง container ใหม่แทนที่ตัวเดิม volume ของ data และ config จะถูกเก็บไว้เช่นเดิม ฐานข้อมูล SQLite จะถูก snapshot ไว้ที่ data/backups/ ก่อน หน้าจอ dashboard จะเชื่อมต่อใหม่อัตโนมัติเมื่อ container ใหม่ผ่าน healthcheck",

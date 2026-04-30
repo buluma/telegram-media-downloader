@@ -685,6 +685,10 @@
     "settings.advanced.batch_insert": "Batch Insert Size",
     "settings.advanced.batch_insert_help": "DB rows buffered before commit during backfill. Higher = faster on small files; uses a tiny bit more RAM.",
     "backfill.already_running": "A backfill is already running for this group",
+    "header.view_mode.grid": "Grid",
+    "header.view_mode.compact": "Compact",
+    "header.view_mode.list": "List",
+    "viewer.open": "Open",
 
     "maintenance.update.title": "Install Update",
     "maintenance.update.help": "Pulls the latest container image and recreates the container in place. The data volume and config are preserved; the SQLite database is snapshotted to data/backups/ first. The dashboard reconnects automatically once the new container is healthy.",
