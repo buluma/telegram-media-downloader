@@ -279,11 +279,14 @@ async function init() {
     window.purgeGroup = purgeGroup;
     window.purgeAll = purgeAll;
     
-    // View-mode toggle in the header — cycles grid → compact → list. Persists
-    // in localStorage so the choice survives reloads. The actual layout is
-    // CSS-driven (see .media-grid.view-* in index.html).
+    // View-mode picker in the header — dropdown with Grid / Compact / List
+    // options (replaces the v2.3.0 cycle button so users can pick directly
+    // instead of clicking through). All three modes share the same tile
+    // markup; layout is pure CSS (`media-grid.view-<mode>` in index.html),
+    // so switching is instant — no re-render, no scroll-position drift.
     const viewModeBtn = document.getElementById('view-mode-btn');
-    if (viewModeBtn) {
+    const viewModeMenu = document.getElementById('view-mode-menu');
+    if (viewModeBtn && viewModeMenu) {
         const VIEW_MODES = ['grid', 'compact', 'list'];
         const VIEW_ICON = { grid: 'ri-layout-grid-line', compact: 'ri-grid-line', list: 'ri-list-check-2' };
         const applyViewMode = (mode) => {
@@ -296,12 +299,39 @@ async function init() {
             }
             const icon = viewModeBtn.querySelector('i');
             if (icon) icon.className = `${VIEW_ICON[mode] || VIEW_ICON.grid} text-xl text-tg-textSecondary`;
+            // Refresh the menu's active state so the checkmark follows.
+            viewModeMenu.querySelectorAll('[data-vm]').forEach(b => {
+                b.dataset.active = b.dataset.vm === mode ? '1' : '0';
+            });
         };
         const stored = (() => { try { return localStorage.getItem('tgdl-view-mode'); } catch { return null; } })();
         applyViewMode(VIEW_MODES.includes(stored) ? stored : 'grid');
-        viewModeBtn.addEventListener('click', () => {
-            const next = VIEW_MODES[(VIEW_MODES.indexOf(state.viewMode) + 1) % VIEW_MODES.length];
-            applyViewMode(next);
+
+        const closeMenu = () => {
+            viewModeMenu.classList.remove('open');
+            viewModeBtn.setAttribute('aria-expanded', 'false');
+        };
+        viewModeBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const open = viewModeMenu.classList.toggle('open');
+            viewModeBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        });
+        viewModeMenu.querySelectorAll('[data-vm]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                applyViewMode(btn.dataset.vm);
+                closeMenu();
+            });
+        });
+        // Click outside / Esc closes the menu — kept on `document` so any
+        // click that wasn't on the menu itself collapses it.
+        document.addEventListener('click', (e) => {
+            if (!viewModeMenu.classList.contains('open')) return;
+            if (viewModeMenu.contains(e.target) || viewModeBtn.contains(e.target)) return;
+            closeMenu();
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && viewModeMenu.classList.contains('open')) closeMenu();
         });
     }
 
@@ -885,26 +915,55 @@ function renderMediaGrid(opts = {}) {
             const imgFallback = `<img loading="lazy" decoding="async" class="w-full h-full object-cover" alt="" `
                 + (thumbUrl ? `src="${escapeHtml(thumbUrl)}"` : '')
                 + ` onerror="this.style.display='none'">`;
-            const videoTile = `
-                <div class="relative w-full h-full bg-black">
-                    ${thumbUrl ? imgFallback : ''}
-                    <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
-                        <div class="w-10 h-10 rounded-full bg-black/55 flex items-center justify-center">
-                            <i class="ri-play-fill text-white text-xl ml-0.5"></i>
+            const docFallback = `<div class="w-full h-full flex flex-col items-center justify-center">
+                <i class="${getFileIcon(file.extension)} text-3xl text-tg-textSecondary"></i>
+            </div>`;
+            // Inner thumb content — the visual changes per file type (img,
+            // video w/ play overlay, doc icon). Wrapped in `.tile-thumb`
+            // so list-mode CSS can size it as a 56 px square cell.
+            const thumbInner = file.type === 'images'
+                ? imgFallback
+                : file.type === 'videos'
+                    ? `<div class="relative w-full h-full bg-black">
+                        ${thumbUrl ? imgFallback : ''}
+                        <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                            <div class="w-10 h-10 rounded-full bg-black/55 flex items-center justify-center">
+                                <i class="ri-play-fill text-white text-xl ml-0.5"></i>
+                            </div>
                         </div>
-                    </div>
-                </div>`;
+                       </div>`
+                    : docFallback;
+            // Filename-under-tile fallback for non-image-non-video types
+            // in GRID/COMPACT modes (where doc icon needs context). CSS
+            // hides this in list mode (which has its own tile-name).
+            const gridDocLabel = (file.type !== 'images' && file.type !== 'videos')
+                ? `<span class="absolute inset-x-0 bottom-0 text-[11px] text-tg-textSecondary truncate text-center px-2 py-1 bg-black/40">${escapeHtml(file.name || '')}</span>`
+                : '';
+            // List-mode metadata. `tile-text/size/date` are display:none in
+            // grid+compact (CSS), display:flex/grid in list. Group name +
+            // file extension in the sub line, full size + date in their
+            // own columns. Date format = locale short.
+            const groupLine = file.groupName || file.groupId || '';
+            const sizeLine = file.sizeFormatted || (file.size ? formatBytes(file.size) : '');
+            const dateLine = file.modified ? formatRelativeTime(file.modified) : '';
             return `
-            <div class="media-item relative aspect-square bg-tg-panel rounded overflow-hidden cursor-pointer ${ringClass}" data-index="${originalIndex}" data-path="${escapeHtml(file.fullPath)}">
-                ${file.type === 'images' ?
-                    imgFallback :
-                    file.type === 'videos' ?
-                    videoTile :
-                    `<div class="w-full h-full flex flex-col items-center justify-center">
-                        <i class="${getFileIcon(file.extension)} text-3xl text-tg-textSecondary"></i>
-                        <span class="text-xs text-tg-textSecondary mt-1 truncate px-2 w-full text-center">${escapeHtml(file.name || '')}</span>
-                    </div>`
-                }
+            <div class="media-item relative ${ringClass}" data-index="${originalIndex}" data-path="${escapeHtml(file.fullPath)}"${file.id != null ? ` data-id="${file.id}"` : ''}>
+                <div class="tile-thumb relative w-full h-full overflow-hidden">
+                    ${thumbInner}
+                    ${gridDocLabel}
+                </div>
+                <div class="tile-text">
+                    <div class="tile-name" title="${escapeHtml(file.name || '')}">${escapeHtml(file.name || '')}</div>
+                    <div class="tile-sub">${escapeHtml(groupLine)}</div>
+                </div>
+                <div class="tile-size">${escapeHtml(sizeLine)}</div>
+                <div class="tile-date" title="${file.modified ? new Date(file.modified).toLocaleString() : ''}">${escapeHtml(dateLine)}</div>
+                <div class="tile-actions">
+                    <button type="button" class="w-7 h-7 rounded-md hover:bg-tg-hover flex items-center justify-center text-tg-textSecondary"
+                            data-tile-open title="${escapeHtml(i18nT('viewer.open', 'Open'))}" aria-label="${escapeHtml(i18nT('viewer.open', 'Open'))}">
+                        <i class="ri-eye-line"></i>
+                    </button>
+                </div>
                 ${checkBadge}
                 ${rescueBadge}
             </div>`;
