@@ -13,7 +13,15 @@ import { openSheet, confirmSheet, promptSheet } from './sheet.js';
 
 export async function loadSettings() {
     try {
-        const config = await api.get('/api/config');
+        // Guest sessions can't read /api/config (admin-only). Swallow the 403
+        // and continue with an empty config — the localStorage-backed Video
+        // Player + Appearance + font wiring below still runs, which is the
+        // only Settings surface a guest sees anyway.
+        const isGuest = (typeof document !== 'undefined' && document.body?.dataset?.role === 'guest');
+        let config = {};
+        if (!isGuest) {
+            config = await api.get('/api/config');
+        }
 
         // Defensive: ensure the font picker is populated every time the
         // user opens the Settings page. The boot-time wire in app.js
@@ -364,21 +372,114 @@ export async function loadSettings() {
             ? i18nT('settings.tg_api.saved_placeholder', '(saved — leave blank to keep)')
             : i18nT('settings.tg_api.id_placeholder', 'From my.telegram.org');
 
-        // Accounts list rendered async (independent from main settings load)
-        loadAccounts().catch(() => {});
+        // Admin-only sub-panels — skip for guest sessions to avoid 403s.
+        if (!isGuest) {
+            // Accounts list rendered async (independent from main settings load)
+            loadAccounts().catch(() => {});
 
-        // Maintenance panel — wire once. Idempotent because loadSettings can
-        // run again on config_updated WS events.
-        wireMaintenance();
+            // Maintenance panel — wire once. Idempotent because loadSettings can
+            // run again on config_updated WS events.
+            wireMaintenance();
 
-        // Advanced runtime tunables. Every field falls back to the same
-        // hardcoded constant the consumer uses, so a missing `advanced` block
-        // (older config.json) renders defaults that match current behaviour.
-        loadAdvanced(config);
+            // Advanced runtime tunables. Every field falls back to the same
+            // hardcoded constant the consumer uses, so a missing `advanced` block
+            // (older config.json) renders defaults that match current behaviour.
+            loadAdvanced(config);
+
+            // Guest password sub-block (lives inside Dashboard Security).
+            wireGuestPassword();
+        }
 
     } catch (e) {
         console.error('Failed to load settings', e);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Guest password (admin-only sub-block in Dashboard Security)
+// ---------------------------------------------------------------------------
+let _guestWired = false;
+async function wireGuestPassword() {
+    const enableToggle = document.getElementById('setting-guest-enabled');
+    const setBtn = document.getElementById('guest-set-btn');
+    const clearBtn = document.getElementById('guest-clear-btn');
+    const pwInput = document.getElementById('setting-guest-password');
+    const status = document.getElementById('guest-enable-status');
+    if (!enableToggle || !setBtn || !clearBtn || !pwInput) return;
+
+    const refreshStatus = async () => {
+        try {
+            const ac = await api.get('/api/auth_check');
+            const enabled = !!ac?.guestEnabled;
+            enableToggle.classList.toggle('active', enabled);
+            if (status) {
+                status.textContent = enabled
+                    ? i18nT('settings.security.guest_enabled_on', 'Enabled — share the guest password with read-only viewers.')
+                    : i18nT('settings.security.guest_enabled_off', 'Disabled — set a guest password and toggle on to share view-only access.');
+            }
+        } catch { /* admin-only endpoint should always succeed for admin */ }
+    };
+    refreshStatus();
+
+    if (_guestWired) return;
+    _guestWired = true;
+
+    enableToggle.addEventListener('click', async (e) => {
+        e.preventDefault();
+        const willEnable = !enableToggle.classList.contains('active');
+        try {
+            const r = await api.post('/api/auth/guest-password', { enabled: willEnable });
+            enableToggle.classList.toggle('active', !!r.enabled);
+            refreshStatus();
+            showToast(willEnable
+                ? i18nT('settings.security.guest_enabled_toast_on', 'Guest access enabled')
+                : i18nT('settings.security.guest_enabled_toast_off', 'Guest access disabled — existing guest sessions revoked'));
+        } catch (err) {
+            showToast(err.data?.error || err.message || 'Failed', 'error');
+        }
+    });
+
+    setBtn.addEventListener('click', async () => {
+        const password = pwInput.value;
+        if (!password || password.length < 8) {
+            showToast(i18nT('settings.security.guest_password_short', 'Guest password must be at least 8 characters'), 'error');
+            return;
+        }
+        setBtn.disabled = true;
+        try {
+            await api.post('/api/auth/guest-password', { password });
+            pwInput.value = '';
+            refreshStatus();
+            showToast(i18nT('settings.security.guest_password_saved', 'Guest password saved'));
+        } catch (err) {
+            const code = err.data?.code;
+            if (code === 'SAME_AS_ADMIN') {
+                showToast(i18nT('settings.security.guest_same_as_admin', 'Guest password must differ from admin'), 'error');
+            } else {
+                showToast(err.data?.error || err.message || 'Failed', 'error');
+            }
+        } finally {
+            setBtn.disabled = false;
+        }
+    });
+
+    clearBtn.addEventListener('click', async () => {
+        const ok = await confirmSheet({
+            title: i18nT('settings.security.guest_clear_title', 'Clear guest password?'),
+            body: i18nT('settings.security.guest_clear_body', 'This will disable guest access and sign out anyone currently logged in as guest.'),
+            confirmText: i18nT('settings.security.guest_clear_confirm', 'Clear'),
+            destructive: true,
+        });
+        if (!ok) return;
+        try {
+            await api.post('/api/auth/guest-password', { clear: true });
+            pwInput.value = '';
+            refreshStatus();
+            showToast(i18nT('settings.security.guest_cleared_toast', 'Guest access cleared'));
+        } catch (err) {
+            showToast(err.data?.error || err.message || 'Failed', 'error');
+        }
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -773,10 +874,315 @@ function wireMaintenance() {
     once(document.getElementById('maint-db-check-btn'), maintDbIntegrity);
     once(document.getElementById('maint-db-vacuum-btn'), maintDbVacuum);
     once(document.getElementById('maint-verify-btn'), maintVerifyFiles);
+    once(document.getElementById('maint-dedup-btn'), maintFindDuplicates);
+    once(document.getElementById('maint-shares-btn'), maintManageShares);
+    once(document.getElementById('maint-thumbs-build-btn'), maintBuildThumbs);
+    once(document.getElementById('maint-thumbs-rebuild-btn'), maintRebuildThumbs);
+    once(document.getElementById('maint-update-btn'), maintInstallUpdate);
     once(document.getElementById('maint-logs-btn'), maintBrowseLogs);
     once(document.getElementById('maint-config-btn'), maintViewConfig);
     once(document.getElementById('maint-export-btn'), maintExportSession);
     once(document.getElementById('maint-signout-all-btn'), maintRevokeAllSessions);
+
+    // Refresh the cache stat line on first open + after each operation.
+    refreshThumbsStats();
+    refreshUpdateStatus();
+}
+
+async function refreshThumbsStats() {
+    const el = document.getElementById('maint-thumbs-stats');
+    if (!el) return;
+    try {
+        const r = await api.get('/api/maintenance/thumbs/stats');
+        const mb = r.bytes ? (r.bytes / (1024 * 1024)).toFixed(1) : '0';
+        const noFf = r.ffmpegAvailable === false
+            ? ' · ' + i18nT('maintenance.thumbs.no_ffmpeg', 'ffmpeg unavailable — image-only')
+            : '';
+        el.textContent = `· ${r.count} cached, ${mb} MB${noFf}`;
+    } catch { /* ignore */ }
+}
+
+async function maintBuildThumbs() {
+    const btn = document.getElementById('maint-thumbs-build-btn');
+    if (btn) { btn.disabled = true; btn.textContent = i18nT('maintenance.thumbs.building', 'Building…'); }
+    try {
+        const r = await api.post('/api/maintenance/thumbs/build-all', {});
+        showToast(i18nTf('maintenance.thumbs.done',
+            { built: r.built, skipped: r.skipped, scanned: r.scanned },
+            `Built ${r.built}, ${r.skipped} already cached out of ${r.scanned}`),
+            'success');
+        refreshThumbsStats();
+    } catch (e) {
+        showToast(e?.data?.error || e.message || 'Failed', 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = i18nT('maintenance.thumbs.action', 'Build'); }
+    }
+}
+
+async function maintInstallUpdate() {
+    // Reuse the chooser sheet from statusbar.js so there's one canonical
+    // install flow (same confirm step, same overlay, same WS handling).
+    // We pass `latest` if we know it, otherwise the chooser falls back
+    // to "Install" with the version unspecified.
+    let latest = null;
+    let releaseUrl = null;
+    try {
+        const v = await api.get('/api/version/check');
+        latest = v?.latest || null;
+        releaseUrl = v?.releaseUrl || null;
+    } catch { /* ignore */ }
+    if (!latest) {
+        showToast(i18nT('maintenance.update.up_to_date',
+            'Already running the latest release.'), 'success');
+        return;
+    }
+    try {
+        const m = await import('./statusbar.js');
+        if (typeof m._openUpdateChooser === 'function') {
+            await m._openUpdateChooser(latest, releaseUrl);
+        }
+    } catch (e) {
+        showToast(e?.message || 'Failed to open update sheet', 'error');
+    }
+}
+
+async function refreshUpdateStatus() {
+    const el = document.getElementById('maint-update-status');
+    if (!el) return;
+    try {
+        const s = await api.get('/api/update/status');
+        if (s.available) {
+            el.textContent = '· ' + i18nT('maintenance.update.ready', 'auto-update ready');
+        } else if (!s.inDocker) {
+            el.textContent = '· ' + i18nT('maintenance.update.not_docker', 'standalone install — manual update only');
+        } else {
+            el.textContent = '· ' + i18nT('maintenance.update.no_watchtower', 'enable the auto-update profile to use this');
+        }
+    } catch { /* leave blank */ }
+}
+
+async function maintRebuildThumbs() {
+    const ok = await confirmSheet({
+        title: i18nT('maintenance.thumbs.rebuild_title', 'Rebuild thumbnail cache?'),
+        body: i18nT('maintenance.thumbs.rebuild_body', 'Wipes every cached thumbnail. The next gallery scroll regenerates them on demand. Useful when previews look stale or after a quality tweak.'),
+        confirmText: i18nT('maintenance.thumbs.rebuild_confirm', 'Wipe cache'),
+        destructive: true,
+    });
+    if (!ok) return;
+    const btn = document.getElementById('maint-thumbs-rebuild-btn');
+    if (btn) btn.disabled = true;
+    try {
+        const r = await api.post('/api/maintenance/thumbs/rebuild', {});
+        showToast(i18nTf('maintenance.thumbs.rebuilt',
+            { removed: r.removed },
+            `Wiped ${r.removed} cached thumbnails`),
+            'success');
+        refreshThumbsStats();
+    } catch (e) {
+        showToast(e?.data?.error || e.message || 'Failed', 'error');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+async function maintManageShares() {
+    try {
+        const m = await import('./share.js');
+        await m.openAllSharesSheet();
+    } catch (e) {
+        console.error('shares sheet load:', e);
+        showToast(i18nT('share.error.load', 'Could not open share manager — try again'), 'error');
+    }
+}
+
+// Find duplicate files by SHA-256 — opens a sheet showing every set of
+// byte-identical copies, lets the user pick which to keep, then deletes
+// the rest. Two-step UX: scan first (no destructive op), explicit Delete
+// confirmation second.
+async function maintFindDuplicates() {
+    const btn = document.getElementById('maint-dedup-btn');
+    if (btn) { btn.disabled = true; btn.textContent = i18nT('maintenance.dedup.scanning', 'Scanning…'); }
+    showToast(i18nT('maintenance.dedup.starting', 'Scanning files — this may take a while on the first run'), 'info');
+    try {
+        const r = await api.post('/api/maintenance/dedup/scan', {});
+        if (!r.duplicateSets?.length) {
+            showToast(i18nTf('maintenance.dedup.none',
+                { scanned: r.scanned ?? 0 },
+                `No duplicates found — scanned ${r.scanned ?? 0} files.`),
+                'success');
+            return;
+        }
+        await openDedupSheet(r.duplicateSets);
+    } catch (e) {
+        showToast(e?.data?.error || e.message || 'Failed', 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = i18nT('maintenance.dedup.action', 'Scan'); }
+    }
+}
+
+function _formatBytesLocal(bytes) {
+    const n = Number(bytes) || 0;
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    if (n < 1024 * 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + ' MB';
+    return (n / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+}
+
+function _isImage(t) { return /^(image|photo)/i.test(t || ''); }
+function _isVideo(t) { return /^video/i.test(t || ''); }
+
+async function openDedupSheet(sets) {
+    const totalSets = sets.length;
+    const totalDupes = sets.reduce((s, x) => s + (x.count - 1), 0);
+    const totalReclaim = sets.reduce((s, x) => s + (x.fileSize * (x.count - 1)), 0);
+
+    // Default selection — keep the OLDEST (first by createdAt asc) of every
+    // set, mark the rest for deletion. Users can flip per-row before confirm.
+    const selected = new Set();   // ids marked FOR DELETION
+    for (const set of sets) {
+        for (let i = 1; i < set.files.length; i++) selected.add(set.files[i].id);
+    }
+
+    const renderRow = (file, set) => {
+        const isThumb = _isImage(file.fileType);
+        const isVideo = _isVideo(file.fileType);
+        // Server-side WebP thumbnail — way smaller than the full file and
+        // works for video previews too (first-frame extraction).
+        const fileUrl = `/files/${encodeURIComponent(file.filePath || '')}?inline=1`;
+        const thumbUrl = (isThumb || isVideo)
+            ? `/api/thumbs/${encodeURIComponent(file.id)}?w=120`
+            : null;
+        const thumb = thumbUrl
+            ? `<img loading="lazy" decoding="async" class="w-12 h-12 object-cover rounded-md bg-tg-bg/40" src="${escapeHtml(thumbUrl)}" alt="" onerror="this.style.display='none'">`
+            : `<div class="w-12 h-12 rounded-md bg-tg-bg/60 flex items-center justify-center text-tg-textSecondary"><i class="ri-file-line text-xl"></i></div>`;
+        const when = file.createdAt ? new Date(file.createdAt).toLocaleString() : '—';
+        const checked = selected.has(file.id) ? 'checked' : '';
+        return `
+            <label class="flex items-center gap-2 p-2 rounded-md hover:bg-tg-hover cursor-pointer" data-file-row="${file.id}">
+                <input type="checkbox" class="dedup-del" data-id="${file.id}" data-hash="${escapeHtml(set.hash)}" ${checked}>
+                ${thumb}
+                <div class="min-w-0 flex-1">
+                    <div class="text-sm text-tg-text truncate">${escapeHtml(file.fileName || '(unnamed)')}</div>
+                    <div class="text-xs text-tg-textSecondary truncate">${escapeHtml(file.groupName || file.groupId || '')} · ${when}</div>
+                </div>
+                <a href="${escapeHtml(fileUrl)}" target="_blank" rel="noopener"
+                   class="text-xs px-2 py-1 rounded-md border border-tg-border text-tg-textSecondary hover:text-tg-blue hover:border-tg-blue">
+                    <i class="ri-eye-line"></i>
+                </a>
+            </label>`;
+    };
+
+    const renderSet = (set) => `
+        <div class="bg-tg-bg/40 rounded-lg p-3 mb-3 border border-tg-border/40" data-set="${escapeHtml(set.hash)}">
+            <div class="flex items-center justify-between mb-2 gap-2">
+                <div class="text-xs text-tg-textSecondary">
+                    ${escapeHtml(i18nTf('maintenance.dedup.set_header',
+                        { count: set.count, size: _formatBytesLocal(set.fileSize) },
+                        `${set.count} copies · ${_formatBytesLocal(set.fileSize)} each`))}
+                </div>
+                <div class="flex items-center gap-1">
+                    <button type="button" class="text-xs px-2 py-0.5 rounded border border-tg-border text-tg-textSecondary hover:text-tg-blue hover:border-tg-blue"
+                            data-keep="oldest" data-hash="${escapeHtml(set.hash)}">
+                        <span data-i18n="maintenance.dedup.keep_oldest">Keep oldest</span>
+                    </button>
+                    <button type="button" class="text-xs px-2 py-0.5 rounded border border-tg-border text-tg-textSecondary hover:text-tg-blue hover:border-tg-blue"
+                            data-keep="newest" data-hash="${escapeHtml(set.hash)}">
+                        <span data-i18n="maintenance.dedup.keep_newest">Keep newest</span>
+                    </button>
+                </div>
+            </div>
+            <div class="space-y-1">${set.files.map(f => renderRow(f, set)).join('')}</div>
+        </div>`;
+
+    const html = `
+        <div class="text-sm text-tg-text mb-2">
+            ${escapeHtml(i18nTf('maintenance.dedup.summary',
+                { sets: totalSets, dupes: totalDupes, freed: _formatBytesLocal(totalReclaim) },
+                `${totalSets} duplicate sets · ${totalDupes} extra copies · up to ${_formatBytesLocal(totalReclaim)} reclaimable`))}
+        </div>
+        <p class="text-xs text-tg-textSecondary mb-3" data-i18n="maintenance.dedup.help_pick">Each set below contains byte-identical files. Tick the copies you want to delete; the rest are kept. Default selection deletes everything except the oldest copy.</p>
+        <div id="dedup-list" class="max-h-[60vh] overflow-y-auto pr-1">
+            ${sets.map(renderSet).join('')}
+        </div>
+        <div class="mt-3 flex items-center justify-between gap-3">
+            <div id="dedup-summary" class="text-xs text-tg-textSecondary"></div>
+            <div class="flex items-center gap-2">
+                <button id="dedup-cancel" type="button" class="tg-btn-secondary text-sm" data-i18n="maintenance.dedup.cancel">Cancel</button>
+                <button id="dedup-delete" type="button" class="tg-btn text-sm bg-red-600 hover:bg-red-700">
+                    <i class="ri-delete-bin-line mr-1"></i><span data-i18n="maintenance.dedup.delete">Delete selected</span>
+                </button>
+            </div>
+        </div>`;
+
+    const sheet = openSheet({
+        title: i18nT('maintenance.dedup.sheet_title', 'Duplicate files'),
+        content: html,
+        size: 'lg',
+    });
+
+    const root = sheet?.body || document;
+    const sumEl = root.querySelector('#dedup-summary');
+
+    const refreshSummary = () => {
+        const ids = [...root.querySelectorAll('.dedup-del:checked')].map(el => Number(el.dataset.id));
+        let bytes = 0;
+        for (const set of sets) {
+            for (const f of set.files) if (ids.includes(f.id)) bytes += Number(f.fileSize) || 0;
+        }
+        if (sumEl) {
+            sumEl.textContent = i18nTf('maintenance.dedup.selected',
+                { count: ids.length, freed: _formatBytesLocal(bytes) },
+                `${ids.length} selected · ${_formatBytesLocal(bytes)} will be freed`);
+        }
+    };
+    root.querySelectorAll('.dedup-del').forEach(cb => cb.addEventListener('change', refreshSummary));
+
+    // Quick "keep oldest/newest" per set — flips checkboxes in one click.
+    root.querySelectorAll('[data-keep]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const hash = btn.dataset.hash;
+            const keep = btn.dataset.keep;
+            const set = sets.find(s => s.hash === hash);
+            if (!set) return;
+            const sortedAsc = [...set.files].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+            const keepId = (keep === 'newest' ? sortedAsc[sortedAsc.length - 1] : sortedAsc[0]).id;
+            for (const f of set.files) {
+                const cb = root.querySelector(`.dedup-del[data-id="${f.id}"]`);
+                if (cb) cb.checked = (f.id !== keepId);
+            }
+            refreshSummary();
+        });
+    });
+
+    refreshSummary();
+
+    root.querySelector('#dedup-cancel')?.addEventListener('click', () => sheet?.close());
+    root.querySelector('#dedup-delete')?.addEventListener('click', async () => {
+        const ids = [...root.querySelectorAll('.dedup-del:checked')].map(el => Number(el.dataset.id));
+        if (!ids.length) {
+            showToast(i18nT('maintenance.dedup.nothing', 'Nothing selected'), 'info');
+            return;
+        }
+        const ok = await confirmSheet({
+            title: i18nT('maintenance.dedup.confirm_title', 'Delete duplicate files?'),
+            body: i18nTf('maintenance.dedup.confirm_body',
+                { n: ids.length },
+                `Permanently delete ${ids.length} file(s) from disk and database?`),
+            confirmText: i18nT('maintenance.dedup.confirm_btn', 'Delete'),
+            destructive: true,
+        });
+        if (!ok) return;
+        try {
+            const r = await api.post('/api/maintenance/dedup/delete', { ids });
+            showToast(i18nTf('maintenance.dedup.deleted',
+                { removed: r.removed, freed: _formatBytesLocal(r.freedBytes) },
+                `Removed ${r.removed} files — freed ${_formatBytesLocal(r.freedBytes)}`),
+                'success');
+            sheet?.close();
+        } catch (e) {
+            showToast(e?.data?.error || e.message || 'Failed', 'error');
+        }
+    });
 }
 
 // Force-run the file-existence sweep (same one that runs hourly via

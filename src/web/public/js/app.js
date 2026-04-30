@@ -54,6 +54,35 @@ function scheduleRender(fn) {
 
 // ============ Initialization ============
 async function init() {
+    // Resolve the session role BEFORE the SPA registers any UI — it drives
+    // the body[data-role] CSS gate (admin-only DOM) and the router redirect
+    // for guest sessions trying to deep-link into admin routes. Falls back
+    // to admin on any failure so a transient network blip never accidentally
+    // hides UI for a real admin.
+    try {
+        const ac = await api.get('/api/auth_check');
+        state.role = ac?.role || null;
+    } catch {
+        state.role = null;
+    }
+    document.body.dataset.role = state.role || '';
+    // Mirror to a window global for router.js (which can't import store
+    // without creating a cycle).
+    try { window.__tgdlRole = state.role; } catch {}
+    // Header role pill — only shown for guest sessions to keep the chrome
+    // unchanged for the existing single-admin-user case.
+    const rolePill = document.getElementById('role-pill');
+    if (rolePill) {
+        if (state.role === 'guest') {
+            rolePill.textContent = 'Guest';
+            rolePill.classList.remove('hidden', 'role-admin');
+            rolePill.classList.add('role-guest');
+            rolePill.dataset.i18n = 'header.role.guest';
+        } else {
+            rolePill.classList.add('hidden');
+        }
+    }
+
     setupEventListeners();
     setupLazyLoading();
     setupInfiniteScroll();
@@ -672,7 +701,16 @@ function showAllMedia() {
 // arrives, smoother feel on a long scroll. The pre-fetch margin
 // (`rootMargin` on the IntersectionObserver below) means the next
 // batch is in flight LONG before the user can run out of rows.
-const FILES_PER_PAGE = 100;
+//
+// Mobile uses a smaller page (50) because the gallery grid renders 4-6
+// tiles per row on small viewports — half the rows than desktop's 8-col,
+// so 100 tiles takes 17 rows of DOM. Combined with the lazy <img>/<video>
+// loaders 50 keeps scroll buttery on mid-range Android.
+const _isMobileViewport = () => {
+    try { return window.matchMedia('(max-width: 768px)').matches; }
+    catch { return false; }
+};
+const FILES_PER_PAGE = _isMobileViewport() ? 50 : 100;
 
 async function loadAllFiles() {
     state.loading = true;
@@ -796,19 +834,38 @@ function renderMediaGrid() {
             // useful signal). Pending shows a remaining-hours estimate +
             // tooltip with the local-time deadline.
             const rescueBadge = renderRescueBadge(file);
+            // Server-side WebP thumbnails. One ~10-30 KB image per tile
+            // — replaces both the previous full-resolution image source
+            // and the mobile-vs-desktop branching. Width snaps to one of
+            // the allowed sizes (240 covers grid + compact); the server
+            // caches the result so subsequent scrolls are pure HTTP-304s.
+            // Falls back to a typed-icon placeholder if the source isn't
+            // thumbnailable (audio / document / dead source).
+            const thumbW = _isMobileViewport() ? 240 : 320;
+            const thumbUrl = file.id != null
+                ? `/api/thumbs/${encodeURIComponent(file.id)}?w=${thumbW}`
+                : null;
+            // Onerror falls back to displaying nothing (the panel
+            // background shows through), which is the desired graceful
+            // degradation for a missing/dead file.
+            const imgFallback = `<img loading="lazy" decoding="async" class="w-full h-full object-cover" alt="" `
+                + (thumbUrl ? `src="${escapeHtml(thumbUrl)}"` : '')
+                + ` onerror="this.style.display='none'">`;
+            const videoTile = `
+                <div class="relative w-full h-full bg-black">
+                    ${thumbUrl ? imgFallback : ''}
+                    <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                        <div class="w-10 h-10 rounded-full bg-black/55 flex items-center justify-center">
+                            <i class="ri-play-fill text-white text-xl ml-0.5"></i>
+                        </div>
+                    </div>
+                </div>`;
             return `
             <div class="media-item relative aspect-square bg-tg-panel rounded overflow-hidden cursor-pointer ${ringClass}" data-index="${originalIndex}" data-path="${escapeHtml(file.fullPath)}">
                 ${file.type === 'images' ?
-                    `<img data-src="/files/${encodeURIComponent(file.fullPath)}?inline=1" class="w-full h-full object-cover" onerror="this.style.display='none'" alt="">` :
+                    imgFallback :
                     file.type === 'videos' ?
-                    `<div class="relative w-full h-full bg-black">
-                        <video data-src="/files/${encodeURIComponent(file.fullPath)}?inline=1" class="w-full h-full object-cover" preload="none" muted></video>
-                        <div class="absolute inset-0 flex items-center justify-center">
-                            <div class="w-10 h-10 rounded-full bg-black/60 flex items-center justify-center">
-                                <i class="ri-play-fill text-white text-xl ml-0.5"></i>
-                            </div>
-                        </div>
-                    </div>` :
+                    videoTile :
                     `<div class="w-full h-full flex flex-col items-center justify-center">
                         <i class="${getFileIcon(file.extension)} text-3xl text-tg-textSecondary"></i>
                         <span class="text-xs text-tg-textSecondary mt-1 truncate px-2 w-full text-center">${escapeHtml(file.name || '')}</span>

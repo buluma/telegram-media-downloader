@@ -55,6 +55,11 @@ export function initBackfillPage() {
     setupCustomLimit();
     setupStartButton();
 
+    // Recent backfills "Clear all" — wired once, button stays hidden until
+    // there's at least one row to clear (renderRecent toggles visibility).
+    const clearBtn = document.getElementById('backfill-recent-clear');
+    if (clearBtn) clearBtn.addEventListener('click', clearAllRecent);
+
     // WS event handlers — keep the page reactive even when the user
     // isn't currently looking at it (so re-opening shows a fresh state).
     ws.on('history_progress', onProgress);
@@ -64,6 +69,16 @@ export function initBackfillPage() {
     // Server still emits this transitional event when a cancel is
     // requested but the loop hasn't bailed yet — surface it as a status.
     ws.on('history_cancelling', onCancelling);
+    // Cross-tab: another admin tab deleted a row → drop it locally too.
+    ws.on('history_deleted', (m) => {
+        if (!m?.jobId) return;
+        recentJobs = recentJobs.filter(j => String(j.id) !== String(m.jobId));
+        renderRecent();
+    });
+    ws.on('history_cleared', () => {
+        recentJobs = recentJobs.filter(j => j.state === 'running');
+        renderRecent();
+    });
 }
 
 /**
@@ -536,14 +551,17 @@ async function startBackfill() {
 function renderRecent() {
     const list = document.getElementById('backfill-recent-list');
     const empty = document.getElementById('backfill-recent-empty');
+    const clearBtn = document.getElementById('backfill-recent-clear');
     if (!list) return;
 
     if (!recentJobs.length) {
         list.innerHTML = '';
         empty?.classList.remove('hidden');
+        clearBtn?.classList.add('hidden');
         return;
     }
     empty?.classList.add('hidden');
+    clearBtn?.classList.remove('hidden');
 
     // Dedupe by (groupId, limit). Same chat backfilled with the same
     // target multiple times → keep the NEWEST row only and surface an
@@ -570,6 +588,9 @@ function renderRecent() {
 
     list.querySelectorAll('[data-rerun]').forEach(btn => {
         btn.addEventListener('click', () => rerunFromRecent(btn.dataset.rerun));
+    });
+    list.querySelectorAll('[data-delete-recent]').forEach(btn => {
+        btn.addEventListener('click', () => deleteRecent(btn.dataset.deleteRecent, btn));
     });
 }
 
@@ -619,13 +640,58 @@ function renderRecentRow(job, attempts = 1) {
                 </div>
                 <div class="flex flex-col items-end gap-1.5 flex-shrink-0">
                     ${statePill}
-                    <button type="button" data-rerun="${escapeHtml(id)}"
-                        class="text-xs px-2.5 py-1 rounded-md border border-tg-border text-tg-textSecondary hover:text-tg-blue hover:border-tg-blue transition-colors">
-                        <i class="ri-refresh-line mr-1"></i>${escapeHtml(i18nT('backfill.row.run_again', 'Run again'))}
-                    </button>
+                    <div class="flex items-center gap-1">
+                        <button type="button" data-rerun="${escapeHtml(id)}"
+                            class="text-xs px-2.5 py-1 rounded-md border border-tg-border text-tg-textSecondary hover:text-tg-blue hover:border-tg-blue transition-colors">
+                            <i class="ri-refresh-line mr-1"></i>${escapeHtml(i18nT('backfill.row.run_again', 'Run again'))}
+                        </button>
+                        <button type="button" data-delete-recent="${escapeHtml(id)}"
+                            class="w-7 h-7 rounded-md border border-tg-border text-tg-textSecondary hover:text-red-400 hover:border-red-400/60 transition-colors flex items-center justify-center"
+                            title="${escapeHtml(i18nT('backfill.recent.delete_one', 'Remove from history'))}"
+                            aria-label="${escapeHtml(i18nT('backfill.recent.delete_one', 'Remove from history'))}">
+                            <i class="ri-close-line"></i>
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>`;
+}
+
+async function deleteRecent(jobId, btn) {
+    if (!jobId) return;
+    if (btn) btn.disabled = true;
+    try {
+        await api.delete(`/api/history/${encodeURIComponent(jobId)}`);
+        // Optimistic removal — also drop any same-key duplicates that the
+        // dedupe view collapsed into this row.
+        recentJobs = recentJobs.filter(j => String(j.id) !== String(jobId));
+        renderRecent();
+    } catch (e) {
+        try { (await import('./utils.js')).showToast(e?.data?.error || e.message || 'Failed', 'error'); } catch {}
+        if (btn) btn.disabled = false;
+    }
+}
+
+async function clearAllRecent() {
+    const ok = await (async () => {
+        try {
+            const sheet = await import('./sheet.js');
+            return await sheet.confirmSheet({
+                title: i18nT('backfill.recent.clear_title', 'Clear all recent backfills?'),
+                body: i18nT('backfill.recent.clear_body', 'This removes every entry from the Recent backfills list. Running jobs are preserved. Files already downloaded are not affected.'),
+                confirmText: i18nT('backfill.recent.clear_confirm', 'Clear all'),
+                destructive: true,
+            });
+        } catch { return window.confirm('Clear all recent backfills?'); }
+    })();
+    if (!ok) return;
+    try {
+        await api.delete('/api/history');
+        recentJobs = recentJobs.filter(j => j.state === 'running');
+        renderRecent();
+    } catch (e) {
+        try { (await import('./utils.js')).showToast(e?.data?.error || e.message || 'Failed', 'error'); } catch {}
+    }
 }
 
 async function rerunFromRecent(jobId) {

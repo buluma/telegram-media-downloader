@@ -27,9 +27,14 @@ ENV NODE_ENV=production \
     BUILT_AT=${BUILT_AT}
 
 # tini      — proper PID 1 (signal handling + zombie reaping)
-# libstdc++ — needed by better-sqlite3's prebuilt binary
+# libstdc++ — needed by better-sqlite3's prebuilt binary + sharp's prebuilt
 # su-exec   — drop from root → node after the entrypoint fixes /app/data perms
-RUN apk add --no-cache tini libstdc++ su-exec
+# ffmpeg    — used by src/core/thumbs.js for video first-frame thumbnails
+#             and audio cover-art extraction. The npm package
+#             @ffmpeg-installer/ffmpeg ships glibc binaries only, which
+#             can't run on alpine/musl, so we install the system package.
+#             ~30 MB — tiny next to libvips and node_modules.
+RUN apk add --no-cache tini libstdc++ su-exec ffmpeg
 
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
