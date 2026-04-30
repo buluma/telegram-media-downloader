@@ -122,6 +122,28 @@ async function init() {
     ws.on('file_deleted', dropFileFromView);
     ws.on('bulk_delete', () => { if (state.currentPage === 'viewer') refreshCurrentPage(); loadStats(); });
     ws.on('config_updated', () => { if (state.currentPage === 'settings') Settings.loadSettings(); });
+    // NSFW review tool — server fires `nsfw_progress` every batch and
+    // `nsfw_done` when the scan finishes. We refresh the Maintenance
+    // status line if the user is looking at it (so the progress bar
+    // moves), and toast + browser-notify on completion regardless of
+    // page so the admin doesn't miss a long background scan.
+    ws.on('nsfw_progress', () => {
+        if (state.currentPage === 'settings') {
+            import('./nsfw-ui.js').then(m => m.refreshNsfwStatus()).catch(() => {});
+        }
+    });
+    ws.on('nsfw_done', (m) => {
+        if (state.currentPage === 'settings') {
+            import('./nsfw-ui.js').then(m2 => m2.refreshNsfwStatus()).catch(() => {});
+        }
+        const candidates = m?.candidates ?? 0;
+        const msg = candidates > 0
+            ? i18nTf('maintenance.nsfw.done_with_candidates',
+                { n: candidates }, `Scan done — ${candidates} possibly not 18+`)
+            : i18nT('maintenance.nsfw.done_clean', 'Scan done — library is clean.');
+        showToast(msg, 'info', 8000);
+        try { Notifications.notifyGeneric?.('NSFW scan finished', msg); } catch {}
+    });
     // Browser notifications. The runtime spreads `{type, payload}` into the
     // outer envelope, so events arrive at the WS as the inner type. Listen
     // for `download_complete` directly — the previous `monitor_event` guard

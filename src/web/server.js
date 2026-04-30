@@ -34,6 +34,10 @@ import { ensureShareSecret, verifyShareToken, buildShareUrlPath,
 import { getOrCreateThumb, purgeThumbsForDownload, purgeAllThumbs,
     getThumbsCacheStats, buildAllThumbnails, hasFfmpeg,
     ALLOWED_WIDTHS as THUMB_WIDTHS } from '../core/thumbs.js';
+import { startScan as nsfwStartScan, cancelScan as nsfwCancelScan,
+    isScanRunning as nsfwIsScanRunning, getScanState as nsfwGetScanState,
+    NSFW_DEFAULTS, getNsfwStats, getNsfwDeleteCandidates,
+    whitelistNsfw } from '../core/nsfw.js';
 import { runAutoUpdate, autoUpdateStatus } from '../core/updater.js';
 import { getRescueSweeper } from '../core/rescue.js';
 import { getRescueStats } from '../core/db.js';
@@ -3372,6 +3376,168 @@ app.get('/api/maintenance/thumbs/stats', async (req, res) => {
     }
 });
 
+// ====== NSFW review tool (Phase 1: photos only) ===========================
+//
+// Curated 18+ libraries get noise from auto-download — non-18+ photos
+// that snuck in. The classifier flags low-score rows (likely NOT 18+)
+// for admin review + manual delete. High-score rows (the genuine 18+
+// content) are kept untouched.
+//
+// All endpoints are admin-only via the v2.3.26 chokepoint. Status +
+// candidate listing is read-only and cheap; scan + delete + whitelist
+// guard against concurrent calls / missing config.
+
+function _nsfwCfg() {
+    try {
+        const cfg = loadConfig().advanced?.nsfw || {};
+        return {
+            enabled: cfg.enabled === true,
+            model: cfg.model || NSFW_DEFAULTS.model,
+            threshold: Number.isFinite(cfg.threshold) ? cfg.threshold : NSFW_DEFAULTS.threshold,
+            concurrency: Number.isFinite(cfg.concurrency) ? cfg.concurrency : NSFW_DEFAULTS.concurrency,
+            batchSize: Number.isFinite(cfg.batchSize) ? cfg.batchSize : NSFW_DEFAULTS.batchSize,
+            fileTypes: (Array.isArray(cfg.fileTypes) && cfg.fileTypes.length)
+                ? cfg.fileTypes : NSFW_DEFAULTS.fileTypes,
+            cacheDir: cfg.cacheDir || NSFW_DEFAULTS.cacheDir,
+        };
+    } catch {
+        return { ...NSFW_DEFAULTS, enabled: false };
+    }
+}
+
+app.get('/api/maintenance/nsfw/status', async (req, res) => {
+    try {
+        const cfg = _nsfwCfg();
+        const state = nsfwGetScanState(cfg);
+        res.json({
+            enabled: cfg.enabled,
+            running: state.running,
+            scanned: state.scanned,
+            total: state.total,
+            candidates: state.candidates,
+            keep: state.keep,
+            whitelisted: state.whitelisted,
+            totalEligible: state.totalEligible,
+            lastCheckedAt: state.lastCheckedAt,
+            startedAt: state.startedAt,
+            finishedAt: state.finishedAt,
+            error: state.error,
+            model: cfg.model,
+            threshold: cfg.threshold,
+            fileTypes: cfg.fileTypes,
+        });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/maintenance/nsfw/scan', async (req, res) => {
+    try {
+        const cfg = _nsfwCfg();
+        if (!cfg.enabled) {
+            return res.status(503).json({
+                error: 'NSFW review is disabled. Enable it in Settings → Advanced first.',
+                code: 'NSFW_DISABLED',
+            });
+        }
+        if (nsfwIsScanRunning()) {
+            return res.status(409).json({ error: 'A scan is already running', code: 'ALREADY_RUNNING' });
+        }
+        const r = await nsfwStartScan(cfg,
+            (p) => { try { broadcast({ type: 'nsfw_progress', ...p }); } catch {} },
+            (p) => { try { broadcast({ type: 'nsfw_done', ...p }); } catch {} },
+            (p) => { try { broadcast({ type: 'nsfw_model_downloading', ...p }); } catch {} },
+        );
+        res.json({ success: true, ...r });
+    } catch (e) {
+        console.error('nsfw/scan:', e);
+        const status = e.code === 'NSFW_LIB_MISSING' ? 503 : 500;
+        res.status(status).json({ error: e.message, code: e.code || 'UNKNOWN' });
+    }
+});
+
+app.post('/api/maintenance/nsfw/scan/cancel', async (req, res) => {
+    const ok = nsfwCancelScan();
+    res.json({ success: true, cancelled: ok });
+});
+
+app.get('/api/maintenance/nsfw/results', async (req, res) => {
+    try {
+        const cfg = _nsfwCfg();
+        const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+        const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
+        const r = getNsfwDeleteCandidates({
+            fileTypes: cfg.fileTypes,
+            threshold: cfg.threshold,
+            page,
+            limit,
+        });
+        res.json({
+            success: true,
+            ...r,
+            threshold: cfg.threshold,
+        });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Delete reviewed candidates. Reuses the dedup-delete pathway (which
+// removes file from disk + DB row) and purges the corresponding
+// thumbnail cache entries so a stale WebP doesn't keep serving.
+app.post('/api/maintenance/nsfw/delete', async (req, res) => {
+    try {
+        const { ids } = req.body || {};
+        if (!Array.isArray(ids) || !ids.length) {
+            return res.status(400).json({ error: 'ids array required' });
+        }
+        const cleanIds = ids.map(Number).filter(n => Number.isInteger(n) && n > 0);
+        if (!cleanIds.length) {
+            return res.status(400).json({ error: 'No valid ids supplied' });
+        }
+        const r = dedupDeleteByIds(cleanIds);
+        for (const id of cleanIds) {
+            try { await purgeThumbsForDownload(id); } catch {}
+        }
+        try { broadcast({ type: 'bulk_delete', ids: cleanIds }); } catch {}
+        try { broadcast({ type: 'nsfw_progress', ..._nsfwStateLight() }); } catch {}
+        res.json({ success: true, ...r });
+    } catch (e) {
+        console.error('nsfw/delete:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Mark rows as admin-confirmed-18+ (keep, never re-flag). Use when the
+// classifier produced a false negative — i.e. the photo IS 18+ but
+// scored low. Future scans skip these rows entirely.
+app.post('/api/maintenance/nsfw/whitelist', async (req, res) => {
+    try {
+        const { ids } = req.body || {};
+        if (!Array.isArray(ids) || !ids.length) {
+            return res.status(400).json({ error: 'ids array required' });
+        }
+        const cleanIds = ids.map(Number).filter(n => Number.isInteger(n) && n > 0);
+        if (!cleanIds.length) {
+            return res.status(400).json({ error: 'No valid ids supplied' });
+        }
+        const updated = whitelistNsfw(cleanIds);
+        try { broadcast({ type: 'nsfw_progress', ..._nsfwStateLight() }); } catch {}
+        res.json({ success: true, updated });
+    } catch (e) {
+        console.error('nsfw/whitelist:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+function _nsfwStateLight() {
+    try {
+        const cfg = _nsfwCfg();
+        const s = getNsfwStats(cfg.fileTypes, cfg.threshold);
+        return { ...s, running: nsfwIsScanRunning() };
+    } catch { return {}; }
+}
+
 // ====== Share-link admin API ===============================================
 //
 // Admin-only by virtue of the chokepoint (the path isn't on either
@@ -3753,6 +3919,10 @@ app.post('/api/config', async (req, res) => {
                     ...(cur.share || {}),
                     ...(inc.share || {}),
                 },
+                nsfw: {
+                    ...(cur.nsfw || {}),
+                    ...(inc.nsfw || {}),
+                },
             };
             // Clamp every numeric so a typo can't ban the user from logging
             // in (sessionTtlDays=0) or hose the downloader (minConcurrency=0).
@@ -3783,6 +3953,28 @@ app.post('/api/config', async (req, res) => {
             sh.ttlDefaultSec   = clampInt(sh.ttlDefaultSec, sh.ttlMinSec, sh.ttlMaxSec, 604800);
             sh.rateLimitWindowMs = clampInt(sh.rateLimitWindowMs, 1000, 3600000, 60000);
             sh.rateLimitMax      = clampInt(sh.rateLimitMax,         1, 100000,    60);
+
+            // NSFW review tool. All values are config-driven — no hardcoded
+            // model id, threshold, or concurrency in code.
+            const ns = merged.nsfw;
+            ns.enabled    = ns.enabled === true;          // explicit opt-in only
+            // Threshold is on a 0-1 score axis; clamped via integer math by
+            // multiplying through so the same clampInt helper works.
+            const tInt = Math.round((Number(ns.threshold) || NSFW_DEFAULTS.threshold) * 1000);
+            ns.threshold  = clampInt(tInt, 100, 990, 600) / 1000;
+            ns.concurrency = clampInt(ns.concurrency, 1, 4, NSFW_DEFAULTS.concurrency);
+            ns.batchSize   = clampInt(ns.batchSize,  10, 500, NSFW_DEFAULTS.batchSize);
+            // Model id + cache dir + fileTypes are strings/arrays — light
+            // validation only (string coerce, allowlist-strip).
+            ns.model = (typeof ns.model === 'string' && ns.model.trim())
+                ? ns.model.trim() : NSFW_DEFAULTS.model;
+            ns.cacheDir = (typeof ns.cacheDir === 'string' && ns.cacheDir.trim())
+                ? ns.cacheDir.trim() : NSFW_DEFAULTS.cacheDir;
+            const ALLOWED_TYPES = ['photo', 'video', 'sticker', 'document'];
+            ns.fileTypes = (Array.isArray(ns.fileTypes) ? ns.fileTypes : NSFW_DEFAULTS.fileTypes)
+                .map(s => String(s).toLowerCase())
+                .filter(s => ALLOWED_TYPES.includes(s));
+            if (!ns.fileTypes.length) ns.fileTypes = NSFW_DEFAULTS.fileTypes.slice();
 
             const r = merged.diskRotator;
             r.sweepBatch         = clampInt(r.sweepBatch,         1,   1000, 50);

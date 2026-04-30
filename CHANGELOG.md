@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.33] — 2026-04-30
+
+### Added — NSFW review tool (Phase 1: photos)
+- Maintenance → "Scan images for NSFW (18+)" — classifies every photo locally via `@huggingface/transformers` (WASM, runs on Win / macOS / glibc-Linux / Alpine / ARM identically).
+- Surfaces photos the classifier scored as **NOT 18+** (deletion candidates for a curated 18+ library) in a paginated review sheet — tick + bulk delete with confirm.
+- Per-row "Mark as 18+" whitelists genuine 18+ false-negatives so future scans skip them.
+- Background scan with WS progress + browser notification on completion. Cancel any time.
+- Opt-in via Settings → Advanced → NSFW review tool. Threshold + concurrency + model id all config-driven (no hardcoded values). Model downloads once to `data/models/`.
+- Config namespace: `advanced.nsfw.{ enabled, model, threshold, concurrency, batchSize, fileTypes, cacheDir }`.
+- DB columns added (idempotent migration): `nsfw_score`, `nsfw_checked_at`, `nsfw_whitelist`. Indexes for unscanned-row scan and review-sort queries.
+
+### SW
+- VERSION bumped `'v32'` → `'v33'`.
+
 ## [2.3.32] — 2026-04-30
 
 ### Changed — Media gallery: smooth on big libraries
