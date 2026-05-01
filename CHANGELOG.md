@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.45] — 2026-05-02
+
+### Changed — Settings tab-strip redesign
+- Settings section nav redesigned from solid pill-chips to flat underlined tabs. The pill chips fought the muted cards below them; the tab-strip sits flat against the page and matches the existing `.tab-item` pattern used by Viewer media tabs and the Group settings modal.
+- Active state is `var(--tg-blue)` text + 2 px underline (no heavy fill). Sticky bar carries a single bottom border that doubles as the inactive baseline. Mask-image edge fade dropped — overflow-scroll is silent on phones, and the row fits flush on tablet+.
+- HTML markup unchanged; CSS-only redesign on `.settings-chip-nav` + `.settings-chip`.
+
+### Changed — Sidebar groups header breathing room
+- Toggle button padding tweaked to `pt-3 pb-1.5` (was `py-2`) so the "Downloaded Groups" heading sits with proper top breathing room and connects more snugly to the search row below.
+- Search row padding upgraded `px-2 pb-2` → `px-3 pt-1 pb-3` so it aligns horizontally with the toggle and gets honest bottom space before the chat list begins.
+- Search input grew `py-1.5` → `py-2` for a more comfortable tap target.
+- Sticky header now carries a soft `border-tg-border/40` bottom edge so it visibly separates from the scrolling list once the user scrolls.
+
+### SW
+- VERSION bumped `'v44'` → `'v45'`.
+
 ## [2.3.44] — 2026-05-02
 
 ### Fixed — Light/dark theme contrast pass
