@@ -68,14 +68,19 @@ export class AutoForwarder {
 
             // 4. Upload & Send
             // We use sendFile to bypass restricted content forwarding
-            await fwdClient.sendFile(targetPeer, {
+            const sentMsg = await fwdClient.sendFile(targetPeer, {
                 file: filePath,
                 caption: caption,
                 forceDocument: false,
                 workers: 1 // Safer for automated uploads
             });
 
-            console.log(colorize(`✅ [AutoForward] Sent to ${settings.destination || 'Storage Channel'}`, 'green'));
+            // GramJS returns the new message; surface its TG message-id in the log
+            // so operators can trace the destination copy back from the dashboard.
+            const sentMsgId = sentMsg?.id ?? sentMsg?.message?.id ?? null;
+            const dest = settings.destination || 'Storage Channel';
+            const tail = sentMsgId ? ` (msg #${sentMsgId})` : '';
+            console.log(colorize(`✅ [AutoForward] Sent to ${dest}${tail}`, 'green'));
 
             // 5. Cleanup (if enabled). Isolate the unlink in its own
             // try/catch so a successful upload isn't reported as failed
@@ -104,28 +109,53 @@ export class AutoForwarder {
         client = client || this.client;
         // Case A: Specific Destination
         if (destination && destination !== 'storage') {
-            if (destination === 'me') return 'me';
-            
+            // Saved Messages — accept both 'me' and 'saved' aliases.
+            if (destination === 'me' || destination === 'saved') return 'me';
+
             // Try to parse if it's an ID
             if (/^-?\d+$/.test(destination)) {
                 try {
-                    // Try to resolve as BigInt ID first
                     const id = BigInt(destination);
-                    // Check if we can get input entity
+
+                    // Primary: cheap, returns InputPeer if GramJS already has the entity cached.
+                    try { return await client.getInputEntity(id); } catch { /* fall through */ }
+
+                    // Secondary: heavier — scans dialogs and resolves usernames/peers, often
+                    // succeeds where getInputEntity fails (e.g. channel never seen on this client).
                     try {
-                         const entity = await client.getInputEntity(id);
-                         return entity;
-                    } catch (e) {
-                        // Fallback: maybe it's treated as a string username if no ID match (unlikely for digits)
-                        return destination;
+                        const entity = await client.getEntity(id);
+                        if (entity) return entity;
+                    } catch { /* fall through */ }
+
+                    // Last resort: hand-roll an InputPeer from the canonical -100… layout.
+                    // accessHash=0 only resolves for channels the bot/user has interacted with
+                    // server-side; for fully-private channels the send will fail and the caller
+                    // will see a clear error (CHANNEL_INVALID / PEER_ID_INVALID) instead of a
+                    // mysterious resolve hang. Logging the fallback so operators can spot it.
+                    const raw = String(destination);
+                    if (raw.startsWith('-100')) {
+                        console.warn(colorize(
+                            `⚠️  [AutoForward] Falling back to manual InputPeerChannel for ${raw} — peer is not in dialog cache. If sends fail, open the channel once from the configured account.`,
+                            'yellow'));
+                        return new Api.InputPeerChannel({
+                            channelId: BigInt(raw.replace(/^-100/, '')),
+                            accessHash: BigInt(0),
+                        });
                     }
-                } catch (e) {
+                    if (raw.startsWith('-')) {
+                        console.warn(colorize(
+                            `⚠️  [AutoForward] Falling back to manual InputPeerChat for ${raw}.`,
+                            'yellow'));
+                        return new Api.InputPeerChat({ chatId: BigInt(raw.replace(/^-/, '')) });
+                    }
+                    return id;
+                } catch {
                     return destination;
                 }
             }
 
             // Treat as username or phone
-            return destination; 
+            return destination;
         }
 
         // Case B: Auto Storage Channel (Single Channel)
