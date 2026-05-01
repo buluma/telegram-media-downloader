@@ -111,6 +111,14 @@
     "header.role.guest": "Guest",
     "errors.admin_only": "Admin only — sign in as admin to perform this action.",
 
+    "settings.section.system": "System",
+    "settings.section.accounts": "Accounts",
+    "settings.section.downloads": "Downloads",
+    "settings.section.appearance": "Look & Feel",
+    "settings.section.network": "Privacy & Net",
+    "header.engine": "Engine status",
+    "header.engine_state": "Engine status: {state}",
+
     "settings.engine": "Engine",
     "settings.engine.start": "Start Monitor",
     "settings.engine.stop": "Stop",
