@@ -489,7 +489,8 @@ function renderPage(page, params = {}) {
         // Optional deep-link: #/settings/<section> scrolls to that section.
         if (params.section) {
             setTimeout(() => {
-                const el = document.querySelector(`[data-settings-section="${params.section}"]`)
+                const el = document.getElementById(`settings-${params.section}`)
+                       || document.querySelector(`[data-settings-section="${params.section}"]`)
                        || document.querySelector(`#setting-${params.section}, .${params.section}-section`);
                 if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
             }, 80);
@@ -534,7 +535,19 @@ function registerRoutes() {
     });
     router.route('/engine', () => renderPage('settings', { section: 'engine', navKey: 'engine' }));
     router.route('/settings', () => renderPage('settings'));
-    router.route('/settings/:section', ({ params }) => renderPage('settings', { section: params.section }));
+    router.route('/settings/:section', ({ params }) => {
+        // Avoid reloading the whole Settings page when only the section anchor
+        // changes; reloading can shift layout mid-scroll and land on the wrong card.
+        if (state.currentPage === 'settings') {
+            state.currentRouteParams = { ...(state.currentRouteParams || {}), section: params.section };
+            const el = document.getElementById(`settings-${params.section}`)
+                || document.querySelector(`[data-settings-section="${params.section}"]`)
+                || document.querySelector(`#setting-${params.section}, .${params.section}-section`);
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            return;
+        }
+        renderPage('settings', { section: params.section });
+    });
     router.route('/backfill', () => renderPage('backfill'));
     router.route('/backfill/:groupId', ({ params }) => renderPage('backfill', { groupId: params.groupId }));
     router.route('/queue', () => renderPage('queue'));
