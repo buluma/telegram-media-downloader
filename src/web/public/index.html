@@ -1521,26 +1521,31 @@
         }
 
         /* ============================================================
-           Settings sticky chip-nav — horizontal pill row that drives
-           smooth-scroll to anchored sections. Chips reflect active
-           section via [aria-selected] (set by IntersectionObserver).
+           Settings sticky tab-strip — drives smooth-scroll to anchored
+           sections. Active state mirrors the existing `.tab-item` family
+           (underline + accent text colour) so the Settings header reads
+           as the same component pattern used by Viewer media tabs and
+           the Group-settings modal. The previous solid-pill design fought
+           the muted cards below; this version sits flat against them.
            ============================================================ */
         .settings-chip-nav {
             position: sticky;
             top: 0;
             z-index: 5;
             display: flex;
-            gap: 8px;
-            padding: 10px 4px;
-            margin: 0 -4px 12px;
+            /* Break out of the page's `px-3 sm:px-4` so the bottom border
+               spans the full width and the row anchors visually. */
+            margin: 0 -12px 16px;
+            padding: 0 12px;
+            background: var(--tg-bg, #17212B);
+            border-bottom: 1px solid var(--tg-border, #0D1117);
             overflow-x: auto;
             overflow-y: hidden;
-            background: var(--tg-bg, #17212B);
             -webkit-overflow-scrolling: touch;
             scrollbar-width: none;
-            /* Edge fade so the row hints at scroll without showing a scrollbar. */
-            mask-image: linear-gradient(to right, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%);
-            -webkit-mask-image: linear-gradient(to right, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%);
+        }
+        @media (min-width: 640px) {
+            .settings-chip-nav { margin: 0 -16px 16px; padding: 0 16px; }
         }
         .settings-chip-nav::-webkit-scrollbar { display: none; }
         .settings-chip {
@@ -1548,28 +1553,32 @@
             display: inline-flex;
             align-items: center;
             gap: 6px;
-            height: 36px;
-            min-height: 36px;
-            padding: 0 14px;
-            border-radius: 999px;
-            background: var(--tg-panel, #242F3D);
+            padding: 12px 14px;
+            background: transparent;
+            border: 0;
             color: var(--tg-textSecondary, #8B9BAA);
-            border: 1px solid transparent;
-            font-size: 13px;
+            font-size: 14px;
             line-height: 1;
             cursor: pointer;
             -webkit-tap-highlight-color: transparent;
-            transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+            position: relative;
+            white-space: nowrap;
+            transition: color 0.2s ease;
         }
-        .settings-chip:hover { background: var(--tg-hover, #2B5278); color: var(--tg-text, #F5F5F5); }
-        .settings-chip[aria-selected="true"] {
+        .settings-chip:hover { color: var(--tg-text, #F5F5F5); }
+        .settings-chip[aria-selected="true"] { color: var(--tg-blue, #2AABEE); }
+        .settings-chip[aria-selected="true"]::after {
+            content: '';
+            position: absolute;
+            bottom: -1px;            /* sit over the nav's bottom border */
+            left: 14px;
+            right: 14px;
+            height: 2px;
             background: var(--tg-blue, #2AABEE);
-            color: #fff;
-            border-color: var(--tg-blue, #2AABEE);
+            border-radius: 2px 2px 0 0;
         }
-        .settings-chip[aria-selected="true"] i { color: #fff; }
         .settings-chip i { font-size: 16px; line-height: 1; }
-        .settings-section { scroll-margin-top: 70px; }
+        .settings-section { scroll-margin-top: 60px; }
         .settings-section-title { padding-left: 4px; }
         @media (prefers-reduced-motion: reduce) {
             .settings-chip { transition: none; }
@@ -1645,22 +1654,22 @@
             <!-- Groups List — sticky toggle + filter so they stay reachable when
                  the list grows past one viewport. -->
             <div class="flex-1 overflow-y-auto overscroll-contain">
-                <div class="sidebar-groups-header sticky top-0 z-10 bg-tg-sidebar">
+                <div class="sidebar-groups-header sticky top-0 z-10 bg-tg-sidebar border-b border-tg-border/40">
                     <button id="downloaded-groups-toggle" type="button"
-                        class="w-full px-3 py-2 text-xs text-tg-textSecondary uppercase tracking-wide flex items-center justify-between hover:bg-tg-hover transition-colors"
+                        class="w-full px-3 pt-3 pb-1.5 text-xs text-tg-textSecondary uppercase tracking-wide flex items-center justify-between hover:bg-tg-hover transition-colors"
                         aria-expanded="true" aria-controls="downloaded-groups-body"
                         data-i18n-aria-label="sidebar.downloaded_groups_collapse" aria-label="Collapse downloaded groups"
                         data-i18n-title="sidebar.downloaded_groups_collapse" title="Collapse downloaded groups">
                         <span data-i18n="sidebar.downloaded_groups">Downloaded Groups</span>
                         <i id="downloaded-groups-chevron" class="ri-arrow-up-s-line text-base normal-case transition-transform" aria-hidden="true"></i>
                     </button>
-                    <div class="px-2 pb-2">
+                    <div class="px-3 pt-1 pb-3">
                         <div class="relative">
                             <i class="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-tg-textSecondary" aria-hidden="true"></i>
                             <input type="text" id="sidebar-groups-search"
                                 data-i18n-placeholder="sidebar.groups_search" placeholder="Filter groups…"
                                 aria-label="Filter downloaded groups"
-                                class="tg-input pl-9 py-1.5 text-sm w-full"
+                                class="tg-input pl-9 py-2 text-sm w-full"
                                 oninput="filterSidebarGroups(this.value)">
                         </div>
                     </div>
