@@ -280,6 +280,7 @@ async function init() {
     // hash dispatch lands on a real handler.
     registerRoutes();
     setupFab();
+    _setupSidebarGroupsCollapse();
     // Wire the Queue store + WS handlers eagerly so its in-memory state
     // (and the bottom-nav badge) tracks live downloads even when the user
     // hasn't visited the page yet.
@@ -308,6 +309,7 @@ async function init() {
     window.toggleFwdDelete = toggleFwdDelete;
     window.openDestinationPicker = openDestinationPicker;
     window.filterDialogs = filterDialogs;
+    window.filterSidebarGroups = filterSidebarGroups;
     window.showToast = showToast;
     window.purgeGroup = purgeGroup;
     window.purgeAll = purgeAll;
@@ -711,6 +713,9 @@ function renderGroupsList() {
     if (renderGroupsList._lastHtml !== html) {
         renderGroupsList._lastHtml = html;
         list.innerHTML = html;
+        // Re-apply any active sidebar filter so a WS-driven re-render
+        // doesn't blow away the user's typed query.
+        _reapplySidebarFilter();
     }
 
     // Fire a one-shot resolve in the background. We dedupe with an in-flight
@@ -1534,10 +1539,59 @@ function renderDialogsList(dialogs) {
 function filterDialogs(query) {
     if (!state.allDialogs) return;
     const q = query.toLowerCase();
-    const filtered = state.allDialogs.filter(d => 
+    const filtered = state.allDialogs.filter(d =>
         (d.name || '').toLowerCase().includes(q) || String(d.id).includes(q)
     );
     renderDialogsList(filtered);
+}
+
+// Sidebar groups filter — DOM-only, no re-render. Hides non-matching
+// .chat-row tiles in #groups-list and lets renderGroupsList()'s
+// _lastHtml cache stay valid so an incoming WS event doesn't blow away
+// the user's filter state mid-typing.
+function filterSidebarGroups(rawQuery) {
+    const list = document.getElementById('groups-list');
+    if (!list) return;
+    const q = String(rawQuery || '').trim().toLowerCase();
+    const rows = list.querySelectorAll('.chat-row');
+    if (!q) {
+        rows.forEach(r => r.classList.remove('hidden'));
+        return;
+    }
+    rows.forEach(r => {
+        const name = (r.querySelector('.row-title-name')?.textContent || '').toLowerCase();
+        const id = (r.dataset.id || '').toLowerCase();
+        r.classList.toggle('hidden', !(name.includes(q) || id.includes(q)));
+    });
+}
+
+// Re-apply the sidebar filter after every renderGroupsList() so a fresh
+// sweep of HTML doesn't undo the user's typed query. Cheap because the
+// row count is bounded (sidebar usually <100 groups).
+function _reapplySidebarFilter() {
+    const input = document.getElementById('sidebar-groups-search');
+    if (input && input.value) filterSidebarGroups(input.value);
+}
+
+// Collapse / expand the "Downloaded Groups" body. Persists across reloads
+// in localStorage so the user's preference sticks.
+function _setupSidebarGroupsCollapse() {
+    const btn = document.getElementById('downloaded-groups-toggle');
+    const body = document.getElementById('downloaded-groups-body');
+    const chev = document.getElementById('downloaded-groups-chevron');
+    if (!btn || !body) return;
+    const KEY = 'tgdl.sidebar.groups.collapsed';
+    const apply = (collapsed) => {
+        body.classList.toggle('hidden', collapsed);
+        btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+        if (chev) chev.style.transform = collapsed ? 'rotate(180deg)' : '';
+    };
+    apply(localStorage.getItem(KEY) === '1');
+    btn.addEventListener('click', () => {
+        const next = !body.classList.contains('hidden');
+        try { localStorage.setItem(KEY, next ? '1' : '0'); } catch { /* private mode */ }
+        apply(next);
+    });
 }
 
 function switchGroupsTab(tab) {
