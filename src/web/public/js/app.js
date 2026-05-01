@@ -455,9 +455,15 @@ function renderPage(page, params = {}) {
         document.getElementById('page-title').textContent = i18nT('settings.page.title', 'Settings');
         document.getElementById('page-subtitle').textContent = i18nT('settings.page.subtitle', 'System Configuration');
         // Optional deep-link: #/settings/<section> scrolls to that section.
+        // Prefer #settings-<anchor> (unique by construction on the chip-nav
+        // wrappers) over a [data-settings-section] match — the latter can
+        // also live on inner cards (legacy attrs like rescue, video-player)
+        // and querySelector returns the first match, which may not be the
+        // section heading we want to scroll to.
         if (params.section) {
             setTimeout(() => {
-                const el = document.querySelector(`[data-settings-section="${params.section}"]`)
+                const el = document.getElementById(`settings-${params.section}`)
+                       || document.querySelector(`[data-settings-section="${params.section}"]`)
                        || document.querySelector(`#setting-${params.section}, .${params.section}-section`);
                 if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
             }, 80);
@@ -502,7 +508,29 @@ function registerRoutes() {
     });
     router.route('/engine', () => renderPage('settings', { section: 'engine', navKey: 'engine' }));
     router.route('/settings', () => renderPage('settings'));
-    router.route('/settings/:section', ({ params }) => renderPage('settings', { section: params.section }));
+    router.route('/settings/:section', ({ params }) => {
+        // Already on the Settings page → just scroll to the section. A full
+        // renderPage() would re-run loadSettings()/initEngine() and re-paint
+        // the page, which on chip-tap shows up as a flicker / "reload feel"
+        // and can land on the wrong card if the IntersectionObserver fires
+        // mid-rebuild. Bypass the re-render and reuse the same lookup chain
+        // as the deep-link handler in renderPage().
+        if (state.currentPage === 'settings') {
+            state.currentRouteParams = { ...(state.currentRouteParams || {}), section: params.section };
+            const el = document.getElementById(`settings-${params.section}`)
+                   || document.querySelector(`[data-settings-section="${params.section}"]`)
+                   || document.querySelector(`#setting-${params.section}, .${params.section}-section`);
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            // Light up the matching chip immediately rather than waiting for
+            // the IntersectionObserver to catch up after the smooth-scroll —
+            // gives instant visual feedback even on slow scrolls.
+            document.querySelectorAll('.settings-chip').forEach(c => {
+                c.setAttribute('aria-selected', c.dataset.chip === params.section ? 'true' : 'false');
+            });
+            return;
+        }
+        renderPage('settings', { section: params.section });
+    });
     router.route('/backfill', () => renderPage('backfill'));
     router.route('/backfill/:groupId', ({ params }) => renderPage('backfill', { groupId: params.groupId }));
     router.route('/queue', () => renderPage('queue'));

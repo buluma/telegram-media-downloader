@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.42] — 2026-05-02
+
+### Fixed — Settings chip-nav: no-reload section routing
+- Tapping a chip from inside the Settings page no longer re-runs `loadSettings()` + `initEngine()`. The `/settings/:section` route now bypasses the full `renderPage()` when `state.currentPage === 'settings'` and just smooth-scrolls to the target wrapper. Removes the visible flicker / "reload feel" introduced in v2.3.40 and stops the IntersectionObserver from landing on the wrong card mid-rebuild.
+- Deep-link resolution now prefers `#settings-<anchor>` (unique by construction on the chip-nav wrappers) over `[data-settings-section]` (legacy attribute that also lived on inner cards).
+- Active chip is set immediately on click — no waiting for the IntersectionObserver to catch up after smooth-scroll completes.
+- Removed a duplicate `data-settings-section="appearance"` attribute from the Appearance card; the section wrapper is now the single source of truth for that anchor.
+
+### SW
+- VERSION bumped `'v41'` → `'v42'`.
+
 ## [2.3.41] — 2026-05-02
 
 ### Added
