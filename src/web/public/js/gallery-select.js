@@ -19,6 +19,16 @@ import { state } from './store.js';
 
 let _wired = false;
 let _lastAnchorPath = null;       // last single-toggle target — pivot for shift+click ranges
+let _hooks = {};                  // captured at setup; reused by selectAllVisible
+
+function _autoEnableSelectMode() {
+    if (state.selectMode) return;
+    state.selectMode = true;
+    const grid = document.getElementById('media-grid');
+    if (grid) grid.classList.add('in-select-mode');
+    const btn = document.getElementById('select-mode-btn');
+    if (btn) btn.classList.add('bg-tg-blue', 'text-white');
+}
 
 /**
  * Wire up the gallery picker once at SPA boot. Idempotent — a second
@@ -35,6 +45,7 @@ export function setupGallerySelect(hooks = {}) {
     const lasso = document.getElementById('gallery-lasso');
     if (!grid) return;
     _wired = true;
+    _hooks = hooks;
 
     state.selected = state.selected || new Set();
 
@@ -373,14 +384,7 @@ export function setupGallerySelect(hooks = {}) {
             // Only when the gallery is visible — the SPA shows multiple pages.
             if (state.currentPage !== 'viewer') return;
             ev.preventDefault();
-            _autoEnableSelectMode();
-            const tiles = grid.querySelectorAll('.media-item[data-path]');
-            state.selected = new Set();
-            for (const t of tiles) {
-                state.selected.add(t.dataset.path);
-                t.classList.add('is-selected');
-            }
-            hooks.onChange?.();
+            selectAllVisible();
             return;
         }
 
@@ -401,16 +405,8 @@ export function setupGallerySelect(hooks = {}) {
     });
 
     // ----- Helpers ------------------------------------------------------
-
-    function _autoEnableSelectMode() {
-        if (state.selectMode) return;
-        state.selectMode = true;
-        grid.classList.add('in-select-mode');
-        const btn = document.getElementById('select-mode-btn');
-        if (btn) {
-            btn.classList.add('bg-tg-blue', 'text-white');
-        }
-    }
+    // (moved to module scope so exported helpers like selectAllVisible can
+    // reuse them without recapturing the setup closure.)
 
     function _toggleOne(path, tile) {
         if (!state.selected) state.selected = new Set();
@@ -451,6 +447,27 @@ export function exitSelectMode() {
     }
     const btn = document.getElementById('select-mode-btn');
     if (btn) btn.classList.remove('bg-tg-blue', 'text-white');
+}
+
+/**
+ * Select every currently-rendered tile in the gallery grid. Auto-enables
+ * select-mode if it isn't on. Idempotent: calling twice with no changes
+ * to the rendered set leaves the selection identical.
+ *
+ * Exposed so the selection-bar "Select all" button + the Ctrl/Cmd+A
+ * shortcut share one implementation.
+ */
+export function selectAllVisible() {
+    const grid = document.getElementById('media-grid');
+    if (!grid) return;
+    _autoEnableSelectMode();
+    const tiles = grid.querySelectorAll('.media-item[data-path]');
+    state.selected = new Set();
+    for (const t of tiles) {
+        state.selected.add(t.dataset.path);
+        t.classList.add('is-selected');
+    }
+    _hooks.onChange?.();
 }
 
 /** Update tile DOM `.is-selected` for every visible tile from `state.selected`. */

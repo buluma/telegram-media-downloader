@@ -2,6 +2,35 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.42] — 2026-05-02
+
+### Fixed — Settings chip-nav: no-reload section routing
+- Tapping a chip from inside the Settings page no longer re-runs `loadSettings()` + `initEngine()`. The `/settings/:section` route now bypasses the full `renderPage()` when `state.currentPage === 'settings'` and just smooth-scrolls to the target wrapper. Removes the visible flicker / "reload feel" introduced in v2.3.40 and stops the IntersectionObserver from landing on the wrong card mid-rebuild.
+- Deep-link resolution now prefers `#settings-<anchor>` (unique by construction on the chip-nav wrappers) over `[data-settings-section]` (legacy attribute that also lived on inner cards).
+- Active chip is set immediately on click — no waiting for the IntersectionObserver to catch up after smooth-scroll completes.
+- Removed a duplicate `data-settings-section="appearance"` attribute from the Appearance card; the section wrapper is now the single source of truth for that anchor.
+
+### SW
+- VERSION bumped `'v41'` → `'v42'`.
+
+## [2.3.41] — 2026-05-02
+
+### Added
+- **Forwarder destination resolution: 3-stage fallback.** `getInputEntity` → `getEntity` (dialog-cache rescan) → hand-rolled `Api.InputPeerChannel` / `InputPeerChat` from the canonical `-100…` layout. The last-resort branch logs a yellow warning so operators can spot it, and recommends opening the channel once on the configured account if sends still fail.
+- **`destination: 'saved'`** now aliases `'me'` (Saved Messages), matching common Telegram-bot phrasing.
+- **TG message-id in forward log** — successful auto-forward writes `(msg #<id>)` after the destination so the destination copy is traceable from the dashboard.
+- **Backfill quick presets**: "Last 5" and "Last 10" added to the per-chat history modal alongside the existing 100 / 1k / 10k / All buttons. Grid is now `grid-cols-3 sm:grid-cols-6` so the row stays one-line on tablet+.
+- **Groups: "Unmonitored" tab** — third tab next to "All" / "Monitored Only", filters dialogs to chats not in the monitored set (`!d.inConfig && !d.enabled`).
+- **Viewer "Select all" button** in the floating selection bar — exposes the existing `Ctrl/⌘+A` shortcut as a tap target so mobile users get the same affordance. Single source of truth: shortcut + button both call `selectAllVisible()` from `gallery-select.js`.
+- **`TGDL_PORT` env override** — `docker-compose.yml` now uses `${TGDL_PORT:-3000}:3000` so a port collision on the host doesn't require a `docker-compose.yml` edit. Documented in `.env.example`.
+
+### Refactor
+- `switchGroupsTab` collapsed from a per-button toggle ladder to a `tabs.forEach` loop — adding a future tab is now a one-line array push.
+- `_autoEnableSelectMode` lifted from `setupGallerySelect`'s closure to module scope so the new exported `selectAllVisible()` can reuse it.
+
+### SW
+- VERSION bumped `'v40'` → `'v41'`.
+
 ## [2.3.40] — 2026-05-02
 
 ### Changed — Mobile UI polish + Settings restructure

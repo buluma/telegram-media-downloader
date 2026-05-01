@@ -410,6 +410,8 @@
     "viewer.selection.unselectAll": "Unselect All",
     "viewer.selection.clear": "Clear",
     "viewer.selection.delete": "Delete",
+    "viewer.selection.select_all": "Select all",
+    "viewer.selection.select_all_title": "Select every visible tile (Ctrl/Cmd+A)",
     "viewer.bulk.title": "Delete selected files?",
     "viewer.bulk.confirm": "Delete {count} file(s)? This cannot be undone.",
     "viewer.bulk.deleted": "Deleted {count} files.",
