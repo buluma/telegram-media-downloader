@@ -111,6 +111,14 @@
     "header.role.guest": "Guest",
     "errors.admin_only": "เฉพาะผู้ดูแลระบบ — กรุณาเข้าสู่ระบบในฐานะ admin เพื่อดำเนินการนี้",
 
+    "settings.section.system": "ระบบ",
+    "settings.section.accounts": "บัญชี",
+    "settings.section.downloads": "ดาวน์โหลด",
+    "settings.section.appearance": "หน้าตา & ธีม",
+    "settings.section.network": "ความเป็นส่วนตัว & เครือข่าย",
+    "header.engine": "สถานะเอนจิน",
+    "header.engine_state": "สถานะเอนจิน: {state}",
+
     "settings.engine": "Engine",
     "settings.engine.start": "เริ่มต้น monitor",
     "settings.engine.stop": "หยุด",

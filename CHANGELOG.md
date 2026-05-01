@@ -2,6 +2,31 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.40] — 2026-05-02
+
+### Changed — Mobile UI polish + Settings restructure
+- Bottom-nav 6 → 5 tabs. Engine tab replaced by a header `engine-status-pill` (taps to `#/settings/engine`; running/error/reconnecting via animated dot; queue+active badge preserved).
+- Settings page reorganised from a flat 15-card stack into 5 sticky-chip-nav sections: System / Accounts / Downloads / Look & Feel / Privacy & Net. Active chip mirrors the section in view via IntersectionObserver. `#/settings/<section>` deep-links unchanged.
+- Per-page accent — `#content-header` now carries a 2 px underline that swaps per top-level page (Library blue / Chats green / Backfill orange / Queue cyan / Settings blue), driven by `body[data-page]`.
+
+### Responsive + a11y
+- Sidebar clamps to `min(85vw, 18rem)` so a 320 px phone always leaves a tap-out gap.
+- Engine status grid `grid-cols-2 sm:grid-cols-4` (single row on tablet+, 2×2 on phone).
+- View-mode menu clamps to viewport (`max-width: min(240px, calc(100vw - 24px))`).
+- Header gains `pt-safe` + `@supports` height bump for notched displays.
+- Bottom-nav badge offset `right: calc(50% - 1ch)` — tracks the icon regardless of font-size tier.
+- Chip-nav is `role="tablist"`, sections are `role="tabpanel" aria-labelledby`. Engine pill `aria-label` reflects state via `header.engine_state`.
+
+### Performance
+- `.media-item` gains `aspect-ratio: 1 / 1`, `content-visibility: auto`, `contain-intrinsic-size: auto 200px`, panel-coloured skeleton — kills load-time layout shift and skips offscreen tiles natively.
+- Image fade trimmed `0.3s → 0.18s`. Sheet transition `220ms → 180ms`; `will-change: transform` only while open.
+
+### i18n
+- 7 new keys in en.json + th.json: `settings.section.{system,accounts,downloads,appearance,network}`, `header.engine`, `header.engine_state`.
+
+### SW
+- VERSION bumped `'v39'` → `'v40'`.
+
 ## [2.3.39] — 2026-04-30
 
 ### Fixed — iOS double-tap zoom
