@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.43] — 2026-05-02
+
+### Added — Sidebar groups: collapse + filter
+- "Downloaded Groups" header is now a button — tap to collapse/expand the list. State persists in `localStorage` (`tgdl.sidebar.groups.collapsed`).
+- New filter input below the header, sticky at the top of the sidebar scroll area so it stays reachable on long lists. DOM-only filter (`filterSidebarGroups`) — no re-render, doesn't fight the existing `_lastHtml` cache, and survives WS-driven re-renders via `_reapplySidebarFilter`.
+- Footer stats compacted into one row (Disk + Files share a line with leading icons), giving the list more vertical real estate.
+
+### Fixed — Video thumbnails on stripped ffmpeg builds
+- `_generateVideoThumb` now picks its codec path at boot via `_ffmpegHasLibwebp()` (cached). When libwebp is present (default Docker image) it stays on the fast single-pass `-c:v libwebp` flow. When missing (stripped Alpine/musl ffmpeg, Windows static builds) it falls back to a JPEG → sharp WebP pipeline so video thumbs still generate. The retry-at-1s-then-0s pattern is preserved on both paths; tmp JPEG is always cleaned up.
+
+### SW
+- VERSION bumped `'v42'` → `'v43'`.
+
 ## [2.3.42] — 2026-05-02
 
 ### Fixed — Settings chip-nav: no-reload section routing
