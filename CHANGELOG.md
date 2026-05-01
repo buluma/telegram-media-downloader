@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.46] — 2026-05-02
+
+### Changed — Settings tab strip: drop sticky + integrate with page flow
+- Settings nav no longer sticky — sits flush with the page in the normal scroll flow, same pattern as the Groups page tabs (`#groups-tab-*`) and the Viewer media tabs. The sticky version floated as a foreign banner; the new version reads as part of the page header.
+- Margin breakout (`-12px / -16px`) removed; the underline now lives within the page's content column instead of spanning the whole content area like a separator.
+- Active indicator moved from `::after` pseudo to the chip's own `border-bottom` so the underline overlaps the nav's `border-bottom` cleanly (the standard tab-into-content pattern).
+- Inactive icons drop to `opacity: 0.75` and snap to full opacity on hover/active — gives the row a calmer rest state.
+- Font weight bumped to 500, padding tightened to `10px 14px` to read as proper tabs rather than buttons.
+
+### SW
+- VERSION bumped `'v45'` → `'v46'`.
+
 ## [2.3.45] — 2026-05-02
 
 ### Changed — Settings tab-strip redesign
