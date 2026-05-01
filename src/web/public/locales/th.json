@@ -29,6 +29,8 @@
     "sidebar.all_media": "มีเดียทั้งหมด",
     "sidebar.all_media_sub": "ดูไฟล์ทั้งหมด",
     "sidebar.downloaded_groups": "กลุ่มที่ดาวน์โหลดแล้ว",
+    "sidebar.downloaded_groups_collapse": "ย่อรายการกลุ่ม",
+    "sidebar.groups_search": "ค้นหากลุ่ม…",
     "sidebar.disk": "ดิสก์",
     "sidebar.files": "ไฟล์",
 

@@ -29,6 +29,8 @@
     "sidebar.all_media": "All Media",
     "sidebar.all_media_sub": "View all files",
     "sidebar.downloaded_groups": "Downloaded Groups",
+    "sidebar.downloaded_groups_collapse": "Collapse downloaded groups",
+    "sidebar.groups_search": "Filter groups…",
     "sidebar.disk": "Disk",
     "sidebar.files": "Files",
 
