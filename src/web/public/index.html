@@ -1521,31 +1521,23 @@
         }
 
         /* ============================================================
-           Settings sticky tab-strip — drives smooth-scroll to anchored
-           sections. Active state mirrors the existing `.tab-item` family
-           (underline + accent text colour) so the Settings header reads
-           as the same component pattern used by Viewer media tabs and
-           the Group-settings modal. The previous solid-pill design fought
-           the muted cards below; this version sits flat against them.
+           Settings tab strip — same visual pattern as the Groups page
+           tabs (`#groups-tab-*`) and the Viewer media tabs: text +
+           2 px underlined indicator, sitting flush in the normal flow
+           with the rest of the page (NOT sticky, NOT a full-width
+           banner). The previous sticky design floated above the cards
+           and read as a foreign component on the page.
            ============================================================ */
         .settings-chip-nav {
-            position: sticky;
-            top: 0;
-            z-index: 5;
             display: flex;
-            /* Break out of the page's `px-3 sm:px-4` so the bottom border
-               spans the full width and the row anchors visually. */
-            margin: 0 -12px 16px;
-            padding: 0 12px;
-            background: var(--tg-bg, #17212B);
+            margin: 0 0 16px;
+            padding: 0;
+            background: transparent;
             border-bottom: 1px solid var(--tg-border, #0D1117);
             overflow-x: auto;
             overflow-y: hidden;
             -webkit-overflow-scrolling: touch;
             scrollbar-width: none;
-        }
-        @media (min-width: 640px) {
-            .settings-chip-nav { margin: 0 -16px 16px; padding: 0 16px; }
         }
         .settings-chip-nav::-webkit-scrollbar { display: none; }
         .settings-chip {
@@ -1553,35 +1545,38 @@
             display: inline-flex;
             align-items: center;
             gap: 6px;
-            padding: 12px 14px;
+            padding: 10px 14px;
             background: transparent;
             border: 0;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -1px;          /* overlap the nav's bottom border */
             color: var(--tg-textSecondary, #8B9BAA);
             font-size: 14px;
-            line-height: 1;
+            font-weight: 500;
+            line-height: 1.2;
             cursor: pointer;
             -webkit-tap-highlight-color: transparent;
-            position: relative;
             white-space: nowrap;
-            transition: color 0.2s ease;
+            transition: color 0.15s ease, border-color 0.15s ease;
         }
         .settings-chip:hover { color: var(--tg-text, #F5F5F5); }
-        .settings-chip[aria-selected="true"] { color: var(--tg-blue, #2AABEE); }
-        .settings-chip[aria-selected="true"]::after {
-            content: '';
-            position: absolute;
-            bottom: -1px;            /* sit over the nav's bottom border */
-            left: 14px;
-            right: 14px;
-            height: 2px;
-            background: var(--tg-blue, #2AABEE);
-            border-radius: 2px 2px 0 0;
+        .settings-chip[aria-selected="true"] {
+            color: var(--tg-blue, #2AABEE);
+            border-bottom-color: var(--tg-blue, #2AABEE);
         }
-        .settings-chip i { font-size: 16px; line-height: 1; }
-        .settings-section { scroll-margin-top: 60px; }
+        .settings-chip i {
+            font-size: 15px;
+            line-height: 1;
+            opacity: 0.75;
+            transition: opacity 0.15s ease;
+        }
+        .settings-chip:hover i,
+        .settings-chip[aria-selected="true"] i { opacity: 1; }
+        .settings-section { scroll-margin-top: 16px; }
         .settings-section-title { padding-left: 4px; }
         @media (prefers-reduced-motion: reduce) {
-            .settings-chip { transition: none; }
+            .settings-chip,
+            .settings-chip i { transition: none; }
         }
     </style>
 </head>
