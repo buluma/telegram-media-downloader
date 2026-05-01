@@ -20,7 +20,7 @@ import { openSheet, confirmSheet } from './sheet.js';
 import { renderChatRow, renderEmptyState, renderRowSkeletons, renderGallerySkeletons } from './components.js';
 import { formatRelativeTime } from './utils.js';
 import { attachPullToRefresh } from './gestures.js';
-import { setupGallerySelect, exitSelectMode, repaintSelection } from './gallery-select.js';
+import { setupGallerySelect, exitSelectMode, repaintSelection, selectAllVisible } from './gallery-select.js';
 import { initI18n, setLang, getLang, applyToDOM as applyI18n, t as i18nT, tf as i18nTf } from './i18n.js';
 import { showBackfillPage, deepLinkFromModal as backfillDeepLink, stopBackfillPage } from './backfill.js';
 import * as Fonts from './fonts.js';
@@ -487,6 +487,11 @@ function renderPage(page, params = {}) {
         document.getElementById('page-title').textContent = i18nT('settings.page.title', 'Settings');
         document.getElementById('page-subtitle').textContent = i18nT('settings.page.subtitle', 'System Configuration');
         // Optional deep-link: #/settings/<section> scrolls to that section.
+        // Prefer #settings-<anchor> (unique by construction on the chip-nav
+        // wrappers) over a [data-settings-section] match — the latter can
+        // also live on inner cards (legacy attrs like rescue, video-player)
+        // and querySelector returns the first match, which may not be the
+        // section heading we want to scroll to.
         if (params.section) {
             setTimeout(() => {
                 const el = document.getElementById(`settings-${params.section}`)
@@ -536,14 +541,24 @@ function registerRoutes() {
     router.route('/engine', () => renderPage('settings', { section: 'engine', navKey: 'engine' }));
     router.route('/settings', () => renderPage('settings'));
     router.route('/settings/:section', ({ params }) => {
-        // Avoid reloading the whole Settings page when only the section anchor
-        // changes; reloading can shift layout mid-scroll and land on the wrong card.
+        // Already on the Settings page → just scroll to the section. A full
+        // renderPage() would re-run loadSettings()/initEngine() and re-paint
+        // the page, which on chip-tap shows up as a flicker / "reload feel"
+        // and can land on the wrong card if the IntersectionObserver fires
+        // mid-rebuild. Bypass the re-render and reuse the same lookup chain
+        // as the deep-link handler in renderPage().
         if (state.currentPage === 'settings') {
             state.currentRouteParams = { ...(state.currentRouteParams || {}), section: params.section };
             const el = document.getElementById(`settings-${params.section}`)
-                || document.querySelector(`[data-settings-section="${params.section}"]`)
-                || document.querySelector(`#setting-${params.section}, .${params.section}-section`);
+                   || document.querySelector(`[data-settings-section="${params.section}"]`)
+                   || document.querySelector(`#setting-${params.section}, .${params.section}-section`);
             if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            // Light up the matching chip immediately rather than waiting for
+            // the IntersectionObserver to catch up after the smooth-scroll —
+            // gives instant visual feedback even on slow scrolls.
+            document.querySelectorAll('.settings-chip').forEach(c => {
+                c.setAttribute('aria-selected', c.dataset.chip === params.section ? 'true' : 'false');
+            });
             return;
         }
         renderPage('settings', { section: params.section });
@@ -1322,6 +1337,7 @@ async function setupMediaSearch() {
     const selBar = document.getElementById('selection-bar');
     const selDel = document.getElementById('selection-delete');
     const selClear = document.getElementById('selection-clear');
+    const selAll = document.getElementById('selection-all');
     if (!input) return;
 
     let timer = null;
@@ -1411,6 +1427,13 @@ async function setupMediaSearch() {
         updateSelectionBar();
     });
 
+    selAll?.addEventListener('click', () => {
+        // Mirrors Ctrl/⌘+A — surfaces the keyboard shortcut as a tappable
+        // button so mobile/touch users get the same affordance.
+        selectAllVisible();
+        updateSelectionBar();
+    });
+
     selDel?.addEventListener('click', async () => {
         if (!state.selected || !state.selected.size) return;
         const paths = Array.from(state.selected);
@@ -1458,7 +1481,7 @@ function renderDialogsList(dialogs) {
     if (!list) return;
     
     const tab = state.groupsTab || 'all';
-    const filtered = tab === 'monitored' 
+    const filtered = tab === 'monitored'
         ? dialogs.filter(d => d.inConfig || d.enabled)
         : tab === 'unmonitored'
             ? dialogs.filter(d => !d.inConfig && !d.enabled)
@@ -1519,18 +1542,20 @@ function filterDialogs(query) {
 
 function switchGroupsTab(tab) {
     state.groupsTab = tab;
-    
+
+    // Single source of truth: the tab id maps 1:1 to the filter slug. This
+    // collapses the previous per-button if-toggle ladder into a loop, so
+    // adding a future tab only requires adding it to this array.
     const tabs = ['all', 'monitored', 'unmonitored'];
-    tabs.forEach(t => {
+    for (const t of tabs) {
         const el = document.getElementById(`groups-tab-${t}`);
-        if (!el) return;
+        if (!el) continue;
         const active = tab === t;
         el.classList.toggle('border-tg-blue', active);
         el.classList.toggle('text-tg-blue', active);
         el.classList.toggle('border-transparent', !active);
         el.classList.toggle('text-tg-textSecondary', !active);
-    });
-    
+    }
     if (state.allDialogs) renderDialogsList(state.allDialogs);
 }
 
