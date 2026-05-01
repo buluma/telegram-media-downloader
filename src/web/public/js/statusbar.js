@@ -22,6 +22,13 @@ function applyState(state) {
     const m = map[state] || map.stopped;
     if (dot) dot.className = `w-2 h-2 rounded-full ${m.color}`;
     if (lbl) lbl.textContent = m.text;
+    const pillEl = $('engine-status-pill');
+    if (pillEl) {
+        pillEl.dataset.state = state || 'stopped';
+        const pillLbl = pillEl.querySelector('.engine-status-label');
+        if (pillLbl) pillLbl.textContent = m.text;
+        pillEl.setAttribute('aria-label', i18nTf('header.engine_state', { state: m.text }, `Engine status: ${m.text}`));
+    }
 }
 
 function applyMonitor(mon) {
