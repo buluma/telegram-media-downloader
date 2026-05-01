@@ -457,6 +457,7 @@ function renderPage(page, params = {}) {
         try { stopBackfillPage(); } catch {}
     }
     state.currentPage = page;
+    document.body.dataset.page = page;
     state.currentRouteParams = params;
 
     // Allow callers to override the highlighted nav slot independent of the
