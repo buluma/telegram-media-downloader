@@ -122,6 +122,45 @@
     <style>
         :root {
             --tgdl-font-family: 'IBM Plex Sans', 'IBM Plex Sans Thai', 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            /* Theme tokens — single source of truth for inline-CSS consumers
+               (`.engine-status-pill`, `.media-item`, `.sheet-card`, `.chat-row`,
+               `.role-pill`, etc. — anything reading `var(--tg-…)`). Tailwind
+               utility classes like `bg-tg-blue` are still swapped via the
+               `html.theme-light .bg-tg-…` overrides further down; both paths
+               must agree per theme. Light variants of brand status colors are
+               darkened to clear WCAG AA on the white panel/sidebar surfaces
+               (e.g. `#2AABEE` → `#1976A8`, ratio jumps 2.84:1 → 4.61:1). */
+            --tg-blue: #2AABEE;
+            --tg-darkBlue: #229ED9;
+            --tg-bg: #17212B;
+            --tg-sidebar: #0E1621;
+            --tg-panel: #242F3D;
+            --tg-hover: #2B5278;
+            --tg-border: #0D1117;
+            --tg-text: #F5F5F5;
+            --tg-textSecondary: #8B9BAA;
+            --tg-green: #4FAE4E;
+            --tg-red: #E53935;
+            --tg-orange: #FF9800;
+            --tg-lightBg: #182533;
+        }
+        html.theme-light {
+            /* Light variants chosen to match existing `.text-tg-*` utility
+               overrides further down so var-consumers and Tailwind-utility
+               consumers paint the same colour per surface. */
+            --tg-blue: #0E78C2;
+            --tg-darkBlue: #0E5A86;
+            --tg-bg: #FFFFFF;
+            --tg-sidebar: #F4F4F5;
+            --tg-panel: #F0F4F7;
+            --tg-hover: #DCEDFF;
+            --tg-border: #D1D5DB;
+            --tg-text: #1F2937;
+            --tg-textSecondary: #4B5563;
+            --tg-green: #008A6E;
+            --tg-red: #B91C1C;
+            --tg-orange: #B8860B;
+            --tg-lightBg: #FFFFFF;
         }
         * {
             font-family: var(--tgdl-font-family);
@@ -251,6 +290,185 @@
            theme — that's a deliberate floating-overlay-on-video idiom.
            No override needed there. */
         html.theme-light .video-controls { /* keep dark gradient — readability over video */ }
+
+        /* ============================================================
+           v2.3.44 — theme contrast pass.
+           Findings (audit run on the v2.3.43 snapshot):
+             A. `--tg-*` were never defined → fixed at top with :root + .theme-light blocks.
+             B. WCAG AA failures on white for brand colours → fixed via the
+                Tailwind utility overrides further up + var redef.
+             C. `:focus { outline: none }` clobbered `:focus-visible` → fixed below.
+                `.nav-item.active` had no CSS rule → fixed below.
+                Status pills, skeletons, select-badge, tab-item, .unread-pill.muted
+                had no light variant → fixed below.
+                Missing slash-variant overrides for yellow, red, blue → fixed below.
+           ============================================================ */
+
+        /* Restore keyboard focus rings — the global `button:focus,
+           input:focus, … { outline: none }` rule otherwise wins by source
+           order and erases `:focus-visible`. Scope the suppression so only
+           mouse-click focus loses the ring; keyboard focus keeps it. */
+        button:focus:not(:focus-visible),
+        input:focus:not(:focus-visible),
+        select:focus:not(:focus-visible),
+        textarea:focus:not(:focus-visible),
+        a:focus:not(:focus-visible) { outline: none; }
+
+        /* Default placeholder colour for both themes — UA default on the
+           dark panel was barely legible. */
+        .tg-input::placeholder,
+        input::placeholder,
+        textarea::placeholder { color: var(--tg-textSecondary, #8B9BAA); opacity: 0.75; }
+
+        /* Sidebar nav active state — toggled by app.js renderPage() but
+           had no matching CSS, so the active page was invisible in the
+           sidebar. Surface a left-accent + tinted background. */
+        .nav-item.active { background-color: var(--tg-hover, #2B5278); position: relative; }
+        .nav-item.active::before {
+            content: '';
+            position: absolute;
+            left: 0; top: 6px; bottom: 6px;
+            width: 3px;
+            background: var(--tg-blue, #2AABEE);
+            border-radius: 0 2px 2px 0;
+        }
+        .nav-item.active i, .nav-item.active span { color: var(--tg-blue, #2AABEE); }
+
+        /* Disabled buttons — visually distinct from enabled (saturate-out
+           + opacity), with `cursor: not-allowed`. Applies to both .tg-btn
+           and .tg-btn-secondary. */
+        .tg-btn:disabled,
+        .tg-btn[disabled],
+        .tg-btn-secondary:disabled,
+        .tg-btn-secondary[disabled] {
+            opacity: 0.5;
+            cursor: not-allowed;
+            filter: saturate(0.55);
+        }
+        .tg-btn:disabled:hover,
+        .tg-btn-secondary:disabled:hover { background: inherit; }
+
+        /* Selection-bar buttons (Select all / Clear) — hover affordance
+           upgraded from text-colour-only to an underline reveal so the
+           click target reads as a button, not body copy. */
+        #selection-all, #selection-clear {
+            text-decoration: underline;
+            text-decoration-color: transparent;
+            text-underline-offset: 3px;
+            transition: text-decoration-color 0.15s ease;
+        }
+        #selection-all:hover, #selection-clear:hover { text-decoration-color: currentColor; }
+
+        /* Light-theme overrides for surfaces that were missing — these
+           bypassed the existing class-override pass. */
+
+        /* Modal hover: white-on-white invisible patch */
+        html.theme-light .hover\:bg-white\/10:hover { background-color: rgba(0, 0, 0, 0.06) !important; }
+
+        /* Yellow alert family (Backfill warnings, etc.) — no overrides existed. */
+        html.theme-light .text-yellow-400 { color: #B45309 !important; }
+        html.theme-light .text-yellow-300 { color: #B45309 !important; }
+        html.theme-light .bg-yellow-500\/10 { background-color: rgba(245, 158, 11, 0.14) !important; }
+        html.theme-light .border-yellow-500\/20 { border-color: rgba(245, 158, 11, 0.40) !important; }
+        html.theme-light .bg-tg-orange\/20 { background-color: rgba(180, 134, 11, 0.18) !important; }
+
+        /* Red family — only /10 and /20 were covered before. Now /5,/15,/25,/30
+           and the `red-600` solid + `red-700` hover (Purge button etc.). */
+        html.theme-light .bg-red-500\/5 { background-color: rgba(185, 28, 28, 0.06) !important; }
+        html.theme-light .bg-red-500\/15 { background-color: rgba(185, 28, 28, 0.10) !important; }
+        html.theme-light .bg-red-500\/25 { background-color: rgba(185, 28, 28, 0.14) !important; }
+        html.theme-light .bg-red-500\/30 { background-color: rgba(185, 28, 28, 0.18) !important; }
+        html.theme-light .hover\:bg-red-500\/30:hover { background-color: rgba(185, 28, 28, 0.18) !important; }
+        html.theme-light .bg-red-600 { background-color: #B91C1C !important; }
+        html.theme-light .hover\:bg-red-700:hover { background-color: #991B1B !important; }
+        html.theme-light .border-red-400\/60 { border-color: rgba(185, 28, 28, 0.45) !important; }
+        html.theme-light .hover\:text-red-400:hover { color: #B91C1C !important; }
+        html.theme-light .hover\:border-red-400\/60:hover { border-color: rgba(185, 28, 28, 0.45) !important; }
+
+        /* Brand-blue slash variants beyond /10 + /20. */
+        html.theme-light .bg-tg-blue\/15 { background-color: rgba(14, 120, 194, 0.12) !important; }
+        html.theme-light .bg-tg-blue\/25 { background-color: rgba(14, 120, 194, 0.18) !important; }
+        html.theme-light .hover\:bg-tg-blue\/20:hover { background-color: rgba(14, 120, 194, 0.18) !important; }
+        html.theme-light .hover\:bg-tg-blue\/25:hover { background-color: rgba(14, 120, 194, 0.20) !important; }
+        html.theme-light .border-tg-blue\/30 { border-color: rgba(14, 120, 194, 0.40) !important; }
+        html.theme-light .hover\:bg-tg-green\/20:hover { background-color: rgba(0, 138, 110, 0.18) !important; }
+        html.theme-light .hover\:bg-tg-orange\/20:hover { background-color: rgba(184, 134, 11, 0.18) !important; }
+        html.theme-light .border-tg-green\/30 { border-color: rgba(0, 138, 110, 0.40) !important; }
+        html.theme-light .border-tg-orange\/30 { border-color: rgba(184, 134, 11, 0.40) !important; }
+
+        /* Standalone gray status dots — `.status-dot`, `.status-ws` use
+           `bg-gray-500` which had no light override. */
+        html.theme-light .bg-gray-500 { background-color: #6B7280 !important; }
+        html.theme-light .bg-gray-700 { background-color: #E5E7EB !important; }
+
+        /* Status pills inside chat rows — the green/orange/grey hard-coded
+           on dark were illegible on light surfaces. Recoloured for AA. */
+        html.theme-light .chat-row .status-pill-active { background: rgba(0, 138, 110, 0.16); color: #006A52; }
+        html.theme-light .chat-row .status-pill-paused { background: rgba(184, 134, 11, 0.18); color: #8A6A00; }
+        html.theme-light .chat-row .status-pill-add { background: rgba(0, 0, 0, 0.06); color: #4B5563; }
+
+        /* Loading skeletons — pure dark hex shimmer left a navy stripe on
+           white pages. Lighten for the light theme. */
+        html.theme-light .skeleton {
+            background: linear-gradient(90deg, #E5E7EB 25%, #D1D5DB 50%, #E5E7EB 75%);
+            background-size: 200% 100%;
+        }
+
+        /* Tabs (`.tab-item` family inside Viewer media tabs + Settings tabs) —
+           default rule used dark hex with no light counterpart. */
+        html.theme-light .tab-item { color: #4B5563; }
+        html.theme-light .tab-item:hover { color: #1F2937; }
+        html.theme-light .tab-item.active { color: #0E78C2; border-bottom-color: #0E78C2; }
+
+        /* Selection badge on media tiles — `rgba(255,255,255,…)` on white
+           is invisible. Flip to dark-on-white for light theme. */
+        html.theme-light .media-item .select-badge {
+            background: rgba(255, 255, 255, 0.92);
+            color: rgba(0, 0, 0, 0.65);
+            border-color: rgba(0, 0, 0, 0.45);
+        }
+        html.theme-light .media-item.is-selected .select-badge {
+            background: var(--tg-blue, #0E78C2);
+            color: #FFFFFF;
+            border-color: var(--tg-blue, #0E78C2);
+        }
+
+        /* Unread / muted pills — gray bg + white text washes out on light. */
+        html.theme-light .unread-pill { background: var(--tg-blue, #0E78C2); color: #FFFFFF; }
+        html.theme-light .unread-pill.muted { background: #6B7280; color: #FFFFFF; }
+
+        /* Engine pill pulse halo — alpha 0.20 was invisible on a near-white
+           header. Bump alpha + recolour for the light surface. */
+        html.theme-light .engine-status-pill[data-state="running"] .engine-status-dot {
+            box-shadow: 0 0 0 2px rgba(0, 138, 110, 0.45);
+            animation-name: engine-pulse-light;
+        }
+        html.theme-light .engine-status-pill[data-state="error"] .engine-status-dot { box-shadow: 0 0 0 2px rgba(185, 28, 28, 0.40); }
+        html.theme-light .engine-status-pill[data-state="reconnecting"] .engine-status-dot,
+        html.theme-light .engine-status-pill[data-state="starting"] .engine-status-dot,
+        html.theme-light .engine-status-pill[data-state="stopping"] .engine-status-dot { box-shadow: 0 0 0 2px rgba(184, 134, 11, 0.40); }
+        html.theme-light .engine-status-pill .engine-status-dot { box-shadow: 0 0 0 2px rgba(75, 85, 99, 0.30); }
+        @keyframes engine-pulse-light {
+            0%, 100% { box-shadow: 0 0 0 2px rgba(0, 138, 110, 0.45); }
+            50%      { box-shadow: 0 0 0 4px rgba(0, 138, 110, 0.20); }
+        }
+
+        /* Brand utilities used as solid backgrounds (primary CTA, FAB,
+           settings-chip active, nav-badge, theme buttons). White-on-#2AABEE
+           is 2.84:1 → we darken to #0E78C2 (4.93:1). */
+        html.theme-light .bg-tg-blue { background-color: #0E78C2 !important; }
+        html.theme-light .hover\:bg-tg-blue:hover { background-color: #0A5E96 !important; }
+        html.theme-light .border-tg-blue { border-color: #0E78C2 !important; }
+        html.theme-light .ring-tg-blue { --tw-ring-color: #0E78C2 !important; }
+        html.theme-light .focus\:ring-tg-blue:focus { --tw-ring-color: #0E78C2 !important; }
+        html.theme-light .focus\:border-tg-blue:focus { border-color: #0E78C2 !important; }
+        /* tg-darkBlue is the primary-button hover; align to the new brand. */
+        html.theme-light .hover\:bg-tg-darkBlue:hover { background-color: #0A5E96 !important; }
+
+        /* Borders that need to actually show on a panel / sidebar rather
+           than blend into them. Card / list dividers reach for D1D5DB. */
+        html.theme-light .border-tg-border\/30 { border-color: rgba(0, 0, 0, 0.06) !important; }
+        html.theme-light .border-tg-border\/60 { border-color: rgba(0, 0, 0, 0.12) !important; }
 
         /* ----- Additional light-theme polish for newer surfaces ----- */
         /* Status bar */

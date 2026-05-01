@@ -2,6 +2,30 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.44] — 2026-05-02
+
+### Fixed — Light/dark theme contrast pass
+- **`--tg-*` CSS variables are now actually defined.** Every `var(--tg-…)` consumer (`.engine-status-pill`, `.media-item`, `.sheet-card`, `.chat-row`, `.role-pill`, `.bottom-nav`, …) silently fell back to the dark hex on a light page. Fixed via a `:root` block plus `html.theme-light` re-definition; one source of truth, both themes paint right.
+- **Brand status colours darkened in light theme** to clear WCAG AA on white surfaces — `tg-blue` `#2AABEE` → `#0E78C2` (2.84:1 → 4.93:1), `tg-green` → `#008A6E`, `tg-red` → `#B91C1C`, `tg-orange` → `#B8860B`. Affects primary buttons, FAB, settings-chip active, nav-badge, links, status pills, role pills, engine pill states.
+- **`:focus-visible` keyboard ring restored** — global `button:focus, input:focus, …{ outline: none }` was eclipsing it, leaving every form element + button with no visible keyboard focus. Suppression now scoped to `:not(:focus-visible)` so mouse-clicks lose the ring but keyboards keep it.
+- **Sidebar `.nav-item.active` actually renders.** App was toggling `.active` in JS but no CSS rule existed, so the active page was invisible in the sidebar. Now shows a 3 px blue accent bar + tinted background.
+- **Engine pill pulse halo** uses higher alpha + theme-correct green in light mode (was `rgba(79,174,78,0.20)` — invisible on a near-white header).
+- **Disabled buttons** (`.tg-btn:disabled`, `.tg-btn-secondary:disabled`) now visibly distinct: `opacity: 0.5 + saturate(0.55) + cursor: not-allowed`.
+- **Selection-bar Select-all / Clear** gained an underline-on-hover affordance — the buttons read as buttons, not body copy.
+
+### Fixed — Missing light-theme overrides
+- Yellow alert family (`text-yellow-400`, `bg-yellow-500/10`, `border-yellow-500/20`).
+- Red alpha variants `bg-red-500/{5,15,25,30}`, `bg-red-600`, `hover:bg-red-700`, `border-red-400/60`, `hover:text-red-400`.
+- Brand-blue alphas beyond `/10`+`/20`: `bg-tg-blue/{15,25}`, `border-tg-blue/30`, `hover:bg-tg-blue/{20,25}`, `hover:bg-tg-{green,orange}/20`, `border-tg-{green,orange}/30`.
+- `.tab-item` (Viewer + Settings tab strips), `.skeleton` shimmer (was a navy stripe on white), `.media-item .select-badge` (was white-on-white), `.unread-pill.muted`, `.bg-gray-500` status dots, `.hover:bg-white/10` patches inside themed surfaces.
+- Status pills in chat rows recoloured per theme: green/orange/grey hard-coded for dark were illegible on light surfaces.
+
+### Added
+- `.tg-input::placeholder` colour rule covers BOTH themes — dark previously fell back to a UA default that was barely legible on the panel bg.
+
+### SW
+- VERSION bumped `'v43'` → `'v44'`.
+
 ## [2.3.43] — 2026-05-02
 
 ### Added — Sidebar groups: collapse + filter
