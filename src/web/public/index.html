@@ -1622,7 +1622,9 @@
                             <span data-i18n="backfill.modal.title">Backfill history</span>
                         </h3>
                         <p class="text-xs text-tg-textSecondary mb-3" data-i18n="backfill.modal.help">Open the Backfill page with this chat preselected.</p>
-                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-2 text-xs">
+                        <div class="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-2 text-xs">
+                            <button class="tg-btn-secondary py-1" data-history-limit="5" data-i18n="backfill.preset.last_5">Last 5</button>
+                            <button class="tg-btn-secondary py-1" data-history-limit="10" data-i18n="backfill.preset.last_10">Last 10</button>
                             <button class="tg-btn-secondary py-1" data-history-limit="100" data-i18n="backfill.preset.last_100">Last 100</button>
                             <button class="tg-btn-secondary py-1" data-history-limit="1000" data-i18n="backfill.preset.last_1k">Last 1k</button>
                             <button class="tg-btn-secondary py-1" data-history-limit="10000" data-i18n="backfill.preset.last_10k">Last 10k</button>
@@ -1780,6 +1782,10 @@
                         <button id="groups-tab-monitored" onclick="switchGroupsTab('monitored')"
                             class="px-4 py-2 text-sm font-medium border-b-2 border-transparent text-tg-textSecondary hover:text-white transition-colors" data-i18n="groups.tab.monitored">
                             Monitored Only
+                        </button>
+                        <button id="groups-tab-unmonitored" onclick="switchGroupsTab('unmonitored')"
+                            class="px-4 py-2 text-sm font-medium border-b-2 border-transparent text-tg-textSecondary hover:text-white transition-colors" data-i18n="groups.tab.unmonitored">
+                            Unmonitored
                         </button>
                     </div>
                     <!-- Search Box -->
@@ -2971,6 +2977,7 @@
     <!-- Selection footer (shown when items are selected) -->
     <div id="selection-bar" class="hidden fixed bottom-8 left-1/2 -translate-x-1/2 bg-tg-panel border border-tg-border rounded-full px-4 py-2 shadow-xl z-40 flex items-center gap-3 text-sm">
         <span id="selection-count" class="text-tg-text">0 selected</span>
+        <button id="selection-all" class="text-tg-blue hover:text-tg-text" data-i18n-title="viewer.selection.select_all_title" title="Select every visible tile (Ctrl/⌘+A)" data-i18n="viewer.selection.select_all">Select all</button>
         <button id="selection-clear" class="text-tg-textSecondary hover:text-tg-text" data-i18n="viewer.selection.clear">Clear</button>
         <button id="selection-delete" class="px-3 py-1 rounded bg-red-500/20 text-red-400 hover:bg-red-500/30">
             <i class="ri-delete-bin-line"></i> <span data-i18n="viewer.selection.delete">Delete</span>

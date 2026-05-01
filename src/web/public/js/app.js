@@ -20,7 +20,7 @@ import { openSheet, confirmSheet } from './sheet.js';
 import { renderChatRow, renderEmptyState, renderRowSkeletons, renderGallerySkeletons } from './components.js';
 import { formatRelativeTime } from './utils.js';
 import { attachPullToRefresh } from './gestures.js';
-import { setupGallerySelect, exitSelectMode, repaintSelection } from './gallery-select.js';
+import { setupGallerySelect, exitSelectMode, repaintSelection, selectAllVisible } from './gallery-select.js';
 import { initI18n, setLang, getLang, applyToDOM as applyI18n, t as i18nT, tf as i18nTf } from './i18n.js';
 import { showBackfillPage, deepLinkFromModal as backfillDeepLink, stopBackfillPage } from './backfill.js';
 import * as Fonts from './fonts.js';
@@ -1210,6 +1210,7 @@ async function setupMediaSearch() {
     const selBar = document.getElementById('selection-bar');
     const selDel = document.getElementById('selection-delete');
     const selClear = document.getElementById('selection-clear');
+    const selAll = document.getElementById('selection-all');
     if (!input) return;
 
     let timer = null;
@@ -1294,6 +1295,13 @@ async function setupMediaSearch() {
         updateSelectionBar();
     });
 
+    selAll?.addEventListener('click', () => {
+        // Mirrors Ctrl/⌘+A — surfaces the keyboard shortcut as a tappable
+        // button so mobile/touch users get the same affordance.
+        selectAllVisible();
+        updateSelectionBar();
+    });
+
     selDel?.addEventListener('click', async () => {
         if (!state.selected || !state.selected.size) return;
         const paths = Array.from(state.selected);
@@ -1341,9 +1349,11 @@ function renderDialogsList(dialogs) {
     if (!list) return;
     
     const tab = state.groupsTab || 'all';
-    const filtered = tab === 'monitored' 
-        ? dialogs.filter(d => d.inConfig || d.enabled) 
-        : dialogs;
+    const filtered = tab === 'monitored'
+        ? dialogs.filter(d => d.inConfig || d.enabled)
+        : tab === 'unmonitored'
+            ? dialogs.filter(d => !d.inConfig && !d.enabled)
+            : dialogs;
     
     if (filtered.length === 0) {
         list.innerHTML = `<div class="text-center py-8 text-tg-textSecondary">${escapeHtml(i18nT('groups.none_found', 'No groups found'))}</div>`;
@@ -1400,17 +1410,21 @@ function filterDialogs(query) {
 
 function switchGroupsTab(tab) {
     state.groupsTab = tab;
-    
-    document.getElementById('groups-tab-all')?.classList.toggle('border-tg-blue', tab === 'all');
-    document.getElementById('groups-tab-all')?.classList.toggle('text-tg-blue', tab === 'all');
-    document.getElementById('groups-tab-all')?.classList.toggle('border-transparent', tab !== 'all');
-    document.getElementById('groups-tab-all')?.classList.toggle('text-tg-textSecondary', tab !== 'all');
-    
-    document.getElementById('groups-tab-monitored')?.classList.toggle('border-tg-blue', tab === 'monitored');
-    document.getElementById('groups-tab-monitored')?.classList.toggle('text-tg-blue', tab === 'monitored');
-    document.getElementById('groups-tab-monitored')?.classList.toggle('border-transparent', tab !== 'monitored');
-    document.getElementById('groups-tab-monitored')?.classList.toggle('text-tg-textSecondary', tab !== 'monitored');
-    
+
+    // Single source of truth: the tab id maps 1:1 to the filter slug. This
+    // collapses the previous per-button if-toggle ladder into a loop, so
+    // adding a future tab only requires adding it to this array.
+    const tabs = ['all', 'monitored', 'unmonitored'];
+    for (const t of tabs) {
+        const el = document.getElementById(`groups-tab-${t}`);
+        if (!el) continue;
+        const active = tab === t;
+        el.classList.toggle('border-tg-blue', active);
+        el.classList.toggle('text-tg-blue', active);
+        el.classList.toggle('border-transparent', !active);
+        el.classList.toggle('text-tg-textSecondary', !active);
+    }
+
     if (state.allDialogs) renderDialogsList(state.allDialogs);
 }
 
