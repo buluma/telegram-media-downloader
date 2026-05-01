@@ -90,6 +90,22 @@ export function hasFfmpeg() {
     } catch { return (_ffmpegOk = false); }
 }
 
+// Detect libwebp at startup (cached). Stripped musl/Alpine ffmpeg builds
+// frequently omit it — when missing, single-pass `-c:v libwebp` fails on
+// every video and we'd produce zero thumbs. Knowing up-front lets the
+// generator pick the JPEG → sharp WebP fallback path automatically.
+let _ffmpegLibwebp = null;
+function _ffmpegHasLibwebp() {
+    if (_ffmpegLibwebp !== null) return _ffmpegLibwebp;
+    if (!hasFfmpeg()) return (_ffmpegLibwebp = false);
+    try {
+        const r = spawnSync(_resolveFfmpegBin(), ['-hide_banner', '-encoders'], { windowsHide: true });
+        if (r.status !== 0) return (_ffmpegLibwebp = false);
+        const out = (r.stdout || Buffer.alloc(0)).toString('utf8');
+        return (_ffmpegLibwebp = /\blibwebp\b/.test(out));
+    } catch { return (_ffmpegLibwebp = false); }
+}
+
 // Encoding parameters — quality / effort kept in one place so the
 // Maintenance "rebuild thumbs" path can replay against the same knobs.
 //
@@ -224,36 +240,63 @@ function _runFfmpeg(args) {
 }
 
 async function _generateVideoThumb(srcAbs, width, dstAbs) {
-    // Extract frame as JPEG, then use sharp to convert to WebP.
-    // This works even without libwebp in ffmpeg.
-    const tmpJpg = dstAbs + '.frame.jpg';
-    const tryAt = async (sec) => {
-        const args = [
-            '-hide_banner', '-loglevel', 'error',
-            '-ss', String(sec),
-            '-i', srcAbs,
-            '-frames:v', '1',
-            '-an',
-            '-vf', `scale='min(${width},iw)':-2:flags=fast_bilinear`,
-            '-q:v', '3',
-            '-y',
-            tmpJpg,
-        ];
-        await _runFfmpeg(args);
-        if (existsSync(tmpJpg)) {
-            await sharp(tmpJpg, { failOn: 'none' })
-                .rotate()
-                .webp({ quality: WEBP_QUALITY, effort: SHARP_EFFORT })
-                .toFile(dstAbs);
+    // Two paths, picked once at boot from `_ffmpegHasLibwebp()`:
+    //   • Fast (libwebp present): single-pass — seek + scale + libwebp encode
+    //     all inside ffmpeg. Reads only the first keyframe + headers. ~10×
+    //     faster than the naive grab-frame-then-resize flow.
+    //   • Fallback (libwebp missing): write a temp JPEG via ffmpeg, then
+    //     hand it to sharp for the WebP encode. Bulletproof on stripped
+    //     ffmpeg builds (Alpine/musl, Windows static binaries).
+    // The seek tries 1 s first (skips opening titles); a fallback to 0 s
+    // handles ultra-short clips where seeking past the end yields no frame.
+    const useSinglePass = _ffmpegHasLibwebp();
+    const tryAt = useSinglePass
+        ? async (sec) => {
+            const args = [
+                '-hide_banner', '-loglevel', 'error',
+                '-ss', String(sec),
+                '-i', srcAbs,
+                '-frames:v', '1',
+                '-an',
+                '-vf', `scale='min(${width},iw)':-2:flags=fast_bilinear`,
+                '-c:v', 'libwebp',
+                '-quality', String(FFMPEG_WEBP_QUALITY),
+                '-compression_level', String(FFMPEG_WEBP_COMPRESSION),
+                '-y',
+                dstAbs,
+            ];
+            await _runFfmpeg(args);
         }
-    };
+        : async (sec) => {
+            const tmpJpg = dstAbs + '.frame.jpg';
+            try {
+                await _runFfmpeg([
+                    '-hide_banner', '-loglevel', 'error',
+                    '-ss', String(sec),
+                    '-i', srcAbs,
+                    '-frames:v', '1',
+                    '-an',
+                    '-vf', `scale='min(${width},iw)':-2:flags=fast_bilinear`,
+                    '-q:v', '3',
+                    '-y',
+                    tmpJpg,
+                ]);
+                if (existsSync(tmpJpg)) {
+                    await sharp(tmpJpg, { failOn: 'none' })
+                        .rotate()
+                        .resize({ width, withoutEnlargement: true, fit: 'inside' })
+                        .webp({ quality: WEBP_QUALITY, effort: SHARP_EFFORT })
+                        .toFile(dstAbs);
+                }
+            } finally {
+                try { if (existsSync(tmpJpg)) await fs.unlink(tmpJpg); } catch { /* best-effort */ }
+            }
+        };
     try {
         await tryAt(1);
         if (!existsSync(dstAbs)) await tryAt(0);
     } catch (_e) {
         await tryAt(0);
-    } finally {
-        try { if (existsSync(tmpJpg)) await fs.unlink(tmpJpg); } catch {}
     }
 }
 
