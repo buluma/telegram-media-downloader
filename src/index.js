@@ -3,23 +3,19 @@
  * Multi-Account Support
  */
 
-import { TelegramClient } from 'telegram';
-import { StringSession } from 'telegram/sessions/index.js';
 import readline from 'readline';
 import fs from 'fs';
 import path from 'path';
 import net from 'net';
 import { fileURLToPath } from 'url';
 
-import { loadConfig, saveConfig, addGroup } from './config/manager.js';
+import { loadConfig, saveConfig } from './config/manager.js';
 import { hashPassword } from './core/web-auth.js';
 import { suppressNoise, wrapConsoleMethod } from './core/logger.js';
-import { RateLimiter, SecureSession } from './core/security.js';
 import { ConnectionManager } from './core/connection.js';
 import { AccountManager } from './core/accounts.js';
 import { colorize, clearScreen, formatBytes } from './cli/colors.js';
 import { resilience } from './core/resilience.js';
-import { getOrGenerateSecret } from './core/secret.js';
 import { getDb, getStats as getDbStats, deleteGroupDownloads, deleteAllDownloads, backfillGroupNames } from './core/db.js';
 import { sanitizeName, migrateFolders } from './core/downloader.js';
 
@@ -914,7 +910,6 @@ async function configureGroups(accountManager, config) {
     });
 
     // Update config
-    let toggledCount = 0;
     for (const item of selection) {
         const configIndex = config.groups.findIndex(g => String(g.id) === String(item.id));
 
@@ -926,7 +921,6 @@ async function configureGroups(accountManager, config) {
             if (item.autoForward) {
                 config.groups[configIndex].autoForward = item.autoForward;
             }
-            toggledCount++;
         } else if (item.enabled) {
             // Add new enabled group
             config.groups.push({
@@ -938,7 +932,6 @@ async function configureGroups(accountManager, config) {
                 trackUsers: { enabled: false, users: [] },
                 topics: { enabled: false, ids: [] }
             });
-            toggledCount++;
         }
     }
 
@@ -1007,7 +1000,7 @@ async function startMonitor(accountManager, config) {
         }
     });
 
-    downloader.on('error', ({ job, error }) => {
+    downloader.on('error', ({ error }) => {
         console.log(colorize(`❌ Error: `, 'red') + error);
     });
 
@@ -1071,7 +1064,7 @@ async function startMonitor(accountManager, config) {
     });
 }
 
-async function startHistory(accountManager, config, connManager) {
+async function startHistory(accountManager, config, _connManager) {
     const startTime = Date.now();
     clearScreen();
     console.log(colorize('╔════════════════════════════════════════╗', 'magenta'));
@@ -1132,7 +1125,6 @@ async function startHistory(accountManager, config, connManager) {
     const { DownloadManager } = await import('./core/downloader.js');
     const { HistoryDownloader } = await import('./core/history.js');
     const { RateLimiter } = await import('./core/security.js');
-    const { AutoForwarder } = await import('./core/forwarder.js');
 
     // Migrate old folder names (space → underscore) before downloading
     await migrateFolders(config.download?.path);
@@ -1295,7 +1287,6 @@ async function startHistory(accountManager, config, connManager) {
     const choice = choiceStr.trim();
 
     let limit = 100;
-    let offsetId = 0;
     let offsetDate = 0;
 
     // Setup Downloader (Early init for scanning)
@@ -1459,7 +1450,7 @@ async function startHistory(accountManager, config, connManager) {
         console.log(colorize(`✅ Saved: `, 'green') + path.basename(job.filePath));
     });
 
-    downloader.on('error', ({ job, error }) => {
+    downloader.on('error', ({ error }) => {
         errorCount++;
         console.log(colorize(`❌ Error: `, 'red') + error);
     });
