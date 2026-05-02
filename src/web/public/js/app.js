@@ -39,6 +39,36 @@ import { showQueuePage, initQueue } from './queue.js';
 // each render function so distinct renders don't shadow each other.
 const _scheduledRenders = new Map(); // fn → { timer, frame }
 const RENDER_COALESCE_MS = 150;
+const SIDEBAR_GROUPS_COLLAPSED_KEY = 'tgdl-sidebar-groups-collapsed';
+const THUMBS_VISIBLE_KEY = 'tgdl-thumbs-visible';
+
+function _loadThumbsVisiblePref() {
+    try {
+        const raw = localStorage.getItem(THUMBS_VISIBLE_KEY);
+        if (raw == null) return false; // default: hidden until user enables
+        return raw === '1';
+    } catch {
+        return false;
+    }
+}
+
+function _applyThumbsVisible(visible, { persist = true, rerender = false } = {}) {
+    state.thumbsVisible = !!visible;
+    if (persist) {
+        try { localStorage.setItem(THUMBS_VISIBLE_KEY, state.thumbsVisible ? '1' : '0'); } catch {}
+    }
+    const btn = document.getElementById('thumbs-toggle-btn');
+    if (btn) {
+        btn.classList.toggle('bg-tg-blue', state.thumbsVisible);
+        btn.classList.toggle('text-white', state.thumbsVisible);
+        btn.classList.toggle('bg-tg-panel', !state.thumbsVisible);
+        btn.classList.toggle('text-tg-text', !state.thumbsVisible);
+        btn.title = state.thumbsVisible ? 'Hide thumbnails' : 'Show thumbnails';
+        const icon = btn.querySelector('i');
+        if (icon) icon.className = state.thumbsVisible ? 'ri-image-line' : 'ri-eye-off-line';
+    }
+    if (rerender && state.currentPage === 'viewer') renderMediaGrid();
+}
 
 function scheduleRender(fn) {
     if (_scheduledRenders.has(fn)) return;
@@ -54,6 +84,8 @@ function scheduleRender(fn) {
 
 // ============ Initialization ============
 async function init() {
+    _applyThumbsVisible(_loadThumbsVisiblePref(), { persist: false, rerender: false });
+
     // Resolve the session role BEFORE the SPA registers any UI — it drives
     // the body[data-role] CSS gate (admin-only DOM) and the router redirect
     // for guest sessions trying to deep-link into admin routes. Falls back
@@ -572,6 +604,21 @@ function closeSidebar() {
     if (overlay) overlay.classList.add('hidden');
 }
 
+function applyDownloadedGroupsCollapsed(collapsed) {
+    const body = document.getElementById('downloaded-groups-body');
+    const btn = document.getElementById('downloaded-groups-toggle');
+    const chevron = document.getElementById('downloaded-groups-chevron');
+    if (!body || !btn || !chevron) return;
+
+    body.classList.toggle('hidden', collapsed);
+    btn.setAttribute('aria-expanded', String(!collapsed));
+    chevron.classList.toggle('ri-arrow-up-s-line', !collapsed);
+    chevron.classList.toggle('ri-arrow-down-s-line', collapsed);
+    btn.dataset.i18nTitle = collapsed ? 'sidebar.downloaded_groups_expand' : 'sidebar.downloaded_groups_collapse';
+    btn.dataset.i18nAriaLabel = btn.dataset.i18nTitle;
+    applyI18n(btn);
+}
+
 // ============ Groups Logic ============
 async function loadGroups() {
     // Show 6 row skeletons while we wait for the network — better than a
@@ -618,6 +665,15 @@ function renderGroupsList() {
     });
     
     const sorted = Array.from(map.values());
+    const q = String(state.downloadedGroupsQuery || '').trim().toLowerCase();
+    const filtered = q
+        ? sorted.filter((g) => {
+            const id = String(g.downloadId || g.id || '');
+            const name = getGroupName(id, { fallback: g.name || '' });
+            const hay = `${name} ${id}`.toLowerCase();
+            return hay.includes(q);
+        })
+        : sorted;
 
     if (sorted.length === 0) {
         list.innerHTML = renderEmptyState({
@@ -629,10 +685,18 @@ function renderGroupsList() {
         });
         return;
     }
+    if (filtered.length === 0) {
+        list.innerHTML = renderEmptyState({
+            icon: 'ri-search-line',
+            title: i18nT('groups.empty.search_title', 'No matching groups'),
+            body: i18nT('groups.empty.search_body', 'Try a different group name or id.'),
+        });
+        return;
+    }
 
     state.activeRings = state.activeRings || new Set();
     let needsResolve = false;
-    const html = sorted.map(g => {
+    const html = filtered.map(g => {
         const id = String(g.downloadId || g.id || g.name);
         // Route every render through the canonical lookup so a name set by
         // the WS `groups_refreshed` handler propagates without a reload.
@@ -977,7 +1041,7 @@ function renderMediaGrid(opts = {}) {
             // Falls back to a typed-icon placeholder if the source isn't
             // thumbnailable (audio / document / dead source).
             const thumbW = _isMobileViewport() ? 240 : 320;
-            const thumbUrl = file.id != null
+            const thumbUrl = (state.thumbsVisible && file.id != null)
                 ? `/api/thumbs/${encodeURIComponent(file.id)}?w=${thumbW}`
                 : null;
             // Onerror falls back to displaying nothing (the panel
@@ -985,7 +1049,7 @@ function renderMediaGrid(opts = {}) {
             // degradation for a missing/dead file.
             const imgFallback = `<img loading="lazy" decoding="async" class="w-full h-full object-cover" alt="" `
                 + (thumbUrl ? `src="${escapeHtml(thumbUrl)}"` : '')
-                + ` onerror="this.style.display='none'">`;
+                + ` onload="this.classList.add('loaded')" onerror="this.style.display='none'">`;
             const docFallback = `<div class="w-full h-full flex flex-col items-center justify-center">
                 <i class="${getFileIcon(file.extension)} text-3xl text-tg-textSecondary"></i>
             </div>`;
@@ -1114,6 +1178,10 @@ function _removeTileFromGrid({ path, id }) {
         const empty = document.getElementById('empty-state');
         if (empty) empty.classList.remove('hidden');
     }
+
+    // Keep selection bar/button state in sync when the visible subset changes
+    // due to filtering, search, or pagination.
+    updateSelectionBar();
 }
 
 /**
@@ -1160,11 +1228,41 @@ function toggleSelection(path) {
     updateSelectionBar();
 }
 
+function getSelectableMediaPaths() {
+    // Prefer what's currently rendered in the grid: this reflects the exact
+    // visible/loaded subset after search, tab filters, and pagination.
+    const fromGrid = Array.from(document.querySelectorAll('#media-grid .media-item[data-path]'))
+        .map(el => el.dataset.path)
+        .filter(Boolean);
+    if (fromGrid.length) return fromGrid;
+
+    // Fallback to loaded state when the grid isn't mounted yet.
+    return (state.files || [])
+        .filter(file => state.currentFilter === 'all' || file.type === state.currentFilter)
+        .map(file => file.fullPath || file.path)
+        .filter(Boolean);
+}
+
+function updateSelectAllButton() {
+    const btn = document.getElementById('selection-select-all');
+    if (!btn) return;
+    const selectable = getSelectableMediaPaths();
+    const selectedCount = selectable.filter(p => state.selected?.has(p)).length;
+    const allSelected = selectable.length > 0 && selectedCount === selectable.length;
+    btn.textContent = allSelected
+        ? i18nT('viewer.selection.unselectAll', 'Unselect All')
+        : i18nT('viewer.selection.selectAll', 'Select All');
+}
+
 function updateSelectionBar() {
     const bar = document.getElementById('selection-bar');
     const count = state.selected ? state.selected.size : 0;
     document.getElementById('selection-count').textContent = i18nTf('viewer.selection.count', { count }, `${count} selected`);
-    if (bar) bar.classList.toggle('hidden', count === 0);
+    updateSelectAllButton();
+    // Keep the bar available while selection mode is active so "Select All"
+    // is reachable without first manually selecting a tile.
+    const shouldShow = Boolean(state.selectMode) || count > 0;
+    if (bar) bar.classList.toggle('hidden', !shouldShow);
 }
 
 // Group files into Telegram-style time sections. Accepts an array of
@@ -1263,6 +1361,8 @@ async function setupMediaSearch() {
     // dropped in v2.3.47 (rarely used; the chat sidebar already filters
     // groups, and the URL link picker handles "find this exact message").
     const selectBtn = document.getElementById('select-mode-btn');
+    const thumbsBtn = document.getElementById('thumbs-toggle-btn');
+    const selBar = document.getElementById('selection-bar');
     const selDel = document.getElementById('selection-delete');
     const selClear = document.getElementById('selection-clear');
     const selAll = document.getElementById('selection-all');
@@ -1279,6 +1379,11 @@ async function setupMediaSearch() {
             if (grid) grid.classList.add('in-select-mode');
         }
         updateSelectionBar();
+    });
+
+    _applyThumbsVisible(state.thumbsVisible, { persist: false, rerender: false });
+    thumbsBtn?.addEventListener('click', () => {
+        _applyThumbsVisible(!state.thumbsVisible, { persist: true, rerender: true });
     });
 
     selClear?.addEventListener('click', () => {
@@ -1481,7 +1586,6 @@ function switchGroupsTab(tab) {
         el.classList.toggle('border-transparent', !active);
         el.classList.toggle('text-tg-textSecondary', !active);
     }
-
     if (state.allDialogs) renderDialogsList(state.allDialogs);
 }
 
@@ -1870,6 +1974,59 @@ function setupEventListeners() {
     
     document.getElementById('sidebar-close')?.addEventListener('click', closeSidebar);
     document.getElementById('sidebar-overlay')?.addEventListener('click', closeSidebar);
+
+    const groupsToggle = document.getElementById('downloaded-groups-toggle');
+    if (groupsToggle) {
+        const collapsed = localStorage.getItem(SIDEBAR_GROUPS_COLLAPSED_KEY) === '1';
+        applyDownloadedGroupsCollapsed(collapsed);
+        groupsToggle.addEventListener('click', () => {
+            const next = localStorage.getItem(SIDEBAR_GROUPS_COLLAPSED_KEY) !== '1';
+            try { localStorage.setItem(SIDEBAR_GROUPS_COLLAPSED_KEY, next ? '1' : '0'); } catch {}
+            applyDownloadedGroupsCollapsed(next);
+        });
+    }
+    
+    // Selection bar - Select All
+    document.getElementById('selection-select-all')?.addEventListener('click', () => {
+        if (!state.selected) state.selected = new Set();
+        const paths = getSelectableMediaPaths();
+        const allSelected = paths.length > 0 && paths.every(p => state.selected.has(p));
+        if (allSelected) {
+            paths.forEach(p => state.selected.delete(p));
+        } else {
+            paths.forEach(p => state.selected.add(p));
+        }
+        updateSelectionBar();
+        renderMediaGrid();
+    });
+
+    // Selection bar - Clear
+    document.getElementById('selection-clear')?.addEventListener('click', () => {
+        if (state.selected) state.selected.clear();
+        updateSelectionBar();
+        renderMediaGrid();
+    });
+
+    // Selection bar - Delete
+    document.getElementById('selection-delete')?.addEventListener('click', async () => {
+        if (!state.selected || !state.selected.size) return;
+        const paths = Array.from(state.selected);
+        if (!(await confirmSheet({
+            title: i18nT('viewer.bulk.title', 'Delete selected files?'),
+            message: i18nTf('viewer.bulk.confirm', { count: paths.length }, `Delete ${paths.length} file(s)? This cannot be undone.`),
+            confirmLabel: i18nT('common.delete', 'Delete'),
+            danger: true,
+        }))) return;
+        try {
+            const r = await api.post('/api/downloads/bulk-delete', { paths });
+            showToast(i18nTf('viewer.bulk.deleted', { count: r.unlinked }, `Deleted ${r.unlinked} files`), 'success');
+            state.selected.clear();
+            await loadStats();
+            await refreshCurrentPage();
+        } catch (e) {
+            showToast(e.message, 'error');
+        }
+    });
     
     // Sidebar quick-filter — matches the sidebar `.chat-row` markup that
     // renderGroupsList() actually produces. The legacy `.group-item`
@@ -1887,6 +2044,11 @@ function setupEventListeners() {
             const idMatch = id && id.toLowerCase().includes(query);
             item.style.display = (!query || text.includes(query) || idMatch) ? '' : 'none';
         });
+    });
+
+    document.getElementById('downloaded-groups-search')?.addEventListener('input', (e) => {
+        state.downloadedGroupsQuery = e.target.value || '';
+        renderGroupsList();
     });
     
     // Media tabs

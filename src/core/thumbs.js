@@ -296,7 +296,6 @@ async function _generateVideoThumb(srcAbs, width, dstAbs) {
         await tryAt(1);
         if (!existsSync(dstAbs)) await tryAt(0);
     } catch (_e) {
-        // First try failed (common on very short clips) — fall back to t=0.
         await tryAt(0);
     }
 }

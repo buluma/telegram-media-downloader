@@ -165,7 +165,7 @@ export async function loadSettings() {
         // viewer module reads the same keys on every clip .load(). One
         // helper covers all the on/off toggles to avoid 5 copies of the
         // same wire-up.
-        const wireBoolPref = (toggleId, key, onMsg, offMsg) => {
+        const wireBoolPref = (toggleId, key, onMsg, offMsg, onFallback, offFallback) => {
             const el = document.getElementById(toggleId);
             if (!el) return;
             const refresh = () => el.classList.toggle('active', localStorage.getItem(key) === '1');
@@ -175,17 +175,25 @@ export async function loadSettings() {
                 const on = localStorage.getItem(key) !== '1';
                 try { localStorage.setItem(key, on ? '1' : '0'); } catch { /* private mode */ }
                 refresh();
-                showToast(on ? i18nT(onMsg, onMsg) : i18nT(offMsg, offMsg), 'info');
+                showToast(on ? i18nT(onMsg, onFallback) : i18nT(offMsg, offFallback), 'info');
             };
         };
-        wireBoolPref('setting-viewer-autoplay',     'viewer-autoplay',     'toast.viewer_autoplay_on',     'toast.viewer_autoplay_off');
-        wireBoolPref('setting-viewer-start-muted',  'video-muted',         'toast.viewer_muted_on',        'toast.viewer_muted_off');
-        wireBoolPref('setting-viewer-loop',         'viewer-loop',         'toast.viewer_loop_on',         'toast.viewer_loop_off');
-        wireBoolPref('setting-viewer-auto-advance', 'viewer-auto-advance', 'toast.viewer_advance_on',      'toast.viewer_advance_off');
+        wireBoolPref('setting-viewer-autoplay', 'viewer-autoplay',
+            'toast.viewer_autoplay_on', 'toast.viewer_autoplay_off',
+            'Autoplay enabled.', 'Autoplay disabled.');
+        wireBoolPref('setting-viewer-start-muted', 'video-muted',
+            'toast.viewer_muted_on', 'toast.viewer_muted_off',
+            'Start muted enabled.', 'Start muted disabled.');
+        wireBoolPref('setting-viewer-loop', 'viewer-loop',
+            'toast.viewer_loop_on', 'toast.viewer_loop_off',
+            'Loop enabled.', 'Loop disabled.');
+        wireBoolPref('setting-viewer-auto-advance', 'viewer-auto-advance',
+            'toast.viewer_advance_on', 'toast.viewer_advance_off',
+            'Auto-advance enabled.', 'Auto-advance disabled.');
         // PiP / Speed button visibility — defaults to ON (legacy behaviour).
         // Use inverted-sense keys ('viewer-hide-pip' = '1' → hidden) so
         // existing users who never touched the toggle keep both visible.
-        const wireHidePref = (toggleId, key, applyFn, onMsg, offMsg) => {
+        const wireHidePref = (toggleId, key, applyFn, onMsg, offMsg, onFallback, offFallback) => {
             const el = document.getElementById(toggleId);
             if (!el) return;
             const refresh = () => el.classList.toggle('active', localStorage.getItem(key) !== '1');
@@ -196,15 +204,17 @@ export async function loadSettings() {
                 const visible = localStorage.getItem(key) !== '1';
                 try { localStorage.setItem(key, visible ? '1' : '0'); } catch {}
                 refresh(); apply();
-                showToast(visible ? i18nT(offMsg, offMsg) : i18nT(onMsg, onMsg), 'info');
+                showToast(visible ? i18nT(offMsg, offFallback) : i18nT(onMsg, onFallback), 'info');
             };
         };
         wireHidePref('setting-viewer-show-pip',   'viewer-hide-pip',
             (visible) => { const b = document.getElementById('video-pip-btn'); if (b) b.style.display = visible ? '' : 'none'; },
-            'toast.viewer_pip_on', 'toast.viewer_pip_off');
+            'toast.viewer_pip_on', 'toast.viewer_pip_off',
+            'PiP button shown.', 'PiP button hidden.');
         wireHidePref('setting-viewer-show-speed', 'viewer-hide-speed',
             (visible) => { const b = document.getElementById('video-settings-btn'); if (b) b.style.display = visible ? '' : 'none'; },
-            'toast.viewer_speedbtn_on', 'toast.viewer_speedbtn_off');
+            'toast.viewer_speedbtn_on', 'toast.viewer_speedbtn_off',
+            'Speed button shown.', 'Speed button hidden.');
         // Seed default ON for double-tap-fullscreen so the toggle reflects
         // the legacy behaviour on first visit. Once set, user clicks
         // toggle as expected.
@@ -212,7 +222,8 @@ export async function loadSettings() {
             try { localStorage.setItem('viewer-dbl-tap-fs', '1'); } catch {}
         }
         wireBoolPref('setting-viewer-dbl-tap-fs', 'viewer-dbl-tap-fs',
-            'toast.viewer_dbltap_on', 'toast.viewer_dbltap_off');
+            'toast.viewer_dbltap_on', 'toast.viewer_dbltap_off',
+            'Double-tap fullscreen enabled.', 'Double-tap fullscreen disabled.');
         // Resume defaults to ON (legacy behaviour) — store the OPPOSITE
         // sense ('viewer-no-resume' = 1 when disabled) so existing users
         // who never touched the toggle keep their resume behaviour.
