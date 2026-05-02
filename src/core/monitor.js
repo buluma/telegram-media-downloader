@@ -74,7 +74,7 @@ export class RealtimeMonitor extends EventEmitter {
     async discoverClientForGroup(group) {
         if (!this.accountManager) return this.client;
 
-        for (const [id, acctClient] of this.accountManager.clients) {
+        for (const [_id, acctClient] of this.accountManager.clients) {
             try {
                 const history = await acctClient.getMessages(group.id, { limit: 1 });
                 if (history) {
@@ -258,7 +258,7 @@ export class RealtimeMonitor extends EventEmitter {
         // Register handler on ALL available clients (multi-account)
         this.handlerClients = [];
         if (this.accountManager && this.accountManager.count > 1) {
-            for (const [id, acctClient] of this.accountManager.clients) {
+            for (const [_id, acctClient] of this.accountManager.clients) {
                 try {
                     acctClient.addEventHandler(this.handler, new NewMessage({}));
                     acctClient.addEventHandler(this.deleteHandler, new Raw({
@@ -381,12 +381,6 @@ export class RealtimeMonitor extends EventEmitter {
 
     async handleEvent(event) {
         const message = event.message;
-
-        // DEBUG: Log EVERY event that has a message to see if we are receiving them
-        if (message) {
-             const peerId = message.peerId?.channelId?.toString() || message.peerId?.chatId?.toString() || message.peerId?.userId?.toString();
-             // console.log(`📨 RAW EVENT: Peer=${peerId} ID=${message.id} Text=${(message.message || '').slice(0, 20)}...`);
-        }
 
         try {
             if (!message) return; // Ignore updates without message

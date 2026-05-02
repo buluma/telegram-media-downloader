@@ -1,6 +1,5 @@
 import { state } from './store.js';
-import { api } from './api.js';
-import { escapeHtml, getFileIcon, formatDate, showToast } from './utils.js';
+import { formatDate, showToast } from './utils.js';
 import { attachSwipe, attachDragDismiss } from './gestures.js';
 import { tf as i18nTf, t as i18nT } from './i18n.js';
 

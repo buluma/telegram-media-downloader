@@ -3,7 +3,7 @@
 // focus is in an input / textarea / contenteditable so search and form
 // fields stay usable.
 
-import { openSheet, closeTopSheet, sheetCount } from './sheet.js';
+import { openSheet, sheetCount } from './sheet.js';
 import { t as i18nT } from './i18n.js';
 
 const SHORTCUTS = [

@@ -4461,9 +4461,6 @@ app.post('/api/groups/refresh-photos', async (req, res) => {
    }
 });
 
-// ============ FILE SERVING (Performance) ============
-const directoryCache = new Map(); // Normalized -> Real Name
-
 // Serve files from data/downloads. Uses safeResolveDownload to reject path
 // traversal, NUL bytes, and symlink escapes. Adds Content-Disposition so a
 // rogue HTML file can't be rendered inline (the browser still inlines images
@@ -4637,11 +4634,6 @@ async function downloadProfilePhoto(groupId) {
 }
 
 // ============ SERVER START ============
-
-function normalizeName(name) {
-    if (!name) return '';
-    return name.replace(/[_|]+/g, ' ').replace(/\s+/g, ' ').replace(/[\/\\:*?"<>]/g, '').trim().toLowerCase();
-}
 
 function formatBytes(bytes) {
     if (!bytes || bytes === 0) return '0 B';
