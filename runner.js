@@ -13,6 +13,7 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOG_FILE = path.join(__dirname, 'data/logs/protection_log.txt');
 const APP_SCRIPT = path.join(__dirname, 'src/index.js');
+const LOCALSTORAGE_FILE = path.join(__dirname, 'data/localstorage.json');
 // Subcommand to run under the watchdog. Default is empty = dashboard/web mode
 // (`node src/index.js`), which is what `npm run prod` promises in README.
 // Override via env: `TGDL_RUN=monitor npm run prod` (space-separated args supported).
@@ -22,7 +23,6 @@ const APP_ARGS = (process.env.TGDL_RUN || '').trim().split(/\s+/).filter(Boolean
 const MAX_CRASHES = 10;
 const RESET_WINDOW = 60000; // 1 minute
 let crashCount = 0;
-let lastCrashTime = 0;
 
 console.log('\x1b[36m%s\x1b[0m', '🌍 Universal Auto-Downloader Watchdog');
 console.log('\x1b[90m%s\x1b[0m', `   Target: node ${APP_SCRIPT} ${APP_ARGS.join(' ')}`);
@@ -47,7 +47,7 @@ function startApp() {
     
     console.log('\x1b[32m%s\x1b[0m', `🚀 Launching Process (Attempt #${crashCount + 1})...`);
     
-    const child = spawn('node', [APP_SCRIPT, ...APP_ARGS], {
+    const child = spawn(process.execPath, [`--localstorage-file=${LOCALSTORAGE_FILE}`, APP_SCRIPT, ...APP_ARGS], {
         stdio: 'inherit', // Preserve colors and dashboard
         cwd: __dirname
     });
