@@ -5,7 +5,7 @@
 
 import { state, getGroupName, updateGroupNameCache, isUnresolvedName } from './store.js';
 import { api } from './api.js';
-import { createAvatar, escapeHtml, getFileIcon, showToast, formatBytes } from './utils.js';
+import { escapeHtml, getFileIcon, showToast, formatBytes } from './utils.js';
 import * as Settings from './settings.js';
 import * as Viewer from './viewer.js';
 import { initEngine, handleEngineWsMessage } from './engine.js';
@@ -780,10 +780,6 @@ function renderGroupsList() {
     });
 }
 
-function normalize(str) {
-    return String(str || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-}
-
 // ============ Open Group / Show All ============
 function openGroup(groupId, groupName) {
     state.currentGroupId = groupId;
@@ -1362,7 +1358,6 @@ async function setupMediaSearch() {
     // groups, and the URL link picker handles "find this exact message").
     const selectBtn = document.getElementById('select-mode-btn');
     const thumbsBtn = document.getElementById('thumbs-toggle-btn');
-    const selBar = document.getElementById('selection-bar');
     const selDel = document.getElementById('selection-delete');
     const selClear = document.getElementById('selection-clear');
     const selAll = document.getElementById('selection-all');
