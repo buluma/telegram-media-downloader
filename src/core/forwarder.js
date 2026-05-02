@@ -8,6 +8,21 @@ import path from 'path';
 import { Api } from 'telegram';
 import { colorize } from '../cli/colors.js';
 
+function getTs() {
+    const d = new Date();
+    const opt = {
+        timeZone: 'Africa/Nairobi',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+    };
+    return new Intl.DateTimeFormat('en-KE', opt).format(d).replace(/,/, '');
+}
+
 export class AutoForwarder {
     constructor(client, config, accountManager = null) {
         this.client = client;
@@ -36,19 +51,19 @@ export class AutoForwarder {
             ? this.accountManager.getClient(groupConfig.forwardAccount)
             : this.client;
 
-        console.log(colorize(`➡️  [AutoForward] Processing for ${groupName}...`, 'cyan'));
+        console.log(colorize(`${getTs()} ➡️ [AutoForward] Processing for ${groupName}...`, 'cyan'));
 
         try {
             // 2. Resolve Destination
             let targetPeer = await this.resolveDestination(settings.destination, fwdClient);
             if (!targetPeer) {
-                console.log(colorize(`⚠️  [AutoForward] Could not resolve destination. Skipping.`, 'yellow'));
+                console.log(colorize(`${getTs()} ⚠️ [AutoForward] Could not resolve destination. Skipping.`, 'yellow'));
                 return;
             }
 
             // 3. Prepare Caption with Message Link
             let caption = message?.message || message?.text || '';
-            
+
             // Generate message link
             // Format: t.me/c/CHANNEL_ID/MESSAGE_ID (private) or t.me/USERNAME/MESSAGE_ID (public)
             let messageLink = '';
@@ -58,7 +73,7 @@ export class AutoForwarder {
                 const cleanId = String(groupId).replace(/^-100/, '');
                 messageLink = `https://t.me/c/${cleanId}/${msgId}`;
             }
-            
+
             // Add source attribution with clickable link
             if (messageLink) {
                 caption += `\n\n📌 Source: [${groupName}](${messageLink})`;
@@ -80,7 +95,7 @@ export class AutoForwarder {
             const sentMsgId = sentMsg?.id ?? sentMsg?.message?.id ?? null;
             const dest = settings.destination || 'Storage Channel';
             const tail = sentMsgId ? ` (msg #${sentMsgId})` : '';
-            console.log(colorize(`✅ [AutoForward] Sent to ${dest}${tail}`, 'green'));
+            console.log(colorize(`${getTs()} ✅ [AutoForward] Sent to ${dest}${tail}`, 'green'));
 
             // 5. Cleanup (if enabled). Isolate the unlink in its own
             // try/catch so a successful upload isn't reported as failed
@@ -91,14 +106,14 @@ export class AutoForwarder {
             if (settings.deleteAfterForward) {
                 try {
                     await fs.unlink(filePath);
-                    console.log(colorize(`🗑️  [AutoForward] Deleted local file: ${path.basename(filePath)}`, 'gray'));
+                    console.log(colorize(`${getTs()} 🗑️ [AutoForward] Deleted local file: ${path.basename(filePath)}`, 'red'));
                 } catch (unlinkErr) {
-                    console.warn(colorize(`⚠️  [AutoForward] Forwarded but local delete failed for ${path.basename(filePath)}: ${unlinkErr.message}`, 'yellow'));
+                    console.warn(colorize(`⚠️ [AutoForward] Forwarded but local delete failed for ${path.basename(filePath)}: ${unlinkErr.message}`, 'yellow'));
                 }
             }
 
         } catch (error) {
-            console.log(colorize(`❌ [AutoForward] Error: ${error.message}`, 'red'));
+            console.log(colorize(`${getTs()} ❌ [AutoForward] Error: ${error.message}`, 'red'));
         }
     }
 
@@ -165,14 +180,14 @@ export class AutoForwarder {
         try {
             const dialogs = await client.getDialogs({ limit: 100 });
             const found = dialogs.find(d => d.title === 'Telegram Downloader Storage');
-            
+
             if (found) {
                 this.storageChannelId = found.entity;
                 return this.storageChannelId;
             }
 
             // Create new if not found
-            console.log(colorize(`🛠️  [AutoForward] Creating storage channel...`, 'cyan'));
+            console.log(colorize(`${getTs()} 🛠️  [AutoForward] Creating storage channel...`, 'cyan'));
             const result = await client.invoke(
                 new Api.channels.CreateChannel({
                     title: 'Telegram Downloader Storage',
@@ -185,12 +200,12 @@ export class AutoForwarder {
             // Access the created channel
             if (result.chats && result.chats[0]) {
                 this.storageChannelId = result.chats[0];
-                console.log(colorize(`✅ [AutoForward] Created channel: Telegram Downloader Storage`, 'green'));
+                console.log(colorize(`${getTs()} ✅ [AutoForward] Created channel: Telegram Downloader Storage`, 'green'));
                 return this.storageChannelId;
             }
 
         } catch (e) {
-            console.log(colorize(`❌ [AutoForward] Failed to create/find storage channel: ${e.message}`, 'red'));
+            console.log(colorize(`${getTs()} ❌ [AutoForward] Failed to create/find storage channel: ${e.message}`, 'red'));
         }
 
         return null;

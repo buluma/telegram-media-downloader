@@ -24,7 +24,7 @@ The image is published to GHCR on every release: `ghcr.io/botnick/telegram-media
 | `PORT`                          | `3000`              | HTTP port. |
 | `NODE_ENV`                      | unset               | Set to `production` to enable `Secure` cookies (requires HTTPS). |
 | `TZ`                            | `UTC`               | Container timezone. |
-| `TGDL_RUN`                      | `monitor`           | Watchdog subcommand for `runner.js` / `runner.sh` / `watchdog.ps1`. |
+| `TGDL_RUN`                      | empty (dashboard)   | Watchdog subcommand for `runner.js` / `runner.sh` / `watchdog.ps1`. Set `monitor` for headless mode. |
 | `TGDL_DEBUG`                    | unset               | Set to any truthy value to surface gramJS reconnect noise on stderr. |
 | `TRUST_PROXY`                   | unset               | `1`, `loopback`, or any value Express's `trust proxy` understands; needed for accurate IPs behind a reverse proxy. |
 | `FFMPEG_PATH`                   | auto-detect         | Override the resolved ffmpeg binary used by `core/thumbs.js`. Resolver order: this var → `/usr/bin/ffmpeg` → `/usr/local/bin/ffmpeg` → `@ffmpeg-installer/ffmpeg` → bare `ffmpeg`. |

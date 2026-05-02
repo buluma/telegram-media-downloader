@@ -651,10 +651,11 @@ export class AccountManager {
         const flow = this._authFlows.get(sessionId);
         if (!flow) return { ok: false, reason: 'not_found' };
         flow.state = 'cancelled';
-        // Reject all deferreds to unblock client.start()
-        try { flow.phoneDeferred.reject(new Error('cancelled')); } catch {}
-        try { flow.codeDeferred.reject(new Error('cancelled')); } catch {}
-        try { flow.passwordDeferred.reject(new Error('cancelled')); } catch {}
+        // Reject all deferreds to unblock client.start() - wrap in try/catch to prevent crashes
+        const safeReject = (d) => { try { d.reject(new Error('cancelled')); } catch {} };
+        try { safeReject(flow.phoneDeferred); } catch {}
+        try { safeReject(flow.codeDeferred); } catch {}
+        try { safeReject(flow.passwordDeferred); } catch {}
         if (flow.client) {
             try { await flow.client.disconnect(); } catch {}
         }

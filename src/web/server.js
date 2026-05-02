@@ -352,8 +352,13 @@ let _configCache = { at: 0, value: null };
 // Bootstrap the share-link HMAC secret + apply runtime limits from
 // config. Lazy-generated secret on first boot, persisted to
 // config.web.shareSecret. Done inside an async IIFE so a missing config
-// file (very-first boot) doesn't crash module load — re-runs on the
-// next request that touches `readConfigSafe`.
+// In-process cache for config.json — must be declared before the share
+// bootstrap IIFE below so it's available when readConfigSafe() runs.
+let _configCache = { at: 0, value: null };
+
+// Share secret bootstrap — runs immediately on module load. If config.json
+// doesn't exist yet the error is caught so it doesn't crash module load.
+// Re-runs on the next request that touches `readConfigSafe`.
 (async () => {
     try {
         const cfg = await readConfigSafe();
@@ -386,17 +391,12 @@ app.use((req, res, next) => {
     next();
 });
 
-// In-process cache for config.json. checkAuth + the force-https +
-// rate-limit middlewares all call readConfigSafe() on every request —
-// during a video playback, the browser issues many 64 KB range GETs to
-// /files/* and each one used to disk-read + JSON.parse the config. The
-// 2-second TTL is short enough that toggle changes feel instant in the
-// settings UI but long enough to fold the per-clip request burst into
-// a single read.
-//
-// Note: the `let _configCache` variable is declared further up (right
-// before the share-secret bootstrap IIFE) to dodge a temporal dead-zone
-// crash on module load. See the comment there for the why.
+// checkAuth + the force-https + rate-limit middlewares all call
+// readConfigSafe() on every request — during a video playback, the browser
+// issues many 64 KB range GETs to /files/* and each one used to disk-read
+// + JSON.parse the config. The 2-second TTL is short enough that toggle
+// changes feel instant in the settings UI but long enough to fold the
+// per-clip request burst into a single read.
 async function readConfigSafe() {
     const now = Date.now();
     if (_configCache.value && now - _configCache.at < 2000) return _configCache.value;
@@ -1122,23 +1122,6 @@ app.get('/metrics', (req, res) => {
 // behave identically to /files/*). Cache-Control: no-store keeps a
 // shared CDN/proxy from hijacking the bytes for the next visitor.
 //
-// Both windowMs and limit are passed as functions so a config_updated
-// broadcast that changes them takes effect on the next request without a
-// process restart.
-const shareLimiter = rateLimit({
-    windowMs: () => {
-        const ms = Number(_currentShareConfig().rateLimitWindowMs);
-        return Number.isFinite(ms) && ms > 0 ? ms : 60_000;
-    },
-    limit: () => {
-        const lim = Number(_currentShareConfig().rateLimitMax);
-        return Number.isFinite(lim) && lim > 0 ? lim : 60;
-    },
-    standardHeaders: 'draft-7',
-    legacyHeaders: false,
-    message: { error: 'Too many requests — slow down.' },
-});
-
 // Tiny cache around the last-loaded config so the rate-limit getters
 // don't sync-read disk on every share request. Refreshed by the
 // config_updated WS broadcast handler below + on first use.
@@ -1151,6 +1134,38 @@ function _currentShareConfig() {
     return _shareConfigCache;
 }
 function _invalidateShareConfigCache() { _shareConfigCache = null; }
+
+function _shareRateLimitWindowMs() {
+    const ms = Number(_currentShareConfig().rateLimitWindowMs);
+    return Number.isFinite(ms) && ms > 0 ? ms : 60_000;
+}
+
+function _shareRateLimitMax() {
+    const lim = Number(_currentShareConfig().rateLimitMax);
+    return Number.isFinite(lim) && lim > 0 ? lim : 60;
+}
+
+function _buildShareLimiter() {
+    return rateLimit({
+        // express-rate-limit expects a NUMBER for windowMs. Passing a
+        // function produces NaN at init-time and arms a near-1ms timer
+        // (TimeoutNaNWarning), which is a major stability hazard.
+        windowMs: _shareRateLimitWindowMs(),
+        limit: _shareRateLimitMax(),
+        standardHeaders: 'draft-7',
+        legacyHeaders: false,
+        message: { error: 'Too many requests — slow down.' },
+    });
+}
+
+let _shareLimiter = _buildShareLimiter();
+function shareLimiter(req, res, next) {
+    return _shareLimiter(req, res, next);
+}
+
+function _refreshShareLimiter() {
+    _shareLimiter = _buildShareLimiter();
+}
 
 app.get('/share/:linkId', shareLimiter, async (req, res, next) => {
     try {
@@ -2795,6 +2810,7 @@ app.get('/api/downloads/:groupId', async (req, res, next) => {
                 : `${groupFolder}/${typeFolder}/${row.file_name}`;
             
             return {
+                id: row.id,
                 name: row.file_name,
                 path: row.file_path,
                 fullPath,
@@ -4101,6 +4117,7 @@ app.post('/api/config', async (req, res) => {
         try {
             applyShareLimits(newConfig.advanced?.share || {});
             _invalidateShareConfigCache();
+            _refreshShareLimiter();
         } catch {}
 
         // Reset the lazy AccountManager singleton if Telegram credentials
