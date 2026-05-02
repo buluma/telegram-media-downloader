@@ -654,6 +654,10 @@ function gatherAdvanced() {
 async function refreshRescueStats() {
     const line = document.getElementById('rescue-stats-line');
     if (!line) return;
+    // Endpoint is admin-only; the rescue line lives inside an admin-only
+    // section that's hidden for guests anyway, but skip the call so the
+    // console stays quiet.
+    if (typeof document !== 'undefined' && document.body?.dataset?.role === 'guest') return;
     try {
         const s = await api.get('/api/rescue/stats');
         line.textContent = i18nTf(

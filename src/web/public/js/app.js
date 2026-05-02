@@ -219,14 +219,18 @@ async function init() {
         }
     });
 
-    // Sticky status bar (engine state + counters + WS link)
-    initStatusBar();
-
-    // First-run / mid-flow guidance — banner that walks the user through
-    // configure-API → add-account → enable-group based on /api/monitor/status.
-    initOnboarding();
-    ws.on('config_updated', refreshOnboarding);
-    ws.on('monitor_state', refreshOnboarding);
+    // Admin-only modules: skip for guests so we don't fire 403s into the
+    // console for endpoints they're never meant to reach. Each gated
+    // module touches one or more admin endpoints (status bar = engine
+    // state + queue counters; onboarding = monitor hint; group-name
+    // resolver = POST /api/groups/refresh-info).
+    const isAdmin = state.role === 'admin';
+    if (isAdmin) {
+        initStatusBar();
+        initOnboarding();
+        ws.on('config_updated', refreshOnboarding);
+        ws.on('monitor_state', refreshOnboarding);
+    }
 
     // Global keyboard shortcuts (press ? for the cheatsheet).
     initShortcuts();
@@ -234,10 +238,10 @@ async function init() {
     await loadGroups();
     await loadStats();
 
-    // First-load name resolve — best-effort, fire-and-forget. Catches the
-    // case where the SPA boots before the engine has connected (so any
-    // paste-link-only or DB-only groups still show as "Unknown chat").
-    if (!state._resolvingGroups) {
+    // First-load name resolve — admin-only because it POSTs and forces a
+    // refresh side-effect. Guests see whatever names landed in the DB on
+    // the last admin-side resolve.
+    if (isAdmin && !state._resolvingGroups) {
         state._resolvingGroups = true;
         api.post('/api/groups/refresh-info').then(r => {
             if (r?.updates) updateGroupNameCache(r.updates);
@@ -251,8 +255,9 @@ async function init() {
     _setupSidebarGroupsCollapse();
     // Wire the Queue store + WS handlers eagerly so its in-memory state
     // (and the bottom-nav badge) tracks live downloads even when the user
-    // hasn't visited the page yet.
-    initQueue();
+    // hasn't visited the page yet. Queue is admin-only — guests never see
+    // the page or the badge, so skip the snapshot fetch.
+    if (isAdmin) initQueue();
     router.start();
     
     // Expose to window for HTML onclick handlers
@@ -344,6 +349,19 @@ async function init() {
     document.getElementById('save-api-credentials')?.addEventListener('click', Settings.saveApiCredentials);
     document.getElementById('change-password-btn')?.addEventListener('click', Settings.changePassword);
     document.getElementById('logout-btn')?.addEventListener('click', Settings.signOut);
+    // Sidebar footer sign-out — gated behind confirmSheet because the
+    // button sits in always-visible chrome and is one accidental tap away
+    // from booting the operator. The deeper Settings button stays no-confirm
+    // (deliberate path = deliberate intent).
+    document.getElementById('sidebar-logout-btn')?.addEventListener('click', async () => {
+        const ok = await confirmSheet({
+            title: i18nT('sidebar.signout.confirm_title', 'Sign out of the dashboard?'),
+            message: i18nT('sidebar.signout.confirm_body', "You'll need to log in again on the next visit. Telegram accounts and downloads stay put."),
+            confirmLabel: i18nT('sidebar.signout', 'Sign out'),
+            danger: true,
+        });
+        if (ok) Settings.signOut();
+    });
     document.getElementById('proxy-save')?.addEventListener('click', Settings.saveProxy);
     document.getElementById('proxy-test')?.addEventListener('click', Settings.testProxy);
     document.getElementById('setting-path-btn')?.addEventListener('click', () => {
@@ -453,7 +471,10 @@ function renderPage(page, params = {}) {
 
     if (page === 'settings') {
         Settings.loadSettings();
-        initEngine();
+        // Engine controls live in the admin-only System section; guests
+        // never see the card, and `initEngine` polls /api/monitor/status
+        // (admin-gated) so skip it for them.
+        if (state.role === 'admin') initEngine();
         document.getElementById('page-title').textContent = i18nT('settings.page.title', 'Settings');
         document.getElementById('page-subtitle').textContent = i18nT('settings.page.subtitle', 'System Configuration');
         // Optional deep-link: #/settings/<section> scrolls to that section.
@@ -1237,73 +1258,14 @@ function setupGalleryGestures() {
 }
 
 async function setupMediaSearch() {
-    const input = document.getElementById('media-search');
-    const clear = document.getElementById('media-search-clear');
+    // Toolbar wiring for the gallery — selection-mode toggle + selection-bar
+    // controls (Select all / Clear / Delete). The free-text media search was
+    // dropped in v2.3.47 (rarely used; the chat sidebar already filters
+    // groups, and the URL link picker handles "find this exact message").
     const selectBtn = document.getElementById('select-mode-btn');
-    const selBar = document.getElementById('selection-bar');
     const selDel = document.getElementById('selection-delete');
     const selClear = document.getElementById('selection-clear');
     const selAll = document.getElementById('selection-all');
-    if (!input) return;
-
-    let timer = null;
-    let lastQuery = '';
-    let inflight = null;
-    let _searchSeq = 0;          // monotonically-increasing tag — last write wins
-
-    const runSearch = async (q) => {
-        // Race-safety: bump the sequence + abort any in-flight request
-        // BEFORE issuing the new one. Without this, fast typing produces
-        // out-of-order responses and the slow one wins the render
-        // ("flickers back to a stale result" bug).
-        const myTag = ++_searchSeq;
-        if (inflight) { try { inflight.abort(); } catch {} }
-
-        if (!q) {
-            state.searchActive = false;
-            inflight = null;
-            if (state.savedFiles) state.files = state.savedFiles;
-            renderMediaGrid();
-            return;
-        }
-        const ctrl = new AbortController();
-        inflight = ctrl;
-        try {
-            const res = await fetch(`/api/downloads/search?q=${encodeURIComponent(q)}&limit=200`, {
-                signal: ctrl.signal,
-                credentials: 'same-origin',
-            });
-            if (myTag !== _searchSeq) return; // a newer search has already started
-            if (!res.ok) {
-                throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
-            }
-            const r = await res.json();
-            if (myTag !== _searchSeq) return;
-            if (!state.searchActive) state.savedFiles = state.files;
-            state.searchActive = true;
-            state.files = r.files;
-            renderMediaGrid();
-        } catch (e) {
-            if (e.name === 'AbortError') return;        // superseded — silent
-            if (myTag !== _searchSeq) return;
-            showToast(i18nTf('viewer.search.failed', { msg: e.message }, `Search failed: ${e.message}`), 'error');
-        } finally {
-            if (inflight === ctrl) inflight = null;
-        }
-    };
-
-    input.addEventListener('input', (e) => {
-        const q = e.target.value.trim();
-        clear.classList.toggle('hidden', !q);
-        if (q === lastQuery) return;
-        lastQuery = q;
-        clearTimeout(timer);
-        // 200 ms hits the sweet spot — fast enough to feel instant on a
-        // "I just stopped typing" pause, slow enough that a 5-keystroke
-        // word fires one HTTP call instead of five.
-        timer = setTimeout(() => runSearch(q), 200);
-    });
-    clear?.addEventListener('click', () => { input.value = ''; lastQuery = ''; clear.classList.add('hidden'); runSearch(''); });
 
     selectBtn?.addEventListener('click', () => {
         if (state.selectMode) {
@@ -1373,6 +1335,19 @@ async function renderGroupsConfig() {
         state.allDialogs = dialogs;
         renderDialogsList(dialogs);
     } catch (e) {
+        // "No Telegram account configured yet" is not an error — it's a
+        // first-run state. Surface a friendly empty-state pointing at the
+        // Add Account flow instead of a red failure message.
+        if (e?.data?.error === 'no_account') {
+            list.innerHTML = renderEmptyState({
+                icon: 'ri-user-add-line',
+                title: i18nT('groups.no_account.title', 'No Telegram account yet'),
+                body: i18nT('groups.no_account.body', 'Add your Telegram account to load chats and start downloading.'),
+                actionLabel: i18nT('groups.no_account.cta', 'Add account'),
+                actionHref: '/add-account.html',
+            });
+            return;
+        }
         list.innerHTML = `<div class="text-center py-8 text-red-400">${escapeHtml(i18nT('groups.load_failed', 'Failed to load dialogs'))}</div>`;
     }
 }
@@ -1768,6 +1743,10 @@ async function openDestinationPicker() {
         const r = await api.get('/api/dialogs');
         dialogs = r.dialogs || [];
     } catch (e) {
+        if (e?.data?.error === 'no_account') {
+            list.innerHTML = `<div class="p-3 text-sm text-tg-textSecondary">${escapeHtml(i18nT('picker.no_account', 'Add a Telegram account first to pick a forward destination.'))} <a href="/add-account.html" class="text-tg-blue hover:underline">${escapeHtml(i18nT('groups.no_account.cta', 'Add account'))}</a></div>`;
+            return;
+        }
         list.innerHTML = `<div class="text-red-400 p-2">${escapeHtml(i18nTf('picker.failed', { msg: e.message }, `Failed to load dialogs: ${e.message}`))}</div>`;
         return;
     }
