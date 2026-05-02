@@ -33,8 +33,8 @@
     "migrate": "/opt/homebrew/bin/node --localstorage-file=./data/localstorage.json scripts/migrate_json_to_sqlite.js",
     "lint": "eslint .",
     "format": "prettier --write \"src/**/*.{js,html,css}\" \"*.{md,json}\"",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "test": "/opt/homebrew/bin/node --localstorage-file=\"$PWD/data/localstorage.json\" ./node_modules/vitest/vitest.mjs run",
+    "test:watch": "/opt/homebrew/bin/node --localstorage-file=\"$PWD/data/localstorage.json\" ./node_modules/vitest/vitest.mjs",
     "prepare": "husky || true"
   },
   "repository": {
