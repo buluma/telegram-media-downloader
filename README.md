@@ -5,7 +5,7 @@ Download photos, videos, documents, voice messages, GIFs, stickers, and Stories 
 [![CI](https://github.com/botnick/telegram-media-downloader/actions/workflows/ci.yml/badge.svg)](https://github.com/botnick/telegram-media-downloader/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/botnick/telegram-media-downloader/actions/workflows/codeql.yml/badge.svg)](https://github.com/botnick/telegram-media-downloader/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
-[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D20-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-25.x-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?logo=docker&logoColor=white)](https://github.com/botnick/telegram-media-downloader/pkgs/container/telegram-media-downloader)
 
 > **Keywords:** Telegram downloader · Telegram channel scraper · Telegram media backup · download Telegram videos · download Telegram photos · Telegram archive tool · self-hosted Telegram bot alternative · GramJS · MTProto · Telegram Stories downloader · Telegram private channel downloader · t.me link downloader · Telegram TTL self-destruct downloader.
@@ -180,7 +180,7 @@ Photos (JPEG, PNG, WebP, BMP), videos (MP4, MKV, AVI, MOV, WebM), audio (MP3, M4
 
 ## Requirements
 
-- **Node.js 20+** (or Docker — no host Node needed)
+- **Node.js 25.x** (or Docker — no host Node needed)
 - A Telegram **API ID** and **API hash** from <https://my.telegram.org> (free, takes 1 minute)
 - Disk space for the media you'll archive
 
@@ -209,12 +209,26 @@ Pre-built image: `ghcr.io/botnick/telegram-media-downloader:latest`.
 git clone https://github.com/botnick/telegram-media-downloader.git
 cd telegram-media-downloader
 npm ci
-npm run web        # web dashboard
-# or
-npm start          # interactive CLI menu
+npm start          # web dashboard (recommended)
+npm run menu       # print CLI commands
 ```
 
 Long-running monitor under a watchdog (Linux / macOS): `TGDL_RUN=monitor ./runner.sh`. Windows: `pwsh ./watchdog.ps1`.
+
+### Runtime troubleshooting (Node / ABI)
+
+- Verify runtime health: `npm run doctor`
+- If you ever see `better-sqlite3` ABI mismatch errors (`NODE_MODULE_VERSION`), ensure Node 25 is active and rebuild once:
+
+```bash
+npm rebuild better-sqlite3
+```
+
+- If port 3000 is busy, run with another port:
+
+```bash
+PORT=3001 npm start
+```
 
 ## CLI cheatsheet
 
@@ -227,6 +241,7 @@ The dashboard does almost everything. The CLI subcommands stay around for headle
 | `npm run monitor` | Headless real-time monitor for servers (no dashboard UI). |
 | `npm run history` | Bulk backfill an existing chat. |
 | `npm run auth` | Reset / change the dashboard password from the terminal. |
+| `npm run doctor` | Runtime diagnostics: Node/ABI, localstorage flag, config load, DB load, and port availability. |
 | `npm run menu` | Full list of subcommands. |
 
 ## Configuration
