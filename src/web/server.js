@@ -82,6 +82,44 @@ const server = createServer(app);
 const wss = new WebSocketServer({ noServer: true });
 const clients = new Set();
 
+// Recursive directory size — used by /api/stats as the fallback when the DB
+// catalogue is empty. We can't trust `data/disk_usage.json` alone because
+// older builds wrote it sparingly and never invalidated on `Purge all`, so a
+// purged dashboard would footer-report a multi-week-old "930 KB" snapshot.
+async function scanDirectorySize(dir) {
+    let total = 0;
+    async function walk(current) {
+        let entries;
+        try {
+            entries = await fs.readdir(current, { withFileTypes: true });
+        } catch {
+            return;
+        }
+        for (const entry of entries) {
+            const fullPath = path.join(current, entry.name);
+            if (entry.isDirectory()) {
+                await walk(fullPath);
+                continue;
+            }
+            try {
+                const st = await fs.stat(fullPath);
+                if (st.isFile()) total += st.size;
+            } catch { /* file disappeared mid-scan */ }
+        }
+    }
+    await walk(dir);
+    return total;
+}
+
+async function writeDiskUsageCache(size) {
+    try {
+        await fs.writeFile(path.join(DATA_DIR, 'disk_usage.json'), JSON.stringify({
+            size,
+            lastScan: Date.now(),
+        }));
+    } catch { /* best-effort cache */ }
+}
+
 function parseCookieHeader(header) {
     const out = {};
     if (!header) return out;
@@ -2350,21 +2388,17 @@ app.get('/api/stats', async (req, res) => {
         const dbStats = getDbStats(); // From DB
         const config = JSON.parse(await fs.readFile(CONFIG_PATH, 'utf8'));
         
-        // Disk usage — prefer the live `SUM(file_size)` from the DB
-        // because it's always in sync with the row count we just read,
-        // and fall back to the `data/disk_usage.json` cache if (and
-        // only if) the DB sum is suspiciously low. The legacy cache
-        // file was written sparingly by older downloader versions and
-        // never invalidated when the DB was purged + repopulated, so a
-        // user with thousands of files could end up reading a
-        // multi-week-old "930 KB" snapshot from the JSON.
+        // Disk usage: prefer the live `SUM(file_size)` from the DB because
+        // it's always in sync with the row count we just read. If the DB
+        // sum is zero (catalogue empty after a Purge / before first run),
+        // walk `data/downloads/` for the real on-disk size and refresh the
+        // JSON cache — never trust a stale `disk_usage.json` snapshot, the
+        // legacy cache was never invalidated on purge so a wiped dashboard
+        // would footer-report a multi-week-old "930 KB".
         let diskUsage = Number(dbStats.totalSize) || 0;
-        const diskUsagePath = path.join(DATA_DIR, 'disk_usage.json');
-        if (diskUsage <= 0 && existsSync(diskUsagePath)) {
-            try {
-                const d = JSON.parse(await fs.readFile(diskUsagePath, 'utf8'));
-                if (d && Number.isFinite(d.size)) diskUsage = d.size;
-            } catch { /* corrupt cache — ignore */ }
+        if (diskUsage <= 0) {
+            diskUsage = await scanDirectorySize(DOWNLOADS_DIR);
+            await writeDiskUsageCache(diskUsage);
         }
 
         // Account count: reflect the on-disk session files even when no
@@ -4447,9 +4481,7 @@ app.post('/api/groups/refresh-photos', async (req, res) => {
    }
 });
 
-// ============ FILE SERVING (Performance) ============
-const directoryCache = new Map(); // Normalized -> Real Name
-
+// ============ FILE SERVING ============
 // Serve files from data/downloads. Uses safeResolveDownload to reject path
 // traversal, NUL bytes, and symlink escapes. Adds Content-Disposition so a
 // rogue HTML file can't be rendered inline (the browser still inlines images
@@ -4623,11 +4655,6 @@ async function downloadProfilePhoto(groupId) {
 }
 
 // ============ SERVER START ============
-
-function normalizeName(name) {
-    if (!name) return '';
-    return name.replace(/[_|]+/g, ' ').replace(/\s+/g, ' ').replace(/[\/\\:*?"<>]/g, '').trim().toLowerCase();
-}
 
 function formatBytes(bytes) {
     if (!bytes || bytes === 0) return '0 B';

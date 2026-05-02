@@ -1,5 +1,15 @@
 # Troubleshooting
 
+## First stop: `npm run doctor`
+
+One-shot diagnostics — Node version + ABI, config load, `better-sqlite3` open + row count, `data/` writability, port availability (honours `PORT`), and `ffmpeg` on `PATH`. Cross-platform, non-interactive (safe to run inside CI / Docker / over SSH). Exits `1` on any blocking failure.
+
+```bash
+npm run doctor
+```
+
+If a check fails it prints what to do next. The most common hit is `SQLite (better-sqlite3): NODE_MODULE_VERSION ... was compiled against a different Node.js version` after a Node upgrade — `npm rebuild better-sqlite3` clears it.
+
 ## "Web dashboard not initialised — run `npm run auth`"
 
 The dashboard fails closed when no password is configured. Either:

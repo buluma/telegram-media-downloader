@@ -22,7 +22,6 @@ const APP_ARGS = (process.env.TGDL_RUN || 'monitor').trim().split(/\s+/).filter(
 const MAX_CRASHES = 10;
 const RESET_WINDOW = 60000; // 1 minute
 let crashCount = 0;
-let lastCrashTime = 0;
 
 console.log('\x1b[36m%s\x1b[0m', '🌍 Universal Auto-Downloader Watchdog');
 console.log('\x1b[90m%s\x1b[0m', `   Target: node ${APP_SCRIPT} ${APP_ARGS.join(' ')}`);

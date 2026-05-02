@@ -17,6 +17,18 @@ docker compose up -d
 
 The image is published to GHCR on every release: `ghcr.io/botnick/telegram-media-downloader:<version>`.
 
+### Verify a deployment
+
+After `docker compose up -d` (or any host install), run the diagnostics:
+
+```bash
+docker compose exec app npm run doctor      # inside the container
+# or, for host installs:
+npm run doctor
+```
+
+Reports Node + ABI, config load, SQLite open, `data/` writability, port availability, and `ffmpeg`. Exits non-zero on any blocking failure — wire it into your provisioning script or CI smoke-step.
+
 ### Environment variables
 
 | Var | Default | Notes |
@@ -26,6 +38,7 @@ The image is published to GHCR on every release: `ghcr.io/botnick/telegram-media
 | `TZ`                            | `UTC`               | Container timezone. |
 | `TGDL_RUN`                      | `monitor`           | Watchdog subcommand for `runner.js` / `runner.sh` / `watchdog.ps1`. |
 | `TGDL_DEBUG`                    | unset               | Set to any truthy value to surface gramJS reconnect noise on stderr. |
+| `TGDL_DATA_DIR`                 | `<repo>/data`       | Override the on-disk data root (`config.json`, `db.sqlite`, `downloads/`, sessions). Used by the test suite to point at an isolated tmpdir; also useful for Docker / multi-instance deploys that want the data on a different mount without symlinks. |
 | `TRUST_PROXY`                   | unset               | `1`, `loopback`, or any value Express's `trust proxy` understands; needed for accurate IPs behind a reverse proxy. |
 | `FFMPEG_PATH`                   | auto-detect         | Override the resolved ffmpeg binary used by `core/thumbs.js`. Resolver order: this var → `/usr/bin/ffmpeg` → `/usr/local/bin/ffmpeg` → `@ffmpeg-installer/ffmpeg` → bare `ffmpeg`. |
 | `THUMBS_IMG_CONCURRENCY`        | `8`                 | Parallel image-thumb jobs. |

@@ -5,7 +5,6 @@
  */
 
 import { NewMessage } from 'telegram/events/index.js';
-import { Api } from 'telegram';
 
 export class BotControl {
     constructor(client, downloader, config) {
@@ -23,8 +22,7 @@ export class BotControl {
             if (!message || !message.text) return;
 
             const text = message.text;
-            const chatId = message.chatId ? message.chatId.toString() : null;
-            
+
             // Security: Only allow commands from admin (Self) or configured admins?
             // For now, let's restrict to "Self" (Saved Messages) or if we are a bot, the owner.
             // But since this runs as Userbot usually, we check if `out` is true (sent by us) or from specific user.

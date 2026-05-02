@@ -1,38 +1,28 @@
-// Integration test for the DB layer. The module pins data/db.sqlite via its
-// module-private `db` singleton; we point HOME-relative __dirname at a tmp
-// directory by spawning the test in a copy of the repo isn't worth it, so
-// instead we exercise insertDownload + searchDownloads against the actual
-// data/db.sqlite created in CI's working tree (fresh, empty on each run).
+// Integration test for the DB layer. We isolate the test by pointing
+// `TGDL_DATA_DIR` at an `os.tmpdir` mkdtemp before the dynamic import of
+// src/core/db.js, so the singleton picks up the throwaway path and the
+// user's real data/db.sqlite is never touched.
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import path from 'path';
 import fs from 'fs';
-import { fileURLToPath } from 'url';
+import os from 'os';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = path.join(__dirname, '..', 'data');
-const DB_PATH = path.join(DATA_DIR, 'db.sqlite');
+const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'tgdl-db-test-'));
 
 let db;
 let downloadsApi;
 
 beforeAll(async () => {
-    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-    // Always start from a clean slate so the assertions are deterministic.
-    for (const f of ['db.sqlite', 'db.sqlite-wal', 'db.sqlite-shm']) {
-        const p = path.join(DATA_DIR, f);
-        if (fs.existsSync(p)) fs.rmSync(p);
-    }
+    process.env.TGDL_DATA_DIR = DATA_DIR;
     downloadsApi = await import('../src/core/db.js');
     db = downloadsApi.getDb();
 });
 
 afterAll(() => {
     try { db.close(); } catch {}
-    for (const f of ['db.sqlite', 'db.sqlite-wal', 'db.sqlite-shm']) {
-        const p = path.join(DATA_DIR, f);
-        if (fs.existsSync(p)) fs.rmSync(p);
-    }
+    delete process.env.TGDL_DATA_DIR;
+    fs.rmSync(DATA_DIR, { recursive: true, force: true });
 });
 
 describe('downloads schema', () => {

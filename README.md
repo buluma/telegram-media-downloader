@@ -227,6 +227,7 @@ The dashboard does almost everything. The CLI subcommands stay around for headle
 | `npm run monitor` | Headless real-time monitor for servers (no dashboard UI). |
 | `npm run history` | Bulk backfill an existing chat. |
 | `npm run auth` | Reset / change the dashboard password from the terminal. |
+| `npm run doctor` | Diagnostics: Node/ABI, config, SQLite, port, ffmpeg. |
 | `npm run menu` | Full list of subcommands. |
 
 ## Configuration
