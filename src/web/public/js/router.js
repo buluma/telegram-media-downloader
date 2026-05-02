@@ -21,22 +21,27 @@ let beforeNav = null;
 let activeRoute = null;
 let listening = false;
 
-// Routes that require admin role. When a guest session navigates to one of
-// these, the dispatcher rewrites the hash to `#/viewer` instead of running
-// the handler. Settings deep-links are special-cased: only video-player and
-// appearance survive — everything else is admin-only.
+// Routes that require admin role. Guests browsing one of these get
+// re-routed to /viewer instead of running the handler. The guest
+// contract is intentionally narrow: browse downloaded media + adjust
+// their own appearance/video-player prefs + sign out. Anything that
+// surfaces operational state (Groups picker, Backfill jobs, Queue,
+// Engine controls) is admin-only on both the front and the back.
 const ADMIN_ROUTE_PREFIXES = [
     '/groups', '/backfill', '/queue', '/engine', '/stories', '/account/add',
 ];
+// Settings sub-routes guests CAN reach. Everything else under /settings
+// (system, accounts, downloads, network) bounces.
 const GUEST_SETTINGS_SECTIONS = new Set(['video-player', 'appearance']);
 
 function isAdminRoute(path) {
     if (ADMIN_ROUTE_PREFIXES.some(p => path === p || path.startsWith(p + '/'))) return true;
-    if (path === '/settings') return true;
     if (path.startsWith('/settings/')) {
         const section = path.slice('/settings/'.length).split('/')[0];
         return !GUEST_SETTINGS_SECTIONS.has(section);
     }
+    // /settings root: allowed for guest (the chip-nav itself only shows
+    // the sections they can use; the page renders fine without admin cards).
     return false;
 }
 

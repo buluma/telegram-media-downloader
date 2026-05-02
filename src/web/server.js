@@ -339,6 +339,16 @@ app.use((req, res, next) => {
 // process alive on shutdown.
 startSessionGc();
 
+// Module-level config cache (definition; the `readConfigSafe` helper that
+// uses it is declared further down). Hoisted to ABOVE the share-secret
+// bootstrap IIFE because that IIFE awaits `readConfigSafe()` synchronously
+// up to its first internal await, and inside the helper we read
+// `_configCache.value` immediately — if the `let` below were still in its
+// original position (after the IIFE) it would be in TDZ at that read,
+// crashing module load with "Cannot access '_configCache' before
+// initialization". Logged in the wild as `[share] secret bootstrap deferred`.
+let _configCache = { at: 0, value: null };
+
 // Bootstrap the share-link HMAC secret + apply runtime limits from
 // config. Lazy-generated secret on first boot, persisted to
 // config.web.shareSecret. Done inside an async IIFE so a missing config
@@ -383,7 +393,10 @@ app.use((req, res, next) => {
 // 2-second TTL is short enough that toggle changes feel instant in the
 // settings UI but long enough to fold the per-clip request burst into
 // a single read.
-let _configCache = { at: 0, value: null };
+//
+// Note: the `let _configCache` variable is declared further up (right
+// before the share-secret bootstrap IIFE) to dodge a temporal dead-zone
+// crash on module load. See the comment there for the why.
 async function readConfigSafe() {
     const now = Date.now();
     if (_configCache.value && now - _configCache.at < 2000) return _configCache.value;
@@ -484,26 +497,31 @@ async function checkAuth(req, res, next) {
 // gets admin-gating for free; forgetting to add `requireAdmin` would leak
 // the route, which is a much worse failure mode than the occasional 403
 // when a new read endpoint forgets to ask for guest access.
+// Guest scope: browse downloaded media, view their own files, sign out.
+// Operational surfaces (Groups picker, Backfill, Queue, Engine, Maintenance)
+// are admin-only on both the front (route gating) and the back (this list).
+// Frontend modules that touch these endpoints either skip the call when
+// `body[data-role="guest"]` is set, or fail-soft on the 403.
 const GUEST_GET_ALLOW = [
     '/api/auth_check', '/api/me', '/api/version', '/api/version/check',
-    '/api/downloads',          // and /:groupId, /all, /search via prefix
-    '/api/groups',             // GET only (list) — PUT/DELETE blocked below
-    '/api/stats',
-    '/api/monitor/status',
-    '/api/queue/snapshot',
-    '/api/rescue/stats',
-    '/api/history',            // GET past jobs only (POST = trigger backfill)
-    '/api/history/jobs',       // GET active jobs read-only
-    '/api/thumbs',             // GET /api/thumbs/:id — read-only thumb stream
+    '/api/downloads',          // Library — list + per-group + paginated /all
+    '/api/groups',              // sidebar list of downloaded folders (no config secrets in the response)
+    '/api/stats',               // footer disk + file counters
+    '/api/thumbs',              // GET /api/thumbs/:id — image thumb stream
 ];
 const GUEST_OTHER_ALLOW = new Set(['POST /api/logout']);
 
 function isGuestAllowed(req) {
+    // The middleware is mounted at `/api`, so inside this function `req.path`
+    // is RELATIVE to the mount point ('/monitor/status' instead of
+    // '/api/monitor/status'). The allowlist below is written with full paths
+    // for legibility — read the full path from `req.baseUrl + req.path` so
+    // the two halves agree. (Pre-fix every guest GET landed here as 403.)
+    const fullPath = (req.baseUrl || '') + req.path;
     if (req.method === 'GET') {
-        const p = req.path;
-        return GUEST_GET_ALLOW.some(pre => p === pre || p.startsWith(pre + '/'));
+        return GUEST_GET_ALLOW.some(pre => fullPath === pre || fullPath.startsWith(pre + '/'));
     }
-    return GUEST_OTHER_ALLOW.has(`${req.method} ${req.path}`);
+    return GUEST_OTHER_ALLOW.has(`${req.method} ${fullPath}`);
 }
 
 function guestGate(req, res, next) {
@@ -2415,7 +2433,18 @@ app.get('/api/dialogs', async (req, res) => {
         } catch { /* no creds yet */ }
         if ((!client || !client.connected) && telegramClient?.connected) client = telegramClient;
         if (!client || !client.connected) {
-            return res.status(503).json({ error: 'Telegram client not connected' });
+            // Distinguish "no Telegram account configured yet" (operator
+            // hasn't run through Add Account) from "client is briefly
+            // disconnected" — the SPA renders a friendly empty-state with
+            // an Add Account CTA for the former, vs. a red error for the
+            // latter.
+            const sessionsDir = path.join(DATA_DIR, 'sessions');
+            const hasSession = existsSync(sessionsDir)
+                && fsSync.readdirSync(sessionsDir).some(f => f.endsWith('.enc'));
+            if (!hasSession) {
+                return res.status(503).json({ error: 'no_account', message: 'No Telegram account configured' });
+            }
+            return res.status(503).json({ error: 'not_connected', message: 'Telegram client not connected' });
         }
 
         const config = JSON.parse(await fs.readFile(CONFIG_PATH, 'utf8'));

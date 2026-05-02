@@ -2,6 +2,31 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.47] — 2026-05-02
+
+### Fixed — Guest scope (strict viewer)
+- **Guest is a strict read-only viewer** — browse downloaded media, adjust their own appearance / video-player preferences (browser-side), sign out. Operational surfaces (Groups picker, Backfill, Queue, Engine, Maintenance, Advanced, Accounts, Rate Limits, Size Limits, Privacy/DM, Proxy, web-auth Security) are admin-only on both the front and the back.
+- **Guest GET 403 on every read endpoint** — `app.use('/api', guestGate)` strips the `/api` prefix from `req.path`, so the allowlist (written with full paths) missed every entry. Now reads `req.baseUrl + req.path` and matches. Without this fix even the legitimate guest reads (downloads, groups list, stats, thumbs) returned 403.
+- **`/settings` root reachable for guest** so they can use the Look & Feel chip; `/settings/<section>` deep-links honour the existing `GUEST_SETTINGS_SECTIONS` allow set (`appearance`, `video-player`).
+- Settings chip-nav: System / Accounts / Downloads / Privacy & Net chips and their sections gain `data-admin-only` — guest sees only the Look & Feel chip + section.
+- `#status-bar` (desktop bottom status bar) gains `data-admin-only` — its content (engine state, queue counters, WS link) is admin-info only; guest's disk/file count is in the sidebar footer.
+- Admin-only init paths gated for guest in `app.js` and `settings.js` — `initStatusBar`, `initOnboarding`, `initQueue`, `initEngine`, `refreshRescueStats`, `POST /api/groups/refresh-info` all skip for guest sessions so the console stays clean.
+- **Onboarding banner suppressed for guest** — JS guard in `initOnboarding` plus `body[data-role="guest"] #onboarding-banner { display: none }` belt-and-suspenders.
+
+### Fixed — Other
+- **`Cannot access '_configCache' before initialization`** crash on boot — the share-secret bootstrap IIFE awaited `readConfigSafe()` before the `let _configCache` declaration. Variable hoisted above the IIFE.
+- **"Failed to load dialogs"** when no Telegram account is configured replaced with a friendly empty-state + "Add account" CTA. Server now returns `error: 'no_account'` (vs. `not_connected`) so the SPA can branch on intent.
+- Settings page `<h2>` section labels removed — they duplicated the chip-nav identity. Cleaner, denser layout.
+
+### Changed — UI polish
+- **`login.html` restyled to match the dashboard theme** — brand mark on a Telegram-blue gradient disc, full `--tg-*` token swap, IBM Plex font, remixicon, soft radial glow, complete light/dark theme parity.
+- **Settings tab strip: sticky-but-integrated.** `var(--tg-bg)` background sits inside the page column (no full-bleed banner), stays reachable while scrolling, doesn't read as a foreign component.
+- **Sidebar gains a full-width red Sign out button** at the bottom (below the Disk/Files stats). Routes through `confirmSheet` so an accidental tap can't kick the operator out. The deeper Settings → Privacy & Net → Security → Sign out path stays for the dedicated flow.
+- **Media search bar dropped from the Viewer page.** The standalone `<input id="media-search">` toolbar at the top of the gallery was rarely used — the sidebar's Downloaded Groups filter narrows by chat, the URL link picker handles "this exact message", and removing the bar gives the grid a full row of vertical real estate. The `/` keyboard shortcut to focus it is gone with it. The `Select` button moved into the page header next to Refresh, and only shows on the Viewer page (`body[data-page="viewer"]` gate).
+
+### SW
+- VERSION bumped `'v46'` → `'v47'`.
+
 ## [2.3.46] — 2026-05-02
 
 ### Changed — Settings tab strip: drop sticky + integrate with page flow

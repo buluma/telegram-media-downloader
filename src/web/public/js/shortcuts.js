@@ -69,11 +69,6 @@ export function initShortcuts() {
             show();
             return;
         }
-        if (e.key === '/') {
-            const search = document.getElementById('media-search');
-            if (search) { e.preventDefault(); search.focus(); }
-            return;
-        }
         if (e.key === 'l' || e.key === 'L') {
             document.getElementById('paste-url-btn')?.click();
             return;

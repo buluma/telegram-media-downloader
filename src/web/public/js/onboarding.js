@@ -114,6 +114,11 @@ function applyStatus(status) {
 }
 
 export function initOnboarding() {
+    // Guests can't progress any of the onboarding steps (paste creds / add
+    // account / enable group are all admin-only mutations), so showing the
+    // banner just teases them with a button that 403s. Skip the subscription
+    // entirely for the guest role — leaves the banner element absent.
+    if (typeof document !== 'undefined' && document.body?.dataset?.role === 'guest') return;
     if (unsubscribe) unsubscribe();
     unsubscribe = subscribeMonitorStatus(applyStatus);
 }

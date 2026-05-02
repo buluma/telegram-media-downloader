@@ -193,12 +193,15 @@
             overscroll-behavior: none;
         }
         /* Reserve room for the status bar on desktop and for the bottom-nav
-           on mobile so fixed-position bars never cover content. */
+           on mobile so fixed-position bars never cover content. Guest sessions
+           hide the desktop status bar (admin-only), so drop the reservation
+           too — otherwise the page ends with an empty 32 px footer gap. */
         @media (max-width: 767.98px) {
             body { padding-bottom: calc(56px + env(safe-area-inset-bottom)); }
         }
         @media (min-width: 768px) {
             body { padding-bottom: 32px; }
+            body[data-role="guest"] { padding-bottom: 0; }
         }
 
         /* ===== Light theme overrides =====
@@ -1494,6 +1497,15 @@
            render path. body[data-role] is set on boot in app.js init() from
            /api/auth_check before any UI mounts. */
         body[data-role="guest"] [data-admin-only] { display: none !important; }
+        /* Onboarding banner is admin-flow only ("paste creds → add account
+           → enable group" — every step is a write a guest can't do).
+           `initOnboarding` already returns early for guest, this rule is
+           the belt-and-suspenders for any race / stale DOM case. */
+        body[data-role="guest"] #onboarding-banner { display: none !important; }
+        /* Select-mode toggle is only meaningful inside the gallery — show it
+           in the header only when the Viewer page is active. Hidden by
+           default via the `hidden` class; this rule un-hides on viewer. */
+        body[data-page="viewer"] #select-mode-btn { display: inline-flex; }
         /* Guest header role pill */
         .role-pill { display: inline-flex; align-items: center; gap: 4px;
             padding: 2px 8px; font-size: 11px; font-weight: 500;
@@ -1521,18 +1533,21 @@
         }
 
         /* ============================================================
-           Settings tab strip — same visual pattern as the Groups page
-           tabs (`#groups-tab-*`) and the Viewer media tabs: text +
-           2 px underlined indicator, sitting flush in the normal flow
-           with the rest of the page (NOT sticky, NOT a full-width
-           banner). The previous sticky design floated above the cards
-           and read as a foreign component on the page.
+           Settings tab strip — sticky tab row that mirrors the Groups
+           page tabs visually (`#groups-tab-*`) but stays in reach while
+           the user scrolls so they can jump between sections without
+           hauling the page back to the top. Sits inside the page's
+           content column (no full-width breakout) so it doesn't read
+           as a foreign banner pasted on top of the cards.
            ============================================================ */
         .settings-chip-nav {
+            position: sticky;
+            top: 0;
+            z-index: 5;
             display: flex;
             margin: 0 0 16px;
             padding: 0;
-            background: transparent;
+            background: var(--tg-bg, #17212B);   /* matches page bg so scrolled cards pass cleanly underneath */
             border-bottom: 1px solid var(--tg-border, #0D1117);
             overflow-x: auto;
             overflow-y: hidden;
@@ -1549,7 +1564,7 @@
             background: transparent;
             border: 0;
             border-bottom: 2px solid transparent;
-            margin-bottom: -1px;          /* overlap the nav's bottom border */
+            margin-bottom: -1px;             /* overlap the nav's bottom border */
             color: var(--tg-textSecondary, #8B9BAA);
             font-size: 14px;
             font-weight: 500;
@@ -1557,12 +1572,13 @@
             cursor: pointer;
             -webkit-tap-highlight-color: transparent;
             white-space: nowrap;
-            transition: color 0.15s ease, border-color 0.15s ease;
+            transition: color 0.15s ease, border-color 0.15s ease, font-weight 0s;
         }
         .settings-chip:hover { color: var(--tg-text, #F5F5F5); }
         .settings-chip[aria-selected="true"] {
             color: var(--tg-blue, #2AABEE);
             border-bottom-color: var(--tg-blue, #2AABEE);
+            font-weight: 600;
         }
         .settings-chip i {
             font-size: 15px;
@@ -1572,8 +1588,8 @@
         }
         .settings-chip:hover i,
         .settings-chip[aria-selected="true"] i { opacity: 1; }
-        .settings-section { scroll-margin-top: 16px; }
-        .settings-section-title { padding-left: 4px; }
+        /* Compensate scroll-target landing for the sticky bar's height. */
+        .settings-section { scroll-margin-top: 60px; }
         @media (prefers-reduced-motion: reduce) {
             .settings-chip,
             .settings-chip i { transition: none; }
@@ -1674,10 +1690,13 @@
                 </div>
             </div>
 
-            <!-- Footer Stats — single-row compact layout. The two metrics share a
-                 row so the sidebar gives the list as much vertical room as possible. -->
-            <div class="p-3 border-t border-tg-border bg-tg-bg">
-                <div class="flex items-center justify-between text-sm gap-4">
+            <!-- Footer Stats + sign-out — stats on top, full-width sign-out
+                 button below. The sign-out routes through `confirmSheet` to
+                 guard against fat-finger taps; same endpoint as the deeper
+                 "Settings → Privacy & Net → Security" button so both surfaces
+                 drop the same session token. -->
+            <div class="border-t border-tg-border bg-tg-bg">
+                <div class="px-3 pt-3 pb-2 flex items-center justify-between text-sm gap-3">
                     <span class="flex items-center gap-1.5 min-w-0">
                         <i class="ri-hard-drive-2-line text-tg-textSecondary" aria-hidden="true"></i>
                         <span class="text-tg-textSecondary" data-i18n="sidebar.disk">Disk</span>
@@ -1689,6 +1708,13 @@
                         <span id="total-files" class="text-tg-text truncate">--</span>
                     </span>
                 </div>
+                <button id="sidebar-logout-btn" type="button"
+                    class="w-full px-3 py-2.5 flex items-center justify-center gap-2 text-sm font-semibold text-white bg-tg-red/90 hover:bg-tg-red transition-colors border-t border-tg-red/30"
+                    data-i18n-aria-label="sidebar.signout" aria-label="Sign out of dashboard"
+                    data-i18n-title="sidebar.signout" title="Sign out of dashboard">
+                    <i class="ri-logout-box-line text-base" aria-hidden="true"></i>
+                    <span data-i18n="sidebar.signout">Sign out</span>
+                </button>
             </div>
         </aside>
 
@@ -1963,6 +1989,12 @@
                             </button>
                         </div>
                     </div>
+                    <button id="select-mode-btn" type="button" data-admin-only
+                        class="w-10 h-10 min-w-[44px] min-h-[44px] rounded-full hover:bg-tg-hover items-center justify-center hidden"
+                        data-i18n-aria-label="viewer.select_mode" aria-label="Toggle selection mode"
+                        data-i18n-title="viewer.select_mode" title="Toggle selection mode">
+                        <i class="ri-checkbox-multiple-line text-xl text-tg-textSecondary" aria-hidden="true"></i>
+                    </button>
                     <button id="refresh-btn" type="button"
                         class="w-10 h-10 min-w-[44px] min-h-[44px] rounded-full hover:bg-tg-hover flex items-center justify-center"
                         data-i18n-aria-label="header.refresh" aria-label="Refresh"
@@ -1986,22 +2018,6 @@
 
                 <!-- Viewer Page -->
                 <div id="page-viewer">
-                    <!-- Media search + selection toolbar -->
-                    <div class="px-2 py-2 flex flex-wrap items-center gap-2 border-b border-tg-border bg-tg-bg">
-                        <div class="relative flex-1 min-w-[160px]">
-                            <i class="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-tg-textSecondary"></i>
-                            <input type="text" id="media-search"
-                                class="w-full bg-tg-panel border border-tg-border rounded-lg pl-9 pr-8 py-1.5 text-sm text-tg-text focus:ring-1 focus:ring-tg-blue focus:border-tg-blue outline-none"
-                                data-i18n-placeholder="viewer.search.placeholder"
-                                placeholder="Search files…">
-                            <button id="media-search-clear" class="absolute right-2 top-1/2 -translate-y-1/2 text-tg-textSecondary hover:text-tg-text hidden">
-                                <i class="ri-close-line"></i>
-                            </button>
-                        </div>
-                        <button id="select-mode-btn" data-admin-only class="px-3 py-1.5 rounded-lg bg-tg-panel hover:bg-tg-hover text-sm text-tg-text" data-i18n-title="viewer.select_mode" title="Toggle selection mode">
-                            <i class="ri-checkbox-multiple-line"></i>
-                        </button>
-                    </div>
                     <div id="media-grid" class="media-grid"></div>
                     <!-- Drag-to-select rubber-band rectangle. Single shared
                          element managed by gallery-select.js — kept outside
@@ -2061,15 +2077,15 @@
                          bottom of the page mirrors active section back
                          to the chip via [aria-selected]. -->
                     <nav class="settings-chip-nav" role="tablist" aria-label="Settings sections">
-                        <button type="button" role="tab" id="settings-chip-system" class="settings-chip" data-chip="system" aria-controls="settings-system" aria-selected="true">
+                        <button type="button" role="tab" id="settings-chip-system" data-admin-only class="settings-chip" data-chip="system" aria-controls="settings-system" aria-selected="true">
                             <i class="ri-cpu-line" aria-hidden="true"></i>
                             <span data-i18n="settings.section.system">System</span>
                         </button>
-                        <button type="button" role="tab" id="settings-chip-accounts" class="settings-chip" data-chip="accounts" aria-controls="settings-accounts" aria-selected="false">
+                        <button type="button" role="tab" id="settings-chip-accounts" data-admin-only class="settings-chip" data-chip="accounts" aria-controls="settings-accounts" aria-selected="false">
                             <i class="ri-user-line" aria-hidden="true"></i>
                             <span data-i18n="settings.section.accounts">Accounts</span>
                         </button>
-                        <button type="button" role="tab" id="settings-chip-downloads" class="settings-chip" data-chip="downloads" aria-controls="settings-downloads" aria-selected="false">
+                        <button type="button" role="tab" id="settings-chip-downloads" data-admin-only class="settings-chip" data-chip="downloads" aria-controls="settings-downloads" aria-selected="false">
                             <i class="ri-download-cloud-2-line" aria-hidden="true"></i>
                             <span data-i18n="settings.section.downloads">Downloads</span>
                         </button>
@@ -2077,7 +2093,7 @@
                             <i class="ri-palette-line" aria-hidden="true"></i>
                             <span data-i18n="settings.section.appearance">Look &amp; Feel</span>
                         </button>
-                        <button type="button" role="tab" id="settings-chip-network" class="settings-chip" data-chip="network" aria-controls="settings-network" aria-selected="false">
+                        <button type="button" role="tab" id="settings-chip-network" data-admin-only class="settings-chip" data-chip="network" aria-controls="settings-network" aria-selected="false">
                             <i class="ri-shield-keyhole-line" aria-hidden="true"></i>
                             <span data-i18n="settings.section.network">Privacy &amp; Net</span>
                         </button>
@@ -2097,12 +2113,7 @@
                         <i class="ri-arrow-right-s-line text-tg-textSecondary ml-auto" aria-hidden="true"></i>
                     </button>
 
-                    <section data-settings-section="system" id="settings-system" role="tabpanel" aria-labelledby="settings-chip-system" class="settings-section space-y-4 mb-6">
-                    <h2 class="settings-section-title flex items-center gap-2 text-tg-textSecondary text-xs font-semibold uppercase tracking-wider mt-2 mb-2">
-                        <i class="ri-cpu-line"></i>
-                        <span data-i18n="settings.section.system">System</span>
-                    </h2>
-
+                    <section data-settings-section="system" id="settings-system" role="tabpanel" aria-labelledby="settings-chip-system" data-admin-only class="settings-section space-y-4 mb-6">
                     <!-- Engine / monitor -->
                     <div class="bg-tg-panel rounded-xl p-4 mb-4">
                         <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
@@ -2446,12 +2457,7 @@
                     </div>
                     </section>
 
-                    <section data-settings-section="accounts" id="settings-accounts" role="tabpanel" aria-labelledby="settings-chip-accounts" class="settings-section space-y-4 mb-6">
-                    <h2 class="settings-section-title flex items-center gap-2 text-tg-textSecondary text-xs font-semibold uppercase tracking-wider mt-2 mb-2">
-                        <i class="ri-user-line"></i>
-                        <span data-i18n="settings.section.accounts">Accounts</span>
-                    </h2>
-
+                    <section data-settings-section="accounts" id="settings-accounts" role="tabpanel" aria-labelledby="settings-chip-accounts" data-admin-only class="settings-section space-y-4 mb-6">
                     <!-- Telegram Accounts -->
                     <div class="bg-tg-panel rounded-xl p-4 mb-4" data-admin-only>
                         <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
@@ -2488,12 +2494,7 @@
                     </div>
                     </section>
 
-                    <section data-settings-section="downloads" id="settings-downloads" role="tabpanel" aria-labelledby="settings-chip-downloads" class="settings-section space-y-4 mb-6">
-                    <h2 class="settings-section-title flex items-center gap-2 text-tg-textSecondary text-xs font-semibold uppercase tracking-wider mt-2 mb-2">
-                        <i class="ri-download-cloud-2-line"></i>
-                        <span data-i18n="settings.section.downloads">Downloads</span>
-                    </h2>
-
+                    <section data-settings-section="downloads" id="settings-downloads" role="tabpanel" aria-labelledby="settings-chip-downloads" data-admin-only class="settings-section space-y-4 mb-6">
                     <!-- Download Settings -->
                     <div class="bg-tg-panel rounded-xl p-4 mb-4" data-admin-only>
                         <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
@@ -2698,11 +2699,6 @@
                     </section>
 
                     <section data-settings-section="appearance" id="settings-appearance" role="tabpanel" aria-labelledby="settings-chip-appearance" class="settings-section space-y-4 mb-6">
-                    <h2 class="settings-section-title flex items-center gap-2 text-tg-textSecondary text-xs font-semibold uppercase tracking-wider mt-2 mb-2">
-                        <i class="ri-palette-line"></i>
-                        <span data-i18n="settings.section.appearance">Look &amp; Feel</span>
-                    </h2>
-
                     <!-- Appearance -->
                     <div class="bg-tg-panel rounded-xl p-4 mb-4">
                         <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
@@ -2848,12 +2844,7 @@
                     </div>
                     </section>
 
-                    <section data-settings-section="network" id="settings-network" role="tabpanel" aria-labelledby="settings-chip-network" class="settings-section space-y-4 mb-6">
-                    <h2 class="settings-section-title flex items-center gap-2 text-tg-textSecondary text-xs font-semibold uppercase tracking-wider mt-2 mb-2">
-                        <i class="ri-shield-keyhole-line"></i>
-                        <span data-i18n="settings.section.network">Privacy &amp; Net</span>
-                    </h2>
-
+                    <section data-settings-section="network" id="settings-network" role="tabpanel" aria-labelledby="settings-chip-network" data-admin-only class="settings-section space-y-4 mb-6">
                     <!-- Privacy / DM downloads -->
                     <div class="bg-tg-panel rounded-xl p-4 mb-4" data-admin-only>
                         <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
@@ -3234,7 +3225,7 @@
     </div>
 
     <!-- Status bar -->
-    <footer id="status-bar" class="hidden md:flex fixed bottom-0 left-0 right-0 bg-tg-sidebar border-t border-tg-border px-3 py-1.5 text-xs items-center gap-3 overflow-x-auto z-40" role="status" aria-live="polite">
+    <footer id="status-bar" data-admin-only class="hidden md:flex fixed bottom-0 left-0 right-0 bg-tg-sidebar border-t border-tg-border px-3 py-1.5 text-xs items-center gap-3 overflow-x-auto z-40" role="status" aria-live="polite">
         <span class="flex items-center gap-1.5">
             <span id="status-dot" class="w-2 h-2 rounded-full bg-gray-500"></span>
             <span id="status-state" class="text-tg-textSecondary" data-i18n="status.idle">Idle</span>
