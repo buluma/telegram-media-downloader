@@ -2,6 +2,23 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.48] — 2026-05-02
+
+### Added
+- **`npm run doctor`** — runtime diagnostics in one command. Reports Node version + ABI, config load, `better-sqlite3` open + row count (with rebuild hint on `NODE_MODULE_VERSION` mismatch), `data/` writability, port availability (honours `PORT`), and `ffmpeg` on `PATH`. Cross-platform (Windows / macOS / Linux), non-interactive — safe for CI / Docker. Exits 1 on any blocking failure.
+
+### Fixed
+- **Disk-usage footer no longer reads stale "930 KB" after Purge all** — when the DB sum is zero (catalogue empty / freshly purged) `/api/stats` now walks `data/downloads/` recursively for the real on-disk size and refreshes `disk_usage.json` instead of trusting the legacy snapshot. The old cache was written sparingly by earlier downloader versions and never invalidated on purge, so a wiped dashboard could keep footer-reporting a multi-week-old size.
+
+### Changed
+- **`tests/db.test.js` no longer touches the user's real `data/db.sqlite`** — the test now points the DB module at an `os.tmpdir()` mkdtemp via the new `TGDL_DATA_DIR` env override and removes the directory in `afterAll`. Previously a local `npm test` would create + delete the production DB file under `data/`.
+- **`src/core/db.js` honours `TGDL_DATA_DIR`** — set the env var to relocate the data root (used by the test isolation above; also lets Docker / multi-instance deploys override the path without symlinks). Default behaviour unchanged.
+- **`sharp ^0.33.5` → `^0.34.5`** to dedupe with the nested copy `@huggingface/transformers` already pulls in. Same `rotate()` / `resize()` / `webp()` patterns we use are stable across the bump; node_modules sheds the duplicate libvips and platform binaries.
+- Lint cleanup: dead code removed across core / web / scripts / tests (`directoryCache`, `normalizeName()`, `hasMissingKeys`, debug `RAW EVENT` block + `peerId` derivation, unused imports `Api` / `closeTopSheet` / `api` / `escapeHtml` / `getFileIcon` / `insertDownload`, unused `chatId` / `lastCrashTime` / `DB_PATH`, destructured `id` → `_id` in accounts/history/monitor). Net `-19` warnings, no behaviour change.
+
+### SW
+- VERSION bumped `'v47'` → `'v48'`.
+
 ## [2.3.47] — 2026-05-02
 
 ### Fixed — Guest scope (strict viewer)

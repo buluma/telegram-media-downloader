@@ -8,6 +8,9 @@ import { StringSession } from 'telegram/sessions/index.js';
 import readline from 'readline';
 import fs from 'fs';
 import path from 'path';
+import net from 'net';
+import os from 'os';
+import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
 import { loadConfig, saveConfig, addGroup } from './config/manager.js';
@@ -54,6 +57,134 @@ function question(query) {
     });
 }
 
+function checkPortAvailable(port) {
+    return new Promise((resolve) => {
+        const server = net.createServer();
+        server.once('error', (err) => {
+            const inUse = err && (err.code === 'EADDRINUSE' || err.code === 'EACCES');
+            resolve({ ok: !inUse, detail: err?.message || String(err) });
+        });
+        server.once('listening', () => {
+            server.close(() => resolve({ ok: true, detail: 'available' }));
+        });
+        server.listen(port, '0.0.0.0');
+    });
+}
+
+function checkFfmpeg() {
+    const cmd = process.platform === 'win32' ? 'where' : 'which';
+    const r = spawnSync(cmd, ['ffmpeg'], { encoding: 'utf8' });
+    if (r.status === 0 && r.stdout.trim()) {
+        return { ok: true, detail: r.stdout.trim().split(/\r?\n/)[0] };
+    }
+    return { ok: false, detail: 'not on PATH (video thumbs will use bundled @ffmpeg-installer fallback)' };
+}
+
+async function runDoctor() {
+    const checks = [];
+
+    const major = Number(String(process.versions.node || '').split('.')[0]);
+    checks.push({
+        name: 'Node runtime',
+        level: major >= 20 ? 'ok' : 'fail',
+        detail: `v${process.versions.node} (ABI ${process.versions.modules}, ${process.platform}/${process.arch}) — engines requires >=20`,
+    });
+
+    try {
+        const cfg = loadConfig();
+        const hasTelegram = Boolean(cfg?.telegram && typeof cfg.telegram === 'object');
+        const hasWeb = Boolean(cfg?.web && typeof cfg.web === 'object');
+        checks.push({
+            name: 'Config load',
+            level: hasTelegram && hasWeb ? 'ok' : 'fail',
+            detail: hasTelegram && hasWeb
+                ? `loaded ${CONFIG_PATH}`
+                : 'config.json missing telegram/web sections — run the dashboard once to bootstrap',
+        });
+    } catch (e) {
+        checks.push({
+            name: 'Config load',
+            level: 'fail',
+            detail: e?.message || String(e),
+        });
+    }
+
+    try {
+        const db = getDb();
+        const row = db.prepare('SELECT COUNT(1) AS n FROM downloads').get();
+        checks.push({
+            name: 'SQLite (better-sqlite3)',
+            level: 'ok',
+            detail: `opened db.sqlite — downloads rows: ${row?.n ?? 0}`,
+        });
+    } catch (e) {
+        const msg = e?.message || String(e);
+        const abiHint = msg.includes('NODE_MODULE_VERSION')
+            ? ' — run `npm rebuild better-sqlite3` after a Node version change'
+            : '';
+        checks.push({
+            name: 'SQLite (better-sqlite3)',
+            level: 'fail',
+            detail: msg + abiHint,
+        });
+    }
+
+    const dataDir = path.join(__dirname, '../data');
+    try {
+        if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+        const probe = path.join(dataDir, '.doctor-write-probe');
+        fs.writeFileSync(probe, String(Date.now()));
+        fs.unlinkSync(probe);
+        checks.push({ name: 'data/ writable', level: 'ok', detail: dataDir });
+    } catch (e) {
+        checks.push({
+            name: 'data/ writable',
+            level: 'fail',
+            detail: `${dataDir}: ${e?.message || e}`,
+        });
+    }
+
+    const port = Number(process.env.PORT || 3000);
+    const portCheck = await checkPortAvailable(port);
+    checks.push({
+        name: `Port ${port}`,
+        level: portCheck.ok ? 'ok' : 'warn',
+        detail: portCheck.ok ? 'available' : `busy (${portCheck.detail}) — set PORT=<other> to override`,
+    });
+
+    const ff = checkFfmpeg();
+    checks.push({
+        name: 'ffmpeg',
+        level: ff.ok ? 'ok' : 'warn',
+        detail: ff.detail,
+    });
+
+    console.log();
+    console.log(colorize('🩺 Telegram Downloader — Doctor', 'cyan', 'bold'));
+    console.log(colorize(`   host=${os.hostname()} platform=${process.platform} arch=${process.arch}`, 'dim'));
+    console.log();
+    let failed = 0;
+    let warned = 0;
+    checks.forEach((c) => {
+        let icon, tone;
+        if (c.level === 'ok') { icon = '✅'; tone = 'green'; }
+        else if (c.level === 'warn') { icon = '⚠️ '; tone = 'yellow'; warned++; }
+        else { icon = '❌'; tone = 'red'; failed++; }
+        console.log(colorize(`${icon} ${c.name}: ${c.detail}`, tone));
+    });
+    console.log();
+    if (failed) {
+        console.log(colorize(`Doctor found ${failed} blocking issue(s)${warned ? `, ${warned} warning(s)` : ''}.`, 'red', 'bold'));
+        process.exitCode = 1;
+        return;
+    }
+    if (warned) {
+        console.log(colorize(`Doctor passed with ${warned} warning(s).`, 'yellow', 'bold'));
+        return;
+    }
+    console.log(colorize('All doctor checks passed.', 'green', 'bold'));
+}
+
 async function main() {
     resilience.init();
 
@@ -81,8 +212,14 @@ async function main() {
         return;
     }
 
+    // Diagnostics — non-interactive, safe to run in headless / CI / Docker.
+    if (command === 'doctor') {
+        await runDoctor();
+        return;
+    }
+
     // Other subcommands beyond this point are interactive — they need a TTY.
-    if (!process.stdin.isTTY && command !== 'web' && command !== 'monitor' && command !== 'history') {
+    if (!process.stdin.isTTY && command !== 'web' && command !== 'monitor' && command !== 'history' && command !== 'doctor') {
         console.error(colorize('❌ This subcommand needs an interactive terminal.', 'red', 'bold'));
         process.exit(1);
     }
@@ -1416,12 +1553,13 @@ function showMenu() {
     console.log(colorize(`  npm start                       → open dashboard at http://localhost:${port}`, 'green'));
     console.log();
     console.log(colorize('Power-user CLI subcommands (when you really want a terminal):', 'dim'));
-    console.log(colorize('  monitor    history    dialogs    accounts    config    settings    viewer    auth    purge', 'white'));
+    console.log(colorize('  monitor    history    dialogs    accounts    config    settings    viewer    auth    purge    doctor', 'white'));
     console.log();
     console.log(colorize('Examples:', 'dim'));
     console.log('  ' + colorize('node src/index.js monitor', 'white') + '   headless real-time monitor (servers)');
     console.log('  ' + colorize('node src/index.js history', 'white') + '   bulk-backfill an existing group');
     console.log('  ' + colorize('node src/index.js auth', 'white') + '      reset the dashboard password');
+    console.log('  ' + colorize('node src/index.js doctor', 'white') + '    diagnose Node/DB/port/ffmpeg issues');
     console.log();
 }
 

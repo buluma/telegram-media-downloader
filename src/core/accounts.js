@@ -471,7 +471,7 @@ export class AccountManager {
      * Disconnect all clients gracefully
      */
     async disconnectAll() {
-        for (const [id, client] of this.clients) {
+        for (const [_id, client] of this.clients) {
             try {
                 await client.disconnect();
             } catch (e) {

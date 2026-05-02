@@ -7,7 +7,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getDb, insertDownload } from '../src/core/db.js';
+import { getDb } from '../src/core/db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, '../data');

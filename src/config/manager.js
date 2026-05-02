@@ -165,7 +165,6 @@ export function loadConfig() {
 
         // Self-Healing: If structure changed (new keys added), save back to disk
         // We compare the keys or string length to decide if update is needed
-        const hasMissingKeys = JSON.stringify(userConfig) !== JSON.stringify(config);
         // Better check: If stringified output is different, it means we added something
         // Note: Simple stringify comparison order check is risky, but for adding keys it works.
         // Or we just save it always? No, disk write spam.
