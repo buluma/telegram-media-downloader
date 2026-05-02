@@ -31,7 +31,7 @@ export class HistoryDownloader extends EventEmitter {
     async discoverClientForGroup(groupId) {
         if (!this.accountManager) return this.client;
 
-        for (const [id, acctClient] of this.accountManager.clients) {
+        for (const [_id, acctClient] of this.accountManager.clients) {
             try {
                 const history = await acctClient.getMessages(groupId, { limit: 1 });
                 if (history) {
@@ -44,7 +44,7 @@ export class HistoryDownloader extends EventEmitter {
         return null; // No client can access
     }
 
-    async scan(groupId, limit = 0) {
+    async scan(groupId, _limit = 0) {
         const counts = {
             photos: 0,
             videos: 0,
