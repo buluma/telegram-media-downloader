@@ -82,6 +82,40 @@ const server = createServer(app);
 const wss = new WebSocketServer({ noServer: true });
 const clients = new Set();
 
+async function scanDirectorySize(dir) {
+    let total = 0;
+    async function walk(current) {
+        let entries;
+        try {
+            entries = await fs.readdir(current, { withFileTypes: true });
+        } catch {
+            return;
+        }
+        for (const entry of entries) {
+            const fullPath = path.join(current, entry.name);
+            if (entry.isDirectory()) {
+                await walk(fullPath);
+                continue;
+            }
+            try {
+                const st = await fs.stat(fullPath);
+                if (st.isFile()) total += st.size;
+            } catch { /* file disappeared during scan */ }
+        }
+    }
+    await walk(dir);
+    return total;
+}
+
+async function writeDiskUsageCache(size) {
+    try {
+        await fs.writeFile(path.join(DATA_DIR, 'disk_usage.json'), JSON.stringify({
+            size,
+            lastScan: Date.now(),
+        }));
+    } catch { /* best-effort cache */ }
+}
+
 function parseCookieHeader(header) {
     const out = {};
     if (!header) return out;
@@ -2362,21 +2396,13 @@ app.get('/api/stats', async (req, res) => {
         const dbStats = getDbStats(); // From DB
         const config = JSON.parse(await fs.readFile(CONFIG_PATH, 'utf8'));
         
-        // Disk usage — prefer the live `SUM(file_size)` from the DB
-        // because it's always in sync with the row count we just read,
-        // and fall back to the `data/disk_usage.json` cache if (and
-        // only if) the DB sum is suspiciously low. The legacy cache
-        // file was written sparingly by older downloader versions and
-        // never invalidated when the DB was purged + repopulated, so a
-        // user with thousands of files could end up reading a
-        // multi-week-old "930 KB" snapshot from the JSON.
+        // Disk usage: prefer DB rows when the catalog has data. If the DB is
+        // empty, scan the real downloads directory instead of trusting the
+        // legacy JSON cache; manual cleanup can leave that cache wildly stale.
         let diskUsage = Number(dbStats.totalSize) || 0;
-        const diskUsagePath = path.join(DATA_DIR, 'disk_usage.json');
-        if (diskUsage <= 0 && existsSync(diskUsagePath)) {
-            try {
-                const d = JSON.parse(await fs.readFile(diskUsagePath, 'utf8'));
-                if (d && Number.isFinite(d.size)) diskUsage = d.size;
-            } catch { /* corrupt cache — ignore */ }
+        if (diskUsage <= 0) {
+            diskUsage = await scanDirectorySize(DOWNLOADS_DIR);
+            await writeDiskUsageCache(diskUsage);
         }
 
         // Account count: reflect the on-disk session files even when no
