@@ -2046,11 +2046,6 @@ function setupEventListeners() {
         });
     });
 
-    document.getElementById('downloaded-groups-search')?.addEventListener('input', (e) => {
-        state.downloadedGroupsQuery = e.target.value || '';
-        renderGroupsList();
-    });
-    
     // Media tabs
     setupMediaTabs();
 }
