@@ -4,7 +4,9 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = path.join(__dirname, '../../data');
+const DATA_DIR = process.env.TGDL_DATA_DIR
+    ? path.resolve(process.env.TGDL_DATA_DIR)
+    : path.join(__dirname, '../../data');
 const DB_PATH = path.join(DATA_DIR, 'db.sqlite');
 
 // Singleton connection

@@ -18,10 +18,10 @@ while true; do
     start=$(date +%s)
     if [ -n "$COMMAND" ]; then
         printf '\n\033[32m🚀 Launching (attempt #%d, command: %s)\033[0m\n' "$((count+1))" "$COMMAND"
-        /opt/homebrew/bin/node --localstorage-file=./data/localstorage.json src/index.js $COMMAND
+        node scripts/run-node.js src/index.js $COMMAND
     else
         printf '\n\033[32m🚀 Launching (attempt #%d, command: <dashboard>)\033[0m\n' "$((count+1))"
-        /opt/homebrew/bin/node --localstorage-file=./data/localstorage.json src/index.js
+        node scripts/run-node.js src/index.js
     fi
     code=$?
     elapsed=$(( $(date +%s) - start ))
