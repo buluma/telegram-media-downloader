@@ -26,6 +26,7 @@
     "menu": "/opt/homebrew/bin/node --localstorage-file=./data/localstorage.json src/index.js menu",
     "monitor": "/opt/homebrew/bin/node --localstorage-file=./data/localstorage.json src/index.js monitor",
     "history": "/opt/homebrew/bin/node --localstorage-file=./data/localstorage.json src/index.js history",
+    "doctor": "/opt/homebrew/bin/node --localstorage-file=./data/localstorage.json src/index.js doctor",
     "auth": "/opt/homebrew/bin/node --localstorage-file=./data/localstorage.json src/index.js auth",
     "prod": "/opt/homebrew/bin/node --localstorage-file=./data/localstorage.json runner.js",
     "dev": "/opt/homebrew/bin/node --localstorage-file=./data/localstorage.json --watch src/web/server.js",

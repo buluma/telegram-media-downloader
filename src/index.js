@@ -8,6 +8,7 @@ import { StringSession } from 'telegram/sessions/index.js';
 import readline from 'readline';
 import fs from 'fs';
 import path from 'path';
+import net from 'net';
 import { fileURLToPath } from 'url';
 
 import { loadConfig, saveConfig, addGroup } from './config/manager.js';
@@ -65,8 +66,106 @@ function assertNodeCompatible() {
     process.exit(1);
 }
 
+function printRuntimeDiagnostics() {
+    const localstorageArg = process.execArgv.find((a) => a.startsWith('--localstorage-file='));
+    const localstoragePath = localstorageArg ? localstorageArg.split('=')[1] : '(not set)';
+    console.log(colorize(
+        `[runtime] node=${process.versions.node} abi=${process.versions.modules} exec=${process.execPath}`,
+        'dim',
+    ));
+    console.log(colorize(`[runtime] localstorage-file=${localstoragePath}`, 'dim'));
+}
+
+function checkPortAvailable(port) {
+    return new Promise((resolve) => {
+        const server = net.createServer();
+        server.once('error', (err) => {
+            const inUse = err && (err.code === 'EADDRINUSE' || err.code === 'EACCES');
+            resolve({ ok: !inUse, detail: err?.message || String(err) });
+        });
+        server.once('listening', () => {
+            server.close(() => resolve({ ok: true, detail: 'available' }));
+        });
+        server.listen(port, '0.0.0.0');
+    });
+}
+
+async function runDoctor() {
+    const checks = [];
+    const major = Number(String(process.versions.node || '').split('.')[0]);
+    checks.push({
+        name: 'Node runtime',
+        ok: major === 25,
+        detail: `v${process.versions.node} (ABI ${process.versions.modules}) at ${process.execPath}`,
+    });
+
+    const localstorageArg = process.execArgv.find((a) => a.startsWith('--localstorage-file='));
+    checks.push({
+        name: 'Node localstorage flag',
+        ok: Boolean(localstorageArg),
+        detail: localstorageArg || 'missing --localstorage-file=<path>',
+    });
+
+    try {
+        const cfg = loadConfig();
+        const hasTelegram = Boolean(cfg?.telegram && typeof cfg.telegram === 'object');
+        const hasWeb = Boolean(cfg?.web && typeof cfg.web === 'object');
+        checks.push({
+            name: 'Config load',
+            ok: hasTelegram && hasWeb,
+            detail: hasTelegram && hasWeb ? `loaded ${CONFIG_PATH}` : 'missing expected top-level keys (telegram/web)',
+        });
+    } catch (e) {
+        checks.push({
+            name: 'Config load',
+            ok: false,
+            detail: e?.message || String(e),
+        });
+    }
+
+    try {
+        const db = getDb();
+        const row = db.prepare('SELECT COUNT(1) AS n FROM downloads').get();
+        checks.push({
+            name: 'SQLite / better-sqlite3',
+            ok: true,
+            detail: `opened db.sqlite (downloads rows: ${row?.n ?? 0})`,
+        });
+    } catch (e) {
+        checks.push({
+            name: 'SQLite / better-sqlite3',
+            ok: false,
+            detail: e?.message || String(e),
+        });
+    }
+
+    const port = Number(process.env.PORT || 3000);
+    const portCheck = await checkPortAvailable(port);
+    checks.push({
+        name: `Port ${port}`,
+        ok: portCheck.ok,
+        detail: portCheck.ok ? 'available' : `busy (${portCheck.detail})`,
+    });
+
+    console.log();
+    console.log(colorize('🩺 Telegram Downloader Doctor', 'cyan', 'bold'));
+    checks.forEach((c) => {
+        const icon = c.ok ? '✅' : '❌';
+        const tone = c.ok ? 'green' : 'red';
+        console.log(colorize(`${icon} ${c.name}: ${c.detail}`, tone));
+    });
+    const failed = checks.filter((c) => !c.ok).length;
+    if (failed) {
+        console.log(colorize(`\nDoctor found ${failed} issue(s).`, 'red', 'bold'));
+        process.exitCode = 1;
+        return;
+    }
+    console.log(colorize('\nDoctor checks passed.', 'green', 'bold'));
+}
+
 async function main() {
     assertNodeCompatible();
+    printRuntimeDiagnostics();
     const command = process.argv[2];
     const isWebMode = !command || command === 'web';
     // The web server has its own unhandled-rejection policy in web/server.js.
@@ -95,9 +194,13 @@ async function main() {
         showMenu();
         return;
     }
+    if (command === 'doctor') {
+        await runDoctor();
+        return;
+    }
 
     // Other subcommands beyond this point are interactive — they need a TTY.
-    if (!process.stdin.isTTY && command !== 'web' && command !== 'monitor' && command !== 'history') {
+    if (!process.stdin.isTTY && command !== 'web' && command !== 'monitor' && command !== 'history' && command !== 'doctor') {
         console.error(colorize('❌ This subcommand needs an interactive terminal.', 'red', 'bold'));
         process.exit(1);
     }
@@ -1431,7 +1534,7 @@ function showMenu() {
     console.log(colorize(`  npm start                       → open dashboard at http://localhost:${port}`, 'green'));
     console.log();
     console.log(colorize('Power-user CLI subcommands (when you really want a terminal):', 'dim'));
-    console.log(colorize('  monitor    history    dialogs    accounts    config    settings    viewer    auth    purge', 'white'));
+    console.log(colorize('  monitor    history    dialogs    accounts    config    settings    viewer    auth    purge    doctor', 'white'));
     console.log();
     console.log(colorize('Examples:', 'dim'));
     console.log('  ' + colorize('node src/index.js monitor', 'white') + '   headless real-time monitor (servers)');
