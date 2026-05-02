@@ -22,14 +22,14 @@
     "SECURITY.md"
   ],
   "scripts": {
-    "start": "node src/index.js",
-    "menu": "node src/index.js menu",
-    "monitor": "node src/index.js monitor",
-    "history": "node src/index.js history",
-    "auth": "node src/index.js auth",
-    "prod": "node runner.js",
-    "dev": "node --watch src/web/server.js",
-    "migrate": "node scripts/migrate_json_to_sqlite.js",
+    "start": "/opt/homebrew/bin/node src/index.js",
+    "menu": "/opt/homebrew/bin/node src/index.js menu",
+    "monitor": "/opt/homebrew/bin/node src/index.js monitor",
+    "history": "/opt/homebrew/bin/node src/index.js history",
+    "auth": "/opt/homebrew/bin/node src/index.js auth",
+    "prod": "/opt/homebrew/bin/node runner.js",
+    "dev": "/opt/homebrew/bin/node --watch src/web/server.js",
+    "migrate": "/opt/homebrew/bin/node scripts/migrate_json_to_sqlite.js",
     "lint": "eslint .",
     "format": "prettier --write \"src/**/*.{js,html,css}\" \"*.{md,json}\"",
     "test": "vitest run",
@@ -90,6 +90,6 @@
     ]
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=25.0.0 <26"
   }
 }

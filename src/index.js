@@ -56,9 +56,9 @@ function question(query) {
 
 function assertNodeCompatible() {
     const major = Number(String(process.versions.node || '').split('.')[0]);
-    if (Number.isFinite(major) && major >= 20) return;
+    if (major === 25) return;
     console.error(colorize(
-        `❌ Unsupported Node.js ${process.versions.node}. Use Node 20+ (see .nvmrc).`,
+        `❌ Unsupported Node.js ${process.versions.node} at ${process.execPath}. Use Node 25 exactly (see .nvmrc).`,
         'red',
         'bold',
     ));
