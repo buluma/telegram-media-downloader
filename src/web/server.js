@@ -964,7 +964,7 @@ app.get('/api/version', (req, res) => {
 // freshly-shipped version always re-checks immediately rather than
 // trusting a now-stale "no update" answer from the previous window.
 const UPDATE_CHECK_TTL_MS = 10 * 60 * 1000;
-const UPDATE_CHECK_REPO = 'botnick/telegram-media-downloader';
+const UPDATE_CHECK_REPO = 'buluma/telegram-media-downloader';
 let _updateCache = { fetchedAt: 0, data: null };
 
 function _cmpSemver(a, b) {

@@ -2,11 +2,11 @@
 
 Download photos, videos, documents, voice messages, GIFs, stickers, and Stories from any Telegram channel, group, or chat your account can read. Bulk-archive a whole channel, paste a `t.me/` link to grab a single message, capture self-destructing media before it expires, and forward downloads automatically to another chat. Generate signed share-links friends can open without logging in. One-click in-dashboard auto-update via a watchtower sidecar. Web dashboard plus a CLI for headless servers. Runs on Windows, Linux, macOS, and Docker (amd64 + arm64).
 
-[![CI](https://github.com/botnick/telegram-media-downloader/actions/workflows/ci.yml/badge.svg)](https://github.com/botnick/telegram-media-downloader/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/botnick/telegram-media-downloader/actions/workflows/codeql.yml/badge.svg)](https://github.com/botnick/telegram-media-downloader/actions/workflows/codeql.yml)
+[![CI](https://github.com/buluma/telegram-media-downloader/actions/workflows/ci.yml/badge.svg)](https://github.com/buluma/telegram-media-downloader/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/buluma/telegram-media-downloader/actions/workflows/codeql.yml/badge.svg)](https://github.com/buluma/telegram-media-downloader/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-25.x-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
-[![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?logo=docker&logoColor=white)](https://github.com/botnick/telegram-media-downloader/pkgs/container/telegram-media-downloader)
+[![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?logo=docker&logoColor=white)](https://github.com/buluma/telegram-media-downloader/pkgs/container/telegram-media-downloader)
 
 > **Keywords:** Telegram downloader · Telegram channel scraper · Telegram media backup · download Telegram videos · download Telegram photos · Telegram archive tool · self-hosted Telegram bot alternative · GramJS · MTProto · Telegram Stories downloader · Telegram private channel downloader · t.me link downloader · Telegram TTL self-destruct downloader.
 
@@ -16,9 +16,9 @@ Download photos, videos, documents, voice messages, GIFs, stickers, and Stories 
 
 | Provider | Button |
 | --- | --- |
-| **Render** | [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/botnick/telegram-media-downloader) |
-| **Railway** | [![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/template/?template=https://github.com/botnick/telegram-media-downloader) |
-| **Fly.io / Docker** | `docker run --pull=always -p 3000:3000 -v "$(pwd)/data:/app/data" ghcr.io/botnick/telegram-media-downloader:latest` |
+| **Render** | [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/buluma/telegram-media-downloader) |
+| **Railway** | [![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/template/?template=https://github.com/buluma/telegram-media-downloader) |
+| **Fly.io / Docker** | `docker run --pull=always -p 3000:3000 -v "$(pwd)/data:/app/data" ghcr.io/buluma/telegram-media-downloader:latest` |
 
 After the container is up, open `:3000` and the in-browser setup wizard takes over (set password → enter API creds → add account → download).
 
@@ -189,7 +189,7 @@ Photos (JPEG, PNG, WebP, BMP), videos (MP4, MKV, AVI, MOV, WebM), audio (MP3, M4
 ### Docker (recommended)
 
 ```bash
-git clone https://github.com/botnick/telegram-media-downloader.git
+git clone https://github.com/buluma/telegram-media-downloader.git
 cd telegram-media-downloader
 docker compose up -d
 ```
@@ -201,12 +201,12 @@ Open `http://localhost:3000`:
 3. **Settings → Telegram Accounts → Add account** — phone number, OTP, optional 2FA.
 4. **Settings → Engine → Start monitor**, or just paste a `t.me/` link in the top bar.
 
-Pre-built image: `ghcr.io/botnick/telegram-media-downloader:latest`.
+Pre-built image: `ghcr.io/buluma/telegram-media-downloader:latest`.
 
 ### Node
 
 ```bash
-git clone https://github.com/botnick/telegram-media-downloader.git
+git clone https://github.com/buluma/telegram-media-downloader.git
 cd telegram-media-downloader
 npm ci
 npm start          # web dashboard (recommended)

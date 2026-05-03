@@ -10,7 +10,7 @@
 
 services:
   telegram-downloader:
-    # image: ghcr.io/botnick/telegram-media-downloader:latest
+    # image: ghcr.io/buluma/telegram-media-downloader:latest
     # pull_policy: always
     build: .
     # build: .
