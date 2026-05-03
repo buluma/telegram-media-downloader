@@ -9,12 +9,12 @@
 #
 # Pin a specific patch version. Floating tags drift; this image is reproducible.
 
-FROM node:20.20.2-alpine AS deps
+FROM node:25-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
 
-FROM node:20.20.2-alpine AS runtime
+FROM node:25-alpine AS runtime
 
 # Build identity — passed in by CI (`docker build --build-arg GIT_SHA=…
 # --build-arg BUILT_AT=…`) and surfaced via `/api/version` so the
@@ -60,4 +60,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD node scripts/healthcheck.js || exit 1
 
 ENTRYPOINT ["/sbin/tini", "--", "/app/scripts/docker-entrypoint.sh"]
-CMD ["node", "src/web/server.js"]
+CMD ["node", "--localstorage-file=/app/data/localstorage.json", "src/web/server.js"]
