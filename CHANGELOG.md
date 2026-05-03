@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.48] — 2026-05-03
+
+### Added
+- **`npm run doctor`** expanded — now also checks `ffmpeg` on PATH (warns if missing, falls back to `@ffmpeg-installer`), `data/` write access, and reports host/platform/arch header. Blocking failures vs warnings separated: port-busy and missing ffmpeg are `warn`, not `fail`. Exits 1 only on blocking issues.
+- `checkFfmpeg()` helper in CLI for cross-platform ffmpeg detection.
+
+### Changed
+- Doctor output uses `level: ok|warn|fail` instead of boolean `ok` — port-busy and missing ffmpeg are warnings, not hard failures.
+- SQLite ABI mismatch now includes `npm rebuild better-sqlite3` hint in error detail.
+- `startHistory` error event handler destructures `{ job, error }` consistently with monitor.
+- `startHistory` imports `AutoForwarder` for forward-on-history support.
+
 ## [2.3.47] — 2026-05-02
 
 ### Fixed — Guest scope (strict viewer)
