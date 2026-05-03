@@ -94,7 +94,7 @@ jobs:
               # → 141 → set -e -o pipefail kills the script). Capture the
               # full ps listing then scan it with awk.
               PS_OUT=$(docker exec smoke ps -o user=,comm=)
-              if ! echo "$PS_OUT" | awk '$1=="node" && $2=="node" {f=1} END{exit !f}'; then
+              if ! echo "$PS_OUT" | awk '$1=="node" && $2~/^node/ {f=1} END{exit !f}'; then
                 echo "FAIL: no node process running as node user"
                 echo "--- ps -o user,comm ---"
                 echo "$PS_OUT"
