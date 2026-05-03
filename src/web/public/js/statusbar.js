@@ -79,7 +79,7 @@ async function paintVersion() {
         }
         // Pin the link to the actual commit on GitHub when we have a real SHA.
         if (r.commit && r.commit !== 'dev') {
-            el.href = `https://github.com/botnick/telegram-media-downloader/commit/${r.commit}`;
+            el.href = `https://github.com/buluma/telegram-media-downloader/commit/${r.commit}`;
         }
     } catch { /* best-effort cosmetic */ }
 }
@@ -109,7 +109,7 @@ async function paintUpdateBadge() {
         badge.title = i18nT('update.click_to_install', 'v{version} is out — click for install / release notes').replace('{version}', latest);
         // Click opens a tiny chooser sheet so admins can pick between
         // one-click install (when configured) and the release-notes link.
-        badge.href = r.releaseUrl || `https://github.com/botnick/telegram-media-downloader/releases/tag/${latest}`;
+        badge.href = r.releaseUrl || `https://github.com/buluma/telegram-media-downloader/releases/tag/${latest}`;
         badge.onclick = (e) => {
             e.preventDefault();
             _openUpdateChooser(latest, r.releaseUrl).catch(() => {});
@@ -280,7 +280,7 @@ export async function _openUpdateChooser(latest, releaseUrl) {
             <div class="space-y-2">
                 ${installButtonHtml}
                 <a class="tg-btn-secondary w-full flex items-center justify-center gap-2"
-                   href="${releaseUrl || `https://github.com/botnick/telegram-media-downloader/releases/tag/${latest}`}"
+                   href="${releaseUrl || `https://github.com/buluma/telegram-media-downloader/releases/tag/${latest}`}"
                    target="_blank" rel="noopener">
                     <i class="ri-github-line"></i><span>${i18nT('update.view_release', 'View release notes')}</span>
                 </a>

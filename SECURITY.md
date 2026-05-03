@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-**Don't open a public issue.** Use [GitHub's private vulnerability reporting](https://github.com/botnick/telegram-media-downloader/security/advisories/new).
+**Don't open a public issue.** Use [GitHub's private vulnerability reporting](https://github.com/buluma/telegram-media-downloader/security/advisories/new).
 
 Please include the affected component, version / commit, a minimal repro, and the impact you believe it has. We aim to acknowledge within **5 business days** and to ship a fix within **30 days** for high/critical issues.
 

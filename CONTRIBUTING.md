@@ -1,7 +1,7 @@
 # Contributing
 
 ```bash
-git clone https://github.com/botnick/telegram-media-downloader.git
+git clone https://github.com/buluma/telegram-media-downloader.git
 cd telegram-media-downloader
 npm ci
 npm run lint

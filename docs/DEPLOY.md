@@ -15,7 +15,7 @@ docker compose up -d
 # 4. Settings → Engine → Start monitor
 ```
 
-The image is published to GHCR on every release: `ghcr.io/botnick/telegram-media-downloader:<version>`.
+The image is published to GHCR on every release: `ghcr.io/buluma/telegram-media-downloader:<version>`.
 
 ### Environment variables
 
