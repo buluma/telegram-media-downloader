@@ -16,7 +16,7 @@ on:
 
 jobs:
   notify-push:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && secrets.TELEGRAM_BOT_TOKEN != ''
     runs-on: ubuntu-latest
     steps:
       - name: Send commit notification
@@ -41,7 +41,7 @@ jobs:
             --data-urlencode "text=${text}"
 
   notify-release:
-    if: github.event_name == 'release'
+    if: github.event_name == 'release' && secrets.TELEGRAM_BOT_TOKEN != ''
     runs-on: ubuntu-latest
     steps:
       - name: Send release notification
