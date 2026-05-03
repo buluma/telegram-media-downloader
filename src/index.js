@@ -7,6 +7,8 @@ import readline from 'readline';
 import fs from 'fs';
 import path from 'path';
 import net from 'net';
+import os from 'os';
+import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
 import { loadConfig, saveConfig } from './config/manager.js';
@@ -86,19 +88,28 @@ function checkPortAvailable(port) {
     });
 }
 
+function checkFfmpeg() {
+    const cmd = process.platform === 'win32' ? 'where' : 'which';
+    const r = spawnSync(cmd, ['ffmpeg'], { encoding: 'utf8' });
+    if (r.status === 0 && r.stdout.trim()) {
+        return { ok: true, detail: r.stdout.trim().split(/\r?\n/)[0] };
+    }
+    return { ok: false, detail: 'not on PATH (video thumbs will use bundled @ffmpeg-installer fallback)' };
+}
+
 async function runDoctor() {
     const checks = [];
     const major = Number(String(process.versions.node || '').split('.')[0]);
     checks.push({
         name: 'Node runtime',
-        ok: major === 25,
-        detail: `v${process.versions.node} (ABI ${process.versions.modules}) at ${process.execPath}`,
+        level: major === 25 ? 'ok' : 'fail',
+        detail: `v${process.versions.node} (ABI ${process.versions.modules}, ${process.platform}/${process.arch}) at ${process.execPath}`,
     });
 
     const localstorageArg = process.execArgv.find((a) => a.startsWith('--localstorage-file='));
     checks.push({
         name: 'Node localstorage flag',
-        ok: Boolean(localstorageArg),
+        level: localstorageArg ? 'ok' : 'fail',
         detail: localstorageArg || 'missing --localstorage-file=<path>',
     });
 
@@ -108,13 +119,15 @@ async function runDoctor() {
         const hasWeb = Boolean(cfg?.web && typeof cfg.web === 'object');
         checks.push({
             name: 'Config load',
-            ok: hasTelegram && hasWeb,
-            detail: hasTelegram && hasWeb ? `loaded ${CONFIG_PATH}` : 'missing expected top-level keys (telegram/web)',
+            level: hasTelegram && hasWeb ? 'ok' : 'fail',
+            detail: hasTelegram && hasWeb
+                ? `loaded ${CONFIG_PATH}`
+                : 'config.json missing telegram/web sections — run the dashboard once to bootstrap',
         });
     } catch (e) {
         checks.push({
             name: 'Config load',
-            ok: false,
+            level: 'fail',
             detail: e?.message || String(e),
         });
     }
@@ -123,15 +136,34 @@ async function runDoctor() {
         const db = getDb();
         const row = db.prepare('SELECT COUNT(1) AS n FROM downloads').get();
         checks.push({
-            name: 'SQLite / better-sqlite3',
-            ok: true,
-            detail: `opened db.sqlite (downloads rows: ${row?.n ?? 0})`,
+            name: 'SQLite (better-sqlite3)',
+            level: 'ok',
+            detail: `opened db.sqlite — downloads rows: ${row?.n ?? 0}`,
         });
     } catch (e) {
+        const msg = e?.message || String(e);
+        const abiHint = msg.includes('NODE_MODULE_VERSION')
+            ? ' — run `npm rebuild better-sqlite3` after a Node version change'
+            : '';
         checks.push({
-            name: 'SQLite / better-sqlite3',
-            ok: false,
-            detail: e?.message || String(e),
+            name: 'SQLite (better-sqlite3)',
+            level: 'fail',
+            detail: msg + abiHint,
+        });
+    }
+
+    const dataDir = path.join(__dirname, '../data');
+    try {
+        if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+        const probe = path.join(dataDir, '.doctor-write-probe');
+        fs.writeFileSync(probe, String(Date.now()));
+        fs.unlinkSync(probe);
+        checks.push({ name: 'data/ writable', level: 'ok', detail: dataDir });
+    } catch (e) {
+        checks.push({
+            name: 'data/ writable',
+            level: 'fail',
+            detail: `${dataDir}: ${e?.message || e}`,
         });
     }
 
@@ -139,24 +171,41 @@ async function runDoctor() {
     const portCheck = await checkPortAvailable(port);
     checks.push({
         name: `Port ${port}`,
-        ok: portCheck.ok,
-        detail: portCheck.ok ? 'available' : `busy (${portCheck.detail})`,
+        level: portCheck.ok ? 'ok' : 'warn',
+        detail: portCheck.ok ? 'available' : `busy (${portCheck.detail}) — set PORT=<other> to override`,
+    });
+
+    const ff = checkFfmpeg();
+    checks.push({
+        name: 'ffmpeg',
+        level: ff.ok ? 'ok' : 'warn',
+        detail: ff.detail,
     });
 
     console.log();
-    console.log(colorize('🩺 Telegram Downloader Doctor', 'cyan', 'bold'));
+    console.log(colorize('🩺 Telegram Downloader — Doctor', 'cyan', 'bold'));
+    console.log(colorize(`   host=${os.hostname()} platform=${process.platform} arch=${process.arch}`, 'dim'));
+    console.log();
+    let failed = 0;
+    let warned = 0;
     checks.forEach((c) => {
-        const icon = c.ok ? '✅' : '❌';
-        const tone = c.ok ? 'green' : 'red';
+        let icon, tone;
+        if (c.level === 'ok') { icon = '✅'; tone = 'green'; }
+        else if (c.level === 'warn') { icon = '⚠️ '; tone = 'yellow'; warned++; }
+        else { icon = '❌'; tone = 'red'; failed++; }
         console.log(colorize(`${icon} ${c.name}: ${c.detail}`, tone));
     });
-    const failed = checks.filter((c) => !c.ok).length;
+    console.log();
     if (failed) {
-        console.log(colorize(`\nDoctor found ${failed} issue(s).`, 'red', 'bold'));
+        console.log(colorize(`Doctor found ${failed} blocking issue(s)${warned ? `, ${warned} warning(s)` : ''}.`, 'red', 'bold'));
         process.exitCode = 1;
         return;
     }
-    console.log(colorize('\nDoctor checks passed.', 'green', 'bold'));
+    if (warned) {
+        console.log(colorize(`Doctor passed with ${warned} warning(s).`, 'yellow', 'bold'));
+        return;
+    }
+    console.log(colorize('All doctor checks passed.', 'green', 'bold'));
 }
 
 async function main() {
@@ -1531,6 +1580,7 @@ function showMenu() {
     console.log('  ' + colorize('node src/index.js monitor', 'white') + '   headless real-time monitor (servers)');
     console.log('  ' + colorize('node src/index.js history', 'white') + '   bulk-backfill an existing group');
     console.log('  ' + colorize('node src/index.js auth', 'white') + '      reset the dashboard password');
+    console.log('  ' + colorize('node src/index.js doctor', 'white') + '    diagnose Node/DB/port/ffmpeg issues');
     console.log();
 }
 

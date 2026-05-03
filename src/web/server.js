@@ -82,6 +82,10 @@ const server = createServer(app);
 const wss = new WebSocketServer({ noServer: true });
 const clients = new Set();
 
+// Recursive directory size — used by /api/stats as the fallback when the DB
+// catalogue is empty. We can't trust `data/disk_usage.json` alone because
+// older builds wrote it sparingly and never invalidated on `Purge all`, so a
+// purged dashboard would footer-report a multi-week-old "930 KB" snapshot.
 async function scanDirectorySize(dir) {
     let total = 0;
     async function walk(current) {
