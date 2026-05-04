@@ -870,12 +870,16 @@ export class DownloadManager extends EventEmitter {
 
         // DB Insert
         try {
-            // Determine type based on extension or message
+            // Determine type based on extension or message. HEIC / HEIF
+            // count as photo so the gallery renders them via <img> + the
+            // /files/<path>?inline=1 transcode path (sharp libvips handles
+            // the format on the server) — otherwise iPhone uploads land
+            // in the "documents" bucket and never preview.
             let type = 'document';
             const ext = path.extname(storedPath).toLowerCase();
-            if (['.jpg', '.jpeg', '.png', '.webp'].includes(ext)) type = 'photo';
-            else if (['.mp4', '.mov', '.avi', '.mkv'].includes(ext)) type = 'video';
-            else if (['.mp3', '.ogg', '.wav', '.m4a'].includes(ext)) type = 'audio';
+            if (['.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif', '.gif'].includes(ext)) type = 'photo';
+            else if (['.mp4', '.mov', '.avi', '.mkv', '.webm'].includes(ext)) type = 'video';
+            else if (['.mp3', '.ogg', '.wav', '.m4a', '.opus', '.flac'].includes(ext)) type = 'audio';
 
             const insertResult = insertDownload({
                 groupId: String(groupId),

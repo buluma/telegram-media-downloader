@@ -156,6 +156,58 @@ function initSchema() {
         CREATE INDEX IF NOT EXISTS idx_share_links_download ON share_links(download_id);
         CREATE INDEX IF NOT EXISTS idx_share_links_expiry ON share_links(expires_at);
     `);
+
+    // Backup destinations + per-destination job queue. The destination row
+    // owns provider config (encrypted at rest by core/backup/credentials.js
+    // — config_blob is opaque ciphertext, never plaintext on disk) and the
+    // optional encryption salt for client-side AES-256-GCM uploads. Jobs
+    // are append-only rows the per-destination worker drains; status flips
+    // pending → uploading → done|failed|skipped.
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS backup_destinations (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            name            TEXT    NOT NULL,
+            provider        TEXT    NOT NULL,
+            config_blob     BLOB    NOT NULL,
+            enabled         INTEGER NOT NULL DEFAULT 1,
+            encryption      INTEGER NOT NULL DEFAULT 0,
+            encryption_salt BLOB,
+            mode            TEXT    NOT NULL DEFAULT 'mirror',
+            cron            TEXT,
+            retain_count    INTEGER DEFAULT 7,
+            last_success_at INTEGER,
+            last_failure_at INTEGER,
+            last_error      TEXT,
+            total_bytes     INTEGER NOT NULL DEFAULT 0,
+            total_files     INTEGER NOT NULL DEFAULT 0,
+            throttle_bps    INTEGER,
+            created_at      INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS backup_jobs (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            destination_id  INTEGER NOT NULL,
+            download_id     INTEGER,
+            snapshot_path   TEXT,
+            status          TEXT    NOT NULL DEFAULT 'pending',
+            attempts        INTEGER NOT NULL DEFAULT 0,
+            max_attempts    INTEGER NOT NULL DEFAULT 5,
+            next_retry_at   INTEGER,
+            started_at      INTEGER,
+            finished_at     INTEGER,
+            bytes_uploaded  INTEGER NOT NULL DEFAULT 0,
+            error           TEXT,
+            remote_path     TEXT,
+            FOREIGN KEY (destination_id) REFERENCES backup_destinations(id) ON DELETE CASCADE,
+            FOREIGN KEY (download_id) REFERENCES downloads(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_backup_jobs_pending ON backup_jobs(destination_id, status, next_retry_at);
+        CREATE INDEX IF NOT EXISTS idx_backup_jobs_download ON backup_jobs(download_id);
+    `);
+    // throttle_bps was added after the initial backup release — wrap the
+    // ALTER in try/catch so the column is present on upgrades and the
+    // CREATE-IF-NOT-EXISTS path on fresh DBs is unaffected.
+    try { db.exec('ALTER TABLE backup_destinations ADD COLUMN throttle_bps INTEGER'); } catch {}
+
     // FK enforcement is per-connection in SQLite — flip it on once we know
     // the table exists. Without this, ON DELETE CASCADE silently no-ops.
     try { db.pragma('foreign_keys = ON'); } catch {}
@@ -728,5 +780,162 @@ export function whitelistNsfw(ids) {
     const ph = cleanIds.map(() => '?').join(',');
     return getDb().prepare(
         `UPDATE downloads SET nsfw_whitelist = 1 WHERE id IN (${ph})`
+    ).run(...cleanIds).changes;
+}
+
+// Tier definitions — higher score = more likely 18+ (the convention the
+// classifier uses internally). Five tiers give the operator more nuance
+// than the original binary "above/below threshold" view, and let the
+// review page surface bulk actions like "delete everything in not_18+
+// tier" without having to scroll a list of 8000 rows.
+//
+// Boundaries are inclusive on the LEFT, exclusive on the RIGHT (except
+// def_18 which is closed on both sides because 1.0 is the max possible
+// score — a row stored at exactly 1.0 must land in def_18, not nowhere).
+//
+// Names favour readability in the UI over brevity:
+//   def_not  — Definitely not 18+      [0.0, 0.3)
+//   maybe_not — Probably not 18+       [0.3, 0.5)
+//   uncertain — Borderline / review    [0.5, 0.7)
+//   maybe    — Probably 18+            [0.7, 0.9)
+//   def      — Definitely 18+          [0.9, 1.0]
+export const NSFW_TIERS = [
+    { id: 'def_not',   min: 0.0, max: 0.3, label: 'Definitely not 18+' },
+    { id: 'maybe_not', min: 0.3, max: 0.5, label: 'Probably not 18+' },
+    { id: 'uncertain', min: 0.5, max: 0.7, label: 'Borderline / review' },
+    { id: 'maybe',     min: 0.7, max: 0.9, label: 'Probably 18+' },
+    { id: 'def',       min: 0.9, max: 1.01, label: 'Definitely 18+' },
+];
+
+function _tierBounds(tierId) {
+    const t = NSFW_TIERS.find((x) => x.id === tierId);
+    if (!t) return null;
+    return { min: t.min, max: t.max };
+}
+
+/**
+ * Per-tier counts. `whitelist` rows count toward `whitelistTotal` and are
+ * NOT included in tier counts (they were admin-confirmed 18+ even when
+ * the score might disagree). The UI uses this to render the stats cards.
+ */
+export function getNsfwTierCounts(fileTypes) {
+    const types = (Array.isArray(fileTypes) && fileTypes.length) ? fileTypes : ['photo'];
+    const placeholders = types.map(() => '?').join(',');
+    const db = getDb();
+    const out = { tiers: {}, scanned: 0, unscanned: 0, whitelisted: 0, totalEligible: 0 };
+    for (const tier of NSFW_TIERS) {
+        const n = db.prepare(`
+            SELECT COUNT(*) AS n FROM downloads
+             WHERE file_type IN (${placeholders})
+               AND nsfw_score IS NOT NULL
+               AND nsfw_score >= ?
+               AND nsfw_score < ?
+               AND nsfw_whitelist = 0
+        `).get(...types, tier.min, tier.max).n;
+        out.tiers[tier.id] = n;
+    }
+    out.scanned = db.prepare(
+        `SELECT COUNT(*) AS n FROM downloads WHERE file_type IN (${placeholders}) AND nsfw_checked_at IS NOT NULL`
+    ).get(...types).n;
+    out.totalEligible = db.prepare(
+        `SELECT COUNT(*) AS n FROM downloads WHERE file_type IN (${placeholders})`
+    ).get(...types).n;
+    out.unscanned = Math.max(0, out.totalEligible - out.scanned);
+    out.whitelisted = db.prepare(
+        `SELECT COUNT(*) AS n FROM downloads WHERE nsfw_whitelist = 1`
+    ).get().n;
+    return out;
+}
+
+/**
+ * Score histogram — N bins across [0, 1]. Drives the small inline chart
+ * on the review page so the operator can spot model bias / clustering at
+ * a glance (e.g. classifier scoring everything in 0.4-0.6 = the model is
+ * uncertain; consider a different model).
+ */
+export function getNsfwHistogram(fileTypes, bins = 20) {
+    const types = (Array.isArray(fileTypes) && fileTypes.length) ? fileTypes : ['photo'];
+    const placeholders = types.map(() => '?').join(',');
+    const n = Math.max(4, Math.min(50, Number(bins) || 20));
+    const out = new Array(n).fill(0);
+    const rows = getDb().prepare(
+        `SELECT nsfw_score FROM downloads WHERE file_type IN (${placeholders}) AND nsfw_score IS NOT NULL`
+    ).all(...types);
+    for (const r of rows) {
+        let idx = Math.floor(Number(r.nsfw_score) * n);
+        if (idx >= n) idx = n - 1;
+        if (idx < 0) idx = 0;
+        out[idx] += 1;
+    }
+    return { bins: n, counts: out };
+}
+
+/**
+ * Paginated list filtered by tier (or score range), file type, and
+ * group. The new review page uses this in place of the old
+ * delete-candidates query so the operator can step through ANY tier,
+ * not only the ones below the deletion threshold.
+ */
+export function getNsfwListByTier({ tier = null, fileTypes, groupId = null, includeWhitelisted = false, page = 1, limit = 50 }) {
+    const types = (Array.isArray(fileTypes) && fileTypes.length) ? fileTypes : ['photo'];
+    const placeholders = types.map(() => '?').join(',');
+    const where = [`file_type IN (${placeholders})`, 'nsfw_score IS NOT NULL'];
+    const params = [...types];
+    if (tier) {
+        const bounds = _tierBounds(tier);
+        if (bounds) {
+            where.push('nsfw_score >= ?');
+            where.push('nsfw_score < ?');
+            params.push(bounds.min, bounds.max);
+        }
+    }
+    if (!includeWhitelisted) where.push('nsfw_whitelist = 0');
+    if (groupId) {
+        where.push('group_id = ?');
+        params.push(String(groupId));
+    }
+    const p = Math.max(1, Number(page) || 1);
+    const lim = Math.max(1, Math.min(200, Number(limit) || 50));
+    const offset = (p - 1) * lim;
+    const whereSql = where.join(' AND ');
+    const db = getDb();
+    const totalRow = db.prepare(`SELECT COUNT(*) AS n FROM downloads WHERE ${whereSql}`).get(...params);
+    const rows = db.prepare(`
+        SELECT id, group_id, group_name, file_name, file_path, file_type, file_size,
+               created_at, nsfw_score, nsfw_checked_at, nsfw_whitelist
+          FROM downloads
+         WHERE ${whereSql}
+         ORDER BY nsfw_score ASC, id ASC
+         LIMIT ? OFFSET ?
+    `).all(...params, lim, offset);
+    return { rows, total: totalRow.n, page: p, totalPages: Math.max(1, Math.ceil(totalRow.n / lim)) };
+}
+
+/**
+ * Bulk reclassify — clear `nsfw_checked_at` so the next scan run picks
+ * the rows up again. Useful after switching the model or threshold
+ * without having to wipe the entire `nsfw_*` column trio.
+ */
+export function reclassifyNsfw(ids) {
+    if (!Array.isArray(ids) || !ids.length) return 0;
+    const cleanIds = ids.map(Number).filter((n) => Number.isInteger(n) && n > 0);
+    if (!cleanIds.length) return 0;
+    const ph = cleanIds.map(() => '?').join(',');
+    return getDb().prepare(
+        `UPDATE downloads SET nsfw_checked_at = NULL, nsfw_score = NULL WHERE id IN (${ph})`
+    ).run(...cleanIds).changes;
+}
+
+/**
+ * Un-whitelist — flip nsfw_whitelist back to 0 so the next scan / review
+ * page sees the row again. Counterpart to `whitelistNsfw`.
+ */
+export function unwhitelistNsfw(ids) {
+    if (!Array.isArray(ids) || !ids.length) return 0;
+    const cleanIds = ids.map(Number).filter((n) => Number.isInteger(n) && n > 0);
+    if (!cleanIds.length) return 0;
+    const ph = cleanIds.map(() => '?').join(',');
+    return getDb().prepare(
+        `UPDATE downloads SET nsfw_whitelist = 0 WHERE id IN (${ph})`
     ).run(...cleanIds).changes;
 }

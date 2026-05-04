@@ -16,7 +16,7 @@
 // Bump on every meaningful release. The activate handler clears any cache
 // whose key doesn't match the current pair, so old shell + asset caches
 // get evicted automatically when this string changes.
-const VERSION = 'v48';
+const VERSION = 'v250';
 const SHELL_CACHE = `tgdl-shell-${VERSION}`;
 const ASSET_CACHE = `tgdl-assets-${VERSION}`;
 
@@ -26,6 +26,7 @@ const SHELL_URLS = [
     '/',
     '/index.html',
     '/manifest.webmanifest',
+    '/css/main.css',
     '/icons/icon-192.png',
     '/icons/icon-512.png',
     '/icons/icon-192-maskable.png',

@@ -34,9 +34,18 @@ const CONFIG_PATH = path.join(__dirname, '../data/config.json');
 // at debug level instead of dropping them silently — a previous version
 // of this file used a regex-string-includes filter that swallowed real
 // errors that happened to contain the same words.
+// Same native-binary-load guard the web server uses — keeps a CLI run
+// from dying on `Error loading shared library ld-linux-…` when an
+// optional dep (most often `onnxruntime-node`, transitively from the
+// optional NSFW classifier) ships glibc-only prebuilds on a musl image.
+const _NATIVE_LOAD_FAIL_CLI = /(ld-linux|ld-musl|libonnxruntime|GLIBC_|NODE_MODULE_VERSION|cannot open shared object|Error loading shared library)/i;
 process.on('unhandledRejection', (reason) => {
     const msg = reason?.message || String(reason);
     if (suppressNoise(msg, 'unhandledRejection')) return;
+    if (_NATIVE_LOAD_FAIL_CLI.test(msg)) {
+        console.warn('[startup] An optional native module failed to load:', msg.slice(0, 200));
+        return;
+    }
     console.error('Unhandled rejection:', reason);
 });
 
@@ -158,6 +167,26 @@ async function runDoctor() {
         level: ff.ok ? 'ok' : 'warn',
         detail: ff.detail,
     });
+
+    // Optional NSFW classifier — moved to optionalDependencies in v2.4.0
+    // because `onnxruntime-node` (transitively pulled in) ships glibc-only
+    // prebuilt binaries that explode on musl-based Linux. We surface the
+    // availability as a `warn` (not `fail`) when missing — most operators
+    // never enable the NSFW review feature, so its absence is fine.
+    try {
+        await import('@huggingface/transformers');
+        checks.push({ name: 'NSFW classifier (optional)', level: 'ok', detail: '@huggingface/transformers loaded' });
+    } catch (e) {
+        const msg = e?.message || String(e);
+        const native = /(ld-linux|libonnxruntime|GLIBC_|NODE_MODULE_VERSION|cannot open shared object)/i.test(msg);
+        checks.push({
+            name: 'NSFW classifier (optional)',
+            level: 'warn',
+            detail: native
+                ? 'native binary missing (' + msg.slice(0, 120) + ') — reinstall on a glibc image or `npm uninstall @huggingface/transformers` to silence'
+                : 'not installed — `npm install @huggingface/transformers` if you want the NSFW review feature',
+        });
+    }
 
     console.log();
     console.log(colorize('🩺 Telegram Downloader — Doctor', 'cyan', 'bold'));

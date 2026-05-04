@@ -2,6 +2,128 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0] — 2026-05-04
+
+### Added — Universal background-job pattern
+- **`src/core/job-tracker.js`** — single-flight orchestration primitive every long-running admin endpoint now wraps. Exposes `tryStart(runFn)` (returns `{started:true}` or 409 `ALREADY_RUNNING`), `cancel()` via AbortController, `getStatus()` snapshot, automatic WS broadcast of `<kind>_progress` + `<kind>_done`, plus `log()` integration. **Cloudflare-safe by construction**: every wrapped POST returns ≤500 ms.
+- **13 endpoints converted** to fire-and-forget — previously any of these could time out behind a 100 s reverse-proxy: `files/verify`, `db/vacuum`, `db/integrity`, `restart-monitor`, `resync-dialogs`, `dedup/delete`, NSFW v2 bulk-{delete,whitelist,unwhitelist,reclassify} (shared tracker), `thumbs/rebuild`, `auto-update`, `groups/refresh-info`, `groups/refresh-photos`, `groups/:id/purge` (multi-flight per id), `purge-all`. Each gets a `/status` companion, a WS event prefix, and a frontend that hydrates state on init.
+- **`src/web/public/js/job-buttons.js`** — frontend helper. `wireJobButton({ btn, statusUrl, eventPrefix, runUrl })` — one binding, six call sites in Settings. Hydrates from `/status` on mount, listens to WS, handles 409 by re-hydrating instead of erroring.
+- **Multi-client coordination**. Start a `Build all thumbnails` on a phone → desktop's button immediately disables. Cancel from desktop → both clients re-enable. State lives on the server, every client is a renderer.
+- **Cancel + abort threading**. Long jobs accept an `AbortSignal`; clicking Cancel stops the worker within seconds.
+- 14 new tests (`tests/job-tracker.test.js` + `tests/job-tracker-multi-client.test.js`) — single-flight, 409 path, abort propagation, two virtual WS clients receive the same payload.
+
+### Added — Backup destinations (NAS-style multi-provider mirror + snapshot)
+- **`#/maintenance/backup`** — full-page admin surface for off-host backups. Cards-grid layout with per-destination Run / Pause / Test / Edit / Remove buttons + recent-jobs strip + WS-driven live state.
+- **Three first-class providers**: S3-compatible (covers AWS / Cloudflare R2 / Backblaze B2 / MinIO / Wasabi from one driver via `@aws-sdk/client-s3`), local filesystem / NAS mount, SFTP (`ssh2-sftp-client`).
+- **Three modes per destination**: `mirror` (every `download_complete` enqueues a job), `snapshot` (cron-scheduled tar.gz of `db.sqlite` + `config.json` + `sessions/`, retains last N copies on the remote), `manual` (only fires on `POST /run`).
+- **Persistent retry queue** — DB-backed (`backup_jobs`), exponential backoff (capped 30 min), max-attempts giveup, boot-time recovery of stuck `uploading` rows.
+- **Optional client-side encryption** — AES-256-GCM with a per-destination salt + PBKDF2-SHA256 (200k) key derivation. Passphrase lives in process memory only; restart re-prompts via the dashboard's Unlock action. File format: `magic 'TGDB' | version | iv | ciphertext | tag`.
+- **Credentials encrypted at rest** — provider configs in `backup_destinations.config_blob` are AES-256-GCM-encrypted under a KEK derived from `config.web.shareSecret`.
+- **Endpoints**: `GET/POST /api/backup/destinations`, `PUT/DELETE /:id`, `POST /:id/test|run|pause|resume|encryption|unlock`, `GET /:id/status|jobs`, `GET /api/backup/jobs/recent`, `POST /api/backup/jobs/:id/retry`, `GET /api/backup/providers`.
+- **WS events**: `backup_destination_added/updated/removed`, `backup_progress`, `backup_done`, `backup_error`, `backup_queue_drained`.
+- **Stub providers** for FTP / Google Drive / Dropbox — wizard pickers list them as "coming soon"; their dependencies are `optionalDependencies` so default installs stay slim.
+- **`BACKUP_WORKERS_PER_DEST`** env var (default 3) caps per-destination concurrency.
+- 20 new tests (encryption round-trip, credentials encrypt/decrypt with rotation, queue retry timing, local-provider full I/O); 2 S3 tests skipped without `MINIO_TEST_ENDPOINT`.
+
+### Changed — Share-link URL format (v2.5)
+- **`/share/<linkId>?exp=<sec>&sig=<43chars>`** → **`/share/<linkId>/<filename>?s=<43chars>`**. The expiry is now read from the DB row (single source of truth), the URL drops `?exp=` entirely, and a sanitised filename segment makes downloads land with a sensible name. The HMAC still binds `(linkId | exp_at_issue)`, so URLs minted before this release continue to verify cleanly — backwards compatible.
+- **Telegram-themed error page** (`src/web/public/share-error.html`) — friends who hit an expired / revoked / bad-sig / not-found / file-missing link now get a branded card with icon, friendly title, and explanation instead of the raw `{"error":"Share link is not valid","code":"expired"}` JSON. Browsers get the HTML; `Accept: application/json` callers keep the JSON for backwards compat. Status code stays `401` so external scanners can't enumerate which link ids are valid.
+
+### SW
+- VERSION bumped `'v240'` → `'v250'` (semver-aligned for v2.5.x line). Service worker shell pre-cache picks up the new `share-error.html` automatically.
+
+### Docs
+- New `docs/BACKUP.md` — full provider walkthroughs, encryption / passphrase management, restore procedure, cost notes per provider.
+- `docs/DEPLOY.md` — `BACKUP_WORKERS_PER_DEST` env var documented; share-link URL format note.
+- `README.md` — backup bullet under "Why people use it", updated keywords.
+
+## [2.4.0] — 2026-05-04
+
+### Added — Maintenance pages (4 admin-only surfaces)
+- **`#/maintenance/duplicates`** — full-page Find Duplicates: scan, group-by-hash review table, per-row keep/delete, bulk "keep oldest / newest", inline Re-index button. Replaces the in-Settings sheet.
+- **`#/maintenance/thumbs`** — full-page Build Thumbnails: cache stats, fire-and-forget build with WS progress (`thumbs_progress`/`thumbs_done`), wipe-cache action, ffmpeg capability badge.
+- **`#/maintenance/nsfw`** — full-page NSFW review with **5-tier dynamic logic** (def_not / maybe_not / uncertain / maybe / def, boundaries 0.3 / 0.5 / 0.7 / 0.9). Stats cards, score histogram (vanilla SVG), per-tier paginated list, per-row Keep / Delete / Whitelist / Re-classify, bulk-action toolbar, scan controls. Replaces the binary above/below threshold review.
+- **`#/maintenance/logs`** — realtime server log viewer (admin). Subscribes to the new WS `log` channel + backfills the in-memory ring buffer via `GET /api/maintenance/logs/recent`. Filter by source / level, search, pause, autoscroll, download `.log`. Stops you from needing `docker logs` for routine debugging.
+- All four pages enforce admin via `ADMIN_ROUTE_PREFIXES` (`router.js`) + `data-admin-only` (CSS gate) + the existing server-side `guestGate` middleware.
+
+### Added — Re-index from disk
+- **`POST /api/maintenance/reindex`** + companion `/status` — walks `data/downloads/` and `INSERT OR IGNORE`s catalogue rows for files the DB doesn't know about (idempotent on `(group_id, message_id)`). Recovers from a wiped DB without re-downloading from Telegram. Fire-and-forget, broadcasts `reindex_progress` + `reindex_done`. Surfaced from `/maintenance/duplicates`.
+
+### Added — Realtime log channel
+- **`log({ source, level, msg })`** helper in `src/web/server.js` writes into a 1000-entry ring buffer and broadcasts a `log` WS message. Mirrors to stdout/stderr so the docker-logs path keeps working. Used by NSFW scan progress, thumbs build, dedup, reindex, and a thumb-miss tally.
+- **Notification bell** in the content-header — surfaces warn / error events from the WS `log` stream. Badge count, persisted last-50 in `localStorage`, browser tab title flash on important events while the tab is hidden, "Clear all" action.
+
+### Added — HEIC display + sharp 0.34
+- **HEIC / HEIF inline transcode** — `/files/<path>?inline=1` for `.heic` / `.heif` returns a JPEG via sharp + libvips libheif (built into sharp 0.34). Cached at `data/thumbs/heic-cache/<sha-of-path-and-mtime>.jpg`; raw bytes still serve when `?inline=1` is absent. iPhone uploads now preview in the gallery instead of falling into the "documents" bucket.
+- `core/downloader.js` recognises `.heic` / `.heif` / `.gif` as `photo`, `.webm` as `video`, `.opus` / `.flac` as `audio`.
+
+### Added — `npm run doctor` (diagnostics CLI)
+- One-shot runtime check: Node version + ABI, config load, `better-sqlite3` open + row count (with `npm rebuild` hint on `NODE_MODULE_VERSION` mismatch), `data/` writability, port availability (honours `PORT`), `ffmpeg` on `PATH`. Cross-platform, non-interactive — safe for CI / Docker. Exits `1` on any blocking failure.
+
+### Added — Auto-save Settings (debounced)
+- Every Setting input now writes to `/api/config` 800 ms after the last edit, no scroll-to-Save round trip required. Inline status indicator: idle → "Editing…" → "Saving…" → "Saved at HH:MM:SS" with an ARIA-live region for screen readers. Tab-hide and field-blur flush early so unsaved edits don't vanish on tab close. The manual Save button stays as an early-flush escape hatch.
+
+### Added — Mobile content-header overhaul
+- Header restructured for narrow viewports: paste-link / stories / view-mode / refresh collapse into a `⋮` overflow menu at <640 px. Subtitle hidden, avatar/title shrunk, engine pill icon-only at <380 px. Always-visible cluster: menu / avatar / title / engine pill / 🔔 bell / select-mode.
+- Per-page header icon (settings → ⚙️, queue → ✅, maintenance pages → relevant icons) — replaces the bug where a previously-selected group's photo bled across pages.
+
+### Added — Force HTTPS hardening
+- Confirm sheet on enable (defends against accidental clicks that lock the operator out of a fresh dashboard with no TLS cert behind it).
+- `Strict-Transport-Security: max-age=31536000; includeSubDomains` on every secure response when Force HTTPS is on.
+- New TLS-lockdown section in `docs/DEPLOY.md` with pre-flight checklist.
+
+### Changed — Architecture
+- **CSS extracted from `index.html`** — the inline `<style>` block (1525 lines) is now `src/web/public/css/main.css`, served via `<link rel="stylesheet" href="/css/main.css?v=2.4.0">`. Service worker preloads it via `SHELL_URLS`. `index.html` shrunk from 3847 → 2325 lines (-1522). Easier to edit, browser + SW cache the stylesheet independently of HTML changes. Future split into per-concern files (theme / layout / gallery / components) is queued for v2.4.1.
+- **Docker base image: `node:20.20.2-alpine` → `node:20.20.2-bookworm-slim`.** `onnxruntime-node` ships glibc-only prebuilt binaries — alpine's musl libc could not load them, so containers died at boot with `Error loading shared library ld-linux-x86-64.so.2`. Bookworm-slim has glibc out of the box. `apk` swapped for `apt-get`, `su-exec` for `gosu` (drop-in equivalent), entrypoint path `/sbin/tini` → `/usr/bin/tini`. Image grows ~40 MB but actually runs.
+- **`docker-compose.yml` defaults `TRUST_PROXY=1`** — most Docker deployments are behind a reverse proxy, and without this the rate-limiter floods stderr with `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` validation warnings on every request.
+- **Background-job pattern** — `thumbs/build-all`, `dedup/scan`, `nsfw/scan`, `reindex` all return 200 immediately and stream progress via WS. Companion `/status` endpoints (`/dedup/status`, `/thumbs/build/status`, `/reindex/status`, `/nsfw/status`) let a re-opened page recover the live state without polling. Closing the tab no longer kills work in flight.
+- **Lint cleanup** — dead code removed across core / web / scripts / tests (`directoryCache`, `normalizeName()`, `hasMissingKeys`, debug `RAW EVENT` block + `peerId` derivation, unused imports `Api` / `closeTopSheet` / `api` / `escapeHtml` / `getFileIcon` / `insertDownload`, unused `chatId` / `lastCrashTime` / `DB_PATH`, destructured `id` → `_id`). Net `-19` warnings, no behaviour change.
+
+### Fixed
+- **`navigateTo is not defined` race on first click** — the inline `onclick="navigateTo('…')"` handlers on sidebar nav-items would throw whenever `loadGroups()` / `loadStats()` rejected before app.js's `init()` finished, because the `window.navigateTo = …` assignments lived after the await chain. Hoisted the entire `window.*` exposure block to right after the synchronous bootstrap so the bindings are live the moment the module finishes parsing — independent of any later network failure.
+- **Backfill flashing "Done" milliseconds after Start** — `core/history.js` swallowed errors via `catch + emit('error')` then unconditionally `emit('complete')` in `finally`, so the Promise returned by `downloadHistory` resolved cleanly no matter what failed. The most common surface was "no available account can read this group" — operators saw a green "Done" pill with zero downloads. The catch now re-throws after emitting so server.js's `.then() / .catch()` actually routes failures to `history_error`. Added log channel emission with a hint for the most common cause (no account in group).
+- **Backfill failures invisible on the realtime log channel** — both the user-triggered (`POST /api/history`) and the auto-spawn (first-add bootstrap, post-restart catch-up) paths now emit a structured `log` event with the group name, group id, and a friendly hint when the message points at account access.
+- **Sidebar `chat-row` overlapping the sticky search input on scroll** — the sidebar groups header was at `z-10` and the avatar's type-badge inside `chat-row` was also `z-10`. Source-order made the chat-rows win on scroll-up. Bumped the sticky header to `z-20`.
+- **Downloaded Groups all showing the megaphone icon regardless of type** — `/api/groups` and `/api/downloads` didn't carry `type`, so the avatar fell back to an id-prefix heuristic (every `-100…` id ⇒ channel) which conflated supergroups with channels. Both endpoints now enrich rows with `type` from the dialogs cache (channel / group / user / bot), matching what Manage Groups already shows.
+- **`opacity: 0` on cached thumbnails leaving tiles permanently invisible** — the lazy-loader was setting `el.src = el.dataset.src` BEFORE attaching `onload`, which meant cached images fired their `load` event synchronously before the handler attached, so the `.loaded` class was never added and CSS kept the tile at `opacity: 0`. Handler now attaches first; we also add `el.complete` recovery for the same-tick race and an `onerror` fallback so broken thumbs don't stay invisible either.
+- **Disk-usage footer reading stale "930 KB" after Purge all** — when the DB sum is zero (catalogue empty / freshly purged) `/api/stats` now walks `data/downloads/` recursively for the real on-disk size and refreshes `disk_usage.json` instead of trusting the legacy snapshot.
+- **`tests/db.test.js` no longer touches the user's real `data/db.sqlite`** — the test now points the DB module at an `os.tmpdir()` mkdtemp via the new `TGDL_DATA_DIR` env override and removes the directory in `afterAll`.
+- **Header avatar bleed** — clicking a group in the sidebar then navigating to Settings used to leave that group's photo in the header. Reset on every page change + per-page icon mapping.
+- **Engine pill queue-count badge invisible on small phones** — the `<380 px` icon-only collapse zeroed `font-size` for the whole pill including the inline queue-count digit. Restored `font-size: 10px` on the badge inside the same media query.
+- **Maintenance Thumbs page auto-completing the build before it finished** — `POST /thumbs/build-all` is fire-and-forget but the page treated the immediate 200 as completion (rendering "Built undefined / undefined" toasts), then failed any subsequent click with a 409. Now the page kicks off the build, waits for `thumbs_done` over WS, and recovers in-flight state via `GET /thumbs/build/status` on re-mount so closing the tab + coming back resumes the progress bar.
+- **Maintenance Logs viewport overflow on landscape mobile** — `height: calc(100vh - 320px) min-height: 320px` evaluated negative on a 360 px-tall viewport and the min-height fallback then cropped the bottom rows under the bottom nav. Switched to `clamp(240px, calc(100vh - 320px), 70vh)`.
+- **Maintenance Logs search jank** — full re-render of the 1 000-line buffer fired on every keystroke. Debounced 150 ms.
+- **Empty gallery left with no actionable hint** — the "ทำไมบางกลุ่มไม่เจอ media" pattern. The empty state now shows a contextual title + body + admin action buttons (Run Backfill / Group Settings / Re-index from disk for per-group, Add account / Manage groups for all-media), so the operator knows where to go next.
+- **Cloudflare 524 timeout on `/api/maintenance/dedup/scan`** — the SHA-256 sweep was awaited inside the POST handler, so on a 50 GB library the request could outlast Cloudflare's 100 s tunnel timeout long before completing. Converted to the same fire-and-forget pattern as thumbs / nsfw / reindex: 200 immediately, progress + final result via WS (`dedup_progress` / `dedup_done`), recovery via `GET /dedup/status`. Closing the tab no longer cancels the scan; opening the page from another device shows the live progress.
+- **`onnxruntime-node` glibc crash defended at the process level** — even with the Dockerfile on bookworm-slim and the dep moved to `optionalDependencies` (see below), an existing install with the broken module on disk could still emit `Error loading shared library ld-linux-x86-64.so.2` and bring the process down via unhandledRejection. Added an explicit guard in `src/web/server.js` (and `src/index.js` for the CLI) that recognises native-load failure messages and logs once-and-survives instead of crashing.
+- **`ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` validation warning storm** — express-rate-limit v7's self-help diagnostic ran on every request when `trust proxy` was at the default `false`. We now default `trust proxy` to `'loopback'` (overridable via `TRUST_PROXY` env), and we explicitly disable the `xForwardedForHeader` + `trustProxy` validators on the rate-limiter since we configure trust proxy correctly ourselves. Other validators stay enabled.
+
+### Changed — Cross-platform support
+- **`@huggingface/transformers` → `optionalDependencies`.** It transitively pulls in `onnxruntime-node`, whose Linux prebuilds are glibc-only and crash on musl images (alpine) at module load. Moving it out of `dependencies` means `npm install` on any platform is safe by default; the NSFW review feature is now an opt-in install (`npm install @huggingface/transformers`). `npm run doctor` reports availability so operators know whether the feature is wired up.
+
+### Changed — Build thumbnails state shape
+- Field names in `_thumbBuildState` and the `thumbs_progress` / `thumbs_done` WS payloads aligned with what `buildAllThumbnails()` returns: `processed / total / built / skipped / errored / scanned`. Replaces the placeholder `done / errors` keys, which made the maintenance log line read `done=undefined errors=undefined`.
+
+### Changed — Multi-client coordination
+- Maintenance pages (Find duplicates, Build thumbnails, NSFW scan, Re-index) now hydrate from `GET /<feature>/status` on (re-)entry. Starting a long-running job on a phone now disables the corresponding button on the desktop client too — and vice versa — because state lives on the server and the front-end is a renderer.
+- **Express `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` warning spam** — silenced by the `TRUST_PROXY=1` default in `docker-compose.yml`.
+
+### Changed — DB
+- **`src/core/db.js` honours `TGDL_DATA_DIR`** — set the env var to relocate the data root (used by the test isolation above; also lets Docker / multi-instance deploys override the path without symlinks). Default behaviour unchanged.
+- New tier-aware NSFW APIs: `getNsfwTierCounts`, `getNsfwHistogram`, `getNsfwListByTier`, `reclassifyNsfw`, `unwhitelistNsfw`. Tier dictionary exported as `NSFW_TIERS`.
+
+### Changed — Dependencies
+- **`sharp ^0.33.5` → `^0.34.5`** to dedupe with the nested copy `@huggingface/transformers` already pulls in. node_modules sheds the duplicate libvips and platform binaries. Bonus: HEIC / HEIF input + output now available out of the box.
+
+### SW
+- VERSION bumped `'v48'` → `'v240'` (semver-aligned for the v2.4.x line). `/css/main.css` added to `SHELL_URLS` so the new stylesheet preloads on install.
+
+### Docs
+- `docs/DEPLOY.md` — new "Force HTTPS (TLS lockdown)" section with pre-flight checklist.
+- `docs/DEPLOY.md` — `TGDL_DATA_DIR` documented in the env vars table.
+- `docs/TROUBLESHOOTING.md` — `npm run doctor` documented as the first stop.
+- `README.md`, `CONTRIBUTING.md` — `npm run doctor` in the CLI cheatsheet + contributor onboarding.
+
 ## [2.3.48] — 2026-05-02
 
 ### Added

@@ -52,16 +52,22 @@ function _resolveCacheDirAbs(cacheDirCfg) {
     return path.isAbsolute(raw) ? raw : path.resolve(PROJECT_ROOT, raw);
 }
 
-async function _loadClassifier(cfg, onProgress) {
+async function _loadClassifier(cfg, onProgress, onLog) {
+    const _log = (level, msg) => { try { if (typeof onLog === 'function') onLog({ source: 'nsfw', level, msg }); } catch {} };
     const modelId = cfg.model || NSFW_DEFAULTS.model;
-    if (_pipelinePromise && _activeModelId === modelId) return _pipelinePromise;
+    if (_pipelinePromise && _activeModelId === modelId) {
+        _log('info', `model already loaded — reusing pipeline for ${modelId}`);
+        return _pipelinePromise;
+    }
 
     _activeModelId = modelId;
     _pipelinePromise = (async () => {
         const cacheDirAbs = _resolveCacheDirAbs(cfg.cacheDir);
         if (!existsSync(cacheDirAbs)) {
             await fs.mkdir(cacheDirAbs, { recursive: true });
+            _log('info', `created model cache dir at ${cacheDirAbs}`);
         }
+        _log('info', `loading classifier — model=${modelId} cacheDir=${cacheDirAbs}`);
 
         // Dynamic import keeps a fresh install from paying the WASM-load
         // cost on every boot. Wrapped in try/catch so a missing or
@@ -71,6 +77,7 @@ async function _loadClassifier(cfg, onProgress) {
         try {
             mod = await import('@huggingface/transformers');
         } catch (e) {
+            _log('error', `@huggingface/transformers import failed: ${e?.message || e}`);
             const err = new Error(
                 `Failed to load @huggingface/transformers: ${e.message}. `
                 + 'Install with `npm install @huggingface/transformers`.'
@@ -187,9 +194,14 @@ export function getScanState(cfg) {
  * @param {(p:object) => void} onProgress  fires every batch with progress
  * @param {(p:object) => void} onDone      fires once when the loop ends
  * @param {(p:object) => void} [onModel]   fires while the model is downloading
+ * @param {(p:object) => void} [onLog]     structured log sink ({source,level,msg}) — server.js wires this to the realtime log channel
  */
-export async function startScan(cfg, onProgress, onDone, onModel) {
-    if (_scanRunning) return { alreadyRunning: true };
+export async function startScan(cfg, onProgress, onDone, onModel, onLog) {
+    const _log = (level, msg) => { try { if (typeof onLog === 'function') onLog({ source: 'nsfw', level, msg }); } catch {} };
+    if (_scanRunning) {
+        _log('warn', 'startScan called while a previous scan is in flight — returning {alreadyRunning:true}');
+        return { alreadyRunning: true };
+    }
     _scanRunning = true;
     const ctrl = new AbortController();
     _scanAbort = ctrl;
@@ -211,14 +223,21 @@ export async function startScan(cfg, onProgress, onDone, onModel) {
     _scanState.keep = baseStats.keep;
     if (typeof onProgress === 'function') onProgress({ ..._scanState });
 
+    if (_scanState.total === 0) {
+        _log('info', `nothing to scan — totalEligible=${baseStats.totalEligible} alreadyScanned=${baseStats.scanned}. Library may be empty (DB rows=0) — try Maintenance → Re-index from disk if files exist.`);
+    } else {
+        _log('info', `starting scan — ${_scanState.total} unscanned ${fileTypes.join('/')} rows, batch=${batchSize}, concurrency=${concurrency}, threshold=${threshold}`);
+    }
+
     // Background driver — fire-and-forget, errors funnel into onDone.
     (async () => {
         let classifier;
         try {
             classifier = await _loadClassifier(cfg, (p) => {
                 try { if (typeof onModel === 'function') onModel(p); } catch {}
-            });
+            }, onLog);
         } catch (e) {
+            _log('error', `classifier load failed: ${e?.message || e}`);
             _scanState.error = e.message;
             _scanState.running = false;
             _scanState.finishedAt = Date.now();
