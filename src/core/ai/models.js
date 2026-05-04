@@ -113,6 +113,27 @@ function _configureEnv(env, cacheDirAbs) {
             env.backends.onnx.wasm.numThreads = 1;
         }
     } catch { /* noop */ }
+    // Optional HuggingFace token. Lets the loader pull gated repos +
+    // dodge anonymous rate limits that show up as 401 in the realtime
+    // log ("Unauthorized access to file …/config.json"). Operators set
+    // `HF_TOKEN` (or `HUGGINGFACE_TOKEN` / `HUGGINGFACEHUB_API_TOKEN`)
+    // in their env; we wire it into transformers.js's auth header.
+    try {
+        const token = process.env.HF_TOKEN
+            || process.env.HUGGINGFACE_TOKEN
+            || process.env.HUGGINGFACEHUB_API_TOKEN
+            || null;
+        if (token && env) {
+            // transformers.js v3 honours `env.useCustomCache`/`env.token`
+            // shapes inconsistently across patch versions — set every
+            // form we've seen documented so at least one wins.
+            try { env.token = token; } catch { /* noop */ }
+            try {
+                if (!env.customHeaders) env.customHeaders = {};
+                env.customHeaders.Authorization = `Bearer ${token}`;
+            } catch { /* noop */ }
+        }
+    } catch { /* noop */ }
 }
 
 /**

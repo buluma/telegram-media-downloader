@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.3] — 2026-05-05
+
+### Fixed
+- **pHash write crash** — "The bound string, buffer, or bigint is too big". `setPhash` now bit-casts the unsigned 64-bit hash into the signed 64-bit range SQLite can store, and `listAllPhashes` reads in `safeIntegers(true)` mode so values outside JS Number's 2^53 envelope round-trip cleanly. Hamming distance still works at the bit level (the helper masks back to 64 bits before XOR).
+- **AI model loads behind 401 / rate limits** — every transformers.js fetch now sends an `Authorization: Bearer …` header when `HF_TOKEN` (or `HUGGINGFACE_TOKEN` / `HUGGINGFACEHUB_API_TOKEN`) is set in env. Lets operators pull gated repos + dodge anonymous rate-limit walls.
+- **Docker smoke test exit 127** — bookworm-slim runtime image was missing `procps`, so the CI smoke test's `docker exec smoke ps -o user=,comm=` returned 127. `procps` is now installed in the runtime stage (~500 KB).
+
+### Internal
+- SW bumped `v262` → `v263`.
+
 ## [2.6.2] — 2026-05-05
 
 ### Fixed
