@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.2] — 2026-05-05
+
+### Fixed
+- **NSFW default model swapped** to `AdamCodd/vit-base-nsfw-detector`. The previous default `Falconsai/nsfw_image_detection` is PyTorch-only — its `onnx/` directory 404s, so transformers.js can't load any of the dtype variants (q8/fp16/fp32/q4 all fail). AdamCodd ships full ONNX coverage and is the de-facto transformers.js NSFW classifier.
+- Operators on a fresh install no longer hit "Could not locate file" preload errors out of the box.
+
+### Internal
+- SW bumped `v261` → `v262`.
+
 ## [2.6.1] — 2026-05-05
 
 ### Fixed
