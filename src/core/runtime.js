@@ -184,6 +184,10 @@ class Runtime extends EventEmitter {
             filePath: job.filePath,
             fileSize: job.fileSize,
             addedAt: job.addedAt || null,
+            // `deduped` is set by registerDownload() when the new file
+            // matched an existing on-disk hash. Carries through to the
+            // queue UI so the row shows a "Duplicate" tag.
+            deduped: job.deduped === true,
         };
     }
 

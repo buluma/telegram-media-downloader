@@ -2,6 +2,37 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.1] — 2026-05-05
+
+### Fixed
+- NSFW model load — default `dtype: 'q8'` (quantized) + auto-fallback through fp16/fp32/q4 when the chosen variant isn't on the HF CDN.
+- Queue rows missed the duplicate flag — `runtime._serializeJob` now propagates `deduped`; rows render a "Duplicate" tag + a Duplicate filter chip.
+- `confirmSheet` accepts both `{message,confirmLabel,danger}` and `{body,confirmText,destructive}` (half the call sites silently dropped options before).
+- Service Worker `/js/` strategy flipped to network-first so stale `.js` can't outlive a deploy. Bumped `v260` → `v261`.
+- Trimmed verbose Maintenance-card help text.
+
+### Added
+- NSFW: model-id input + precision picker + Preload-now button + Preload-on-start toggle + Wipe cached weights. Endpoints: `POST /api/maintenance/nsfw/preload`, `GET /api/maintenance/nsfw/model-status`, `DELETE /api/maintenance/nsfw/cache`.
+- AI master switch + per-capability toggles on `/maintenance/ai`.
+- Settings chip-nav — 10 chips per top-level card with IntersectionObserver-driven active state.
+- Active share links modal — stats grid + sticky toolbar + filter chips + Cleanup-expired bulk action + polished row design (state pill, Open/Copy/Revoke 28×28).
+- Logs filter chips — branded toggle pills with per-source coloured dot + live count badge + All/None.
+- Duplicates page — bulk "Keep oldest / Keep newest / Clear" toolbar.
+- Install-update button disables + relabels to "Up to date" when on the latest release.
+- Verify-files done event also lands in the bell notification list.
+
+### Changed
+- Per-tool settings moved to per-tool maintenance pages (no duplicate in Settings → Advanced).
+- Backfill page patches active rows in place on WS progress (was full innerHTML rewrite per tick).
+- AI hero search drops purple accent — uses Telegram blue, label-above-chip layout, disabled mic removed.
+- Thumb-miss warning: 15-min window + 200-miss floor + 30-min cooldown + opt-out toggle (~2/h instead of ~60/h).
+- `notify-clear-btn` icon-only.
+
+### Internal
+- New config keys: `advanced.nsfw.dtype`, `advanced.nsfw.preload`, `advanced.thumbs.warnMisses` (allow-list-validated).
+- New WS events: `nsfw_model_downloading`, `ai_model_progress`.
+- `setupAutoSave` binds at `<body>` so per-tool settings cards autosave through the same pipeline.
+
 ## [2.6.0] — 2026-05-04
 
 ### Added — Single-row Maintenance hub

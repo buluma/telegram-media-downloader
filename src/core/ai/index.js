@@ -31,4 +31,9 @@ export {
 
 export { embedText, embedImage } from './embeddings.js';
 export { dbscan } from './faces.js';
-export { loadedPipelines, AI_MODEL_DEFAULTS } from './models.js';
+export {
+    loadedPipelines, AI_MODEL_DEFAULTS,
+    inspectModelCache, deleteModelCache, clearPipelineForModel,
+    pipelineMetaSnapshot, pipelineErrorsSnapshot, setModelProgressHook,
+    resolveCacheDir,
+} from './models.js';

@@ -14,6 +14,7 @@ import { api } from './api.js';
 import { showToast } from './utils.js';
 import { confirmSheet } from './sheet.js';
 import { t as i18nT, tf as i18nTf } from './i18n.js';
+import { loadAdvanced, setupAutoSave } from './settings.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -39,7 +40,12 @@ async function _refreshStats() {
         if (countEl) countEl.textContent = String(r.count ?? 0);
         if (bytesEl) bytesEl.textContent = _formatBytes(r.bytes);
         if (widthsEl && Array.isArray(r.allowedWidths)) {
-            widthsEl.textContent = r.allowedWidths.join(' / ');
+            // Render each allowed width as a chip — the slash-joined
+            // string read like a phone number; chips communicate "these
+            // are distinct picker options the server will serve at".
+            widthsEl.innerHTML = r.allowedWidths.map((w) =>
+                `<span class="inline-flex items-center px-1.5 py-0.5 rounded-md bg-tg-blue/15 text-tg-blue text-[11px] font-medium tabular-nums">${Number(w) || 0}<span class="text-tg-blue/70 ml-0.5">px</span></span>`
+            ).join('');
         }
         if (ffmpegChip) {
             ffmpegChip.classList.toggle('hidden', r.ffmpegAvailable !== false);
@@ -202,6 +208,16 @@ export function init() {
         $('thumbs-build-btn')?.addEventListener('click', _buildAll);
         $('thumbs-wipe-btn')?.addEventListener('click', _wipeCache);
     }
+    // Hydrate the Decoder backend dropdown from /api/config + arm the
+    // shared autosave so picking a backend persists immediately. Same
+    // pipeline the Settings page uses.
+    (async () => {
+        try {
+            const cfg = await api.get('/api/config');
+            loadAdvanced(cfg);
+        } catch { /* select still operable; autosave still wired */ }
+        try { setupAutoSave(); } catch {}
+    })();
     _refreshStats();
     _recoverBuildState();
 }

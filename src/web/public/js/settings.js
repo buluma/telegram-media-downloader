@@ -557,7 +557,10 @@ function combineDiskCap(value, unit) {
     return `${n}${u}`;
 }
 
-function loadAdvanced(config) {
+// Exported so the per-tool maintenance pages (NSFW, thumbs, AI) can
+// hydrate their settings cards on enter without going through the
+// Settings page. Idempotent — safe to call multiple times.
+export function loadAdvanced(config) {
     const adv = config?.advanced || {};
     const set = (id, val) => {
         const el = document.getElementById(id);
@@ -601,21 +604,27 @@ function loadAdvanced(config) {
     const w = { ...ADVANCED_DEFAULTS.web, ...(adv.web || {}) };
     set('setting-adv-session-days',      w.sessionTtlDays);
 
-    // NSFW review tool — opt-in toggle + threshold + concurrency. The
-    // toggle uses the existing `.tg-toggle` widget; click-to-flip is wired
-    // once below. Defaults match `core/nsfw.js` NSFW_DEFAULTS.
+    // NSFW review tool — opt-in toggle + model id + dtype + threshold +
+    // concurrency + preload-on-start. The toggles use the `.tg-toggle`
+    // widget; click-to-flip is wired idempotently below. Defaults mirror
+    // `core/nsfw.js` NSFW_DEFAULTS.
     const ns = adv.nsfw || {};
-    const nsToggle = document.getElementById('setting-adv-nsfw-enabled');
-    if (nsToggle) {
-        nsToggle.classList.toggle('active', ns.enabled === true);
-        if (!nsToggle.dataset.wired) {
-            nsToggle.dataset.wired = '1';
-            nsToggle.addEventListener('click', (e) => {
+    const wireToggle = (id, on) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.classList.toggle('active', on === true);
+        if (!el.dataset.wired) {
+            el.dataset.wired = '1';
+            el.addEventListener('click', (e) => {
                 e.preventDefault();
-                nsToggle.classList.toggle('active');
+                el.classList.toggle('active');
             });
         }
-    }
+    };
+    wireToggle('setting-adv-nsfw-enabled', ns.enabled === true);
+    wireToggle('setting-adv-nsfw-preload', ns.preload === true);
+    set('setting-adv-nsfw-model',       (typeof ns.model === 'string' && ns.model.trim()) ? ns.model.trim() : 'Falconsai/nsfw_image_detection');
+    set('setting-adv-nsfw-dtype',       ['q8', 'fp16', 'fp32', 'q4'].includes(ns.dtype) ? ns.dtype : 'q8');
     set('setting-adv-nsfw-threshold',   Number.isFinite(ns.threshold) ? ns.threshold : 0.6);
     set('setting-adv-nsfw-concurrency', Number.isFinite(ns.concurrency) ? ns.concurrency : 1);
 
@@ -625,6 +634,10 @@ function loadAdvanced(config) {
     const tHw = adv.thumbs?.hwaccel ?? '';
     const tHwEl = document.getElementById('setting-adv-ffmpeg-hwaccel');
     if (tHwEl) tHwEl.value = String(tHw);
+    // Toggle for the consolidated thumb-miss warning. Default on; the
+    // server falls back to true when the key is absent so first-run
+    // installs see the helpful warning until they explicitly silence it.
+    wireToggle('setting-adv-thumbs-warn-misses', adv.thumbs?.warnMisses !== false);
 
     // Probe button — fetch /thumbs/hwaccel-probe and render available
     // backends as small chips. Idempotent wire-up via `dataset.wired`.
@@ -699,6 +712,9 @@ function gatherAdvanced() {
         },
         nsfw: {
             enabled: document.getElementById('setting-adv-nsfw-enabled')?.classList.contains('active') === true,
+            preload: document.getElementById('setting-adv-nsfw-preload')?.classList.contains('active') === true,
+            model: String(get('setting-adv-nsfw-model') || '').trim() || 'Falconsai/nsfw_image_detection',
+            dtype: String(get('setting-adv-nsfw-dtype') || 'q8'),
             threshold: parseFloat(get('setting-adv-nsfw-threshold')) || 0.6,
             concurrency: num('setting-adv-nsfw-concurrency', 1),
         },
@@ -707,6 +723,7 @@ function gatherAdvanced() {
             // allow-list so a hand-edited config can't pass arbitrary
             // values through to the ffmpeg process.
             hwaccel: String(get('setting-adv-ffmpeg-hwaccel') || ''),
+            warnMisses: document.getElementById('setting-adv-thumbs-warn-misses')?.classList.contains('active') !== false,
         },
     };
 }
@@ -900,7 +917,11 @@ export function setupAutoSave() {
     if (_autoSaveBound) return;
     _autoSaveBound = true;
 
-    const root = document.getElementById('page-settings');
+    // Bind to <body> instead of #page-settings so per-tool settings cards
+    // on the maintenance pages (e.g. NSFW model id, ffmpeg hwaccel) auto-
+    // save through the same pipeline. The id-prefix filter keeps it from
+    // firing on unrelated form fields.
+    const root = document.body;
     if (!root) return;
 
     // Capture the baseline so an "untouched page renders + scrolls" doesn't
@@ -910,22 +931,32 @@ export function setupAutoSave() {
         try { _autoSaveSnapshot = JSON.stringify(_gatherSettingsPayload()); } catch {}
     });
 
+    // Inputs that opt in to autosave are flagged either by an `id` that
+    // starts with `setting-` (legacy convention) or a `data-autosave`
+    // attribute (newer modules). The closure bundles both checks.
+    const isAutosaveInput = (t) => {
+        if (!t) return false;
+        if (t.id && t.id.startsWith('setting-')) return true;
+        if (typeof t.closest === 'function' && t.closest('[data-autosave]')) return true;
+        return false;
+    };
+
     // Native input/change events from <input> / <select> / <textarea>.
     root.addEventListener('input', (e) => {
-        const t = e.target;
-        if (!t || !t.id || !t.id.startsWith('setting-')) return;
+        if (!isAutosaveInput(e.target)) return;
         _scheduleAutoSave();
     });
     root.addEventListener('change', (e) => {
-        const t = e.target;
-        if (!t || !t.id || !t.id.startsWith('setting-')) return;
+        if (!isAutosaveInput(e.target)) return;
         _scheduleAutoSave();
     });
 
-    // tg-toggle is a div+class trick — listen on click bubbling.
+    // tg-toggle is a div+class trick — listen on click bubbling. Restrict
+    // to toggles whose id matches the autosave convention so unrelated
+    // toggles (e.g. theme switch) don't queue saves.
     root.addEventListener('click', (e) => {
         const t = e.target.closest('.tg-toggle');
-        if (!t) return;
+        if (!t || !t.id || !t.id.startsWith('setting-')) return;
         // Defer so the toggle handler that flips .active runs first.
         setTimeout(_scheduleAutoSave, 0);
     });
@@ -933,8 +964,7 @@ export function setupAutoSave() {
     // Flush early when the user blurs a field (they're done with it).
     root.addEventListener('focusout', (e) => {
         if (!_autoSaveTimer) return;
-        const t = e.target;
-        if (!t || !t.id || !t.id.startsWith('setting-')) return;
+        if (!isAutosaveInput(e.target)) return;
         _autoSaveFlush();
     });
 
@@ -1278,15 +1308,41 @@ async function maintInstallUpdate() {
 
 async function refreshUpdateStatus() {
     const el = document.getElementById('maint-update-status');
-    if (!el) return;
+    const btn = document.getElementById('maint-update-btn');
+    if (!el && !btn) return;
     try {
         const s = await api.get('/api/update/status');
-        if (s.available) {
-            el.textContent = '· ' + i18nT('maintenance.update.ready', 'auto-update ready');
-        } else if (!s.inDocker) {
-            el.textContent = '· ' + i18nT('maintenance.update.not_docker', 'standalone install — manual update only');
-        } else {
-            el.textContent = '· ' + i18nT('maintenance.update.no_watchtower', 'enable the auto-update profile to use this');
+        if (el) {
+            if (s.available) {
+                el.textContent = '· ' + i18nT('maintenance.update.ready', 'auto-update ready');
+            } else if (!s.inDocker) {
+                el.textContent = '· ' + i18nT('maintenance.update.not_docker', 'standalone install — manual update only');
+            } else {
+                el.textContent = '· ' + i18nT('maintenance.update.no_watchtower', 'enable the auto-update profile to use this');
+            }
+        }
+        // Cross-check the actual release feed so the button reflects
+        // whether there's anything to install. Up-to-date → disable the
+        // button + flip the label to "Up to date" so the operator doesn't
+        // wonder why it's a no-op.
+        if (btn) {
+            try {
+                const v = await api.get('/api/version/check');
+                const upToDate = !v?.latest;
+                btn.disabled = upToDate;
+                btn.classList.toggle('opacity-50', upToDate);
+                btn.classList.toggle('cursor-not-allowed', upToDate);
+                const labelEl = btn.querySelector('[data-i18n]') || btn;
+                if (upToDate) {
+                    labelEl.textContent = i18nT('maintenance.update.up_to_date_btn', 'Up to date');
+                    btn.title = i18nT('maintenance.update.up_to_date',
+                        'Already running the latest release.');
+                } else {
+                    labelEl.textContent = i18nTf('maintenance.update.action_with_version',
+                        { version: v.latest }, `Install v${v.latest}`);
+                    btn.title = '';
+                }
+            } catch { /* leave default */ }
         }
     } catch { /* leave blank */ }
 }
@@ -1629,15 +1685,31 @@ function wireMaintenanceJobToasts() {
     });
     ws.on('files_verify_done', (m) => {
         if (m?.error) {
-            showToast(i18nTf('maintenance.failed', { msg: m.error }, `Failed: ${m.error}`), 'error');
+            const msg = i18nTf('maintenance.failed', { msg: m.error }, `Failed: ${m.error}`);
+            showToast(msg, 'error');
+            // Persist failures to the bell so the operator sees them after
+            // the toast auto-dismisses (especially relevant for jobs that
+            // started on another device).
+            import('./header-mobile.js').then((mod) => mod.pushLogToNotify({
+                level: 'error',
+                source: 'verify',
+                msg,
+                ts: Date.now(),
+            })).catch(() => {});
             return;
         }
         const scanned = m?.scanned ?? 0;
         const pruned = m?.pruned ?? 0;
-        showToast(i18nTf('maintenance.verify.done',
+        const msg = i18nTf('maintenance.verify.done',
             { scanned, pruned },
-            `Verified ${scanned} files — pruned ${pruned} missing rows`),
-            pruned > 0 ? 'warning' : 'success');
+            `Verified ${scanned} files — pruned ${pruned} missing rows`);
+        showToast(msg, pruned > 0 ? 'warning' : 'success');
+        import('./header-mobile.js').then((mod) => mod.pushLogToNotify({
+            level: pruned > 0 ? 'warn' : 'info',
+            source: 'verify',
+            msg,
+            ts: Date.now(),
+        })).catch(() => {});
     });
 
     // db/integrity

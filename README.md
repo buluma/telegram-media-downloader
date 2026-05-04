@@ -131,7 +131,7 @@ A self-hosted application that watches your Telegram chats and downloads new med
 - **Paste t.me link** — drop one or many URLs (newline-separated) to download just those messages.
 - **Stories drawer** — fetch a username's active Stories, pick which ones to save.
 - **Group settings modal** — per-chat media filters (photos, videos, files, voice, gifs, stickers, links), auto-forward destination, monitor / forward account assignment, forum-topic whitelist, per-row cog.
-- **Settings → Advanced** — runtime tunables surfaced as live-editable knobs (worker auto-scale, integrity batch size, polling interval, history retention, share TTL bounds, NSFW threshold + concurrency, auto-backfill knobs, etc.). All clamped server-side; defaults preserve current behaviour.
+- **Settings → Advanced** — system-wide runtime tunables (worker auto-scale, integrity batch size, polling interval, history retention, share TTL bounds, auto-backfill knobs, etc.). All clamped server-side; defaults preserve current behaviour. Per-tool settings (NSFW classifier, ffmpeg decoder, AI capabilities) live on their respective `/maintenance/*` page.
 - **Font picker** — 21 fonts (10 Thai-capable + 10 Latin + system); applied at boot before first paint to avoid FOUC.
 - **Privacy / Force-HTTPS / Rate-limit toggles** — opt-in from the browser, no `.env` editing.
 - **Browser notifications** — opt-in toast for download-complete events, with burst coalescing.

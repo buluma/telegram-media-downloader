@@ -49,6 +49,25 @@ function _defaultModelsDir() {
 // their own cached handle.
 const _pipelinePromises = new Map();
 
+// Per-pipeline metadata: when each handle resolved + the most recent
+// download progress callback payload. Feeds the `/api/ai/models/status`
+// endpoint so the dashboard can show "Ready · loaded N min ago" without
+// forcing a load.
+const _pipelineMeta = new Map();
+// Most recent error per (kind, modelId) — preserved after a failed load
+// so the dashboard can render a "Retry" affordance with the failure cause
+// instead of a blank slate.
+const _pipelineErrors = new Map();
+
+// Optional broadcast hook — the web server registers a callback here so
+// every Transformers.js progress event during a model download bubbles
+// out to connected dashboard clients as a `ai_model_progress` WS event.
+// Keep the hook optional so models.js stays usable in CLI / tests.
+let _progressHook = null;
+export function setModelProgressHook(fn) {
+    _progressHook = (typeof fn === 'function') ? fn : null;
+}
+
 /**
  * Resolve the absolute models cache directory for a capability config.
  * Honors per-capability `cacheDir` overrides; otherwise falls back to the
@@ -124,25 +143,174 @@ export async function getPipeline({ kind, modelId, cacheDir, onProgress, onLog }
         await _ensureCacheDir(cacheDirAbs);
         _log('info', `loading ${kind} pipeline — model=${modelId} cacheDir=${cacheDirAbs}`);
 
+        // Mark the entry so the status endpoint can render "Loading…"
+        // before the first progress event lands.
+        _pipelineMeta.set(key, {
+            kind, modelId,
+            startedAt: Date.now(),
+            loadedAt: null,
+            lastProgress: null,
+        });
+
         const mod = await _importTransformers();
         const { pipeline, env } = mod;
         _configureEnv(env, cacheDirAbs);
 
-        return pipeline(kind, modelId, {
+        const handle = await pipeline(kind, modelId, {
             progress_callback: (p) => {
                 try { if (typeof onProgress === 'function') onProgress(p); }
                 catch { /* progress callbacks must never crash the loader */ }
+                try {
+                    const meta = _pipelineMeta.get(key);
+                    if (meta) meta.lastProgress = { ...p, ts: Date.now() };
+                } catch { /* swallow */ }
+                try {
+                    if (_progressHook) _progressHook({ kind, modelId, progress: p });
+                } catch { /* never crash the loader */ }
             },
         });
+
+        const meta = _pipelineMeta.get(key);
+        if (meta) {
+            meta.loadedAt = Date.now();
+            meta.lastProgress = null;
+        }
+        _pipelineErrors.delete(key);
+        try {
+            if (_progressHook) _progressHook({ kind, modelId, progress: { status: 'ready' } });
+        } catch { /* swallow */ }
+        return handle;
     })().catch((e) => {
         // Reset so the next caller retries the load instead of inheriting
         // the rejected promise forever.
         _pipelinePromises.delete(key);
+        _pipelineMeta.delete(key);
+        _pipelineErrors.set(key, { message: e?.message || String(e), ts: Date.now() });
+        try {
+            if (_progressHook) _progressHook({
+                kind, modelId,
+                progress: { status: 'error', error: e?.message || String(e) },
+            });
+        } catch { /* swallow */ }
         throw e;
     });
 
     _pipelinePromises.set(key, promise);
     return promise;
+}
+
+/**
+ * Drop the cached pipeline for a model so the next request triggers a
+ * fresh load. Used by the model-swap UI: changing config.advanced.ai.<cap>.model
+ * has no effect until the in-process handle is dropped.
+ *
+ * Best-effort dispose of the underlying handle if it has already resolved;
+ * a still-in-flight load is left to settle (its promise is removed from
+ * the cache so future callers won't await the old handle).
+ */
+export async function clearPipelineForModel(modelId) {
+    const target = String(modelId || '').trim();
+    if (!target) return 0;
+    const keys = [..._pipelinePromises.keys()].filter((k) => k.endsWith(`::${target}`));
+    let cleared = 0;
+    for (const key of keys) {
+        const p = _pipelinePromises.get(key);
+        _pipelinePromises.delete(key);
+        _pipelineMeta.delete(key);
+        try {
+            const cls = await p;
+            if (cls && typeof cls.dispose === 'function') await cls.dispose();
+        } catch { /* swallow */ }
+        cleared += 1;
+    }
+    return cleared;
+}
+
+/**
+ * Public snapshot of the per-model metadata. Returns one entry per
+ * `(kind, modelId)` cache key — keys mirror `loadedPipelines()`. Each
+ * entry: `{ kind, modelId, startedAt, loadedAt, lastProgress }`.
+ */
+export function pipelineMetaSnapshot() {
+    return [..._pipelineMeta.entries()].map(([key, v]) => ({ key, ...v }));
+}
+
+export function pipelineErrorsSnapshot() {
+    return [..._pipelineErrors.entries()].map(([key, v]) => ({ key, ...v }));
+}
+
+/**
+ * Walk the on-disk cache for a given model id and sum the byte size.
+ * Transformers.js stores per-model files under
+ *   `<cacheDir>/<owner>/<repo>/...` (the `/` from the HF id becomes a
+ * sub-directory). Returns `{ bytes, files, dir }` — bytes=0 + files=0 when
+ * the model has never been downloaded. Errors swallow to `{ bytes: 0 }`.
+ */
+export async function inspectModelCache(modelId, cacheDirCfg) {
+    const id = String(modelId || '').trim();
+    if (!id) return { bytes: 0, files: 0, dir: null };
+    const root = resolveCacheDir(cacheDirCfg);
+    // Transformers.js mirrors the HF id structure verbatim — Xenova/foo
+    // becomes <cache>/Xenova/foo. Resolve both styles defensively because
+    // some older versions flattened the slash to '_'.
+    const candidates = [
+        path.join(root, id),
+        path.join(root, id.replace(/\//g, path.sep)),
+        path.join(root, id.replace(/\//g, '_')),
+    ];
+    for (const dir of candidates) {
+        try {
+            const stat = await fs.stat(dir).catch(() => null);
+            if (!stat || !stat.isDirectory()) continue;
+            let bytes = 0;
+            let files = 0;
+            const stack = [dir];
+            while (stack.length) {
+                const cur = stack.pop();
+                let ents;
+                try { ents = await fs.readdir(cur, { withFileTypes: true }); }
+                catch { continue; }
+                for (const e of ents) {
+                    const p = path.join(cur, e.name);
+                    if (e.isDirectory()) { stack.push(p); continue; }
+                    if (e.isFile()) {
+                        try {
+                            const s = await fs.stat(p);
+                            bytes += s.size;
+                            files += 1;
+                        } catch { /* skip racy unlinks */ }
+                    }
+                }
+            }
+            return { bytes, files, dir };
+        } catch { /* try next candidate */ }
+    }
+    return { bytes: 0, files: 0, dir: null };
+}
+
+/**
+ * Delete the on-disk cache for a model so the next load redownloads. Returns
+ * `{ removed: boolean, bytes: number }`. Refuses paths that escape the
+ * configured cache root — defence-in-depth against an admin who hand-edits
+ * a config file with a `..`-laden model id.
+ */
+export async function deleteModelCache(modelId, cacheDirCfg) {
+    const insp = await inspectModelCache(modelId, cacheDirCfg);
+    if (!insp.dir) return { removed: false, bytes: 0 };
+    const root = resolveCacheDir(cacheDirCfg);
+    const rootResolved = path.resolve(root) + path.sep;
+    const targetResolved = path.resolve(insp.dir);
+    if (!targetResolved.startsWith(rootResolved)) {
+        // Refuse anything outside the cache dir — an `id` containing `..`
+        // could otherwise resolve to a system directory.
+        return { removed: false, bytes: 0 };
+    }
+    try {
+        await fs.rm(insp.dir, { recursive: true, force: true });
+        return { removed: true, bytes: insp.bytes };
+    } catch {
+        return { removed: false, bytes: 0 };
+    }
 }
 
 /**

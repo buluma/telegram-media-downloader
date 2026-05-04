@@ -15,6 +15,7 @@ import { api } from './api.js';
 import { showToast, escapeHtml } from './utils.js';
 import { confirmSheet } from './sheet.js';
 import { t as i18nT, tf as i18nTf } from './i18n.js';
+import { loadAdvanced, setupAutoSave } from './settings.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -461,6 +462,27 @@ function _wireWs() {
         _loadList();
     });
 
+    // Live model-download progress — flips the model-status pill into a
+    // "Loading X%" state, then "Ready" / "Error" on completion.
+    ws.on('nsfw_model_downloading', (m) => {
+        const status = String(m?.status || '').toLowerCase();
+        if (status === 'progress' || status === 'download' || (m?.progress != null)) {
+            const pct = m?.progress != null ? Math.round(Number(m.progress)) : null;
+            _renderModelStatus({
+                state: 'loading',
+                label: pct != null
+                    ? i18nTf('maintenance.nsfw.model_status.loading_pct', { pct }, `Loading ${pct}%`)
+                    : i18nT('maintenance.nsfw.model_status.loading', 'Loading…'),
+                progress: pct,
+                file: m?.file || '',
+            });
+        } else if (status === 'ready' || status === 'done') {
+            _renderModelStatus({ state: 'ready', label: i18nT('maintenance.nsfw.model_status.ready', 'Ready') });
+        } else if (status === 'error') {
+            _renderModelStatus({ state: 'error', label: i18nT('maintenance.nsfw.model_status.error', 'Failed') });
+        }
+    });
+
     // Bulk-delete / whitelist / unwhitelist / reclassify share one
     // `nsfwBulk` tracker, so a single done event covers all four ops.
     // The payload's `op` field tells us which toast to render.
@@ -490,6 +512,104 @@ function _wireWs() {
     });
 }
 
+// Render the model-status pill in the Settings card. `state` drives the
+// dot colour (idle/loading/ready/error) and `label` is the human string.
+const MODEL_STATUS_COLOR = {
+    idle:    'bg-tg-textSecondary',
+    loading: 'bg-tg-orange',
+    ready:   'bg-tg-green',
+    error:   'bg-red-400',
+};
+function _renderModelStatus({ state = 'idle', label = '', progress = null, file = '' } = {}) {
+    const pill = $('nsfw-model-status');
+    const progLine = $('nsfw-model-progress');
+    if (pill) {
+        const dotClass = MODEL_STATUS_COLOR[state] || MODEL_STATUS_COLOR.idle;
+        pill.innerHTML = `
+            <span class="w-1.5 h-1.5 rounded-full ${dotClass}"></span>
+            <span>${escapeHtml(label || i18nT('maintenance.nsfw.model_status.idle', 'Not loaded'))}</span>
+        `;
+    }
+    if (progLine) {
+        if (state === 'loading' && file) {
+            progLine.textContent = i18nTf('maintenance.nsfw.model_status.loading_file',
+                { file, pct: progress != null ? `${progress}%` : '' },
+                `Downloading ${file} ${progress != null ? `(${progress}%)` : ''}`);
+        } else if (state === 'ready') {
+            progLine.textContent = i18nT('maintenance.nsfw.model_status.ready_help', 'Weights cached on disk — scans start instantly.');
+        } else if (state === 'error') {
+            progLine.textContent = i18nT('maintenance.nsfw.model_status.error_help', 'Load failed. Check the realtime log for details, then try a different model id or precision.');
+        } else {
+            progLine.textContent = '';
+        }
+    }
+}
+
+async function _refreshModelStatus() {
+    try {
+        const r = await api.get('/api/maintenance/nsfw/model-status');
+        const state = r?.state === 'ready' ? 'ready'
+                    : r?.state === 'loading' ? 'loading'
+                    : r?.state === 'error' ? 'error'
+                    : 'idle';
+        const label = state === 'ready'   ? i18nT('maintenance.nsfw.model_status.ready', 'Ready')
+                    : state === 'loading' ? i18nT('maintenance.nsfw.model_status.loading', 'Loading…')
+                    : state === 'error'   ? i18nT('maintenance.nsfw.model_status.error', 'Failed')
+                    : i18nT('maintenance.nsfw.model_status.idle', 'Not loaded');
+        _renderModelStatus({ state, label, progress: r?.progress?.progress != null ? Math.round(r.progress.progress) : null, file: r?.progress?.file || '' });
+    } catch {
+        _renderModelStatus({ state: 'idle' });
+    }
+}
+
+async function _onPreloadClick() {
+    const btn = $('nsfw-preload-btn');
+    if (!btn) return;
+    btn.disabled = true;
+    const orig = btn.innerHTML;
+    btn.innerHTML = `<i class="ri-loader-4-line animate-spin"></i><span>${escapeHtml(i18nT('common.loading', 'Loading…'))}</span>`;
+    try {
+        const r = await api.post('/api/maintenance/nsfw/preload', {});
+        if (r?.alreadyReady) {
+            showToast(i18nT('maintenance.nsfw.preload.already_ready', 'Model already loaded.'), 'info');
+        } else if (r?.alreadyLoading) {
+            showToast(i18nT('maintenance.nsfw.preload.already_loading', 'A preload is already in progress.'), 'info');
+        } else {
+            showToast(i18nT('maintenance.nsfw.preload.started', 'Preload started — progress in the realtime log.'), 'success');
+        }
+        _renderModelStatus({ state: 'loading', label: i18nT('maintenance.nsfw.model_status.loading', 'Loading…') });
+    } catch (e) {
+        showToast(e?.data?.error || e?.message || 'Preload failed', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = orig;
+    }
+}
+
+async function _onCacheClearClick() {
+    const ok = await confirmSheet({
+        title: i18nT('maintenance.nsfw.cache_clear.confirm_title', 'Wipe cached weights?'),
+        body: i18nT('maintenance.nsfw.cache_clear.confirm_body', 'The classifier cache directory will be emptied. The next scan or preload will re-download the model.'),
+        confirmText: i18nT('common.delete', 'Delete'),
+        confirmDanger: true,
+    });
+    if (!ok) return;
+    const btn = $('nsfw-cache-clear-btn');
+    if (btn) btn.disabled = true;
+    try {
+        const r = await api.del('/api/maintenance/nsfw/cache');
+        const mb = ((r?.bytes || 0) / (1024 * 1024)).toFixed(1);
+        showToast(i18nTf('maintenance.nsfw.cache_clear.done',
+            { files: r?.files || 0, mb },
+            `Removed ${r?.files || 0} file(s), ${mb} MB freed.`), 'success');
+        _renderModelStatus({ state: 'idle' });
+    } catch (e) {
+        showToast(e?.data?.error || e?.message || 'Wipe failed', 'error');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
 export function init() {
     _wireWs();
     if (!_pageWired) {
@@ -504,13 +624,26 @@ export function init() {
         $('nsfw-bulk-delete-btn')?.addEventListener('click', () => _bulkAction('delete'));
         $('nsfw-bulk-whitelist-btn')?.addEventListener('click', () => _bulkAction('whitelist'));
         $('nsfw-bulk-reclassify-btn')?.addEventListener('click', () => _bulkAction('reclassify'));
+        $('nsfw-preload-btn')?.addEventListener('click', _onPreloadClick);
+        $('nsfw-cache-clear-btn')?.addEventListener('click', _onCacheClearClick);
     }
     (async () => {
+        // Hydrate the Settings card inputs from /api/config so the model
+        // id, dtype, threshold, etc. show the persisted values. Same path
+        // the Settings page uses — keeps the two surfaces in lock-step.
+        try {
+            const cfg = await api.get('/api/config');
+            loadAdvanced(cfg);
+        } catch { /* best-effort — input still typeable, autosave still works */ }
+        // Wire the autosave pipeline so input changes here PATCH /api/config
+        // through the same debounced flush the Settings page uses.
+        try { setupAutoSave(); } catch {}
         await _loadTiersMeta();
         await _refreshStats();
         await _refreshHistogram();
         _renderBulkBar();
         await _loadList();
+        await _refreshModelStatus();
         // Hydrate bulk-action state — a job started elsewhere keeps
         // this tab's bulk buttons disabled until it finishes.
         try {

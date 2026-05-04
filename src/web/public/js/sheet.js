@@ -283,13 +283,16 @@ export function promptSheet(opts = {}) {
  * the confirm button in the destructive red palette.
  */
 export function confirmSheet(opts = {}) {
-    const {
-        title = i18nT('common.confirm', 'Confirm'),
-        message = '',
-        confirmLabel = i18nT('common.confirm', 'Confirm'),
-        cancelLabel = i18nT('common.cancel', 'Cancel'),
-        danger = false,
-    } = opts;
+    // Tolerate both naming conventions used across the codebase:
+    //   - { message, confirmLabel, cancelLabel, danger }   (original)
+    //   - { body,    confirmText,  cancelText,  destructive } (newer)
+    // Without this, callers passing the modern field names got an empty
+    // body + default Confirm label.
+    const title = opts.title ?? i18nT('common.confirm', 'Confirm');
+    const message = opts.message ?? opts.body ?? '';
+    const confirmLabel = opts.confirmLabel ?? opts.confirmText ?? i18nT('common.confirm', 'Confirm');
+    const cancelLabel  = opts.cancelLabel  ?? opts.cancelText  ?? i18nT('common.cancel', 'Cancel');
+    const danger = opts.danger === true || opts.destructive === true;
 
     return new Promise((resolve) => {
         let decided = false;
