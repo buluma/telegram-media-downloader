@@ -538,6 +538,47 @@ async function _refreshAll() {
     await Promise.all([_loadPeople(), _loadTags(), _loadPhashGroups()]).catch(() => {});
 }
 
+// Ping huggingface.co/api/whoami-v2 with the typed (or saved) token. Surfaces
+// success/error inline beneath the input so the operator gets immediate
+// feedback before kicking off a heavy model preload.
+async function _testHfToken() {
+    const btn = $('ai-hf-token-test');
+    const out = $('ai-hf-token-result');
+    const inp = $('setting-adv-ai-hf-token');
+    if (!btn || !out) return;
+    const orig = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = `<i class="ri-loader-4-line animate-spin"></i><span>${escapeHtml(i18nT('common.loading', 'Loading…'))}</span>`;
+    out.innerHTML = '';
+    try {
+        // Pass the typed token directly so the operator can verify a
+        // freshly-pasted value without waiting for the autosave round-
+        // trip. Server falls back to the stored value when this is empty.
+        const typed = (inp?.value || '').trim();
+        const r = await api.post('/api/ai/hf/test', typed ? { token: typed } : {});
+        if (r?.ok) {
+            const name = String(r.name || '').replace(/[<>]/g, '');
+            out.innerHTML = `
+                <i class="ri-check-line text-tg-green"></i>
+                <span class="text-tg-green">${escapeHtml(i18nTf('maintenance.ai.hf_token.test_ok',
+                    { name }, `Token works — signed in as ${name}.`))}</span>`;
+        } else {
+            const msg = r?.message || i18nT('maintenance.ai.hf_token.test_fail_generic', 'Token did not work.');
+            out.innerHTML = `
+                <i class="ri-error-warning-line text-red-400"></i>
+                <span class="text-red-400">${escapeHtml(msg)}</span>`;
+        }
+    } catch (e) {
+        const msg = e?.data?.message || e?.message || 'Test failed';
+        out.innerHTML = `
+            <i class="ri-error-warning-line text-red-400"></i>
+            <span class="text-red-400">${escapeHtml(msg)}</span>`;
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = orig;
+    }
+}
+
 export async function init() {
     _wireWs();
     if (!_initOnce) {
@@ -552,6 +593,13 @@ export async function init() {
         });
         // Refresh model status panel on demand.
         $('ai-models-refresh')?.addEventListener('click', _refreshModels);
+        // HF token — show/hide + Test button.
+        $('ai-hf-token-reveal')?.addEventListener('click', () => {
+            const inp = $('setting-adv-ai-hf-token');
+            if (!inp) return;
+            inp.type = inp.type === 'password' ? 'text' : 'password';
+        });
+        $('ai-hf-token-test')?.addEventListener('click', _testHfToken);
         _initOnce = true;
     }
     await _refreshAll();
