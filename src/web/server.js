@@ -42,6 +42,8 @@ import { getOrCreateThumb, purgeThumbsForDownload, purgeAllThumbs,
     ALLOWED_WIDTHS as THUMB_WIDTHS } from '../core/thumbs.js';
 import { startScan as nsfwStartScan, cancelScan as nsfwCancelScan,
     isScanRunning as nsfwIsScanRunning, getScanState as nsfwGetScanState,
+    preloadClassifier as nsfwPreloadClassifier, clearClassifierCache as nsfwClearCache,
+    classifierReady as nsfwClassifierReady,
     NSFW_DEFAULTS, getNsfwStats, getNsfwDeleteCandidates,
     whitelistNsfw } from '../core/nsfw.js';
 import { runAutoUpdate, autoUpdateStatus } from '../core/updater.js';
@@ -2181,6 +2183,10 @@ runtime.on('event', (e) => {
             filePath: relPath,
             fileSize: p.fileSize || 0,
             status: 'done',
+            // Surfaces "file was already on disk under another (group, msg)
+            // mapping" — `registerDownload()` set this on dedup. The queue UI
+            // renders a small "Duplicate" tag when present.
+            deduped: p.deduped === true,
             addedAt: p.addedAt || null,
             finishedAt: Date.now(),
             error: null,
@@ -3942,8 +3948,20 @@ app.get('/api/maintenance/dedup/delete/status', async (req, res) => {
 // Returns 404 when the source is not thumbnailable (audio/document) so
 // the SPA's <img onerror> fallback can kick in and render an icon.
 // Throttle log spam — a 1000-tile gallery scrolling past missing files
-// would otherwise flood the buffer. Reset every minute.
-let _thumbMissBatch = { count: 0, resetAt: 0 };
+// would otherwise flood the buffer. Three layers of quieting:
+//   1. WINDOW_MS — count is bucketed into 15-minute windows (was 1 min,
+//      then 5 min — busy operators still saw it as flood)
+//   2. FLOOR — a window only warns if the burst crossed 200 misses;
+//      small bursts (a few audio rows scrolled past) stay silent
+//   3. COOLDOWN_MS — after one warning fires, the next one is held off
+//      for 30 minutes regardless of count, so a chatty afternoon emits
+//      at most ~2 warnings instead of 4
+// Operators who want it fully silent set `advanced.thumbs.warnMisses`
+// to false in /api/config (validated server-side as boolean).
+const THUMB_MISS_WINDOW_MS = 15 * 60_000;
+const THUMB_MISS_FLOOR = 200;
+const THUMB_MISS_COOLDOWN_MS = 30 * 60_000;
+let _thumbMissBatch = { count: 0, resetAt: 0, lastWarnedAt: 0 };
 app.get('/api/thumbs/:id', async (req, res) => {
     try {
         const id = parseInt(req.params.id, 10);
@@ -3952,15 +3970,26 @@ app.get('/api/thumbs/:id', async (req, res) => {
         }
         const thumb = await getOrCreateThumb(id, req.query.w);
         if (!thumb) {
-            // Surface a tally to the realtime log so the operator can see
-            // "1247 thumb misses in last minute" instead of being mystified
-            // by silent 404s in the gallery.
             const now = Date.now();
-            if (now - _thumbMissBatch.resetAt > 60_000) {
-                if (_thumbMissBatch.count > 0) {
-                    log({ source: 'thumbs', level: 'warn', msg: `${_thumbMissBatch.count} thumb misses in the last minute (DB row missing, file off disk, or source not thumbnailable). Try Maintenance → Verify files / Re-index.` });
+            if (now - _thumbMissBatch.resetAt > THUMB_MISS_WINDOW_MS) {
+                // Window rollover — emit a consolidated warning if (a) the
+                // burst crossed the floor AND (b) we're past the cooldown
+                // since the last emission. Both gates have to pass; either
+                // alone leaves it quiet.
+                let warnMisses = true;
+                try {
+                    const cfg = loadConfig();
+                    warnMisses = cfg?.advanced?.thumbs?.warnMisses !== false;
+                } catch { /* no config yet → default on */ }
+                if (warnMisses
+                    && _thumbMissBatch.count >= THUMB_MISS_FLOOR
+                    && (now - _thumbMissBatch.lastWarnedAt) >= THUMB_MISS_COOLDOWN_MS) {
+                    const mins = Math.round(THUMB_MISS_WINDOW_MS / 60_000);
+                    log({ source: 'thumbs', level: 'warn', msg: `${_thumbMissBatch.count} thumb misses in the last ${mins} min (DB row missing, file off disk, or source not thumbnailable). Try Maintenance → Verify files / Re-index.` });
+                    _thumbMissBatch.lastWarnedAt = now;
                 }
-                _thumbMissBatch = { count: 1, resetAt: now };
+                _thumbMissBatch.count = 1;
+                _thumbMissBatch.resetAt = now;
             } else {
                 _thumbMissBatch.count += 1;
             }
@@ -4198,7 +4227,7 @@ app.post('/api/maintenance/nsfw/scan', async (req, res) => {
         const cfg = _nsfwCfg();
         if (!cfg.enabled) {
             return res.status(503).json({
-                error: 'NSFW review is disabled. Enable it in Settings → Advanced first.',
+                error: 'NSFW review is disabled. Open Maintenance → NSFW review and toggle it on first.',
                 code: 'NSFW_DISABLED',
             });
         }
@@ -4248,6 +4277,46 @@ app.post('/api/maintenance/nsfw/scan', async (req, res) => {
 app.post('/api/maintenance/nsfw/scan/cancel', async (req, res) => {
     const ok = nsfwCancelScan();
     res.json({ success: true, cancelled: ok });
+});
+
+// Pre-fetch the classifier weights without scanning a single file. Lets
+// the operator warm the cache from the UI so the next scan starts
+// instantly. Returns immediately; download progress flows over the
+// existing `nsfw_model_downloading` WS event + realtime log channel.
+app.post('/api/maintenance/nsfw/preload', async (req, res) => {
+    try {
+        const cfg = _nsfwCfg();
+        const r = await nsfwPreloadClassifier(cfg,
+            (p) => { try { broadcast({ type: 'nsfw_model_downloading', ...p }); } catch {} },
+            (entry) => log(entry),
+        );
+        res.json({ success: true, ...r });
+    } catch (e) {
+        log({ source: 'nsfw', level: 'error', msg: `preload failed to start: ${e?.message || e}` });
+        const status = e.code === 'NSFW_LIB_MISSING' ? 503 : 500;
+        res.status(status).json({ error: e.message, code: e.code || 'UNKNOWN' });
+    }
+});
+
+// Snapshot of the in-process classifier load state. Polled by the
+// /maintenance/nsfw page so the model-status pill reflects reality
+// even between WS messages.
+app.get('/api/maintenance/nsfw/model-status', async (req, res) => {
+    res.json({ success: true, ...nsfwClassifierReady() });
+});
+
+// Wipe the cached weights on disk. Confirm-gated in the UI; safe-by-
+// design here (the cache dir is allow-listed via _resolveCacheDirAbs
+// inside nsfw.js — there's no caller-supplied path).
+app.delete('/api/maintenance/nsfw/cache', async (req, res) => {
+    try {
+        const cfg = _nsfwCfg();
+        const r = await nsfwClearCache(cfg);
+        log({ source: 'nsfw', level: 'info', msg: `cleared model cache — removed ${r.files} file(s) / ${r.bytes} bytes` });
+        res.json({ success: true, ...r });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
 });
 
 app.get('/api/maintenance/nsfw/results', async (req, res) => {
@@ -4754,6 +4823,33 @@ async function _maybeProbeVec() {
     try { await ai.loadVecExtension(getDb, log); } catch {}
 }
 
+// Wire Transformers.js progress callbacks into the WS bus so the model
+// status panel can show live download bytes without polling. Idempotent —
+// the hook is registered once at module evaluation; subsequent reloads
+// (e.g. test re-imports) overwrite the same slot.
+try {
+    ai.setModelProgressHook?.(({ kind, modelId, progress }) => {
+        try {
+            broadcast({
+                type: 'ai_model_progress',
+                kind, modelId,
+                progress: progress || null,
+                ts: Date.now(),
+            });
+        } catch { /* swallow — never crash the loader */ }
+    });
+} catch { /* setModelProgressHook is optional */ }
+
+// Per-capability descriptors used by the model-status endpoint. Mirrors
+// the names the dashboard already uses. The kind is the Transformers.js
+// pipeline kind — needed because the same model id can be loaded under
+// two kinds (CLIP image vs text).
+const _MODEL_CAPS = [
+    { cap: 'embeddings', cfgKey: 'embeddings', defaultKind: 'image-feature-extraction' },
+    { cap: 'faces',      cfgKey: 'faces',      defaultKind: 'object-detection' },
+    { cap: 'tags',       cfgKey: 'tags',       defaultKind: 'image-classification' },
+];
+
 app.get('/api/ai/status', async (_req, res) => {
     try {
         await _maybeProbeVec();
@@ -4763,6 +4859,7 @@ app.get('/api/ai/status', async (_req, res) => {
             success: true,
             enabled: cfg.enabled,
             capabilities: {
+                master:     cfg.enabled,
                 embeddings: cfg.embeddings.enabled,
                 faces:      cfg.faces.enabled,
                 tags:       cfg.tags.enabled,
@@ -4784,7 +4881,7 @@ app.get('/api/ai/status', async (_req, res) => {
 app.post('/api/ai/index/scan', async (_req, res) => {
     const cfg = _aiCfg();
     if (!cfg.enabled) {
-        return res.status(503).json({ error: 'AI subsystem disabled. Enable in Settings → Advanced.', code: 'AI_DISABLED' });
+        return res.status(503).json({ error: 'AI subsystem disabled. Toggle "Enable AI subsystem" in Maintenance → AI search.', code: 'AI_DISABLED' });
     }
     const tracker = _jobTrackers.aiIndex;
     const r = tracker.tryStart(async ({ onProgress, signal }) => {
@@ -4960,6 +5057,133 @@ app.get('/api/ai/tags/:tag/photos', async (req, res) => {
         const offset = Number(req.query.offset) || 0;
         res.json({ success: true, ...listPhotosForTag(tag, { limit, offset }) });
     } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// ---- Model status + swap (v2.6 - operator visibility) -------------------
+//
+// The dashboard's "Models" panel asks: which AI models are loaded, how
+// big are their on-disk caches, and what's the most recent download
+// progress event? Single endpoint per page render — live progress arrives
+// via the `ai_model_progress` WS event wired above.
+app.get('/api/ai/models/status', async (_req, res) => {
+    try {
+        const cfg = _aiCfg();
+        const meta = ai.pipelineMetaSnapshot();
+        const errors = ai.pipelineErrorsSnapshot();
+        const metaByKey = new Map(meta.map((m) => [m.key, m]));
+        const errsByKey = new Map(errors.map((e) => [e.key, e]));
+
+        const out = {};
+        for (const desc of _MODEL_CAPS) {
+            const capCfg = cfg[desc.cfgKey] || {};
+            const modelId = capCfg.model || ai.AI_MODEL_DEFAULTS[desc.cfgKey]?.modelId || '';
+            const kind = ai.AI_MODEL_DEFAULTS[desc.cfgKey]?.kind || desc.defaultKind;
+            const key = `${kind}::${modelId}`;
+            const m = metaByKey.get(key);
+            const err = errsByKey.get(key);
+            const cache = await ai.inspectModelCache(modelId, cfg.cacheDir);
+            out[desc.cap] = {
+                modelId,
+                kind,
+                enabled: capCfg.enabled === true,
+                loaded: !!(m && m.loadedAt),
+                loading: !!(m && !m.loadedAt),
+                lastLoadedAt: m?.loadedAt || null,
+                startedAt: m?.startedAt || null,
+                lastProgress: m?.lastProgress || null,
+                error: err ? err.message : null,
+                cacheBytes: cache.bytes,
+                cacheFiles: cache.files,
+                cacheDir: cache.dir,
+            };
+        }
+        res.json({
+            success: true,
+            cacheRoot: ai.resolveCacheDir(cfg.cacheDir),
+            models: out,
+        });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Wipe the cached weights for a single model id. The next scan / search
+// will redownload from huggingface.co. Confirm-gated on the client.
+app.delete('/api/ai/models/cache', async (req, res) => {
+    try {
+        const modelId = String(req.query.model || req.body?.model || '').trim();
+        if (!modelId) return res.status(400).json({ error: 'model id required' });
+        const cfg = _aiCfg();
+        // Drop the in-process pipeline first so the on-disk wipe doesn't
+        // leave a stale handle wired to deleted weights.
+        try { await ai.clearPipelineForModel(modelId); } catch { /* ignore */ }
+        const r = await ai.deleteModelCache(modelId, cfg.cacheDir);
+        log({ source: 'ai', level: 'info', msg: `model cache wiped: ${modelId} (${r.bytes} bytes)` });
+        res.json({ success: true, ...r });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// "More like this" — top-K rows by cosine similarity against the source
+// row's embedding. Reuses the in-memory vector cache from vector-store.js
+// so a second similar-search after a text search is essentially free
+// (same cache hit).
+app.post('/api/ai/search/similar', async (req, res) => {
+    try {
+        const downloadId = Number(req.body?.downloadId);
+        if (!Number.isInteger(downloadId) || downloadId <= 0) {
+            return res.status(400).json({ error: 'downloadId required' });
+        }
+        const cfg = _aiCfg();
+        if (!cfg.enabled || !cfg.embeddings.enabled) {
+            return res.status(503).json({ error: 'AI embeddings are disabled', code: 'EMBEDDINGS_DISABLED' });
+        }
+        const limit = Math.max(1, Math.min(200, Number(req.body?.limit) || 24));
+        // Pull every embedding (cache-friendly via vector-store.topK
+        // re-using the same listing) so we can grab the source row's
+        // vector without a new SELECT path.
+        const { listAllImageEmbeddings } = await import('../core/db.js');
+        const rows = listAllImageEmbeddings({ fileTypes: cfg.fileTypes });
+        const src = rows.find((r) => r.download_id === downloadId);
+        if (!src || !src.embedding) {
+            return res.status(404).json({ error: 'no embedding for that download' });
+        }
+        const { blobToVector } = await import('../core/ai/vector-store.js');
+        const vec = blobToVector(src.embedding);
+        if (!vec) return res.status(500).json({ error: 'embedding decode failed' });
+        // Run topK; remove the source row itself from the result list.
+        const { topK } = await import('../core/ai/vector-store.js');
+        const top = topK(vec, { limit: limit + 1, fileTypes: cfg.fileTypes });
+        const results = top
+            .filter((r) => r.download_id !== downloadId)
+            .slice(0, limit)
+            .map((r) => ({
+                download_id: r.download_id,
+                score: r.score,
+                file_name: r.row.file_name,
+                file_path: r.row.file_path,
+                file_type: r.row.file_type,
+                file_size: r.row.file_size,
+                group_id:  r.row.group_id,
+                group_name: r.row.group_name,
+                created_at: r.row.created_at,
+            }));
+        res.json({
+            success: true,
+            source: {
+                download_id: src.download_id,
+                file_name: src.file_name,
+                group_id: src.group_id,
+                group_name: src.group_name,
+            },
+            results,
+            total: results.length,
+        });
+    } catch (e) {
+        log({ source: 'ai', level: 'error', msg: `similar search failed: ${e?.message || e}` });
         res.status(500).json({ error: e.message });
     }
 });
@@ -5353,6 +5577,23 @@ app.post('/api/config', async (req, res) => {
                     ...(cur.thumbs || {}),
                     ...(inc.thumbs || {}),
                 },
+                ai: (() => {
+                    // Two-level deep-merge for the AI namespace so the
+                    // model-swap UI can PATCH a single capability's model
+                    // id without flattening the others. Per-capability
+                    // sub-objects are spread individually for the same
+                    // reason.
+                    const c = cur.ai || {};
+                    const i = inc.ai || {};
+                    return {
+                        ...c,
+                        ...i,
+                        embeddings: { ...(c.embeddings || {}), ...(i.embeddings || {}) },
+                        faces:      { ...(c.faces || {}),      ...(i.faces || {}) },
+                        tags:       { ...(c.tags || {}),       ...(i.tags || {}) },
+                        phash:      { ...(c.phash || {}),      ...(i.phash || {}) },
+                    };
+                })(),
             };
             // ffmpeg hwaccel — allow-list validation. An attacker who
             // got past the admin gate could otherwise pass arbitrary
@@ -5362,6 +5603,10 @@ app.post('/api/config', async (req, res) => {
             const HWACCEL_ALLOW = new Set(['', 'vaapi', 'qsv', 'cuda', 'videotoolbox', 'd3d11va', 'dxva2']);
             const hwIn = String(merged.thumbs?.hwaccel || '').toLowerCase().trim();
             merged.thumbs.hwaccel = HWACCEL_ALLOW.has(hwIn) ? hwIn : '';
+            // warnMisses — boolean, default true. Coerce non-false to true
+            // so a hand-edited string ("yes", 1) doesn't quietly disable
+            // the helpful warning.
+            merged.thumbs.warnMisses = merged.thumbs.warnMisses !== false;
             // Clamp every numeric so a typo can't ban the user from logging
             // in (sessionTtlDays=0) or hose the downloader (minConcurrency=0).
             const d = merged.downloader;
@@ -5413,6 +5658,13 @@ app.post('/api/config', async (req, res) => {
             // validation only (string coerce, allowlist-strip).
             ns.model = (typeof ns.model === 'string' && ns.model.trim())
                 ? ns.model.trim() : NSFW_DEFAULTS.model;
+            // dtype controls which ONNX variant is fetched from HuggingFace.
+            // Allow-list keeps a typo from sending arbitrary text to the
+            // transformers.js loader and helps the UI fall back to the
+            // documented default when the operator clears the field.
+            const NSFW_DTYPES = new Set(['q8', 'fp16', 'fp32', 'q4']);
+            const dIn = String(ns.dtype || '').toLowerCase().trim();
+            ns.dtype = NSFW_DTYPES.has(dIn) ? dIn : NSFW_DEFAULTS.dtype;
             ns.cacheDir = (typeof ns.cacheDir === 'string' && ns.cacheDir.trim())
                 ? ns.cacheDir.trim() : NSFW_DEFAULTS.cacheDir;
             const ALLOWED_TYPES = ['photo', 'video', 'sticker', 'document'];
@@ -5470,6 +5722,25 @@ app.post('/api/config', async (req, res) => {
         // Refresh the cached rate-limit config so the toggle / RPM change
         // takes effect immediately instead of waiting for the 30s sweep.
         if (req.body.web?.rateLimit) refreshRateLimitConfig();
+
+        // Drop cached AI pipelines for any capability whose model id
+        // changed. Without this, a save through the model-swap UI would
+        // not take effect until the process restarted because the old
+        // pipeline handle is still cached under the old id.
+        if (req.body.advanced?.ai) {
+            try {
+                const oldAi = currentConfig.advanced?.ai || {};
+                const newAi = newConfig.advanced?.ai || {};
+                const _drop = async (oldId) => {
+                    if (oldId) await ai.clearPipelineForModel(oldId);
+                };
+                for (const cap of ['embeddings', 'faces', 'tags']) {
+                    const o = oldAi[cap]?.model || '';
+                    const n = newAi[cap]?.model || '';
+                    if (o && o !== n) _drop(o).catch(() => {});
+                }
+            } catch (e) { console.warn('[ai] pipeline reset failed:', e.message); }
+        }
 
         // Restart the disk rotator if the user changed any diskManagement
         // field — picks up the new cap / enabled / interval on the very next
@@ -6278,6 +6549,21 @@ ${tip}
         });
     } catch (e) {
         console.warn('[backup] init failed:', e.message);
+    }
+
+    // Pre-fetch the NSFW classifier in the background when the operator
+    // has enabled both `advanced.nsfw.enabled` and `advanced.nsfw.preload`.
+    // Fire-and-forget — boot is never blocked by the model download.
+    try {
+        const cfg = _nsfwCfg();
+        if (cfg.enabled && cfg.preload === true) {
+            nsfwPreloadClassifier(cfg,
+                (p) => { try { broadcast({ type: 'nsfw_model_downloading', ...p }); } catch {} },
+                (entry) => log(entry),
+            ).catch(() => { /* errors land in the realtime log via onLog */ });
+        }
+    } catch (e) {
+        console.warn('[nsfw] preload-on-boot skipped:', e.message);
     }
 
     // Resolve group names from Telegram for any DB records still unnamed

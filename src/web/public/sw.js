@@ -16,7 +16,7 @@
 // Bump on every meaningful release. The activate handler clears any cache
 // whose key doesn't match the current pair, so old shell + asset caches
 // get evicted automatically when this string changes.
-const VERSION = 'v260';
+const VERSION = 'v261';
 const SHELL_CACHE = `tgdl-shell-${VERSION}`;
 const ASSET_CACHE = `tgdl-assets-${VERSION}`;
 
@@ -149,7 +149,30 @@ self.addEventListener('fetch', (event) => {
         return;
     }
 
-    // Hashed/static assets — cache-first with background revalidation.
+    // /js/ — network-first. JS modules ship app behaviour; a stale .js
+    // outliving a deploy is the worst kind of cache bug ("works on my
+    // machine, broken on every other browser"). Bytes are tiny so we
+    // pay almost no latency hit. Cache is only the offline fallback.
+    if (url.pathname.startsWith('/js/')) {
+        event.respondWith(
+            (async () => {
+                const cache = await caches.open(ASSET_CACHE);
+                try {
+                    const fresh = await fetch(req);
+                    if (fresh && fresh.ok) cache.put(req, fresh.clone()).catch(() => {});
+                    return fresh;
+                } catch {
+                    const cached = await cache.match(req);
+                    return cached || Response.error();
+                }
+            })()
+        );
+        return;
+    }
+
+    // Other static assets (css/locales/icons) — cache-first with
+    // background revalidation. These rarely change between deploys and
+    // benefit from the offline-first behaviour.
     if (isStaticAsset(url)) {
         event.respondWith(
             (async () => {

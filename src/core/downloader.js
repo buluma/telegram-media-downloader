@@ -928,6 +928,13 @@ export class DownloadManager extends EventEmitter {
         // download added zero bytes, so the rotator quota stays accurate.
         if (bytesAddedToDisk > 0) this.incrementDiskUsage(bytesAddedToDisk);
 
+        const wasDeduped = bytesAddedToDisk === 0;
+        // Stash the flag on the job so the queue loop's `complete` event
+        // payload (`{ ...job, filePath }`) carries `deduped` through to
+        // runtime.js → broadcast → queue.js, which surfaces a "Duplicate"
+        // tag on the row.
+        try { job.deduped = wasDeduped; } catch { /* job object frozen — old path */ }
+
         this.emit('download_complete', {
             filePath: storedPath,
             fileName: path.basename(storedPath),
@@ -937,7 +944,7 @@ export class DownloadManager extends EventEmitter {
             message: job.message,
             mediaType: job.mediaType,
             // Surfaces the dedup result for monitor logs / future UI.
-            deduped: bytesAddedToDisk === 0,
+            deduped: wasDeduped,
         });
 
         return storedPath;

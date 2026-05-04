@@ -48,13 +48,46 @@ function _matchesFilter(entry) {
     return true;
 }
 
+// Per-source colour palette — every source gets a stable hue so the eye
+// can scan a chatty terminal and pick out the line it cares about. Same
+// pattern as how `tail -f` colour wrappers (lnav, multitail, etc.) work.
+const SOURCE_HUE = {
+    app:        'text-emerald-400',
+    nsfw:       'text-pink-400',
+    thumbs:     'text-cyan-400',
+    dedup:      'text-amber-400',
+    integrity:  'text-violet-400',
+    gramjs:     'text-sky-400',
+    downloader: 'text-lime-400',
+    monitor:    'text-fuchsia-400',
+    backup:     'text-teal-400',
+    ai:         'text-indigo-400',
+    settings:   'text-orange-400',
+    backfill:   'text-yellow-400',
+};
+
 function _renderLine(entry) {
-    const cls = entry.level === 'error'
-        ? 'text-red-400'
-        : entry.level === 'warn'
-            ? 'text-yellow-400'
-            : 'text-tg-text';
-    return `<div class="${cls}">[${_formatTime(entry.ts)}] [${escapeHtml(entry.source)}] [${escapeHtml(entry.level)}] ${escapeHtml(entry.msg)}</div>`;
+    // Terminal-style row: timestamp dimmed (so it doesn't fight the message),
+    // source pill in its own hue, level glyph (info=•, warn=▲, error=✖)
+    // colour-coded, message in default body colour. Selectable text;
+    // copy-paste pulls the raw line.
+    const tsCls = 'text-tg-textSecondary/70';
+    const srcCls = SOURCE_HUE[entry.source] || 'text-tg-textSecondary';
+    const levelGlyph = entry.level === 'error' ? '✖'
+        : entry.level === 'warn' ? '▲'
+        : '•';
+    const levelCls = entry.level === 'error' ? 'text-red-400'
+        : entry.level === 'warn' ? 'text-yellow-400'
+        : 'text-emerald-400/80';
+    const msgCls = entry.level === 'error' ? 'text-red-300'
+        : entry.level === 'warn' ? 'text-yellow-200'
+        : 'text-tg-text';
+    return `<div class="logline" data-level="${escapeHtml(entry.level)}" data-source="${escapeHtml(entry.source)}">`
+        + `<span class="${tsCls}">${_formatTime(entry.ts)}</span> `
+        + `<span class="${levelCls}">${levelGlyph}</span> `
+        + `<span class="${srcCls}">${escapeHtml(entry.source.padEnd(10))}</span> `
+        + `<span class="${msgCls}">${escapeHtml(entry.msg)}</span>`
+        + `</div>`;
 }
 
 function _renderAll() {
@@ -65,9 +98,23 @@ function _renderAll() {
     if (_autoscroll) pre.scrollTop = pre.scrollHeight;
 }
 
+// Coalesced redraw of the source-count badges. Called from _appendOne
+// on every log entry; we batch into a single rAF so a 200 lines/sec
+// burst doesn't trip 200 querySelector loops per second.
+let _countsDirty = false;
+function _scheduleCountsUpdate() {
+    if (_countsDirty) return;
+    _countsDirty = true;
+    requestAnimationFrame(() => {
+        _countsDirty = false;
+        _updateSourceCounts();
+    });
+}
+
 function _appendOne(entry) {
     _lines.push(entry);
     if (_lines.length > MAX_LINES) _lines.shift();
+    _scheduleCountsUpdate();
     if (_paused) return;
     if (!_matchesFilter(entry)) return;
     const pre = $('logs-stream');
@@ -79,20 +126,81 @@ function _appendOne(entry) {
     if (_autoscroll) pre.scrollTop = pre.scrollHeight;
 }
 
+// Render the chip group's HTML once, then keep the per-chip count badge
+// in sync via a separate update pass — avoids re-rendering the whole row
+// on every log line. Bound on first wire; later log events just call
+// `_updateSourceCounts` to bump the badges.
+function _renderSourceChips() {
+    const wrap = $('logs-filter-sources');
+    if (!wrap) return;
+    // Two quick-action chips on the left ("All" / "None") + one chip per
+    // known source. Each chip carries its own bg-on-pressed style + a
+    // count badge that tracks how many buffered lines currently match.
+    const sourceChips = SOURCES.map((s) => {
+        const dotCls = SOURCE_HUE[s] || 'text-tg-textSecondary';
+        const pressed = _filter.sources.has(s);
+        return `
+            <button type="button" class="log-src-chip" data-source="${escapeHtml(s)}"
+                    aria-pressed="${pressed ? 'true' : 'false'}">
+                <span class="log-src-chip__dot ${dotCls}">●</span>
+                <span class="log-src-chip__label">${escapeHtml(s)}</span>
+                <span class="log-src-chip__count" data-source-count="${escapeHtml(s)}">0</span>
+            </button>`;
+    }).join('');
+    wrap.innerHTML = `
+        <div class="log-src-quick">
+            <button type="button" class="log-src-quick__btn" data-action="all"
+                data-i18n="maintenance.logs.filter.all">All</button>
+            <button type="button" class="log-src-quick__btn" data-action="none"
+                data-i18n="maintenance.logs.filter.none">None</button>
+        </div>
+        ${sourceChips}
+    `;
+}
+
+function _updateSourceCounts() {
+    const wrap = $('logs-filter-sources');
+    if (!wrap) return;
+    const counts = Object.create(null);
+    for (const s of SOURCES) counts[s] = 0;
+    for (const e of _lines) {
+        if (counts[e.source] != null) counts[e.source] += 1;
+    }
+    for (const s of SOURCES) {
+        const badge = wrap.querySelector(`[data-source-count="${s}"]`);
+        if (badge) badge.textContent = counts[s] > 999 ? '999+' : String(counts[s]);
+    }
+}
+
 function _wireFilters() {
     const sourceWrap = $('logs-filter-sources');
     if (sourceWrap) {
-        sourceWrap.innerHTML = SOURCES.map((s) => `
-            <label class="inline-flex items-center gap-1 px-2 py-1 rounded-full border border-tg-border text-xs cursor-pointer hover:bg-tg-hover">
-                <input type="checkbox" class="logs-source-chip" data-source="${escapeHtml(s)}" checked>
-                <span>${escapeHtml(s)}</span>
-            </label>`).join('');
-        sourceWrap.querySelectorAll('.logs-source-chip').forEach((cb) => {
-            cb.addEventListener('change', () => {
-                if (cb.checked) _filter.sources.add(cb.dataset.source);
-                else _filter.sources.delete(cb.dataset.source);
+        _renderSourceChips();
+        _updateSourceCounts();
+        // Single delegated listener — chip clicks toggle the source and
+        // quick-action clicks flip the whole set.
+        sourceWrap.addEventListener('click', (e) => {
+            const quick = e.target.closest('.log-src-quick__btn');
+            if (quick) {
+                const action = quick.dataset.action;
+                if (action === 'all') {
+                    SOURCES.forEach(s => _filter.sources.add(s));
+                } else if (action === 'none') {
+                    _filter.sources.clear();
+                }
+                sourceWrap.querySelectorAll('.log-src-chip').forEach(btn => {
+                    btn.setAttribute('aria-pressed', _filter.sources.has(btn.dataset.source) ? 'true' : 'false');
+                });
                 _renderAll();
-            });
+                return;
+            }
+            const chip = e.target.closest('.log-src-chip');
+            if (!chip) return;
+            const src = chip.dataset.source;
+            if (_filter.sources.has(src)) _filter.sources.delete(src);
+            else _filter.sources.add(src);
+            chip.setAttribute('aria-pressed', _filter.sources.has(src) ? 'true' : 'false');
+            _renderAll();
         });
     }
     const levelWrap = $('logs-filter-level');

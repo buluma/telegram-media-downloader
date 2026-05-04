@@ -540,10 +540,14 @@
                             <span id="notify-bell-badge" class="absolute top-1.5 right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-tg-red text-white text-[10px] font-medium leading-[18px] text-center hidden">0</span>
                         </button>
                         <div id="notify-bell-menu" class="view-mode-menu notify-menu" role="menu" aria-labelledby="notify-bell-btn">
-                            <div class="notify-header flex items-center justify-between px-2 py-1.5 border-b border-tg-border mb-1">
-                                <span class="text-xs font-medium text-tg-textSecondary" data-i18n="header.notifications">Notifications</span>
+                            <div class="notify-header flex items-center justify-between gap-2 px-3 py-2 border-b border-tg-border mb-1">
+                                <span class="text-xs font-semibold tracking-wide uppercase text-tg-textSecondary" data-i18n="header.notifications">Notifications</span>
                                 <button id="notify-clear-btn" type="button"
-                                    class="text-[11px] text-tg-blue hover:underline" data-i18n="header.notifications.clear">Clear all</button>
+                                    class="w-7 h-7 rounded-full inline-flex items-center justify-center text-tg-textSecondary hover:text-tg-text hover:bg-tg-hover transition-colors"
+                                    data-i18n-title="header.notifications.clear" title="Clear all"
+                                    data-i18n-aria-label="header.notifications.clear" aria-label="Clear all">
+                                    <i class="ri-eraser-line text-[14px]"></i>
+                                </button>
                             </div>
                             <div id="notify-list" class="max-h-[60vh] overflow-y-auto"></div>
                             <div id="notify-empty" class="px-3 py-6 text-center text-xs text-tg-textSecondary" data-i18n="header.notifications.empty">No notifications yet.</div>
@@ -730,7 +734,7 @@
                 </div>
 
                 <!-- Groups Config Page -->
-                <div id="page-groups" class="hidden max-w-2xl mx-auto">
+                <div id="page-groups" class="hidden max-w-5xl mx-auto px-3 sm:px-4">
                     <!-- Tabs -->
                     <div class="flex border-b border-tg-border mb-4">
                         <button id="groups-tab-all" onclick="switchGroupsTab('all')"
@@ -761,7 +765,7 @@
                 </div>
 
                 <!-- Settings Page -->
-                <div id="page-settings" class="hidden max-w-2xl mx-auto px-3 sm:px-4">
+                <div id="page-settings" class="hidden max-w-5xl mx-auto px-3 sm:px-4">
 
                     <!-- Sticky chip-nav. Drives smooth-scroll to the five
                          anchored sections below (System / Accounts /
@@ -770,25 +774,50 @@
                          bottom of the page mirrors active section back
                          to the chip via [aria-selected]. -->
                     <nav class="settings-chip-nav" role="tablist" aria-label="Settings sections">
-                        <button type="button" role="tab" id="settings-chip-system" data-admin-only class="settings-chip" data-chip="system" aria-controls="settings-system" aria-selected="true">
-                            <i class="ri-cpu-line" aria-hidden="true"></i>
-                            <span data-i18n="settings.section.system">System</span>
+                        <!-- Per-card chips, trimmed to the essentials.
+                             Sub-cards (Telegram API, Quick Presets, Rescue,
+                             Privacy, Proxy) are reachable by scrolling to
+                             their parent section; chip-nav surfaces the
+                             top-level cards only. -->
+                        <button type="button" role="tab" data-admin-only class="settings-chip" data-chip="card-engine" aria-selected="true">
+                            <i class="ri-broadcast-line" aria-hidden="true"></i>
+                            <span data-i18n="settings.engine">Engine</span>
                         </button>
-                        <button type="button" role="tab" id="settings-chip-accounts" data-admin-only class="settings-chip" data-chip="accounts" aria-controls="settings-accounts" aria-selected="false">
+                        <button type="button" role="tab" data-admin-only class="settings-chip" data-chip="card-maintenance" aria-selected="false">
+                            <i class="ri-tools-line" aria-hidden="true"></i>
+                            <span data-i18n="maintenance.title">Maintenance</span>
+                        </button>
+                        <button type="button" role="tab" data-admin-only class="settings-chip" data-chip="card-advanced" aria-selected="false">
+                            <i class="ri-tools-fill" aria-hidden="true"></i>
+                            <span data-i18n="settings.advanced.title">Advanced</span>
+                        </button>
+                        <button type="button" role="tab" data-admin-only class="settings-chip" data-chip="card-accounts" aria-selected="false">
                             <i class="ri-user-line" aria-hidden="true"></i>
-                            <span data-i18n="settings.section.accounts">Accounts</span>
+                            <span data-i18n="settings.accounts">Accounts</span>
                         </button>
-                        <button type="button" role="tab" id="settings-chip-downloads" data-admin-only class="settings-chip" data-chip="downloads" aria-controls="settings-downloads" aria-selected="false">
-                            <i class="ri-download-cloud-2-line" aria-hidden="true"></i>
-                            <span data-i18n="settings.section.downloads">Downloads</span>
+                        <button type="button" role="tab" data-admin-only class="settings-chip" data-chip="card-download" aria-selected="false">
+                            <i class="ri-download-line" aria-hidden="true"></i>
+                            <span data-i18n="settings.download">Download</span>
                         </button>
-                        <button type="button" role="tab" id="settings-chip-appearance" class="settings-chip" data-chip="appearance" aria-controls="settings-appearance" aria-selected="false">
+                        <button type="button" role="tab" data-admin-only class="settings-chip" data-chip="card-rate" aria-selected="false">
+                            <i class="ri-speed-line" aria-hidden="true"></i>
+                            <span data-i18n="settings.rate.title">Rate Limits</span>
+                        </button>
+                        <button type="button" role="tab" data-admin-only class="settings-chip" data-chip="card-size" aria-selected="false">
+                            <i class="ri-hard-drive-2-line" aria-hidden="true"></i>
+                            <span data-i18n="settings.size.title">Size Limits</span>
+                        </button>
+                        <button type="button" role="tab" class="settings-chip" data-chip="card-appearance" aria-selected="false">
                             <i class="ri-palette-line" aria-hidden="true"></i>
-                            <span data-i18n="settings.section.appearance">Look &amp; Feel</span>
+                            <span data-i18n="settings.appearance">Appearance</span>
                         </button>
-                        <button type="button" role="tab" id="settings-chip-network" data-admin-only class="settings-chip" data-chip="network" aria-controls="settings-network" aria-selected="false">
-                            <i class="ri-shield-keyhole-line" aria-hidden="true"></i>
-                            <span data-i18n="settings.section.network">Privacy &amp; Net</span>
+                        <button type="button" role="tab" class="settings-chip" data-chip="card-video" aria-selected="false">
+                            <i class="ri-film-line" aria-hidden="true"></i>
+                            <span data-i18n="settings.video_player.title">Video Player</span>
+                        </button>
+                        <button type="button" role="tab" data-admin-only class="settings-chip" data-chip="card-security" aria-selected="false">
+                            <i class="ri-lock-2-line" aria-hidden="true"></i>
+                            <span data-i18n="settings.security">Security</span>
                         </button>
                     </nav>
 
@@ -806,9 +835,9 @@
                         <i class="ri-arrow-right-s-line text-tg-textSecondary ml-auto" aria-hidden="true"></i>
                     </button>
 
-                    <section data-settings-section="system" id="settings-system" role="tabpanel" aria-labelledby="settings-chip-system" data-admin-only class="settings-section space-y-4 mb-6">
+                    <section id="settings-system" role="tabpanel" data-admin-only class="settings-section space-y-4 mb-6">
                     <!-- Engine / monitor -->
-                    <div class="bg-tg-panel rounded-xl p-4 mb-4">
+                    <div id="settings-card-engine" data-settings-section="card-engine" class="bg-tg-panel rounded-xl p-4 mb-4 scroll-mt-24">
                         <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
                             <i class="ri-broadcast-line text-tg-green"></i> <span data-i18n="settings.engine">Engine</span>
                             <span id="engine-pill" class="ml-auto text-xs px-2 py-0.5 rounded-full bg-gray-700 text-gray-300" data-i18n="settings.engine.stopped">Stopped</span>
@@ -836,7 +865,7 @@
                     </div>
 
                     <!-- Maintenance -->
-                    <div class="mt-6 bg-tg-panel rounded-xl p-4" data-admin-only>
+                    <div id="settings-card-maintenance" data-settings-section="card-maintenance" class="mt-6 bg-tg-panel rounded-xl p-4 scroll-mt-24" data-admin-only>
                         <h3 class="text-tg-text font-medium mb-1 flex items-center gap-2">
                             <i class="ri-tools-line text-tg-blue"></i> <span data-i18n="maintenance.title">Maintenance</span>
                         </h3>
@@ -981,55 +1010,13 @@
                         main "Save Settings" button above. Server clamps every
                         value, so a typo can't brick the install.
                     -->
-                    <div class="mt-6 bg-tg-panel rounded-xl p-4" data-admin-only>
+                    <div id="settings-card-advanced" data-settings-section="card-advanced" class="mt-6 bg-tg-panel rounded-xl p-4 scroll-mt-24" data-admin-only>
                         <h3 class="text-tg-text font-medium mb-1 flex items-center gap-2">
                             <i class="ri-tools-fill text-tg-orange"></i> <span data-i18n="settings.advanced.title">Advanced</span>
                         </h3>
                         <p class="text-xs text-tg-textSecondary mb-4" data-i18n="settings.advanced.subtitle">Hot-path tunables. Defaults match the original hardcoded values — only change these if you know what you are doing.</p>
 
                         <div class="space-y-4">
-                            <!-- ffmpeg hardware acceleration — opt-in,
-                                 makes video thumbnails 5-10× faster on
-                                 hosts with an iGPU (Intel) / NVDEC (NVIDIA)
-                                 / VideoToolbox (macOS). Default `off` keeps
-                                 the pure-CPU path that works everywhere. -->
-                            <div>
-                                <h4 class="text-tg-text text-sm font-medium mb-2 flex items-center gap-2">
-                                    <i class="ri-cpu-line text-tg-textSecondary"></i>
-                                    <span data-i18n="settings.advanced.thumbs.hwaccel">Video thumb hardware acceleration</span>
-                                </h4>
-                                <!-- Two-column layout pairs the dropdown with a
-                                     "Detect available" button + result strip;
-                                     before this fix the right half was a
-                                     visible empty column on desktop. -->
-                                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                    <div>
-                                        <label for="setting-adv-ffmpeg-hwaccel" class="text-tg-text text-xs block mb-1" data-i18n="settings.advanced.thumbs.hwaccel_label">Decoder backend</label>
-                                        <select id="setting-adv-ffmpeg-hwaccel" class="tg-input w-full text-sm">
-                                            <option value=""             data-i18n="settings.advanced.thumbs.hwaccel.off">Off (CPU only)</option>
-                                            <option value="vaapi"        data-i18n="settings.advanced.thumbs.hwaccel.vaapi">VAAPI — Intel iGPU / AMD on Linux</option>
-                                            <option value="qsv"          data-i18n="settings.advanced.thumbs.hwaccel.qsv">QSV — Intel Quick Sync</option>
-                                            <option value="cuda"         data-i18n="settings.advanced.thumbs.hwaccel.cuda">CUDA / NVDEC — NVIDIA</option>
-                                            <option value="videotoolbox" data-i18n="settings.advanced.thumbs.hwaccel.videotoolbox">VideoToolbox — macOS</option>
-                                            <option value="d3d11va"      data-i18n="settings.advanced.thumbs.hwaccel.d3d11va">D3D11VA — Windows</option>
-                                        </select>
-                                        <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.advanced.thumbs.hwaccel_help">Off is the safe default. Pick the matching backend if the host has the matching driver + Docker has device passthrough (`/dev/dri` for VAAPI/QSV). Falls back to CPU silently if the chosen backend isn't available.</p>
-                                    </div>
-                                    <div class="flex flex-col gap-2">
-                                        <label class="text-tg-text text-xs block" data-i18n="settings.advanced.thumbs.hwaccel_probe_label">Available on this host</label>
-                                        <button id="setting-adv-ffmpeg-hwaccel-probe" type="button"
-                                            class="tg-btn-secondary text-xs px-3 py-1.5 w-full sm:w-auto inline-flex items-center justify-center gap-1.5">
-                                            <i class="ri-radar-line"></i>
-                                            <span data-i18n="settings.advanced.thumbs.hwaccel_probe">Detect available</span>
-                                        </button>
-                                        <div id="setting-adv-ffmpeg-hwaccel-probe-result"
-                                             class="text-[11px] text-tg-textSecondary leading-relaxed min-h-[32px] flex flex-wrap gap-1 items-start"
-                                             role="status" aria-live="polite"></div>
-                                        <p class="text-[10px] text-tg-textSecondary leading-relaxed" data-i18n="settings.advanced.thumbs.hwaccel_probe_help">Asks the bundled ffmpeg which acceleration backends it can talk to. The list reflects what's compiled into the ffmpeg binary AND reachable on this host (driver loaded, /dev/dri accessible, etc.).</p>
-                                    </div>
-                                </div>
-                            </div>
-
                             <!-- Downloader -->
                             <div>
                                 <h4 class="text-tg-text text-sm font-medium mb-2" data-i18n="settings.advanced.downloader">Downloader</h4>
@@ -1161,40 +1148,13 @@
                                 </div>
                             </div>
 
-                            <!-- NSFW review tool -->
-                            <div class="mt-4 pt-4 border-t border-tg-border/30">
-                                <h4 class="text-tg-text text-sm font-medium mb-2 flex items-center gap-2">
-                                    <i class="ri-alert-line text-tg-orange"></i>
-                                    <span data-i18n="settings.advanced.nsfw">NSFW review tool</span>
-                                </h4>
-                                <p class="text-[11px] text-tg-textSecondary mb-3" data-i18n="settings.advanced.nsfw_help">Off by default. Enable to surface a Maintenance button that scans every photo, classifies 18+ vs not-18+, and lists the not-18+ rows for admin review + delete. Runs entirely on this server (no external service); the model downloads once on first scan.</p>
-                                <div class="flex items-start justify-between gap-3 py-1">
-                                    <div class="min-w-0">
-                                        <div class="text-tg-text text-sm" data-i18n="settings.advanced.nsfw_enable">Enable NSFW review</div>
-                                        <p class="text-[11px] text-tg-textSecondary mt-0.5" data-i18n="settings.advanced.nsfw_enable_help">Adds the "Scan images for NSFW" button to Maintenance.</p>
-                                    </div>
-                                    <div id="setting-adv-nsfw-enabled" class="tg-toggle shrink-0 mt-0.5"></div>
-                                </div>
-                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
-                                    <div>
-                                        <label for="setting-adv-nsfw-threshold" class="text-tg-text text-xs block mb-1" data-i18n="settings.advanced.nsfw_threshold">Threshold (0.10–0.99)</label>
-                                        <input id="setting-adv-nsfw-threshold" type="number" min="0.10" max="0.99" step="0.05" class="tg-input w-full text-sm" placeholder="0.60">
-                                        <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.advanced.nsfw_threshold_help">Score &gt;= this counts as 18+ (kept). Below = surfaced for review. Higher = stricter (more rows surfaced as &quot;possibly not 18+&quot;).</p>
-                                    </div>
-                                    <div>
-                                        <label for="setting-adv-nsfw-concurrency" class="text-tg-text text-xs block mb-1" data-i18n="settings.advanced.nsfw_concurrency">Concurrency (1–4)</label>
-                                        <input id="setting-adv-nsfw-concurrency" type="number" min="1" max="4" class="tg-input w-full text-sm" placeholder="1">
-                                        <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.advanced.nsfw_concurrency_help">Parallel inferences. Higher uses more CPU/RAM during scan; defaults to 1 to keep the server responsive.</p>
-                                    </div>
-                                </div>
-                            </div>
                         </div>
                     </div>
                     </section>
 
-                    <section data-settings-section="accounts" id="settings-accounts" role="tabpanel" aria-labelledby="settings-chip-accounts" data-admin-only class="settings-section space-y-4 mb-6">
+                    <section id="settings-accounts" role="tabpanel" data-admin-only class="settings-section space-y-4 mb-6">
                     <!-- Telegram Accounts -->
-                    <div class="bg-tg-panel rounded-xl p-4 mb-4" data-admin-only>
+                    <div id="settings-card-accounts" data-settings-section="card-accounts" class="bg-tg-panel rounded-xl p-4 mb-4 scroll-mt-24" data-admin-only>
                         <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
                             <i class="ri-user-line text-tg-blue"></i> <span data-i18n="settings.accounts">Telegram Accounts</span>
                             <a href="/add-account.html" class="ml-auto tg-btn-secondary text-xs px-3 py-1 inline-flex items-center gap-1">
@@ -1208,7 +1168,7 @@
                     </div>
 
                     <!-- Telegram API credentials -->
-                    <div class="bg-tg-panel rounded-xl p-4 mb-4" data-admin-only>
+                    <div id="settings-card-tg-api" data-settings-section="card-tg-api" class="bg-tg-panel rounded-xl p-4 mb-4 scroll-mt-24" data-admin-only>
                         <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
                             <i class="ri-key-2-line text-tg-blue"></i> <span data-i18n="settings.tg_api">Telegram API</span>
                         </h3>
@@ -1229,9 +1189,9 @@
                     </div>
                     </section>
 
-                    <section data-settings-section="downloads" id="settings-downloads" role="tabpanel" aria-labelledby="settings-chip-downloads" data-admin-only class="settings-section space-y-4 mb-6">
+                    <section id="settings-downloads" role="tabpanel" data-admin-only class="settings-section space-y-4 mb-6">
                     <!-- Download Settings -->
-                    <div class="bg-tg-panel rounded-xl p-4 mb-4" data-admin-only>
+                    <div id="settings-card-download" data-settings-section="card-download" class="bg-tg-panel rounded-xl p-4 mb-4 scroll-mt-24" data-admin-only>
                         <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
                             <i class="ri-download-line text-tg-blue"></i> <span data-i18n="settings.download">Download</span>
                         </h3>
@@ -1298,7 +1258,7 @@
                     </div>
 
                     <!-- Rate Limits -->
-                    <div class="bg-tg-panel rounded-xl p-4 mb-4">
+                    <div id="settings-card-rate" data-settings-section="card-rate" class="bg-tg-panel rounded-xl p-4 mb-4 scroll-mt-24">
                         <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
                             <i class="ri-speed-line text-tg-orange"></i> <span data-i18n="settings.rate.title">Rate Limits</span>
                             <span
@@ -1332,7 +1292,7 @@
                     </div>
 
                     <!-- Size Limits -->
-                    <div class="bg-tg-panel rounded-xl p-4 mb-4">
+                    <div id="settings-card-size" data-settings-section="card-size" class="bg-tg-panel rounded-xl p-4 mb-4 scroll-mt-24">
                         <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
                             <i class="ri-hard-drive-2-line text-tg-green"></i> <span data-i18n="settings.size.title">Size Limits</span>
                         </h3>
@@ -1387,7 +1347,7 @@
                     <!-- Rescue Mode (global default). Per-group rescueMode='auto'
                          follows this toggle; 'on'/'off' overrides it. The sweep
                          interval applies to every group with rescue active. -->
-                    <div class="bg-tg-panel rounded-xl p-4 mb-4" data-settings-section="rescue" data-admin-only>
+                    <div id="settings-card-rescue" data-settings-section="card-rescue" class="bg-tg-panel rounded-xl p-4 mb-4 scroll-mt-24" data-admin-only>
                         <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
                             <i class="ri-lifebuoy-line text-tg-blue" aria-hidden="true"></i>
                             <span data-i18n="settings.rescue.title">Rescue mode</span>
@@ -1411,7 +1371,7 @@
                     </div>
 
                     <!-- Quick Presets -->
-                    <div class="bg-tg-panel rounded-xl p-4 mb-4" data-admin-only>
+                    <div id="settings-card-presets" data-settings-section="card-presets" class="bg-tg-panel rounded-xl p-4 mb-4 scroll-mt-24" data-admin-only>
                         <h3 class="text-tg-text font-medium mb-3" data-i18n="settings.preset.title">Quick Presets</h3>
                         <div class="grid grid-cols-3 gap-2">
                             <button onclick="applyPreset('safe')"
@@ -1433,9 +1393,9 @@
                     </div>
                     </section>
 
-                    <section data-settings-section="appearance" id="settings-appearance" role="tabpanel" aria-labelledby="settings-chip-appearance" class="settings-section space-y-4 mb-6">
+                    <section id="settings-appearance" role="tabpanel" class="settings-section space-y-4 mb-6">
                     <!-- Appearance -->
-                    <div class="bg-tg-panel rounded-xl p-4 mb-4">
+                    <div id="settings-card-appearance" data-settings-section="card-appearance" class="bg-tg-panel rounded-xl p-4 mb-4 scroll-mt-24">
                         <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
                             <i class="ri-palette-line text-tg-blue" aria-hidden="true"></i>
                             <span data-i18n="settings.appearance">Appearance</span>
@@ -1477,7 +1437,7 @@
                          persisted in localStorage). Each toggle/select
                          maps 1:1 to a key the viewer module reads on
                          every clip load. -->
-                    <div class="bg-tg-panel rounded-xl p-4 mb-4" data-settings-section="video-player">
+                    <div id="settings-card-video" data-settings-section="card-video" class="bg-tg-panel rounded-xl p-4 mb-4 scroll-mt-24">
                         <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
                             <i class="ri-play-circle-line text-tg-blue" aria-hidden="true"></i>
                             <span data-i18n="settings.video_player.title">Video Player</span>
@@ -1637,7 +1597,7 @@
                     </div>
 
                     <!-- Security (web auth) -->
-                    <div class="bg-tg-panel rounded-xl p-4 mb-4" data-admin-only>
+                    <div id="settings-card-security" data-settings-section="card-security" class="bg-tg-panel rounded-xl p-4 mb-4 scroll-mt-24" data-admin-only>
                         <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
                             <i class="ri-lock-2-line text-tg-blue"></i> <span data-i18n="settings.security">Dashboard security</span>
                         </h3>
@@ -1785,7 +1745,7 @@
                      Backfill feature). Three stacked cards, populated by
                      js/backfill.js: Active jobs / Start a new backfill /
                      Recent jobs (last 30 days). -->
-                <div id="page-backfill" class="hidden max-w-2xl mx-auto">
+                <div id="page-backfill" class="hidden max-w-5xl mx-auto px-3 sm:px-4">
                     <!-- Card A — Active jobs -->
                     <section class="bg-tg-panel rounded-xl p-4 mb-4">
                         <h3 class="text-tg-text font-medium mb-3 flex items-center gap-2">
@@ -1868,7 +1828,7 @@
                      fixed-height spacer so the virtualiser only renders
                      visible rows + a small over-scroll buffer (see
                      js/queue.js for the math). -->
-                <div id="page-queue" class="hidden max-w-5xl mx-auto">
+                <div id="page-queue" class="hidden max-w-5xl mx-auto px-3 sm:px-4">
                     <!-- Top toolbar — chips, sort, search, global actions -->
                     <section class="bg-tg-panel rounded-xl p-3 mb-3">
                         <div id="queue-chips" class="flex flex-wrap gap-1.5 mb-3"></div>
@@ -1979,7 +1939,7 @@
                 </div>
 
                 <!-- Maintenance / Duplicates page (admin-only) -->
-                <div id="page-maintenance-duplicates" class="hidden max-w-3xl mx-auto px-3 sm:px-4" data-admin-only
+                <div id="page-maintenance-duplicates" class="hidden max-w-5xl mx-auto px-3 sm:px-4" data-admin-only
                      data-page-title-key="maintenance.duplicates.title"
                      data-page-subtitle-key="maintenance.duplicates.subtitle">
                     <section class="bg-tg-panel rounded-xl p-4 mb-3">
@@ -2008,6 +1968,22 @@
                     </section>
                     <section class="bg-tg-panel rounded-xl p-4">
                         <div id="dup-totals" class="text-sm text-tg-text mb-2"></div>
+                        <!-- Bulk keep-decisions — applies the rule to every
+                             set in one click. Hidden when the list is empty. -->
+                        <div id="dup-bulk-bar" class="hidden flex items-center justify-between gap-2 flex-wrap mb-3 pb-3 border-b border-tg-border/30">
+                            <span class="text-[11px] uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.duplicates.bulk.heading">Apply to all sets</span>
+                            <div class="flex items-center gap-1.5 flex-wrap">
+                                <button id="dup-bulk-oldest" type="button" class="tg-btn-secondary text-xs px-3 py-1.5 inline-flex items-center gap-1.5">
+                                    <i class="ri-time-line"></i><span data-i18n="maintenance.duplicates.bulk.keep_oldest">Keep oldest in every set</span>
+                                </button>
+                                <button id="dup-bulk-newest" type="button" class="tg-btn-secondary text-xs px-3 py-1.5 inline-flex items-center gap-1.5">
+                                    <i class="ri-flashlight-line"></i><span data-i18n="maintenance.duplicates.bulk.keep_newest">Keep newest in every set</span>
+                                </button>
+                                <button id="dup-bulk-clear" type="button" class="tg-btn-secondary text-xs px-3 py-1.5 inline-flex items-center gap-1.5">
+                                    <i class="ri-eraser-line"></i><span data-i18n="maintenance.duplicates.bulk.clear">Clear selection</span>
+                                </button>
+                            </div>
+                        </div>
                         <div id="dup-empty" class="text-center py-8 text-sm text-tg-textSecondary" data-i18n="maintenance.duplicates.empty">No scan yet — click "Scan" to begin.</div>
                         <div id="dup-list" class="max-h-[60vh] overflow-y-auto pr-1"></div>
                         <div class="mt-3 flex items-center justify-between gap-3 flex-wrap">
@@ -2020,7 +1996,7 @@
                 </div>
 
                 <!-- Maintenance / Thumbnails page (admin-only) -->
-                <div id="page-maintenance-thumbs" class="hidden max-w-3xl mx-auto px-3 sm:px-4" data-admin-only
+                <div id="page-maintenance-thumbs" class="hidden max-w-5xl mx-auto px-3 sm:px-4" data-admin-only
                      data-page-title-key="maintenance.thumbs.page_title"
                      data-page-subtitle-key="maintenance.thumbs.subtitle">
                     <section class="bg-tg-panel rounded-xl p-4 mb-3">
@@ -2055,17 +2031,66 @@
                                 <div class="text-xs text-tg-textSecondary uppercase tracking-wide" data-i18n="maintenance.thumbs.disk">Disk</div>
                                 <div id="thumbs-stat-bytes" class="text-2xl font-semibold text-tg-text tabular-nums">—</div>
                             </div>
-                            <div class="bg-tg-bg/40 rounded-lg p-3 text-center col-span-2 sm:col-span-1">
-                                <div class="text-xs text-tg-textSecondary uppercase tracking-wide" data-i18n="maintenance.thumbs.widths">Widths</div>
-                                <div id="thumbs-stat-widths" class="text-sm font-semibold text-tg-text tabular-nums">—</div>
+                            <div class="bg-tg-bg/40 rounded-lg p-3 col-span-2 sm:col-span-1 flex flex-col items-center justify-center text-center">
+                                <div class="text-xs text-tg-textSecondary uppercase tracking-wide mb-1.5" data-i18n="maintenance.thumbs.widths">Widths</div>
+                                <!-- Render as chips (px / px / …) instead of a slash-joined string;
+                                     the previous tabular-nums monospace flat string read like a phone
+                                     number and didn't communicate "these are picker options". -->
+                                <div id="thumbs-stat-widths" class="flex flex-wrap items-center justify-center gap-1"></div>
                             </div>
                         </div>
                         <div id="thumbs-breakdown" class="grid grid-cols-3 gap-2"></div>
                     </section>
+
+                    <!-- Decoder backend + warn-misses toggle. Per-tool
+                         settings live with their tool, not in
+                         Settings → Advanced (no duplication). -->
+                    <section class="bg-tg-panel rounded-xl p-4 mt-3">
+                        <h3 class="text-tg-text text-sm font-medium mb-2 flex items-center gap-2">
+                            <i class="ri-cpu-line text-tg-textSecondary"></i>
+                            <span data-i18n="maintenance.thumbs.hwaccel">Video thumb hardware acceleration</span>
+                        </h3>
+                        <div class="space-y-3">
+                            <div>
+                                <label for="setting-adv-ffmpeg-hwaccel" class="text-tg-text text-xs block mb-1" data-i18n="maintenance.thumbs.hwaccel_label">Decoder backend</label>
+                                <select id="setting-adv-ffmpeg-hwaccel" class="tg-input w-full text-sm">
+                                    <option value=""             data-i18n="maintenance.thumbs.hwaccel.off">Off (CPU only)</option>
+                                    <option value="vaapi"        data-i18n="maintenance.thumbs.hwaccel.vaapi">VAAPI — Intel iGPU / AMD on Linux</option>
+                                    <option value="qsv"          data-i18n="maintenance.thumbs.hwaccel.qsv">QSV — Intel Quick Sync</option>
+                                    <option value="cuda"         data-i18n="maintenance.thumbs.hwaccel.cuda">CUDA / NVDEC — NVIDIA</option>
+                                    <option value="videotoolbox" data-i18n="maintenance.thumbs.hwaccel.videotoolbox">VideoToolbox — macOS</option>
+                                    <option value="d3d11va"      data-i18n="maintenance.thumbs.hwaccel.d3d11va">D3D11VA — Windows</option>
+                                </select>
+                                <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="maintenance.thumbs.hwaccel_help">Off is the safe default. Pick the matching backend if the host has the matching driver + Docker has device passthrough (`/dev/dri` for VAAPI/QSV). Falls back to CPU silently if the chosen backend isn't available.</p>
+                            </div>
+                            <div class="bg-tg-bg/30 rounded-lg p-3 border border-tg-border/40">
+                                <div class="flex items-center justify-between gap-2 flex-wrap mb-2">
+                                    <div class="text-xs text-tg-text font-medium" data-i18n="maintenance.thumbs.hwaccel_probe_label">Test what this server can use</div>
+                                    <button id="setting-adv-ffmpeg-hwaccel-probe" type="button"
+                                        class="tg-btn-secondary text-xs px-3 py-1.5 inline-flex items-center justify-center gap-1.5 shrink-0">
+                                        <i class="ri-radar-line"></i>
+                                        <span data-i18n="maintenance.thumbs.hwaccel_probe">Run hardware probe</span>
+                                    </button>
+                                </div>
+                                <div id="setting-adv-ffmpeg-hwaccel-probe-result"
+                                     class="text-[11px] text-tg-textSecondary leading-relaxed min-h-[24px] flex flex-wrap gap-1 items-center"
+                                     role="status" aria-live="polite"></div>
+                                <p class="text-[10px] text-tg-textSecondary mt-2 leading-relaxed" data-i18n="maintenance.thumbs.hwaccel_probe_help">Click to ask the running ffmpeg which acceleration backends are actually usable on this host. Backends shown are both compiled into ffmpeg AND reachable. Pick a matching value above; leave Off if nothing shows up.</p>
+                            </div>
+                        </div>
+
+                        <div class="flex items-start justify-between gap-3 mt-4 pt-3 border-t border-tg-border/30">
+                            <div class="min-w-0">
+                                <div class="text-tg-text text-sm" data-i18n="maintenance.thumbs.warn_misses">Warn about thumb misses</div>
+                                <p class="text-[11px] text-tg-textSecondary mt-0.5" data-i18n="maintenance.thumbs.warn_misses_help">When on, emits one consolidated "X thumb misses" warning every 30 minutes if the rate is high. Turn off if you find the warnings noisy and you've already verified your library.</p>
+                            </div>
+                            <div id="setting-adv-thumbs-warn-misses" class="tg-toggle shrink-0 mt-0.5"></div>
+                        </div>
+                    </section>
                 </div>
 
                 <!-- Maintenance / NSFW review page (admin-only) -->
-                <div id="page-maintenance-nsfw" class="hidden max-w-4xl mx-auto px-3 sm:px-4" data-admin-only
+                <div id="page-maintenance-nsfw" class="hidden max-w-5xl mx-auto px-3 sm:px-4" data-admin-only
                      data-page-title-key="maintenance.nsfw.page_title"
                      data-page-subtitle-key="maintenance.nsfw.subtitle">
                     <header class="bg-tg-panel rounded-xl p-4 mb-3">
@@ -2076,6 +2101,86 @@
                     <div id="nsfw-empty-db-banner" class="hidden bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 mb-3 text-xs text-yellow-300" data-i18n="maintenance.nsfw.empty_db_hint">
                         Library has no scannable photos — try Maintenance → Re-index from disk first if files exist on disk but the catalogue is empty.
                     </div>
+
+                    <!-- Classifier settings + actions. The whole config
+                         lives here (no duplicate in Settings → Advanced
+                         per the project's split rule: per-tool knobs go
+                         to per-tool maintenance pages). -->
+                    <section class="bg-tg-panel rounded-xl p-4 mb-3">
+                        <div class="flex items-start justify-between gap-3 flex-wrap">
+                            <div class="min-w-0">
+                                <h3 class="text-tg-text text-sm font-medium flex items-center gap-2">
+                                    <i class="ri-shield-check-line text-tg-orange"></i>
+                                    <span data-i18n="maintenance.nsfw.settings_heading">Classifier settings</span>
+                                </h3>
+                                <p class="text-[11px] text-tg-textSecondary mt-0.5" data-i18n="maintenance.nsfw.settings_help">Off by default. The model downloads once on first scan (or click "Preload" to fetch it now). Runs entirely on this server — no third-party service.</p>
+                            </div>
+                            <div class="flex items-center gap-2 shrink-0">
+                                <span id="nsfw-model-status" class="inline-flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-full bg-tg-bg/40 text-tg-textSecondary" role="status" aria-live="polite">
+                                    <span class="w-1.5 h-1.5 rounded-full bg-tg-textSecondary"></span>
+                                    <span data-i18n="maintenance.nsfw.model_status.idle">Not loaded</span>
+                                </span>
+                            </div>
+                        </div>
+
+                        <div class="flex items-start justify-between gap-3 py-2 mt-3 border-t border-tg-border/30">
+                            <div class="min-w-0">
+                                <div class="text-tg-text text-sm" data-i18n="maintenance.nsfw.enable">Enable NSFW review</div>
+                                <p class="text-[11px] text-tg-textSecondary mt-0.5" data-i18n="maintenance.nsfw.enable_help">Surfaces this Maintenance tool + scores newly-downloaded photos in the background.</p>
+                            </div>
+                            <div id="setting-adv-nsfw-enabled" class="tg-toggle shrink-0 mt-0.5"></div>
+                        </div>
+
+                        <div class="flex items-start justify-between gap-3 py-2 border-t border-tg-border/30">
+                            <div class="min-w-0">
+                                <div class="text-tg-text text-sm" data-i18n="maintenance.nsfw.preload_on_start">Preload on server start</div>
+                                <p class="text-[11px] text-tg-textSecondary mt-0.5" data-i18n="maintenance.nsfw.preload_on_start_help">Download + warm the model in the background when the server boots, so the first scan starts instantly.</p>
+                            </div>
+                            <div id="setting-adv-nsfw-preload" class="tg-toggle shrink-0 mt-0.5"></div>
+                        </div>
+
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3 pt-3 border-t border-tg-border/30">
+                            <div class="sm:col-span-2">
+                                <label for="setting-adv-nsfw-model" class="text-tg-text text-xs block mb-1" data-i18n="maintenance.nsfw.model">HuggingFace model id</label>
+                                <input id="setting-adv-nsfw-model" type="text" autocomplete="off" spellcheck="false"
+                                    class="tg-input w-full text-sm font-mono"
+                                    placeholder="Falconsai/nsfw_image_detection">
+                                <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="maintenance.nsfw.model_help">Any HuggingFace `owner/model` id that ships an `image-classification` ONNX pipeline. The library auto-detects which precision variant is available.</p>
+                            </div>
+                            <div>
+                                <label for="setting-adv-nsfw-dtype" class="text-tg-text text-xs block mb-1" data-i18n="maintenance.nsfw.dtype">Precision</label>
+                                <select id="setting-adv-nsfw-dtype" class="tg-input w-full text-sm">
+                                    <option value="q8"   data-i18n="maintenance.nsfw.dtype.q8">int8 quantized — smallest, fastest (default)</option>
+                                    <option value="fp16" data-i18n="maintenance.nsfw.dtype.fp16">fp16 — half precision</option>
+                                    <option value="fp32" data-i18n="maintenance.nsfw.dtype.fp32">fp32 — full precision</option>
+                                    <option value="q4"   data-i18n="maintenance.nsfw.dtype.q4">int4 — tiniest, lowest accuracy</option>
+                                </select>
+                                <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="maintenance.nsfw.dtype_help">Falls back to whichever variant the model actually publishes if the chosen one is missing.</p>
+                            </div>
+                            <div>
+                                <label for="setting-adv-nsfw-threshold" class="text-tg-text text-xs block mb-1" data-i18n="maintenance.nsfw.threshold">Threshold (0.10–0.99)</label>
+                                <input id="setting-adv-nsfw-threshold" type="number" min="0.10" max="0.99" step="0.05" class="tg-input w-full text-sm" placeholder="0.60">
+                                <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="maintenance.nsfw.threshold_help">Score &gt;= this counts as 18+ (kept). Below = surfaced for review. Higher = stricter.</p>
+                            </div>
+                            <div>
+                                <label for="setting-adv-nsfw-concurrency" class="text-tg-text text-xs block mb-1" data-i18n="maintenance.nsfw.concurrency">Concurrency (1–4)</label>
+                                <input id="setting-adv-nsfw-concurrency" type="number" min="1" max="4" class="tg-input w-full text-sm" placeholder="1">
+                                <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="maintenance.nsfw.concurrency_help">Parallel inferences per scan. Higher uses more CPU/RAM; default 1 keeps the server responsive.</p>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center justify-between gap-2 flex-wrap mt-3 pt-3 border-t border-tg-border/30">
+                            <div class="text-[11px] text-tg-textSecondary" id="nsfw-model-progress" aria-live="polite"></div>
+                            <div class="flex items-center gap-1.5">
+                                <button id="nsfw-preload-btn" type="button" class="tg-btn-secondary text-xs px-3 py-1.5 inline-flex items-center gap-1.5">
+                                    <i class="ri-download-cloud-line"></i><span data-i18n="maintenance.nsfw.preload">Preload model now</span>
+                                </button>
+                                <button id="nsfw-cache-clear-btn" type="button" class="tg-btn-secondary text-xs px-3 py-1.5 inline-flex items-center gap-1.5">
+                                    <i class="ri-delete-bin-line"></i><span data-i18n="maintenance.nsfw.cache_clear">Wipe cached weights</span>
+                                </button>
+                            </div>
+                        </div>
+                    </section>
 
                     <!-- Stats cards -->
                     <section class="grid grid-cols-3 gap-2 mb-3">
@@ -2196,7 +2301,7 @@
                 </div>
 
                 <!-- Maintenance / Backup page (admin-only) -->
-                <div id="page-maintenance-backup" class="hidden max-w-6xl mx-auto px-3 sm:px-4" data-admin-only
+                <div id="page-maintenance-backup" class="hidden max-w-5xl mx-auto px-3 sm:px-4" data-admin-only
                      data-page-title-key="maintenance.backup.page_title"
                      data-page-subtitle-key="maintenance.backup.subtitle">
                     <header class="bg-tg-panel rounded-xl p-4 mb-3 flex items-start justify-between gap-3 flex-wrap">
@@ -2226,18 +2331,85 @@
                 <!-- Maintenance / AI search & people (admin-only) -->
                 <div id="page-maintenance-ai" class="hidden max-w-5xl mx-auto px-3 sm:px-4" data-admin-only
                      data-page-title-key="maintenance.ai.title"
-                     data-page-subtitle-key="maintenance.ai.subtitle"
-                     style="--ai-accent: #6E41E2;">
+                     data-page-subtitle-key="maintenance.ai.subtitle">
                     <header class="bg-tg-panel rounded-xl p-4 mb-3">
                         <h2 class="text-tg-text text-base font-semibold" data-i18n="maintenance.ai.title">AI Search &amp; Smart Organisation</h2>
                         <p class="text-xs text-tg-textSecondary mt-0.5" data-i18n="maintenance.ai.subtitle">Local-only image embeddings, face clustering, perceptual dedup, and auto-tagging.</p>
                         <p class="text-[11px] text-tg-textSecondary/80 mt-2" data-i18n="maintenance.ai.privacy_note">All processing happens on this server. Nothing is uploaded to any third-party API.</p>
                     </header>
 
-                    <!-- Settings strip -->
+                    <!-- Hero search -->
+                    <section class="ai-hero" role="search" aria-labelledby="ai-search-heading">
+                        <h3 id="ai-search-heading" class="sr-only" data-i18n="maintenance.ai.search.heading">Search</h3>
+                        <label class="ai-hero-input-wrap">
+                            <i class="ri-search-2-line ai-hero-icon-left" aria-hidden="true"></i>
+                            <input id="ai-search-input" type="search" autocomplete="off" spellcheck="false"
+                                   class="ai-hero-input"
+                                   data-i18n-placeholder="maintenance.ai.search.placeholder_hero"
+                                   placeholder="Search your library — try &quot;beach&quot;, &quot;invoice&quot;, &quot;birthday cake&quot;…"
+                                   aria-label="Search your library"/>
+                            <button id="ai-search-clear" type="button" class="ai-hero-icon-right hidden"
+                                    data-i18n-aria-label="maintenance.ai.search.clear" aria-label="Clear search">
+                                <i class="ri-close-circle-fill" aria-hidden="true"></i>
+                            </button>
+                            <button id="ai-search-btn" type="button" class="sr-only" data-i18n="maintenance.ai.search.go">Search</button>
+                        </label>
+                        <div id="ai-search-similar-bar" class="ai-similar-bar hidden" role="status" aria-live="polite">
+                            <span class="ai-similar-text">
+                                <i class="ri-magic-line"></i>
+                                <span data-i18n="maintenance.ai.search.similar_to">Similar to</span>
+                                <span id="ai-similar-name" class="ai-similar-name"></span>
+                            </span>
+                            <button id="ai-similar-clear" type="button" class="ai-similar-clear"
+                                    data-i18n-aria-label="maintenance.ai.search.similar_clear" aria-label="Clear similar search">
+                                <i class="ri-close-line"></i>
+                                <span data-i18n="common.clear">Clear</span>
+                            </button>
+                        </div>
+
+                        <!-- Suggestion chip rows. Labels sit ABOVE each row
+                             instead of in a left-side column — looks cleaner
+                             at every breakpoint and stops the chip list from
+                             being squeezed by a 60-px label gutter. -->
+                        <div id="ai-chips-wrap" class="ai-chips-wrap">
+                            <div id="ai-chips-recent" class="ai-chip-row hidden">
+                                <span class="ai-chip-row-label" data-i18n="maintenance.ai.search.chips.recent">Recent</span>
+                                <div class="ai-chip-list" role="list"></div>
+                            </div>
+                            <div id="ai-chips-try" class="ai-chip-row">
+                                <span class="ai-chip-row-label" data-i18n="maintenance.ai.search.chips.try">Try</span>
+                                <div class="ai-chip-list" role="list"></div>
+                            </div>
+                            <div id="ai-chips-tags" class="ai-chip-row hidden">
+                                <span class="ai-chip-row-label" data-i18n="maintenance.ai.search.chips.top_tags">Top tags</span>
+                                <div class="ai-chip-list" role="list"></div>
+                            </div>
+                            <div id="ai-chips-people" class="ai-chip-row hidden">
+                                <span class="ai-chip-row-label" data-i18n="maintenance.ai.search.chips.people">People</span>
+                                <div class="ai-chip-list ai-chip-list-people" role="list"></div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Models panel + swap UI -->
                     <section class="bg-tg-panel rounded-xl p-3 mb-3">
                         <div class="flex items-center justify-between gap-2 mb-2">
-                            <h3 class="text-xs uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.ai.settings_heading">Settings</h3>
+                            <h3 class="text-tg-text text-sm font-medium flex items-center gap-2">
+                                <i class="ri-cpu-line text-tg-textSecondary"></i>
+                                <span data-i18n="maintenance.ai.model.heading">Models</span>
+                            </h3>
+                            <button id="ai-models-refresh" type="button" class="tg-btn-secondary text-[11px] px-2 py-1"
+                                    data-i18n-title="maintenance.ai.model.refresh" title="Refresh model status">
+                                <i class="ri-refresh-line"></i>
+                            </button>
+                        </div>
+                        <div id="ai-models-list" class="ai-models-list" aria-live="polite"></div>
+                    </section>
+
+                    <!-- Settings strip (capabilities) -->
+                    <section class="bg-tg-panel rounded-xl p-3 mb-3">
+                        <div class="flex items-center justify-between gap-2 mb-2">
+                            <h3 class="text-xs uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.ai.settings_heading">Capabilities</h3>
                             <span id="ai-vec-status" class="text-[11px] text-tg-textSecondary"></span>
                         </div>
                         <div id="ai-settings-grid" class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
@@ -2245,18 +2417,20 @@
                         </div>
                     </section>
 
-                    <!-- Card 1: Search -->
+                    <!-- Search results -->
                     <section class="bg-tg-panel rounded-xl p-3 mb-3">
-                        <h3 class="text-tg-text text-sm font-medium mb-2" data-i18n="maintenance.ai.search.heading">Search</h3>
-                        <div class="flex gap-2 items-center">
-                            <input id="ai-search-input" type="text" class="flex-1 bg-tg-bg/40 border border-tg-border rounded-lg px-3 py-2 text-sm text-tg-text"
-                                   data-i18n-placeholder="maintenance.ai.search.placeholder"
-                                   placeholder='Search your library — try "beach photos", "red car", "birthday cake"…'/>
-                            <button id="ai-search-btn" class="tg-btn-secondary text-xs px-3 py-2" data-i18n="maintenance.ai.search.go">Search</button>
+                        <div class="flex items-center justify-between gap-2 mb-2">
+                            <h3 class="text-tg-text text-sm font-medium" data-i18n="maintenance.ai.search.results_heading">Results</h3>
+                            <span id="ai-search-meta" class="text-[11px] text-tg-textSecondary tabular-nums"></span>
                         </div>
-                        <div id="ai-search-meta" class="text-[11px] text-tg-textSecondary mt-2"></div>
-                        <div id="ai-search-results" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 mt-3"></div>
+                        <div id="ai-search-results" class="ai-results-grid" role="grid" aria-label="Search results"></div>
                         <div id="ai-search-empty" class="hidden text-center py-8 text-xs text-tg-textSecondary" data-i18n="maintenance.ai.search.no_results">Nothing matches. Try a different phrase or run an index scan first.</div>
+                        <div id="ai-search-cta" class="hidden text-center py-10">
+                            <p class="text-tg-text text-sm font-medium" data-i18n="maintenance.ai.search.index_cta_title">Index your library to enable search</p>
+                            <p class="text-tg-textSecondary text-xs mt-1" data-i18n="maintenance.ai.search.index_cta_hint">Builds a small embedding per photo so you can search by what's in the picture.</p>
+                            <button id="ai-search-cta-btn" type="button" class="tg-btn-primary mt-3 text-xs px-3 py-1.5"
+                                    data-i18n="maintenance.ai.search.index_cta_btn">Run an index scan</button>
+                        </div>
                     </section>
 
                     <!-- Card 2: People -->

@@ -220,6 +220,11 @@ function onCancelling(m) {
 // Card A — Active jobs
 // ────────────────────────────────────────────────────────────────────
 
+// Active-jobs render. Patch existing rows in place when possible (counters
+// + progress bar + state badge) — full re-render kicks in only when a row
+// is added or removed. A single delegated listener on the list root handles
+// cancel + open-chat clicks so we don't rebind on every tick.
+let _activeListWired = false;
 function renderActive() {
     const list = document.getElementById('backfill-active-list');
     const empty = document.getElementById('backfill-active-empty');
@@ -236,19 +241,78 @@ function renderActive() {
     }
     empty?.classList.add('hidden');
 
-    list.innerHTML = jobs.map(job => renderActiveRow(job)).join('');
-
-    // Wire cancel buttons.
-    list.querySelectorAll('[data-cancel-job]').forEach(btn => {
-        btn.addEventListener('click', () => cancelJob(btn.dataset.cancelJob));
-    });
-    // Wire "go to chat" links.
-    list.querySelectorAll('[data-open-chat]').forEach(el => {
-        el.addEventListener('click', (e) => {
-            e.preventDefault();
-            location.hash = `#/viewer/${encodeURIComponent(el.dataset.openChat)}`;
+    // Wire delegation once — survives subsequent renders.
+    if (!_activeListWired) {
+        _activeListWired = true;
+        list.addEventListener('click', (e) => {
+            const cancelBtn = e.target.closest('[data-cancel-job]');
+            if (cancelBtn) {
+                cancelJob(cancelBtn.dataset.cancelJob);
+                return;
+            }
+            const openChat = e.target.closest('[data-open-chat]');
+            if (openChat) {
+                e.preventDefault();
+                location.hash = `#/viewer/${encodeURIComponent(openChat.dataset.openChat)}`;
+            }
         });
-    });
+    }
+
+    // Walk the desired job order. Re-use existing row DOM nodes whose
+    // job-id matches; patch the bytes that change (processed counter,
+    // downloaded counter, elapsed, progress bar). Add/remove only the
+    // rows that need it.
+    const have = new Map();
+    for (const node of Array.from(list.children)) {
+        const id = node.dataset.jobRow;
+        if (id) have.set(id, node);
+    }
+    const want = new Set();
+    let prevSibling = null;
+    for (const job of jobs) {
+        const id = String(job.id);
+        want.add(id);
+        const existing = have.get(id);
+        // Re-render the row when state shifts (running → done flash, etc.) —
+        // the action buttons + colour change require a fresh DOM. While
+        // simply running, patch in place.
+        if (existing && !existing.dataset.flash && !job._flash && job.state === 'running') {
+            _patchActiveRow(existing, job);
+        } else {
+            const fresh = document.createElement('div');
+            fresh.innerHTML = renderActiveRow(job).trim();
+            const row = fresh.firstElementChild;
+            if (existing) existing.replaceWith(row);
+            else if (prevSibling) prevSibling.after(row);
+            else list.prepend(row);
+            prevSibling = row;
+            continue;
+        }
+        prevSibling = existing;
+    }
+    // Remove rows whose job is gone.
+    for (const [id, node] of have) {
+        if (!want.has(id)) node.remove();
+    }
+}
+
+function _patchActiveRow(node, job) {
+    const processed = job.processed || 0;
+    const downloaded = job.downloaded || 0;
+    const elapsed = formatElapsed(Date.now() - (job.startedAt || Date.now()));
+    const procEl = node.querySelector('[data-row-processed]');
+    if (procEl) procEl.textContent = i18nTf('backfill.row.processed', { n: processed }, `${processed} processed`);
+    const dlEl = node.querySelector('[data-row-downloaded]');
+    if (dlEl) dlEl.textContent = i18nTf('backfill.row.downloaded', { n: downloaded }, `${downloaded} downloaded`);
+    const elEl = node.querySelector('[data-elapsed]');
+    if (elEl) elEl.dataset.elapsed = job.startedAt || '';
+    const elText = node.querySelector('[data-elapsed-text]');
+    if (elText) elText.textContent = i18nTf('backfill.row.elapsed', { t: elapsed }, `elapsed ${elapsed}`);
+    const bar = node.querySelector('[data-row-bar]');
+    if (bar && job.limit && job.limit > 0) {
+        const pct = Math.min(100, Math.round((processed / job.limit) * 100));
+        bar.style.width = pct + '%';
+    }
 }
 
 function renderActiveRow(job) {
@@ -282,14 +346,15 @@ function renderActiveRow(job) {
     const showCancel = job.state === 'running' && !job._flash;
     const progressBar = pct !== null
         ? `<div class="mt-2 h-1.5 bg-tg-bg/60 rounded-full overflow-hidden">
-              <div class="h-full bg-tg-blue transition-all" style="width: ${pct}%"></div>
+              <div data-row-bar class="h-full bg-tg-blue transition-all" style="width: ${pct}%"></div>
            </div>`
         : `<div class="mt-2 h-1.5 bg-tg-bg/60 rounded-full overflow-hidden">
-              <div class="h-full bg-tg-blue/60 animate-pulse" style="width: 30%"></div>
+              <div data-row-bar class="h-full bg-tg-blue/60 animate-pulse" style="width: 30%"></div>
            </div>`;
+    const flashAttr = job._flash ? `data-flash="${escapeHtml(job._flash)}"` : '';
 
     return `
-        <div class="rounded-lg border border-tg-border/40 ${flashClass} p-3 transition-colors" data-job-row="${escapeHtml(id)}">
+        <div class="rounded-lg border border-tg-border/40 ${flashClass} p-3 transition-colors" data-job-row="${escapeHtml(id)}" ${flashAttr}>
             <div class="flex items-start gap-2">
                 <div class="min-w-0 flex-1">
                     <a href="#/viewer/${encodeURIComponent(String(job.groupId || ''))}"
@@ -298,17 +363,17 @@ function renderActiveRow(job) {
                         ${escapeHtml(groupName)}
                     </a>
                     <div class="text-xs text-tg-textSecondary mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5">
-                        <span><i class="ri-target-line"></i> ${escapeHtml(target)}</span>
-                        <span><i class="ri-file-list-line"></i> ${escapeHtml(i18nTf('backfill.row.processed', { n: processed }, `${processed} processed`))}</span>
-                        <span><i class="ri-download-line"></i> ${escapeHtml(i18nTf('backfill.row.downloaded', { n: downloaded }, `${downloaded} downloaded`))}</span>
-                        <span data-elapsed="${job.startedAt || ''}"><i class="ri-time-line"></i> ${escapeHtml(i18nTf('backfill.row.elapsed', { t: elapsed }, `elapsed ${elapsed}`))}</span>
+                        <span class="inline-flex items-center gap-1"><i class="ri-target-line"></i> ${escapeHtml(target)}</span>
+                        <span class="inline-flex items-center gap-1"><i class="ri-file-list-line"></i> <span data-row-processed>${escapeHtml(i18nTf('backfill.row.processed', { n: processed }, `${processed} processed`))}</span></span>
+                        <span class="inline-flex items-center gap-1"><i class="ri-download-line"></i> <span data-row-downloaded>${escapeHtml(i18nTf('backfill.row.downloaded', { n: downloaded }, `${downloaded} downloaded`))}</span></span>
+                        <span class="inline-flex items-center gap-1" data-elapsed="${job.startedAt || ''}"><i class="ri-time-line"></i><span data-elapsed-text>${escapeHtml(i18nTf('backfill.row.elapsed', { t: elapsed }, `elapsed ${elapsed}`))}</span></span>
                         ${stateBadge}
                     </div>
                 </div>
                 ${showCancel ? `
                     <button type="button" data-cancel-job="${escapeHtml(id)}"
-                        class="text-xs px-2.5 py-1 rounded-md border border-tg-border text-tg-textSecondary hover:text-red-400 hover:border-red-400 transition-colors flex-shrink-0">
-                        <i class="ri-stop-circle-line mr-1"></i>${escapeHtml(i18nT('backfill.row.cancel', 'Cancel'))}
+                        class="text-xs px-2.5 py-1 rounded-md border border-tg-border text-tg-textSecondary hover:text-red-400 hover:border-red-400 transition-colors flex-shrink-0 inline-flex items-center gap-1">
+                        <i class="ri-stop-circle-line"></i>${escapeHtml(i18nT('backfill.row.cancel', 'Cancel'))}
                     </button>` : ''}
             </div>
             ${progressBar}
@@ -680,17 +745,19 @@ async function deleteRecent(jobId, btn) {
 }
 
 async function clearAllRecent() {
-    const ok = await (async () => {
-        try {
-            const sheet = await import('./sheet.js');
-            return await sheet.confirmSheet({
-                title: i18nT('backfill.recent.clear_title', 'Clear all recent backfills?'),
-                body: i18nT('backfill.recent.clear_body', 'This removes every entry from the Recent backfills list. Running jobs are preserved. Files already downloaded are not affected.'),
-                confirmText: i18nT('backfill.recent.clear_confirm', 'Clear all'),
-                destructive: true,
-            });
-        } catch { return window.confirm('Clear all recent backfills?'); }
-    })();
+    // Themed sheet only — no native confirm() fallback. If the sheet
+    // module fails to load (very rare; its bundle ships inline) the
+    // operator can re-trigger after the next refresh.
+    let ok = false;
+    try {
+        const sheet = await import('./sheet.js');
+        ok = await sheet.confirmSheet({
+            title: i18nT('backfill.recent.clear_title', 'Clear all recent backfills?'),
+            body: i18nT('backfill.recent.clear_body', 'This removes every entry from the Recent backfills list. Running jobs are preserved. Files already downloaded are not affected.'),
+            confirmText: i18nT('backfill.recent.clear_confirm', 'Clear all'),
+            destructive: true,
+        });
+    } catch { ok = false; }
     if (!ok) return;
     try {
         await api.delete('/api/history');
@@ -741,7 +808,9 @@ function startElapsedTimer() {
             if (!Number.isFinite(startedAt) || !startedAt) return;
             const t = formatElapsed(Date.now() - startedAt);
             const label = i18nTf('backfill.row.elapsed', { t }, `elapsed ${t}`);
-            el.innerHTML = `<i class="ri-time-line"></i> ${escapeHtml(label)}`;
+            // Only the text node updates — icon stays in its own <i>.
+            const textEl = el.querySelector('[data-elapsed-text]');
+            if (textEl) textEl.textContent = label;
         });
     }, 1000);
 }

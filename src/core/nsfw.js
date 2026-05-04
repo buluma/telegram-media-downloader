@@ -31,14 +31,38 @@ const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
 // Public defaults. Live values are pulled from `config.advanced.nsfw`
 // at every entry point so a `config_updated` save takes effect on the
 // next scan without a restart.
+//
+// `dtype` controls which ONNX variant transformers.js downloads:
+//   q8  → onnx/model_quantized.onnx  (~85 MB, default — int8 quantized)
+//   fp16→ onnx/model_fp16.onnx       (~165 MB, half precision)
+//   fp32→ onnx/model.onnx            (~330 MB, full precision)
+// q8 is the default because (a) every well-maintained classifier on
+// HuggingFace ships a quantized variant, while the unquantized model.onnx
+// is sometimes missing or behind LFS-CDN issues; (b) the accuracy hit on
+// a binary safe/unsafe classifier is negligible; (c) the smaller download
+// is friendlier to first-run installs on metered connections.
 export const NSFW_DEFAULTS = Object.freeze({
     model: 'Falconsai/nsfw_image_detection',
+    dtype: 'q8',
     threshold: 0.6,
     concurrency: 1,
     fileTypes: ['photo'],
     cacheDir: 'data/models',
     batchSize: 50,
 });
+
+// Suggestions surfaced as a `<datalist>` in the UI — operators can pick
+// or just type any HuggingFace `owner/model` id. Not a closed enum: any
+// model that exposes the transformers.js `image-classification` pipeline
+// will work, and the dtype-fallback chain in `_loadClassifier` smooths
+// over models that ship only a subset of ONNX variants.
+export const NSFW_MODEL_SUGGESTIONS = Object.freeze([
+    'Falconsai/nsfw_image_detection',
+    'AdamCodd/vit-base-nsfw-detector',
+    'Marqo/nsfw-image-detection-384',
+]);
+
+const VALID_DTYPES = new Set(['q8', 'fp16', 'fp32', 'q4']);
 
 // Lazy classifier singleton. The transformers module is heavy
 // (~10 MB of JS + WASM glue) so we only require() it when the operator
@@ -55,19 +79,23 @@ function _resolveCacheDirAbs(cacheDirCfg) {
 async function _loadClassifier(cfg, onProgress, onLog) {
     const _log = (level, msg) => { try { if (typeof onLog === 'function') onLog({ source: 'nsfw', level, msg }); } catch {} };
     const modelId = cfg.model || NSFW_DEFAULTS.model;
-    if (_pipelinePromise && _activeModelId === modelId) {
-        _log('info', `model already loaded — reusing pipeline for ${modelId}`);
+    const dtypeWanted = VALID_DTYPES.has(String(cfg.dtype || '').toLowerCase())
+        ? String(cfg.dtype).toLowerCase()
+        : NSFW_DEFAULTS.dtype;
+    const cacheKey = `${modelId}::${dtypeWanted}`;
+    if (_pipelinePromise && _activeModelId === cacheKey) {
+        _log('info', `model already loaded — reusing pipeline for ${modelId} (${dtypeWanted})`);
         return _pipelinePromise;
     }
 
-    _activeModelId = modelId;
+    _activeModelId = cacheKey;
     _pipelinePromise = (async () => {
         const cacheDirAbs = _resolveCacheDirAbs(cfg.cacheDir);
         if (!existsSync(cacheDirAbs)) {
             await fs.mkdir(cacheDirAbs, { recursive: true });
             _log('info', `created model cache dir at ${cacheDirAbs}`);
         }
-        _log('info', `loading classifier — model=${modelId} cacheDir=${cacheDirAbs}`);
+        _log('info', `loading classifier — model=${modelId} dtype=${dtypeWanted} cacheDir=${cacheDirAbs}`);
 
         // Dynamic import keeps a fresh install from paying the WASM-load
         // cost on every boot. Wrapped in try/catch so a missing or
@@ -103,13 +131,37 @@ async function _loadClassifier(cfg, onProgress, onLog) {
             }
         } catch {}
 
-        return pipeline('image-classification', modelId, {
-            progress_callback: (p) => {
-                try {
-                    if (typeof onProgress === 'function') onProgress(p);
-                } catch { /* swallow — UI hint, not load-critical */ }
-            },
-        });
+        // Try the requested dtype first. If the model doesn't ship that
+        // variant on the HF CDN (the unquantized model.onnx is the most
+        // common offender), fall back through the chain so the operator
+        // doesn't have to know which precision a given model bundles.
+        const fallbackOrder = [dtypeWanted, ...['q8', 'fp16', 'fp32', 'q4'].filter(d => d !== dtypeWanted)];
+        let lastErr = null;
+        for (const dtype of fallbackOrder) {
+            try {
+                const cls = await pipeline('image-classification', modelId, {
+                    dtype,
+                    progress_callback: (p) => {
+                        try {
+                            if (typeof onProgress === 'function') onProgress(p);
+                        } catch { /* swallow — UI hint, not load-critical */ }
+                    },
+                });
+                if (dtype !== dtypeWanted) {
+                    _log('warn', `${dtypeWanted} variant unavailable for ${modelId} — fell back to ${dtype}`);
+                }
+                return cls;
+            } catch (e) {
+                lastErr = e;
+                const msg = String(e?.message || e);
+                // Only fall through on "file not found" style errors.
+                // Other failures (auth, permissions, OOM) shouldn't trigger
+                // a brute-force cycle through every variant.
+                if (!/locate file|ENOENT|HTTP error|404|not found/i.test(msg)) throw e;
+                _log('warn', `dtype=${dtype} unavailable: ${msg}`);
+            }
+        }
+        throw lastErr || new Error(`No usable ONNX variant found for ${modelId}`);
     })().catch((e) => {
         // Reset the cached promise so the next call retries instead of
         // returning the rejected promise forever.
@@ -448,10 +500,112 @@ export async function disposeClassifier() {
     _activeModelId = null;
 }
 
-// Stat helper for the Maintenance UI's "model ready?" indicator.
+// Last-known load state. Updated by the progress callback inside
+// _loadClassifier wrappers — the UI polls this so it can render a
+// progress bar even between WS messages.
+let _loadState = {
+    state: 'idle',          // 'idle' | 'loading' | 'ready' | 'error'
+    model: null,
+    dtype: null,
+    progress: null,         // { file, loaded, total, progress }
+    error: null,
+    startedAt: null,
+    finishedAt: null,
+};
+
 export function classifierReady() {
-    // Return a snapshot of the load state without forcing a load.
-    return { ready: !!_pipelinePromise, model: _activeModelId };
+    return {
+        ..._loadState,
+        ready: _loadState.state === 'ready',
+    };
+}
+
+/**
+ * Pre-fetch the classifier without starting a scan. Returns immediately;
+ * the actual download runs in the background and emits progress through
+ * `onProgress` and `onLog` (server.js wires both into the realtime log
+ * channel + the `nsfw_model_downloading` WS event).
+ *
+ *   { started: true }            — preload kicked off (or already ready)
+ *   { alreadyLoading: true }     — a previous preload/scan is mid-download
+ */
+export async function preloadClassifier(cfg, onProgress, onLog) {
+    const _log = (level, msg) => { try { if (typeof onLog === 'function') onLog({ source: 'nsfw', level, msg }); } catch {} };
+    const modelId = cfg.model || NSFW_DEFAULTS.model;
+    const dtype = VALID_DTYPES.has(String(cfg.dtype || '').toLowerCase())
+        ? String(cfg.dtype).toLowerCase()
+        : NSFW_DEFAULTS.dtype;
+    if (_loadState.state === 'loading' && _loadState.model === modelId && _loadState.dtype === dtype) {
+        _log('info', `preload skipped — already loading ${modelId} (${dtype})`);
+        return { alreadyLoading: true };
+    }
+    if (_loadState.state === 'ready' && _activeModelId === `${modelId}::${dtype}`) {
+        _log('info', `preload skipped — ${modelId} (${dtype}) already loaded`);
+        return { started: true, alreadyReady: true };
+    }
+    _loadState = {
+        state: 'loading',
+        model: modelId,
+        dtype,
+        progress: null,
+        error: null,
+        startedAt: Date.now(),
+        finishedAt: null,
+    };
+    _log('info', `preload starting — ${modelId} (${dtype})`);
+    // Fire-and-forget — caller doesn't await the actual download.
+    (async () => {
+        try {
+            await _loadClassifier({ ...cfg, model: modelId, dtype }, (p) => {
+                try {
+                    _loadState.progress = p;
+                    if (typeof onProgress === 'function') onProgress(p);
+                } catch {}
+            }, onLog);
+            _loadState.state = 'ready';
+            _loadState.finishedAt = Date.now();
+            _log('info', `preload complete — ${modelId} (${dtype}) ready`);
+        } catch (e) {
+            _loadState.state = 'error';
+            _loadState.error = e?.message || String(e);
+            _loadState.finishedAt = Date.now();
+            _log('error', `preload failed: ${_loadState.error}`);
+        }
+    })();
+    return { started: true };
+}
+
+/**
+ * Wipe the on-disk model cache + drop any in-process pipeline so the next
+ * load re-downloads a clean copy. Returns the bytes freed so the UI can
+ * show a confirmation toast.
+ */
+export async function clearClassifierCache(cfg) {
+    await disposeClassifier();
+    _loadState = { state: 'idle', model: null, dtype: null, progress: null, error: null, startedAt: null, finishedAt: null };
+    const cacheDirAbs = _resolveCacheDirAbs(cfg.cacheDir);
+    if (!existsSync(cacheDirAbs)) return { bytes: 0, files: 0 };
+    let bytes = 0;
+    let files = 0;
+    const walk = async (dir) => {
+        let entries;
+        try { entries = await fs.readdir(dir, { withFileTypes: true }); }
+        catch { return; }
+        for (const entry of entries) {
+            const p = path.join(dir, entry.name);
+            if (entry.isDirectory()) { await walk(p); continue; }
+            try {
+                const st = await fs.stat(p);
+                bytes += st.size;
+                files += 1;
+                await fs.unlink(p);
+            } catch { /* best-effort per file */ }
+        }
+        try { await fs.rmdir(dir); } catch { /* parent walk drains the rest */ }
+    };
+    await walk(cacheDirAbs);
+    try { await fs.mkdir(cacheDirAbs, { recursive: true }); } catch {}
+    return { bytes, files };
 }
 
 // Make the DB getter accessible to callers that just want the stats

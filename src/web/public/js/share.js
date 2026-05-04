@@ -91,12 +91,27 @@ function _renderRow(link, { showFile = false } = {}) {
     // as expired immediately (since 0 < Date.now()).
     const isExpired = link.expiresAt !== 0 && (link.expiresAt * 1000) <= Date.now();
     const inactive = !!link.revokedAt || isExpired;
-    const rowCls = inactive ? 'opacity-60' : '';
+    // Visual status pill — three discrete states (active / expired /
+    // revoked). Each gets its own colour so the eye picks out which links
+    // still work without parsing the expiry timestamp.
+    const stateInfo = link.revokedAt
+        ? { cls: 'bg-red-500/15 text-red-400 border-red-500/30',
+            iconCls: 'ri-close-circle-line',
+            labelKey: 'share.state.revoked', labelFb: 'Revoked' }
+        : isExpired
+        ? { cls: 'bg-tg-textSecondary/15 text-tg-textSecondary border-tg-border',
+            iconCls: 'ri-time-line',
+            labelKey: 'share.state.expired', labelFb: 'Expired' }
+        : { cls: 'bg-tg-green/15 text-tg-green border-tg-green/30',
+            iconCls: 'ri-shield-check-line',
+            labelKey: 'share.state.active', labelFb: 'Active' };
+    const statePill = `<span class="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full border ${stateInfo.cls}"><i class="${stateInfo.iconCls}"></i>${escapeHtml(i18nT(stateInfo.labelKey, stateInfo.labelFb))}</span>`;
     const labelHtml = link.label
-        ? `<span class="text-xs px-1.5 py-0.5 rounded bg-tg-bg/60 text-tg-textSecondary">${escapeHtml(link.label)}</span>`
+        ? `<span class="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-tg-bg/60 text-tg-textSecondary"><i class="ri-price-tag-3-line"></i>${escapeHtml(link.label)}</span>`
         : '';
     const fileLine = showFile
-        ? `<div class="text-xs text-tg-textSecondary truncate">${escapeHtml(link.fileName || '')} · ${escapeHtml(link.groupName || link.groupId || '')}</div>`
+        ? `<div class="text-sm text-tg-text font-medium truncate" title="${escapeHtml(link.fileName || '')}">${escapeHtml(link.fileName || '(unnamed)')}</div>
+           <div class="text-[11px] text-tg-textSecondary truncate flex items-center gap-1"><i class="ri-folder-3-line"></i>${escapeHtml(link.groupName || link.groupId || '—')}</div>`
         : '';
     const accesses = link.accessCount > 0
         ? i18nTf('share.access_count', { n: link.accessCount }, `${link.accessCount} opens`)
@@ -104,35 +119,39 @@ function _renderRow(link, { showFile = false } = {}) {
     const lastOpened = link.lastAccessedAt
         ? i18nTf('share.last_opened', { when: _relTime(link.lastAccessedAt) }, `last ${_relTime(link.lastAccessedAt)}`)
         : '';
+    const expiryStr = inactive ? '' : _expiryHint(link.expiresAt, link.revokedAt);
     const revokeBtn = inactive
-        ? `<button class="text-xs px-2 py-1 rounded-md border border-tg-border text-tg-textSecondary opacity-50" disabled>
+        ? `<button class="inline-flex items-center justify-center w-7 h-7 rounded-md border border-tg-border/50 text-tg-textSecondary opacity-40 cursor-not-allowed" disabled aria-label="${escapeHtml(i18nT('share.revoke', 'Revoke'))}">
               <i class="ri-eraser-line"></i>
            </button>`
-        : `<button data-revoke="${link.id}" class="text-xs px-2 py-1 rounded-md border border-tg-border text-tg-textSecondary hover:text-red-400 hover:border-red-400/60 transition-colors"
+        : `<button data-revoke="${link.id}" class="inline-flex items-center justify-center w-7 h-7 rounded-md border border-tg-border text-tg-textSecondary hover:text-red-400 hover:border-red-400/60 hover:bg-red-500/5 transition-colors"
                    title="${escapeHtml(i18nT('share.revoke', 'Revoke'))}" aria-label="${escapeHtml(i18nT('share.revoke', 'Revoke'))}">
               <i class="ri-eraser-line"></i>
            </button>`;
     return `
-        <div class="bg-tg-bg/40 rounded-lg p-2 border border-tg-border/40 ${rowCls}" data-share-row="${link.id}">
-            <div class="flex items-start gap-2">
+        <div class="bg-tg-panel/60 hover:bg-tg-panel rounded-lg p-3 border border-tg-border/40 ${inactive ? 'opacity-70' : ''} transition-colors" data-share-row="${link.id}">
+            <div class="flex items-start gap-3 mb-2">
                 <div class="min-w-0 flex-1">
                     ${fileLine}
-                    <div class="text-xs text-tg-textSecondary flex flex-wrap gap-x-2 gap-y-0.5 items-center">
+                    <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
+                        ${statePill}
                         ${labelHtml}
-                        <span>${_expiryHint(link.expiresAt, link.revokedAt)}</span>
-                        <span>·</span>
-                        <span>${escapeHtml(accesses)}</span>
-                        ${lastOpened ? `<span>·</span><span>${escapeHtml(lastOpened)}</span>` : ''}
-                    </div>
-                    <div class="mt-1.5 flex gap-1">
-                        <input type="text" readonly class="tg-input text-xs flex-1 min-w-0 font-mono" value="${escapeHtml(link.url)}" data-url="${link.id}">
-                        <button data-copy="${link.id}" class="text-xs px-2 py-1 rounded-md border border-tg-border text-tg-textSecondary hover:text-tg-blue hover:border-tg-blue transition-colors flex-shrink-0"
-                                title="${escapeHtml(i18nT('share.copy', 'Copy link'))}">
-                            <i class="ri-clipboard-line"></i>
-                        </button>
-                        ${revokeBtn}
+                        ${expiryStr ? `<span class="text-[11px] text-tg-textSecondary inline-flex items-center gap-1"><i class="ri-time-line"></i>${expiryStr}</span>` : ''}
+                        <span class="text-[11px] text-tg-textSecondary inline-flex items-center gap-1" title="${escapeHtml(lastOpened)}"><i class="ri-eye-line"></i>${escapeHtml(accesses)}</span>
                     </div>
                 </div>
+            </div>
+            <div class="flex items-center gap-1.5">
+                <input type="text" readonly class="tg-input text-[11px] flex-1 min-w-0 font-mono py-1 px-2" value="${escapeHtml(link.url)}" data-url="${link.id}" onfocus="this.select()" onclick="this.select()">
+                <button data-copy="${link.id}" class="inline-flex items-center justify-center w-7 h-7 rounded-md border border-tg-border text-tg-textSecondary hover:text-tg-blue hover:border-tg-blue/60 hover:bg-tg-blue/5 transition-colors flex-shrink-0"
+                        title="${escapeHtml(i18nT('share.copy', 'Copy link'))}" aria-label="${escapeHtml(i18nT('share.copy', 'Copy link'))}">
+                    <i class="ri-clipboard-line"></i>
+                </button>
+                <a href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center justify-center w-7 h-7 rounded-md border border-tg-border text-tg-textSecondary hover:text-tg-blue hover:border-tg-blue/60 hover:bg-tg-blue/5 transition-colors flex-shrink-0"
+                   title="${escapeHtml(i18nT('share.open', 'Open in new tab'))}" aria-label="${escapeHtml(i18nT('share.open', 'Open in new tab'))}">
+                    <i class="ri-external-link-line"></i>
+                </a>
+                ${revokeBtn}
             </div>
         </div>`;
 }
@@ -279,26 +298,102 @@ export async function openAllSharesSheet() {
         return;
     }
 
-    const summary = i18nTf('share.maint.summary',
-        { total: links.length },
-        `${links.length} share link(s) issued.`);
+    // Tally each link into one of four buckets so the stats strip + the
+    // filter chip counts stay in lockstep.
+    const tally = () => {
+        const now = Date.now();
+        let active = 0, expired = 0, revoked = 0;
+        for (const l of links) {
+            if (l.revokedAt) revoked += 1;
+            else if (l.expiresAt !== 0 && l.expiresAt * 1000 <= now) expired += 1;
+            else active += 1;
+        }
+        return { total: links.length, active, expired, revoked };
+    };
 
     const renderList = (filtered) => filtered.length
         ? filtered.map(l => _renderRow(l, { showFile: true })).join('')
-        : `<div class="text-xs text-tg-textSecondary text-center py-3" data-i18n="share.no_links">No share links yet.</div>`;
+        : `<div class="py-10 text-center">
+              <i class="ri-link-unlink-m text-4xl text-tg-textSecondary/40"></i>
+              <div class="text-sm text-tg-textSecondary mt-2" data-i18n="share.maint.empty_filter">No links match the current filter.</div>
+           </div>`;
+
+    const renderStats = (t) => `
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+            <div class="bg-tg-bg/40 rounded-lg p-2.5 text-center">
+                <div class="text-[10px] uppercase text-tg-textSecondary tracking-wide" data-i18n="share.maint.stat.total">Total</div>
+                <div class="text-lg font-semibold text-tg-text tabular-nums">${t.total}</div>
+            </div>
+            <div class="bg-tg-green/10 border border-tg-green/30 rounded-lg p-2.5 text-center">
+                <div class="text-[10px] uppercase text-tg-green/80 tracking-wide" data-i18n="share.maint.stat.active">Active</div>
+                <div class="text-lg font-semibold text-tg-green tabular-nums">${t.active}</div>
+            </div>
+            <div class="bg-tg-bg/40 rounded-lg p-2.5 text-center">
+                <div class="text-[10px] uppercase text-tg-textSecondary tracking-wide" data-i18n="share.maint.stat.expired">Expired</div>
+                <div class="text-lg font-semibold text-tg-textSecondary tabular-nums">${t.expired}</div>
+            </div>
+            <div class="bg-red-500/10 border border-red-500/30 rounded-lg p-2.5 text-center">
+                <div class="text-[10px] uppercase text-red-400/80 tracking-wide" data-i18n="share.maint.stat.revoked">Revoked</div>
+                <div class="text-lg font-semibold text-red-400 tabular-nums">${t.revoked}</div>
+            </div>
+        </div>`;
+
+    const renderFilterChips = (active, t) => {
+        const chip = (id, labelKey, labelFb, n, accentCls) => {
+            const isOn = active === id;
+            const baseCls = 'inline-flex items-center gap-1.5 px-3 h-7 rounded-full text-xs font-medium transition-colors border cursor-pointer';
+            const onCls = isOn ? accentCls : 'border-tg-border text-tg-textSecondary hover:text-tg-text hover:bg-tg-hover';
+            return `<button type="button" data-share-filter="${id}" class="${baseCls} ${onCls}" aria-pressed="${isOn}">
+                <span data-i18n="${labelKey}">${escapeHtml(labelFb)}</span>
+                <span class="text-[10px] tabular-nums opacity-80">${n}</span>
+            </button>`;
+        };
+        return `
+            <div class="flex flex-wrap items-center gap-1.5">
+                ${chip('all',     'share.maint.filter.all',     'All',     t.total,   'bg-tg-blue/15 text-tg-blue border-tg-blue/40')}
+                ${chip('active',  'share.maint.filter.active',  'Active',  t.active,  'bg-tg-green/15 text-tg-green border-tg-green/40')}
+                ${chip('expired', 'share.maint.filter.expired', 'Expired', t.expired, 'bg-tg-textSecondary/15 text-tg-text border-tg-border')}
+                ${chip('revoked', 'share.maint.filter.revoked', 'Revoked', t.revoked, 'bg-red-500/15 text-red-400 border-red-500/40')}
+            </div>`;
+    };
+
+    let activeFilter = 'active';
+    const t0 = tally();
 
     const html = `
-        <div class="text-xs text-tg-textSecondary mb-2">${escapeHtml(summary)}</div>
-        <div class="flex items-center gap-2 mb-3">
-            <input id="share-maint-search" type="text" class="tg-input text-sm flex-1"
-                   data-i18n-placeholder="share.maint.search_placeholder" placeholder="Search filename, group, or note…">
-            <label class="text-xs text-tg-textSecondary inline-flex items-center gap-1">
-                <input type="checkbox" id="share-maint-active-only" checked>
-                <span data-i18n="share.maint.active_only">Active only</span>
-            </label>
-        </div>
-        <div id="share-maint-list" class="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
-            ${renderList(links.filter(l => !l.revokedAt && (l.expiresAt === 0 || l.expiresAt * 1000 > Date.now())))}
+        <div class="share-maint-wrap">
+            <!-- Hero strip: brief description so the operator doesn't have
+                 to read it on the settings page first; contains the same
+                 wording as the settings card help text. -->
+            <div class="share-maint-hero">
+                <i class="ri-share-forward-2-line share-maint-hero-icon" aria-hidden="true"></i>
+                <p class="text-[11px] text-tg-textSecondary leading-relaxed" data-i18n="maintenance.shares.help">View, search, and revoke every shareable media link issued from this dashboard.</p>
+            </div>
+
+            <div id="share-maint-stats">${renderStats(t0)}</div>
+
+            <!-- Sticky toolbar so the operator can keep filtering while
+                 scrolling a long list. The sheet body itself scrolls; we
+                 sticky-position the toolbar to its top. -->
+            <div class="share-maint-toolbar">
+                <div class="flex items-center gap-2 flex-wrap">
+                    <div class="relative flex-1 min-w-[180px]">
+                        <i class="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-tg-textSecondary text-sm" aria-hidden="true"></i>
+                        <input id="share-maint-search" type="text" class="tg-input text-sm w-full pl-9"
+                               data-i18n-placeholder="share.maint.search_placeholder" placeholder="Search filename, group, or note…">
+                    </div>
+                    <button id="share-maint-revoke-expired" type="button"
+                            class="text-xs px-3 h-9 rounded-md border border-tg-border text-tg-textSecondary hover:text-red-400 hover:border-red-400/60 hover:bg-red-500/5 transition-colors inline-flex items-center gap-1.5 ${t0.expired === 0 ? 'opacity-50 cursor-not-allowed' : ''}"
+                            ${t0.expired === 0 ? 'disabled' : ''}
+                            title="${escapeHtml(i18nT('share.maint.cleanup_help', 'Revoke every link that already expired — keeps the list tidy.'))}">
+                        <i class="ri-broom-line" aria-hidden="true"></i>
+                        <span data-i18n="share.maint.cleanup">Cleanup expired</span>
+                    </button>
+                </div>
+                <div id="share-maint-filters" class="mt-2">${renderFilterChips(activeFilter, t0)}</div>
+            </div>
+
+            <div id="share-maint-list" class="space-y-2 mt-3"></div>
         </div>`;
 
     const sheet = openSheet({
@@ -311,19 +406,28 @@ export async function openAllSharesSheet() {
 
     const list = root.querySelector('#share-maint-list');
     const searchEl = root.querySelector('#share-maint-search');
-    const activeOnly = root.querySelector('#share-maint-active-only');
+    const filtersEl = root.querySelector('#share-maint-filters');
+    const statsEl = root.querySelector('#share-maint-stats');
+    const cleanupBtn = root.querySelector('#share-maint-revoke-expired');
 
     const apply = () => {
         const q = (searchEl?.value || '').trim().toLowerCase();
-        const onlyActive = !!activeOnly?.checked;
         const now = Date.now();
+        const t = tally();
+        if (statsEl) statsEl.innerHTML = renderStats(t);
+        if (filtersEl) filtersEl.innerHTML = renderFilterChips(activeFilter, t);
+        if (cleanupBtn) {
+            const has = t.expired > 0;
+            cleanupBtn.classList.toggle('opacity-50', !has);
+            cleanupBtn.classList.toggle('cursor-not-allowed', !has);
+            cleanupBtn.disabled = !has;
+        }
         const filtered = links.filter(l => {
-            if (onlyActive) {
-                // Same "never expires" exception as _renderRow — a row
-                // with expiresAt=0 is active until explicitly revoked.
-                const expired = l.expiresAt !== 0 && l.expiresAt * 1000 <= now;
-                if (l.revokedAt || expired) return false;
-            }
+            const isRevoked = !!l.revokedAt;
+            const isExpired = !isRevoked && l.expiresAt !== 0 && l.expiresAt * 1000 <= now;
+            if (activeFilter === 'active'  && (isRevoked || isExpired)) return false;
+            if (activeFilter === 'expired' && !isExpired)               return false;
+            if (activeFilter === 'revoked' && !isRevoked)               return false;
             if (!q) return true;
             return [l.fileName, l.groupName, l.label].filter(Boolean)
                 .some(s => String(s).toLowerCase().includes(q));
@@ -338,5 +442,46 @@ export async function openAllSharesSheet() {
     };
     apply();
     searchEl?.addEventListener('input', apply);
-    activeOnly?.addEventListener('change', apply);
+    // Filter chip clicks — delegated from the wrapper so re-rendering on
+    // tally change doesn't drop bindings.
+    filtersEl?.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-share-filter]');
+        if (!btn) return;
+        activeFilter = btn.dataset.shareFilter;
+        apply();
+    });
+    // Cleanup expired — bulk-revoke every link whose expiry passed. Each
+    // call hits its own DELETE so individual failures don't poison the
+    // whole batch (network blip / row already revoked from another tab).
+    cleanupBtn?.addEventListener('click', async () => {
+        const now = Date.now();
+        const expired = links.filter(l => !l.revokedAt && l.expiresAt !== 0 && l.expiresAt * 1000 <= now);
+        if (!expired.length) return;
+        const ok = await import('./sheet.js').then(m => m.confirmSheet({
+            title: i18nT('share.maint.cleanup_confirm_title', 'Revoke all expired links?'),
+            message: i18nTf('share.maint.cleanup_confirm_body',
+                { n: expired.length },
+                `Permanently revoke ${expired.length} expired link(s)? Anyone holding them already can't open the file — this just removes them from the list.`),
+            confirmLabel: i18nT('share.maint.cleanup', 'Cleanup expired'),
+            danger: true,
+        }));
+        if (!ok) return;
+        cleanupBtn.disabled = true;
+        const orig = cleanupBtn.innerHTML;
+        cleanupBtn.innerHTML = `<i class="ri-loader-4-line animate-spin"></i><span>${escapeHtml(i18nT('common.loading', 'Loading…'))}</span>`;
+        let cleaned = 0;
+        for (const l of expired) {
+            try {
+                await api.delete(`/api/share/links/${encodeURIComponent(l.id)}`);
+                links = links.map(x => String(x.id) === String(l.id) ? { ...x, revokedAt: Date.now() } : x);
+                cleaned += 1;
+            } catch { /* keep going; partial cleanup still useful */ }
+        }
+        cleanupBtn.innerHTML = orig;
+        showToast(i18nTf('share.maint.cleanup_done',
+            { n: cleaned },
+            `Revoked ${cleaned} expired link(s).`),
+            cleaned > 0 ? 'success' : 'info');
+        apply();
+    });
 }
