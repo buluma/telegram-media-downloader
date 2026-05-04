@@ -4869,6 +4869,58 @@ const _MODEL_CAPS = [
     { cap: 'tags',       cfgKey: 'tags',       defaultKind: 'image-classification' },
 ];
 
+// Probe a HuggingFace token. POST `{ token? }` — when `token` is present
+// we use that value directly, otherwise we fall back to the saved
+// `advanced.ai.hfToken` (lets the operator click "Test" before the
+// autosave round-trip lands). Hits `/api/whoami-v2` which returns the
+// user object on a valid token + 401 on a bad one. We never echo the
+// token back, only `{ ok: true, name, type }` or `{ ok: false, status,
+// message }`. Rate-limit caps it to once every 2 s per session via the
+// shared `loginLimiter` family — the app loop is in JS so a single
+// admin spamming the button can't choke the box.
+app.post('/api/ai/hf/test', async (req, res) => {
+    try {
+        let token = (req.body && typeof req.body.token === 'string') ? req.body.token.trim() : '';
+        if (!token) {
+            try {
+                const cfg = loadConfig();
+                token = String(cfg?.advanced?.ai?.hfToken || '').trim();
+            } catch { /* config not ready */ }
+        }
+        if (!token) {
+            return res.status(400).json({ ok: false, status: 0, message: 'No token to test. Paste one above first.' });
+        }
+        // 5-second timeout — HF whoami is fast and the operator is
+        // staring at a button waiting.
+        const ac = new AbortController();
+        const timer = setTimeout(() => ac.abort(), 5000);
+        let r;
+        try {
+            r = await fetch('https://huggingface.co/api/whoami-v2', {
+                headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' },
+                signal: ac.signal,
+            });
+        } catch (e) {
+            return res.json({ ok: false, status: 0, message: e?.name === 'AbortError' ? 'Timed out talking to huggingface.co.' : `Network error: ${e?.message || e}` });
+        } finally {
+            clearTimeout(timer);
+        }
+        if (r.status === 401 || r.status === 403) {
+            return res.json({ ok: false, status: r.status, message: 'Token rejected by HuggingFace (401). Re-create the token with Read role.' });
+        }
+        if (!r.ok) {
+            return res.json({ ok: false, status: r.status, message: `HuggingFace returned HTTP ${r.status}.` });
+        }
+        let body = null;
+        try { body = await r.json(); } catch { /* ignore */ }
+        const name = body?.name || body?.fullname || '(unknown)';
+        const type = body?.type || 'user';
+        return res.json({ ok: true, status: r.status, name, type });
+    } catch (e) {
+        res.status(500).json({ ok: false, status: 0, message: e.message });
+    }
+});
+
 app.get('/api/ai/status', async (_req, res) => {
     try {
         await _maybeProbeVec();

@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.5] — 2026-05-05
+
+### Added
+- **HuggingFace token "Test" button** on `/maintenance/ai`. Pings `huggingface.co/api/whoami-v2` with the typed (or saved) token. Shows green "signed in as <name>" on success, red "Token rejected by HuggingFace" on 401 — so the operator knows the token works before kicking off a model preload.
+- **Show/hide eye toggle** on the token field so operators can verify they pasted the right value without re-typing.
+- **"Get a token →" link + collapsible How-to** (sign in → Settings → Access Tokens → Read role → paste). Removes the "where do I find this?" friction.
+
+### Internal
+- New endpoint `POST /api/ai/hf/test { token? }` → `{ ok, status, name?, message? }`. Falls back to the saved `advanced.ai.hfToken` when the body's `token` field is empty so a save-then-test flow works too. 5-second timeout, 401/network errors surface verbatim.
+- SW bumped `v264` → `v265`.
+
 ## [2.6.4] — 2026-05-05
 
 ### Fixed
