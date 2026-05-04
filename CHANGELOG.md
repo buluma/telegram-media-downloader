@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.6] — 2026-05-05
+
+### Fixed
+- **AI master Start/Stop toggle now lives in static HTML** at the top of `/maintenance/ai`. Was rendered dynamically inside the Capabilities grid, which meant a stale-cache JS bundle (or any render-path failure) hid it entirely — operators saw "Start scan" buttons but no way to actually start the subsystem. Static markup keeps the control visible regardless of what the grid does. State pill (`On` / `Off`) syncs live with the toggle.
+
+### Internal
+- SW bumped `v265` → `v266`.
+
 ## [2.6.5] — 2026-05-05
 
 ### Added
