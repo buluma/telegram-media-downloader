@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.4] — 2026-05-05
+
+### Fixed
+- **Share v2 URLs returning "Invalid share link"** — route handler still expected the legacy `?exp=&sig=` shape; URL builder generates `?s=<sig>` (v2). Handler now accepts both, looks up the row first, and verifies the sig against the stored `expires_at`. Filename slug routes (`/share/<id>/<filename>?s=…`) also work.
+- **Stale CSS in production** — `<link href="/css/main.css?v=2.6.0">` was hard-coded. Newer releases shipped CSS classes (`.share-maint-toolbar`, `.log-src-chip`, `.ai-hero`) that the SW kept serving from the v2.6.0 cache. The cache-bust rewriter now covers `/css/` paths too, and the `<link>` no longer carries a stale literal version.
+
+### Added
+- **HuggingFace access token field** on `/maintenance/ai`. Set it from the web instead of needing `HF_TOKEN` in env. Stored in `config.advanced.ai.hfToken`; both NSFW and AI capability loaders read it.
+
+### Internal
+- SW bumped `v263` → `v264`.
+
 ## [2.6.3] — 2026-05-05
 
 ### Fixed
