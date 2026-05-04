@@ -70,6 +70,7 @@ A self-hosted application that watches your Telegram chats and downloads new med
 - **Avoid Telegram bot limits** — User API has no 50 MB / 4 GB ceiling that the Bot API imposes.
 - **Forward as you download** — auto-forward to another channel, group, or Saved Messages.
 - **Share without logging in** — admin generates HMAC-signed `/share/<id>` URLs that friends can open or feed to a download manager (TTL configurable, including "never expires").
+- **Backup off-host** — multi-provider mirror to S3-compatible storage (AWS / R2 / B2 / MinIO / Wasabi), an SFTP NAS, or a local mount. Continuous mirror as new files arrive, scheduled tar.gz snapshots, optional client-side AES-256-GCM encryption, persistent retry queue.
 - **Find duplicates** — SHA-256 dedup at download time + on-demand library scan.
 - **Sort 18+ vs not-18+** — opt-in in-process classifier (`@huggingface/transformers`, WASM, runs everywhere) flags photos that don't match the rest of the library so they can be reviewed and purged.
 - **One-click update** — opt-in watchtower sidecar lets the dashboard pull-and-recreate the container itself; data volume + DB are preserved (DB is snapshotted to `data/backups/` first).
@@ -162,7 +163,7 @@ A self-hosted application that watches your Telegram chats and downloads new med
 - **CodeQL + Dependabot** scheduled scans.
 
 ### Operations
-- **Docker image** on GHCR, multi-stage, runs as non-root `node` user, `tini` as PID 1, built-in `HEALTHCHECK` against `/api/auth_check`. Multi-arch (amd64 + arm64). Includes `ffmpeg` (apt) so video / audio thumbnails work on alpine without an extra container.
+- **Docker image** on GHCR, multi-stage, Debian-slim base (glibc — required by `onnxruntime-node` for the optional NSFW classifier), runs as non-root `node` user, `tini` as PID 1, built-in `HEALTHCHECK` against `/api/auth_check`. Multi-arch (amd64 + arm64). Includes `ffmpeg` (apt) so video / audio thumbnails work out of the box without an extra container.
 - **GHCR pull-policy:always** in the bundled compose file — `docker compose up -d` always grabs `:latest`.
 - **`/api/version` + `/api/version/check` + `/metrics`** endpoints — version chip, GitHub-Releases-backed update notifier (cached, fail-soft), and OpenMetrics text format for Prometheus scraping.
 - **Optional in-dashboard auto-update** — opt-in `auto-update` compose profile spins up a watchtower sidecar; a one-click button in Maintenance pulls the new image and recreates the container in place.

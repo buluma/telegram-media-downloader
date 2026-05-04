@@ -50,10 +50,9 @@ const THUMBS_DIR = path.resolve(PROJECT_ROOT, 'data', 'thumbs');
 
 // Resolve the ffmpeg binary lazily and in priority order:
 //   1. FFMPEG_PATH env var (operator override).
-//   2. System `/usr/bin/ffmpeg` — what `apk add ffmpeg` installs in the
-//      Docker container, and the only thing that actually runs on
-//      alpine/musl. The published image ships ffmpeg this way so
-//      video / audio-cover thumbs work out of the box.
+//   2. System `/usr/bin/ffmpeg` — what `apt-get install ffmpeg` installs
+//      in the Docker container. The published image ships ffmpeg this
+//      way so video / audio-cover thumbs work out of the box.
 //   3. `@ffmpeg-installer/ffmpeg` — bundles prebuilt binaries for
 //      Windows / macOS / glibc-Linux (great DX on the maintainer's
 //      laptop). Loaded via createRequire so a missing or incompatible

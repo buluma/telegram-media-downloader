@@ -100,14 +100,22 @@ describe('signShareToken / verifyShareToken', () => {
 describe('buildShareUrlPath', () => {
     beforeEach(() => { _resetShareSecretCache(); freshSecretConfig(); });
 
-    it('formats /share/<id>?exp=<n>&sig=<…>', () => {
+    it('formats /share/<id>?s=<…> (v2.5 short URL)', () => {
+        // The URL no longer carries `?exp=` — the DB row's expires_at is
+        // the canonical source, the HMAC still binds (linkId | exp_at_issue)
+        // so any URL minted with the matching exp verifies cleanly.
         const url = buildShareUrlPath(42, 1750000000);
-        expect(url).toMatch(/^\/share\/42\?exp=1750000000&sig=[A-Za-z0-9_\-%]+$/);
+        expect(url).toMatch(/^\/share\/42\?s=[A-Za-z0-9_\-%]+$/);
     });
 
-    it('embeds exp=0 verbatim for never-expires links', () => {
+    it('appends a sanitised filename segment when supplied', () => {
+        const url = buildShareUrlPath(42, 1750000000, 'cat photo.jpg');
+        expect(url).toMatch(/^\/share\/42\/cat%20photo\.jpg\?s=[A-Za-z0-9_\-%]+$/);
+    });
+
+    it('mints a verifiable link for never-expires (exp=0)', () => {
         const url = buildShareUrlPath(7, 0);
-        expect(url.startsWith('/share/7?exp=0&sig=')).toBe(true);
+        expect(url.startsWith('/share/7?s=')).toBe(true);
     });
 });
 

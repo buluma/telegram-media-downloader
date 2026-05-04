@@ -4,7 +4,7 @@
 #      `node` user (uid 1000) can always read/write — host-side perms
 #      from `docker run -v ./data:/app/data` otherwise win and locked
 #      out new installs on Linux hosts.
-#   2. Drop privileges to `node` via su-exec and exec the CMD.
+#   2. Drop privileges to `node` via gosu and exec the CMD.
 #
 # Idempotent: safe to run on every container start. The chown/chmod walk
 # is a no-op once perms are already correct (millisecond-cost on most
@@ -18,7 +18,7 @@ if [ "$(id -u)" = "0" ]; then
         chown -R node:node /app/data 2>/dev/null || true
         chmod -R u+rwX,g+rwX,o+rX /app/data 2>/dev/null || true
     fi
-    exec su-exec node:node "$@"
+    exec gosu node:node "$@"
 fi
 
 exec "$@"

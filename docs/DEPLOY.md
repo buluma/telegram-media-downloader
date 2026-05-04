@@ -45,6 +45,7 @@ Reports Node + ABI, config load, SQLite open, `data/` writability, port availabi
 | `THUMBS_VID_CONCURRENCY`        | `3`                 | Parallel video-thumb jobs (ffmpeg pins a CPU core). |
 | `WATCHTOWER_HTTP_API_TOKEN`     | unset               | Bearer token shared between the dashboard and the optional watchtower sidecar. Setting this + booting with the `auto-update` compose profile lights up the **Install update** button. |
 | `WATCHTOWER_URL`                | `http://watchtower:8080` | Internal address of the watchtower sidecar. |
+| `BACKUP_WORKERS_PER_DEST`       | `3`                 | Per-destination concurrent uploads for the backup subsystem. Keep modest — backups share the host's outbound bandwidth with everything else (including the realtime monitor). |
 
 ## One-click in-dashboard auto-update (opt-in)
 
@@ -100,6 +101,24 @@ server {
 ```
 
 Behind a proxy, set `TRUST_PROXY=1` in the container env so the rate-limiter sees the real client IP.
+
+### Force HTTPS (TLS lockdown)
+
+Once the reverse proxy has a working TLS cert, lock the dashboard to HTTPS in **Settings → Privacy & Net → Dashboard security → Force HTTPS**. Effects:
+
+- Every HTTP request 308-redirects to HTTPS (`localhost` excepted so the operator can always reach the dashboard from the host even if the proxy melts).
+- A `Strict-Transport-Security: max-age=31536000; includeSubDomains` header attaches to every secure response — browsers cache the HTTPS-only verdict for a year.
+- Non-GET / non-HEAD HTTP requests get a `403 HTTPS required` response instead of a redirect, so a misconfigured client can't silently retry a write on plain HTTP.
+
+Pre-flight check before flipping the toggle:
+
+1. **Cert reachable** — `curl -I https://tg.example.com/` returns 200 (or whatever HTTP code, just not a TLS error).
+2. **`TRUST_PROXY=1`** is set in the dashboard container env so `req.secure` honours `X-Forwarded-Proto`. Without this, the dashboard sees every request as plain HTTP and 308-loops.
+3. **Localhost recovery path** — keep SSH / docker exec access; you can flip the toggle back from the host even if the cert breaks (the localhost exemption keeps `127.0.0.1:3000` reachable from inside the container).
+
+The setting persists in `data/config.json → web.forceHttps`. To roll back without the dashboard, edit the file and restart the container.
+
+For HSTS preload (chrome global list), submit your domain at <https://hstspreload.org> after the header has been live for at least a few weeks. The dashboard does **not** add `preload` to the HSTS header automatically — preload is a one-way commitment that needs operator opt-in.
 
 ## systemd unit (bare-metal Node)
 

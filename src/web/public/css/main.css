@@ -1,0 +1,1561 @@
+/*
+ * Telegram Media Downloader — main stylesheet.
+ *
+ * Single bundle that holds every style the SPA paints. Versioned via the
+ * `?v=...` query param on the <link> in index.html so a release bump
+ * forces the browser + service worker to refetch.
+ *
+ * Sections (in order):
+ *   1. Theme tokens (:root + html.theme-light overrides)
+ *   2. Resets (font, scrollbar, base body)
+ *   3. Light-theme override pass for Tailwind utility classes
+ *   4. Avatars + chat-row + group-item
+ *   5. Gallery: media-grid, media-item, view modes, selection, lasso
+ *   6. Header dropdowns: view-mode menu, notify menu
+ *   7. Sidebar nav (active states), bottom-nav, status-bar
+ *   8. Sheets, modals, video player chrome
+ *   9. Settings: chip-nav, cards, tabs
+ *  10. Buttons + form inputs (.tg-btn / .tg-input / .tg-toggle)
+ *  11. Engine status pill + role pill + status pills
+ *  12. Skeletons + animations
+ *  13. Accessibility utilities (pt-safe, pb-safe, prefers-reduced-motion)
+ *
+ * Conventions:
+ *   - Theme-aware values use `var(--tg-…)` with a fallback hex so they
+ *     read sensibly even before the :root rule attaches.
+ *   - Light-theme overrides live next to the dark default so the diff for
+ *     a colour change touches one logical block.
+ *   - Tailwind utility overrides (html.theme-light .bg-tg-…) are kept
+ *     together so adding a new `bg-tg-blue/30` slash variant has an
+ *     obvious neighbour to copy.
+ */
+
+:root {
+    --tgdl-font-family: 'IBM Plex Sans', 'IBM Plex Sans Thai', 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    /* Theme tokens — single source of truth for inline-CSS consumers
+       (`.engine-status-pill`, `.media-item`, `.sheet-card`, `.chat-row`,
+       `.role-pill`, etc. — anything reading `var(--tg-…)`). Tailwind
+       utility classes like `bg-tg-blue` are still swapped via the
+       `html.theme-light .bg-tg-…` overrides further down; both paths
+       must agree per theme. Light variants of brand status colors are
+       darkened to clear WCAG AA on the white panel/sidebar surfaces
+       (e.g. `#2AABEE` → `#1976A8`, ratio jumps 2.84:1 → 4.61:1). */
+    --tg-blue: #2AABEE;
+    --tg-darkBlue: #229ED9;
+    --tg-bg: #17212B;
+    --tg-sidebar: #0E1621;
+    --tg-panel: #242F3D;
+    --tg-hover: #2B5278;
+    --tg-border: #0D1117;
+    --tg-text: #F5F5F5;
+    --tg-textSecondary: #8B9BAA;
+    --tg-green: #4FAE4E;
+    --tg-red: #E53935;
+    --tg-orange: #FF9800;
+    --tg-lightBg: #182533;
+}
+html.theme-light {
+    /* Light variants chosen to match existing `.text-tg-*` utility
+       overrides further down so var-consumers and Tailwind-utility
+       consumers paint the same colour per surface. */
+    --tg-blue: #0E78C2;
+    --tg-darkBlue: #0E5A86;
+    --tg-bg: #FFFFFF;
+    --tg-sidebar: #F4F4F5;
+    --tg-panel: #F0F4F7;
+    --tg-hover: #DCEDFF;
+    --tg-border: #D1D5DB;
+    --tg-text: #1F2937;
+    --tg-textSecondary: #4B5563;
+    --tg-green: #008A6E;
+    --tg-red: #B91C1C;
+    --tg-orange: #B8860B;
+    --tg-lightBg: #FFFFFF;
+}
+* {
+    font-family: var(--tgdl-font-family);
+    box-sizing: border-box;
+    -webkit-tap-highlight-color: transparent;
+}
+/* Disable iOS Safari double-tap-to-zoom across the whole app.
+   `touch-action: manipulation` permits scroll + pinch but kills
+   the double-tap-zoom gesture — needed because the HTML
+   viewport's `user-scalable=no` is intentionally ignored on
+   iOS 10+ (Apple removed the kill-switch for accessibility).
+   Override per-element where a custom touch interpretation is
+   needed (e.g. `#image-container` uses `touch-action: none`
+   for its own zoom math, lasso-active does the same). */
+body { touch-action: manipulation; }
+/* Mono font hooks — Tailwind's `font-mono` and any inline mono
+   class now resolve to IBM Plex Mono so the time block + log
+   viewer + queue size column read consistently. Mono stays IBM
+   Plex regardless of UI font choice — most Thai-friendly
+   webfonts don't ship a mono companion, and a mono unit width
+   is more important here than family consistency. */
+.font-mono, code, pre, kbd, samp,
+[class*="tabular-nums"] {
+    font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+body {
+    background: #17212B;
+    color: #F5F5F5;
+    overscroll-behavior: none;
+}
+/* Reserve room for the status bar on desktop and for the bottom-nav
+   on mobile so fixed-position bars never cover content. Guest sessions
+   hide the desktop status bar (admin-only), so drop the reservation
+   too — otherwise the page ends with an empty 32 px footer gap. */
+@media (max-width: 767.98px) {
+    body { padding-bottom: calc(56px + env(safe-area-inset-bottom)); }
+}
+@media (min-width: 768px) {
+    body { padding-bottom: 32px; }
+    body[data-role="guest"] { padding-bottom: 0; }
+}
+
+/* ===== Light theme overrides =====
+   When html.theme-light is set, replace the dark Tailwind colours
+   with a Telegram-light-inspired palette. Uses class-level overrides
+   so the existing markup doesn't have to change. */
+html.theme-light body { background: #FFFFFF; color: #232E3C; }
+html.theme-light .bg-tg-bg { background-color: #FFFFFF !important; }
+html.theme-light .bg-tg-sidebar { background-color: #F4F4F5 !important; }
+html.theme-light .bg-tg-panel { background-color: #F0F4F7 !important; }
+html.theme-light .bg-tg-lightBg { background-color: #FFFFFF !important; }
+html.theme-light .text-tg-text { color: #1F2937 !important; }
+/* Bumped from #65737E so labels like "Downloaded Groups" and footer
+   captions stay readable on the light sidebar background without
+   needing hover. */
+html.theme-light .text-tg-textSecondary { color: #4B5563 !important; }
+html.theme-light .text-white { color: #1F2937 !important; }
+html.theme-light .border-tg-border { border-color: #E1E5EA !important; }
+html.theme-light .hover\:bg-tg-hover:hover { background-color: #DCEDFF !important; }
+html.theme-light .bg-tg-hover { background-color: #DCEDFF !important; }
+html.theme-light ::-webkit-scrollbar-thumb { background: #C1C9D2 !important; }
+html.theme-light .modal-backdrop { background-color: rgba(0, 0, 0, 0.45) !important; }
+html.theme-light .tg-input { background: #FFFFFF !important; color: #1F2937 !important; border-color: #E1E5EA !important; }
+
+/* ----- Slash-modifier (rgba) variants of the dark tokens -----
+   Tailwind compiles `bg-tg-bg/40` to an rgba derived from the dark
+   hex (#17212B), so the no-slash override above doesn't catch them.
+   Newer panels (Queue, Maintenance, Backfill, Rescue, Engine card)
+   lean on these for sub-cards / progress tracks / chip backgrounds.
+   Map them to a soft neutral so panels stay readable in light mode. */
+html.theme-light .bg-tg-bg\/30 { background-color: rgba(225, 229, 234, 0.55) !important; }
+html.theme-light .bg-tg-bg\/40 { background-color: rgba(225, 229, 234, 0.65) !important; }
+html.theme-light .bg-tg-bg\/50 { background-color: rgba(225, 229, 234, 0.75) !important; }
+html.theme-light .bg-tg-bg\/60 { background-color: rgba(225, 229, 234, 0.85) !important; }
+html.theme-light .hover\:bg-tg-bg\/60:hover { background-color: rgba(225, 229, 234, 0.85) !important; }
+html.theme-light .hover\:bg-tg-hover\/40:hover { background-color: rgba(220, 237, 255, 0.55) !important; }
+
+/* Selected-chip / hovered-row tints. Tailwind `bg-tg-blue/20` etc
+   render an rgba off the brand blue, which already reads fine on
+   light — but the hover row in the queue table needs softening so
+   the row text stays legible over the wash. */
+html.theme-light .hover\:bg-tg-blue\/10:hover { background-color: rgba(42, 171, 238, 0.10) !important; }
+
+/* Border slash variants — used for divider rows in queue / backfill. */
+html.theme-light .border-tg-border\/40 { border-color: rgba(0, 0, 0, 0.08) !important; }
+html.theme-light .border-tg-border\/50 { border-color: rgba(0, 0, 0, 0.10) !important; }
+
+/* Some text utilities are dark-only too. */
+html.theme-light .hover\:text-tg-text:hover { color: #1F2937 !important; }
+html.theme-light .text-gray-300 { color: #4B5563 !important; }
+html.theme-light .text-gray-500 { color: #6B7280 !important; }
+html.theme-light .bg-gray-700 { background-color: #E5E7EB !important; }
+html.theme-light .bg-gray-700\/40 { background-color: rgba(229, 231, 235, 0.7) !important; }
+
+/* Light-mode override of the base .tg-btn-secondary defined above. */
+html.theme-light .tg-btn-secondary {
+    background: #E1E5EA !important;
+    color: #1F2937 !important;
+    border-color: #D1D5DB !important;
+}
+html.theme-light .tg-btn-secondary:hover {
+    background: #D1D5DB !important;
+    border-color: #9CA3AF !important;
+}
+
+/* Rescue-mode chips (per-group modal). The active chip already
+   uses brand blue; inactive chips use bg-tg-bg/40 which the slash
+   rule above covers — but the hover state needs a soft tint. */
+html.theme-light .rescue-chip:not(.active):hover { background-color: #DCEDFF !important; color: #1F2937 !important; }
+
+/* Sheet primitive — inline `var(--tg-panel)` falls back to the
+   dark default, so override the computed background here too. */
+html.theme-light .sheet-card { background: #F0F4F7 !important; color: #1F2937 !important; }
+html.theme-light .sheet-close { color: #65737E !important; }
+
+/* Selection footer uses .bg-tg-panel (covered) but also a pill
+   border that we want soft in light mode. */
+html.theme-light #selection-bar { box-shadow: 0 4px 16px rgba(0, 0, 0, 0.10); }
+
+/* Bottom nav + status bar surfaces use CSS variables that fall
+   back to dark hexes — re-paint them for light. */
+html.theme-light .bottom-nav { background: #F4F4F5 !important; border-top-color: #E1E5EA !important; }
+html.theme-light .bottom-nav-item { color: #65737E; }
+
+/* Video player controls — the player chrome still needs a dark
+   gradient over the video (so white controls remain legible
+   against arbitrary footage), but the speed-menu pop-over uses a
+   hard-coded `bg-[#212121]/95` which can stay dark in either
+   theme — that's a deliberate floating-overlay-on-video idiom.
+   No override needed there. */
+html.theme-light .video-controls { /* keep dark gradient — readability over video */ }
+
+/* ============================================================
+   v2.3.44 — theme contrast pass.
+   Findings (audit run on the v2.3.43 snapshot):
+     A. `--tg-*` were never defined → fixed at top with :root + .theme-light blocks.
+     B. WCAG AA failures on white for brand colours → fixed via the
+        Tailwind utility overrides further up + var redef.
+     C. `:focus { outline: none }` clobbered `:focus-visible` → fixed below.
+        `.nav-item.active` had no CSS rule → fixed below.
+        Status pills, skeletons, select-badge, tab-item, .unread-pill.muted
+        had no light variant → fixed below.
+        Missing slash-variant overrides for yellow, red, blue → fixed below.
+   ============================================================ */
+
+/* Restore keyboard focus rings — the global `button:focus,
+   input:focus, … { outline: none }` rule otherwise wins by source
+   order and erases `:focus-visible`. Scope the suppression so only
+   mouse-click focus loses the ring; keyboard focus keeps it. */
+button:focus:not(:focus-visible),
+input:focus:not(:focus-visible),
+select:focus:not(:focus-visible),
+textarea:focus:not(:focus-visible),
+a:focus:not(:focus-visible) { outline: none; }
+
+/* Default placeholder colour for both themes — UA default on the
+   dark panel was barely legible. */
+.tg-input::placeholder,
+input::placeholder,
+textarea::placeholder { color: var(--tg-textSecondary, #8B9BAA); opacity: 0.75; }
+
+/* Sidebar nav active state — toggled by app.js renderPage() but
+   had no matching CSS, so the active page was invisible in the
+   sidebar. Surface a left-accent + tinted background. */
+.nav-item.active { background-color: var(--tg-hover, #2B5278); position: relative; }
+.nav-item.active::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 6px; bottom: 6px;
+    width: 3px;
+    background: var(--tg-blue, #2AABEE);
+    border-radius: 0 2px 2px 0;
+}
+.nav-item.active i, .nav-item.active span { color: var(--tg-blue, #2AABEE); }
+
+/* Disabled buttons — visually distinct from enabled (saturate-out
+   + opacity), with `cursor: not-allowed`. Applies to both .tg-btn
+   and .tg-btn-secondary. */
+.tg-btn:disabled,
+.tg-btn[disabled],
+.tg-btn-secondary:disabled,
+.tg-btn-secondary[disabled] {
+    opacity: 0.5;
+    cursor: not-allowed;
+    filter: saturate(0.55);
+}
+.tg-btn:disabled:hover,
+.tg-btn-secondary:disabled:hover { background: inherit; }
+
+/* Selection-bar buttons (Select all / Clear) — hover affordance
+   upgraded from text-colour-only to an underline reveal so the
+   click target reads as a button, not body copy. */
+#selection-all, #selection-clear {
+    text-decoration: underline;
+    text-decoration-color: transparent;
+    text-underline-offset: 3px;
+    transition: text-decoration-color 0.15s ease;
+}
+#selection-all:hover, #selection-clear:hover { text-decoration-color: currentColor; }
+
+/* Light-theme overrides for surfaces that were missing — these
+   bypassed the existing class-override pass. */
+
+/* Modal hover: white-on-white invisible patch */
+html.theme-light .hover\:bg-white\/10:hover { background-color: rgba(0, 0, 0, 0.06) !important; }
+
+/* Yellow alert family (Backfill warnings, etc.) — no overrides existed. */
+html.theme-light .text-yellow-400 { color: #B45309 !important; }
+html.theme-light .text-yellow-300 { color: #B45309 !important; }
+html.theme-light .bg-yellow-500\/10 { background-color: rgba(245, 158, 11, 0.14) !important; }
+html.theme-light .border-yellow-500\/20 { border-color: rgba(245, 158, 11, 0.40) !important; }
+html.theme-light .bg-tg-orange\/20 { background-color: rgba(180, 134, 11, 0.18) !important; }
+
+/* Red family — only /10 and /20 were covered before. Now /5,/15,/25,/30
+   and the `red-600` solid + `red-700` hover (Purge button etc.). */
+html.theme-light .bg-red-500\/5 { background-color: rgba(185, 28, 28, 0.06) !important; }
+html.theme-light .bg-red-500\/15 { background-color: rgba(185, 28, 28, 0.10) !important; }
+html.theme-light .bg-red-500\/25 { background-color: rgba(185, 28, 28, 0.14) !important; }
+html.theme-light .bg-red-500\/30 { background-color: rgba(185, 28, 28, 0.18) !important; }
+html.theme-light .hover\:bg-red-500\/30:hover { background-color: rgba(185, 28, 28, 0.18) !important; }
+html.theme-light .bg-red-600 { background-color: #B91C1C !important; }
+html.theme-light .hover\:bg-red-700:hover { background-color: #991B1B !important; }
+html.theme-light .border-red-400\/60 { border-color: rgba(185, 28, 28, 0.45) !important; }
+html.theme-light .hover\:text-red-400:hover { color: #B91C1C !important; }
+html.theme-light .hover\:border-red-400\/60:hover { border-color: rgba(185, 28, 28, 0.45) !important; }
+
+/* Brand-blue slash variants beyond /10 + /20. */
+html.theme-light .bg-tg-blue\/15 { background-color: rgba(14, 120, 194, 0.12) !important; }
+html.theme-light .bg-tg-blue\/25 { background-color: rgba(14, 120, 194, 0.18) !important; }
+html.theme-light .hover\:bg-tg-blue\/20:hover { background-color: rgba(14, 120, 194, 0.18) !important; }
+html.theme-light .hover\:bg-tg-blue\/25:hover { background-color: rgba(14, 120, 194, 0.20) !important; }
+html.theme-light .border-tg-blue\/30 { border-color: rgba(14, 120, 194, 0.40) !important; }
+html.theme-light .hover\:bg-tg-green\/20:hover { background-color: rgba(0, 138, 110, 0.18) !important; }
+html.theme-light .hover\:bg-tg-orange\/20:hover { background-color: rgba(184, 134, 11, 0.18) !important; }
+html.theme-light .border-tg-green\/30 { border-color: rgba(0, 138, 110, 0.40) !important; }
+html.theme-light .border-tg-orange\/30 { border-color: rgba(184, 134, 11, 0.40) !important; }
+
+/* Standalone gray status dots — `.status-dot`, `.status-ws` use
+   `bg-gray-500` which had no light override. */
+html.theme-light .bg-gray-500 { background-color: #6B7280 !important; }
+html.theme-light .bg-gray-700 { background-color: #E5E7EB !important; }
+
+/* Status pills inside chat rows — the green/orange/grey hard-coded
+   on dark were illegible on light surfaces. Recoloured for AA. */
+html.theme-light .chat-row .status-pill-active { background: rgba(0, 138, 110, 0.16); color: #006A52; }
+html.theme-light .chat-row .status-pill-paused { background: rgba(184, 134, 11, 0.18); color: #8A6A00; }
+html.theme-light .chat-row .status-pill-add { background: rgba(0, 0, 0, 0.06); color: #4B5563; }
+
+/* Loading skeletons — pure dark hex shimmer left a navy stripe on
+   white pages. Lighten for the light theme. */
+html.theme-light .skeleton {
+    background: linear-gradient(90deg, #E5E7EB 25%, #D1D5DB 50%, #E5E7EB 75%);
+    background-size: 200% 100%;
+}
+
+/* Tabs (`.tab-item` family inside Viewer media tabs + Settings tabs) —
+   default rule used dark hex with no light counterpart. */
+html.theme-light .tab-item { color: #4B5563; }
+html.theme-light .tab-item:hover { color: #1F2937; }
+html.theme-light .tab-item.active { color: #0E78C2; border-bottom-color: #0E78C2; }
+
+/* Selection badge on media tiles — `rgba(255,255,255,…)` on white
+   is invisible. Flip to dark-on-white for light theme. */
+html.theme-light .media-item .select-badge {
+    background: rgba(255, 255, 255, 0.92);
+    color: rgba(0, 0, 0, 0.65);
+    border-color: rgba(0, 0, 0, 0.45);
+}
+html.theme-light .media-item.is-selected .select-badge {
+    background: var(--tg-blue, #0E78C2);
+    color: #FFFFFF;
+    border-color: var(--tg-blue, #0E78C2);
+}
+
+/* Unread / muted pills — gray bg + white text washes out on light. */
+html.theme-light .unread-pill { background: var(--tg-blue, #0E78C2); color: #FFFFFF; }
+html.theme-light .unread-pill.muted { background: #6B7280; color: #FFFFFF; }
+
+/* Engine pill pulse halo — alpha 0.20 was invisible on a near-white
+   header. Bump alpha + recolour for the light surface. */
+html.theme-light .engine-status-pill[data-state="running"] .engine-status-dot {
+    box-shadow: 0 0 0 2px rgba(0, 138, 110, 0.45);
+    animation-name: engine-pulse-light;
+}
+html.theme-light .engine-status-pill[data-state="error"] .engine-status-dot { box-shadow: 0 0 0 2px rgba(185, 28, 28, 0.40); }
+html.theme-light .engine-status-pill[data-state="reconnecting"] .engine-status-dot,
+html.theme-light .engine-status-pill[data-state="starting"] .engine-status-dot,
+html.theme-light .engine-status-pill[data-state="stopping"] .engine-status-dot { box-shadow: 0 0 0 2px rgba(184, 134, 11, 0.40); }
+html.theme-light .engine-status-pill .engine-status-dot { box-shadow: 0 0 0 2px rgba(75, 85, 99, 0.30); }
+@keyframes engine-pulse-light {
+    0%, 100% { box-shadow: 0 0 0 2px rgba(0, 138, 110, 0.45); }
+    50%      { box-shadow: 0 0 0 4px rgba(0, 138, 110, 0.20); }
+}
+
+/* Brand utilities used as solid backgrounds (primary CTA, FAB,
+   settings-chip active, nav-badge, theme buttons). White-on-#2AABEE
+   is 2.84:1 → we darken to #0E78C2 (4.93:1). */
+html.theme-light .bg-tg-blue { background-color: #0E78C2 !important; }
+html.theme-light .hover\:bg-tg-blue:hover { background-color: #0A5E96 !important; }
+html.theme-light .border-tg-blue { border-color: #0E78C2 !important; }
+html.theme-light .ring-tg-blue { --tw-ring-color: #0E78C2 !important; }
+html.theme-light .focus\:ring-tg-blue:focus { --tw-ring-color: #0E78C2 !important; }
+html.theme-light .focus\:border-tg-blue:focus { border-color: #0E78C2 !important; }
+/* tg-darkBlue is the primary-button hover; align to the new brand. */
+html.theme-light .hover\:bg-tg-darkBlue:hover { background-color: #0A5E96 !important; }
+
+/* Borders that need to actually show on a panel / sidebar rather
+   than blend into them. Card / list dividers reach for D1D5DB. */
+html.theme-light .border-tg-border\/30 { border-color: rgba(0, 0, 0, 0.06) !important; }
+html.theme-light .border-tg-border\/60 { border-color: rgba(0, 0, 0, 0.12) !important; }
+
+/* ----- Additional light-theme polish for newer surfaces ----- */
+/* Status bar */
+html.theme-light #status-bar { background: #F4F4F5 !important; border-top-color: #E1E5EA !important; }
+html.theme-light #status-bar .text-tg-textSecondary { color: #65737E !important; }
+html.theme-light #status-version { color: rgba(101, 115, 126, 0.85) !important; }
+
+/* Engine/queue/maintenance pills + status colours */
+html.theme-light .bg-tg-blue\/10 { background-color: rgba(42, 171, 238, 0.12) !important; }
+html.theme-light .bg-tg-blue\/20 { background-color: rgba(42, 171, 238, 0.18) !important; color: #0769B5 !important; }
+html.theme-light .bg-tg-green\/20 { background-color: rgba(0, 168, 132, 0.16) !important; color: #007A5E !important; }
+html.theme-light .bg-tg-orange\/20 { background-color: rgba(244, 180, 0, 0.20) !important; color: #8A6A00 !important; }
+html.theme-light .bg-red-500\/10 { background-color: rgba(239, 68, 68, 0.10) !important; }
+html.theme-light .bg-red-500\/20 { background-color: rgba(239, 68, 68, 0.16) !important; color: #B91C1C !important; }
+html.theme-light .text-tg-blue { color: #0E78C2 !important; }
+html.theme-light .text-tg-green { color: #008A6E !important; }
+html.theme-light .text-tg-orange { color: #B8860B !important; }
+html.theme-light .text-red-300 { color: #B91C1C !important; }
+html.theme-light .text-red-400 { color: #B91C1C !important; }
+
+/* Borders + ring slash variants */
+html.theme-light .border-red-500\/20 { border-color: rgba(239, 68, 68, 0.30) !important; }
+html.theme-light .border-red-500\/30 { border-color: rgba(239, 68, 68, 0.45) !important; }
+html.theme-light .border-red-500\/40 { border-color: rgba(239, 68, 68, 0.55) !important; }
+
+/* Maintenance + Queue helper text — make sure subdued copy stays
+   readable on the lighter card backgrounds. */
+html.theme-light .text-tg-textSecondary\/70 { color: rgba(101, 115, 126, 0.85) !important; }
+
+/* Auto-fill datalist / number inputs read white-on-white in some
+   browsers. Force a stronger visible border so users can find the
+   setting-max-disk + setting-rate-limit-rpm fields by sight. */
+/* Cover both <input> and <select> — selects were borderless before. */
+html.theme-light .tg-input { border: 1px solid #D1D5DB !important; }
+html.theme-light .tg-input:hover { border-color: #9CA3AF !important; }
+html.theme-light .tg-input:focus { border-color: #2AABEE !important; box-shadow: 0 0 0 3px rgba(42,171,238,0.18) !important; }
+html.theme-light .tg-input::placeholder { color: #9CA3AF !important; }
+
+/* Tg-toggle inactive track is too dark in light mode. */
+html.theme-light .tg-toggle { background: #CBD5DD !important; }
+html.theme-light .tg-toggle.active { background: #2AABEE !important; }
+
+/* Rescue badge tweaks for light: keep the pills visible against
+   the lighter media tile backgrounds. */
+html.theme-light .badge-rescued { background: rgba(14, 120, 194, 0.95) !important; }
+html.theme-light .badge-pending { background: rgba(184, 134, 11, 0.95) !important; color: #FFFFFF !important; }
+
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #3A4A5C;
+    border-radius: 3px;
+}
+
+.chat-item {
+    transition: background 0.15s ease;
+}
+
+.chat-item:hover,
+.chat-item.active {
+    background: #2B5278;
+}
+
+/* Show delete button on group hover */
+.group-item:hover .purge-btn {
+    opacity: 1 !important;
+}
+
+/* Telegram Avatar Gradients */
+.tg-avatar {
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-weight: 500;
+}
+
+.tg-avatar-1 {
+    background: linear-gradient(135deg, #FF845E 0%, #FF516A 100%);
+}
+
+.tg-avatar-2 {
+    background: linear-gradient(135deg, #FFD95A 0%, #F5A623 100%);
+}
+
+.tg-avatar-3 {
+    background: linear-gradient(135deg, #A695E7 0%, #7B68EE 100%);
+}
+
+.tg-avatar-4 {
+    background: linear-gradient(135deg, #7FD6F5 0%, #5BC8EB 100%);
+}
+
+.tg-avatar-5 {
+    background: linear-gradient(135deg, #5BCAAF 0%, #3BA99C 100%);
+}
+
+.tg-avatar-6 {
+    background: linear-gradient(135deg, #F599C7 0%, #E573A8 100%);
+}
+
+.tg-avatar-7 {
+    background: linear-gradient(135deg, #6EC9CB 0%, #4EBFC2 100%);
+}
+
+/* ===== Gallery view modes (v2.3.35) =====================
+   Three modes — all share the same renderRow HTML so a mode
+   switch is pure CSS (no re-render, no DOM thrash):
+
+     grid    — default, square thumbnails, ~150-180 px wide
+     compact — denser, square thumbnails, ~80-100 px wide
+     list    — single column rows, thumb + name + meta + size + date
+
+   Every tile carries .tile-text and .tile-meta children that are
+   DISPLAY:NONE in grid/compact and revealed in list. CSS Grid for
+   the list keeps columns aligned; hover fills the row background.
+*/
+
+/* GRID mode (default) */
+.media-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 4px;
+}
+@media (min-width: 640px)  { .media-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); } }
+@media (min-width: 1024px) { .media-grid { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); } }
+
+/* COMPACT mode — denser square tiles. */
+.media-grid.view-compact {
+    grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+    gap: 3px;
+}
+@media (min-width: 640px) { .media-grid.view-compact { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); } }
+
+/* LIST mode — Telegram/Mac Finder-style row layout. */
+.media-grid.view-list {
+    grid-template-columns: 1fr;
+    gap: 0;
+}
+.media-grid.view-list .media-item {
+    aspect-ratio: auto;
+    display: grid;
+    /* thumb · name+meta (flex-grow) · size · date · actions */
+    grid-template-columns: 56px minmax(0, 1fr) 90px 110px auto;
+    grid-template-areas: "thumb text size date actions";
+    align-items: center;
+    gap: 12px;
+    padding: 8px 14px;
+    background: transparent;
+    border-radius: 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    transition: background-color 0.12s ease;
+}
+.media-grid.view-list .media-item:first-child { border-top-left-radius: 10px; border-top-right-radius: 10px; }
+.media-grid.view-list .media-item:last-child  { border-bottom-left-radius: 10px; border-bottom-right-radius: 10px; border-bottom: none; }
+.media-grid.view-list .media-item:hover {
+    background: rgba(255, 255, 255, 0.04);
+}
+html.theme-light .media-grid.view-list .media-item {
+    border-bottom-color: rgba(0, 0, 0, 0.06);
+}
+html.theme-light .media-grid.view-list .media-item:hover {
+    background: rgba(0, 0, 0, 0.03);
+}
+.media-grid.view-list .media-item .tile-thumb {
+    grid-area: thumb;
+    width: 56px;
+    height: 56px;
+    border-radius: 8px;
+    overflow: hidden;
+    position: relative;
+    background: var(--tg-panel, #17212B);
+}
+.media-grid.view-list .media-item .tile-thumb img,
+.media-grid.view-list .media-item .tile-thumb video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+.media-grid.view-list .media-item .tile-text  { grid-area: text; min-width: 0; }
+.media-grid.view-list .media-item .tile-name  {
+    font-size: 14px;
+    color: var(--tg-text, #E2E8F0);
+    font-weight: 500;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.media-grid.view-list .media-item .tile-sub {
+    font-size: 12px;
+    color: var(--tg-textSecondary, #8B9BAA);
+    margin-top: 2px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.media-grid.view-list .media-item .tile-size {
+    grid-area: size;
+    font-size: 12px;
+    color: var(--tg-textSecondary, #8B9BAA);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+.media-grid.view-list .media-item .tile-date {
+    grid-area: date;
+    font-size: 12px;
+    color: var(--tg-textSecondary, #8B9BAA);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+.media-grid.view-list .media-item .tile-actions { grid-area: actions; display: flex; gap: 4px; }
+.media-grid.view-list .media-item .select-badge { top: 14px; left: 14px; }
+/* Hide list-only columns on narrow viewports — keep just thumb + name. */
+@media (max-width: 640px) {
+    .media-grid.view-list .media-item {
+        grid-template-columns: 48px minmax(0, 1fr) auto;
+        grid-template-areas: "thumb text actions";
+        padding: 8px 10px;
+    }
+    .media-grid.view-list .media-item .tile-thumb { width: 48px; height: 48px; }
+    .media-grid.view-list .media-item .tile-size,
+    .media-grid.view-list .media-item .tile-date { display: none; }
+}
+
+/* Tile-text + tile-meta are list-only — hidden in grid/compact. */
+.media-grid:not(.view-list) .media-item .tile-text,
+.media-grid:not(.view-list) .media-item .tile-size,
+.media-grid:not(.view-list) .media-item .tile-date,
+.media-grid:not(.view-list) .media-item .tile-actions { display: none; }
+
+.media-item {
+    position: relative;
+    aspect-ratio: 1 / 1;
+    overflow: hidden;
+    cursor: pointer;
+    background: var(--tg-panel, #242F3D);
+    content-visibility: auto;
+    contain-intrinsic-size: auto 200px;
+}
+
+/* ===== Selection mode (v2.3.36) =================================
+   Click → toggle one
+   Ctrl/Cmd + click → toggle one (auto-enables select mode)
+   Shift + click → range from last anchor
+   Drag from empty space → lasso rectangle (multi-select by overlap)
+   Ctrl/Cmd + A → select all visible
+   Esc → exit select mode
+   Long-press (touch) → enter select mode + toggle (existing)
+
+   In-place: toggling .is-selected on a tile flips the ring + ✓
+   with no re-render of the surrounding grid.
+*/
+.media-item .select-badge {
+    position: absolute;
+    top: 6px; left: 6px;
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    background: rgba(0, 0, 0, 0.45);
+    color: rgba(255, 255, 255, 0.6);
+    border: 1.5px solid rgba(255, 255, 255, 0.4);
+    transition: background 0.12s ease, color 0.12s ease, transform 0.12s ease;
+    z-index: 2;
+    pointer-events: none;
+}
+.media-grid.in-select-mode .media-item .select-badge { display: flex; }
+.media-item.is-selected {
+    outline: 2px solid var(--tg-blue, #2AABEE);
+    outline-offset: -2px;
+}
+.media-item.is-selected .select-badge {
+    background: var(--tg-blue, #2AABEE);
+    color: #fff;
+    border-color: var(--tg-blue, #2AABEE);
+    transform: scale(1.05);
+}
+/* During an active lasso drag, prevent text selection on the grid
+   so the rectangle doesn't accidentally highlight text. Also
+   disable touch panning ON THE GRID DURING THE DRAG ONLY — the
+   rest of the time normal vertical scroll works as expected. */
+.media-grid.lasso-active { user-select: none; -webkit-user-select: none; touch-action: none; }
+.media-grid.lasso-active .media-item { cursor: default; }
+/* Tiles disable browser long-press context menus on touch — we
+   own the long-press gesture for entering select mode. */
+.media-item { -webkit-touch-callout: none; }
+
+/* The rubber-band lasso rectangle. Position: fixed so it tracks
+   the mouse in viewport coordinates regardless of scroll. */
+#gallery-lasso {
+    position: fixed;
+    display: none;
+    background: rgba(42, 171, 238, 0.16);
+    border: 1px solid var(--tg-blue, #2AABEE);
+    border-radius: 2px;
+    pointer-events: none;
+    z-index: 40;
+}
+#gallery-lasso.visible { display: block; }
+/* Subtle highlight while a tile is in the rectangle but the
+   drag hasn't been committed yet. */
+.media-item.is-marquee {
+    outline: 2px dashed rgba(42, 171, 238, 0.7);
+    outline-offset: -2px;
+}
+
+/* View-mode picker dropdown (header) */
+.view-mode-menu {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 4px);
+    min-width: 180px;
+    max-width: min(240px, calc(100vw - 24px));
+    transform-origin: top right;
+    background: var(--tg-panel, #17212B);
+    border: 1px solid var(--tg-border, rgba(255,255,255,0.08));
+    border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    padding: 4px;
+    z-index: 50;
+    display: none;
+}
+.view-mode-menu.open { display: block; }
+.view-mode-menu button {
+    display: flex; align-items: center; gap: 10px;
+    width: 100%;
+    padding: 8px 10px;
+    border-radius: 6px;
+    text-align: left;
+    color: var(--tg-text, #E2E8F0);
+    font-size: 13px;
+    transition: background 0.1s ease;
+}
+.view-mode-menu button:hover { background: rgba(255,255,255,0.06); }
+.view-mode-menu button[data-active="1"] { background: rgba(42, 171, 238, 0.14); color: var(--tg-blue, #2AABEE); }
+.view-mode-menu button i { font-size: 18px; }
+.view-mode-menu button .vm-label { flex: 1; }
+.view-mode-menu button .vm-check { font-size: 14px; opacity: 0; }
+.view-mode-menu button[data-active="1"] .vm-check { opacity: 1; }
+html.theme-light .view-mode-menu { background: #FFFFFF; box-shadow: 0 8px 24px rgba(0,0,0,0.12); }
+html.theme-light .view-mode-menu button:hover { background: rgba(0,0,0,0.04); }
+
+/* Notification bell dropdown — same chrome as view-mode-menu but
+   sized for a list of items. Width is wider on desktop (300px)
+   and clamped on mobile (calc(100vw - 16px)) so the menu never
+   clips the right edge of a 320px viewport. */
+.notify-menu {
+    min-width: 280px;
+    width: min(320px, calc(100vw - 16px));
+    max-width: calc(100vw - 16px);
+    padding: 0;
+}
+.notify-menu .notify-row {
+    display: flex; gap: 8px; align-items: flex-start;
+    padding: 8px 10px;
+    border-radius: 6px;
+    cursor: default;
+}
+.notify-menu .notify-row:hover { background: rgba(255,255,255,0.04); }
+.notify-menu .notify-row .notify-icon {
+    width: 22px; height: 22px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 50%; font-size: 13px;
+}
+.notify-menu .notify-row[data-level="info"] .notify-icon  { background: rgba(42, 171, 238, 0.18); color: var(--tg-blue, #2AABEE); }
+.notify-menu .notify-row[data-level="warn"] .notify-icon  { background: rgba(255, 152, 0, 0.18); color: var(--tg-orange, #FF9800); }
+.notify-menu .notify-row[data-level="error"] .notify-icon { background: rgba(229, 57, 53, 0.20); color: var(--tg-red, #E53935); }
+.notify-menu .notify-row .notify-body { flex: 1; min-width: 0; }
+.notify-menu .notify-row .notify-msg {
+    color: var(--tg-text, #E2E8F0);
+    font-size: 12px; line-height: 1.35;
+    word-break: break-word;
+}
+.notify-menu .notify-row .notify-meta {
+    color: var(--tg-textSecondary, #93AAC4);
+    font-size: 10px; margin-top: 2px;
+    display: flex; gap: 6px; align-items: center;
+}
+html.theme-light .notify-menu .notify-row:hover { background: rgba(0,0,0,0.04); }
+
+/* Engine status pill: compact further on tiny screens (<400px) so
+   it doesn't push the bell + select-mode + overflow trio into
+   overflow-x scroll. Pill goes icon-only at 420px (existing rule
+   at line ~1166) — at 380px we also drop the dot's outer glow. */
+@media (max-width: 380px) {
+    .engine-status-pill { padding: 0 4px; min-width: 28px; }
+    #engine-status-pill { font-size: 0; }
+    /* Keep the queue-count badge legible after the parent pill collapses
+       its label to font-size: 0 — without this, an admin with 12 jobs
+       in flight saw an empty 8 px dot on a 320 px iPhone. */
+    #engine-status-pill .nav-badge { font-size: 10px; }
+}
+
+.media-item img {
+    opacity: 0;
+    transition: opacity 0.18s ease;
+}
+.media-item video {
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.media-item img.loaded,
+.media-item video.loaded {
+    opacity: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+    .media-item img,
+    .media-item video { transition: none; }
+}
+
+.media-item:hover .media-overlay {
+    opacity: 1;
+}
+
+.media-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    opacity: 0;
+    transition: opacity 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.skeleton {
+    background: linear-gradient(90deg, #242F3D 25%, #2B3A4A 50%, #242F3D 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+}
+
+@keyframes shimmer {
+    0% {
+        background-position: 200% 0;
+    }
+
+    100% {
+        background-position: -200% 0;
+    }
+}
+
+.tg-btn {
+    background: #2AABEE;
+    color: white;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+.tg-btn:hover {
+    background: #229ED9;
+}
+
+.tg-btn:active {
+    transform: scale(0.98);
+}
+
+/* Used everywhere in the SPA for non-primary actions (Save credentials,
+   Export, Resync, Restart, log View/Copy/Download, Backfill presets,
+   remove-account, etc.). Was relying on a hypothetical JS-injected
+   runtime style that never existed, so dark-mode buttons fell back to
+   the browser default and looked broken. */
+.tg-btn-secondary {
+    background: #2F3B4A;
+    color: #F5F5F5;
+    padding: 8px 14px;
+    border-radius: 8px;
+    border: 1px solid #38444D;
+    font-weight: 500;
+    font-size: 13px;
+    line-height: 1.2;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, transform 0.15s;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    white-space: nowrap;
+}
+
+.tg-btn-secondary:hover {
+    background: #3A4A5C;
+    border-color: #4A5C6E;
+}
+
+.tg-btn-secondary:active {
+    transform: scale(0.98);
+}
+
+.tg-btn-secondary:disabled,
+.tg-btn-secondary[disabled] {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.tg-toggle {
+    width: 44px;
+    height: 24px;
+    background: #3A4A5C;
+    border-radius: 12px;
+    position: relative;
+    cursor: pointer;
+    transition: background 0.2s;
+    flex-shrink: 0;
+}
+
+.tg-toggle.active {
+    background: #2AABEE;
+}
+
+/* Rescue Mode chip group: active chip gets the brand-blue fill so the
+   selection stays visible against the panel. Used in the per-group
+   settings modal; rendered by data-rescue-value buttons. */
+.rescue-chip.active {
+    background: #2AABEE;
+    color: #fff;
+    font-weight: 500;
+}
+
+/* Inline gallery badges for Rescue Mode tiles. The "rescued" lifebuoy
+   pill marks files whose source got deleted (kept forever); the
+   hourglass pill marks pending files (auto-prune at countdown). */
+.badge-rescued, .badge-pending {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    padding: 2px 6px;
+    font-size: 10px;
+    border-radius: 6px;
+    line-height: 1.2;
+    color: #fff;
+    backdrop-filter: blur(4px);
+    background: rgba(0,0,0,0.55);
+    pointer-events: none;
+}
+.badge-rescued { background: rgba(42,171,238,0.85); }
+.badge-pending { background: rgba(244,180,0,0.85); color: #1f1300; }
+
+.tg-toggle::after {
+    content: '';
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    background: white;
+    border-radius: 50%;
+    top: 2px;
+    left: 2px;
+    transition: transform 0.2s;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+}
+
+.tg-toggle.active::after {
+    transform: translateX(20px);
+}
+
+.tg-input {
+    background: #242F3D;
+    /* Subtle border so inputs and selects are visually bounded
+       against the panel — borderless inputs blended into card
+       backgrounds in dark mode. */
+    border: 1px solid #38444D;
+    border-radius: 8px;
+    padding: 11px 16px;
+    color: #F5F5F5;
+    width: 100%;
+    outline: none;
+}
+
+.tg-input:hover {
+    border-color: #4A5C6E;
+}
+
+.tg-input:focus {
+    border-color: #2AABEE;
+    box-shadow: 0 0 0 2px rgba(42, 171, 238, 0.25);
+}
+
+/* Branded range slider — covers the player volume bar, the
+   Settings → Video Player default-volume slider, and any
+   future range input. UA defaults are inconsistent
+   (Chromium thumb comically large; Firefox thumb invisible). */
+input[type="range"].tg-range,
+#video-volume,
+#setting-viewer-default-volume {
+    -webkit-appearance: none;
+    appearance: none;
+    background: transparent;
+    outline: none;
+    height: 18px;
+}
+input[type="range"].tg-range::-webkit-slider-thumb,
+#video-volume::-webkit-slider-thumb,
+#setting-viewer-default-volume::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #FFFFFF;
+    border: 2px solid #2AABEE;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+    cursor: pointer;
+    margin-top: -5px;   /* centre over the 4px track */
+}
+input[type="range"].tg-range::-moz-range-thumb,
+#video-volume::-moz-range-thumb,
+#setting-viewer-default-volume::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #FFFFFF;
+    border: 2px solid #2AABEE;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+    cursor: pointer;
+}
+input[type="range"].tg-range::-webkit-slider-runnable-track,
+#video-volume::-webkit-slider-runnable-track,
+#setting-viewer-default-volume::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 9999px;
+    background: rgba(120, 130, 145, 0.35);
+}
+input[type="range"].tg-range::-moz-range-track,
+#video-volume::-moz-range-track,
+#setting-viewer-default-volume::-moz-range-track {
+    height: 4px;
+    border-radius: 9999px;
+    background: rgba(120, 130, 145, 0.35);
+}
+/* Volume slider in the player sits on a dark gradient — keep
+   the track subtle there. */
+#video-volume::-webkit-slider-runnable-track,
+#video-volume::-moz-range-track {
+    background: rgba(255, 255, 255, 0.25);
+}
+
+.modal-backdrop {
+    background: rgba(0, 0, 0, 0.92);
+}
+
+.tab-item {
+    padding: 12px 16px;
+    color: #8B9BAA;
+    cursor: pointer;
+    position: relative;
+    transition: color 0.2s;
+    white-space: nowrap;
+}
+
+.tab-item:hover {
+    color: #F5F5F5;
+}
+
+.tab-item.active {
+    color: #2AABEE;
+}
+
+.tab-item.active::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: #2AABEE;
+    border-radius: 3px 3px 0 0;
+}
+
+.sidebar-mobile {
+    transform: translateX(-100%);
+    transition: transform 0.3s ease;
+}
+
+.sidebar-mobile.open {
+    transform: translateX(0);
+}
+
+/* ============================================================
+   Engine status pill (top header) — replaces the dropped Engine
+   bottom-nav tab. Tappable, navigates to #/settings/engine, and
+   reflects monitor state via [data-state] driven from
+   js/statusbar.js applyState(). Keeps the #engine-nav-badge span
+   inside so existing queue+active count logic stays untouched.
+   ============================================================ */
+.engine-status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 36px;
+    min-height: 36px;
+    padding: 0 10px;
+    margin-right: 4px;
+    border-radius: 999px;
+    font-size: 12px;
+    line-height: 1;
+    color: var(--tg-textSecondary, #8B9BAA);
+    text-decoration: none;
+    -webkit-tap-highlight-color: transparent;
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+.engine-status-pill:hover { background: var(--tg-hover, #2B5278); }
+.engine-status-pill .engine-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--tg-textSecondary, #8B9BAA);
+    box-shadow: 0 0 0 2px rgba(139,155,170,0.18);
+    transition: background-color 0.15s ease, box-shadow 0.15s ease;
+}
+.engine-status-pill[data-state="running"] { color: var(--tg-green, #4FAE4E); }
+.engine-status-pill[data-state="running"] .engine-status-dot {
+    background: var(--tg-green, #4FAE4E);
+    box-shadow: 0 0 0 2px rgba(79,174,78,0.20);
+    animation: engine-pulse 2.4s ease-in-out infinite;
+}
+.engine-status-pill[data-state="error"] { color: var(--tg-red, #E53935); }
+.engine-status-pill[data-state="error"] .engine-status-dot {
+    background: var(--tg-red, #E53935);
+    box-shadow: 0 0 0 2px rgba(229,57,53,0.20);
+}
+.engine-status-pill[data-state="reconnecting"],
+.engine-status-pill[data-state="starting"],
+.engine-status-pill[data-state="stopping"] { color: var(--tg-orange, #FF9800); }
+.engine-status-pill[data-state="reconnecting"] .engine-status-dot,
+.engine-status-pill[data-state="starting"] .engine-status-dot,
+.engine-status-pill[data-state="stopping"] .engine-status-dot {
+    background: var(--tg-orange, #FF9800);
+    box-shadow: 0 0 0 2px rgba(255,152,0,0.20);
+}
+@keyframes engine-pulse {
+    0%, 100% { box-shadow: 0 0 0 2px rgba(79,174,78,0.20); }
+    50% { box-shadow: 0 0 0 4px rgba(79,174,78,0.10); }
+}
+@media (max-width: 420px) {
+    .engine-status-pill .engine-status-label { display: none; }
+    .engine-status-pill { padding: 0 6px; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .engine-status-pill,
+    .engine-status-pill .engine-status-dot { transition: none; }
+    .engine-status-pill[data-state="running"] .engine-status-dot { animation: none; }
+}
+
+/* ============================================================
+   Bottom navigation (mobile-only).
+   Visible below md (768px). 4 items + safe-area-inset-bottom.
+   ============================================================ */
+@media (max-width: 767.98px) {
+    body.has-bottom-nav { padding-bottom: calc(56px + env(safe-area-inset-bottom)); }
+}
+.bottom-nav {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    height: 56px;
+    display: flex;
+    align-items: stretch;
+    justify-content: space-around;
+    background: var(--tg-sidebar, #0E1621);
+    border-top: 1px solid var(--tg-border, #0D1117);
+    z-index: 35;
+    padding-bottom: env(safe-area-inset-bottom);
+}
+@media (min-width: 768px) { .bottom-nav { display: none; } }
+.bottom-nav-item {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    color: var(--tg-textSecondary, #8B9BAA);
+    text-decoration: none;
+    font-size: 11px;
+    line-height: 1;
+    gap: 3px;
+    cursor: pointer;
+    position: relative;
+    -webkit-tap-highlight-color: transparent;
+}
+.bottom-nav-item.active { color: var(--tg-blue, #2AABEE); }
+.bottom-nav-item i { font-size: 22px; }
+.bottom-nav-item span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+/* Five-tab bottom nav: the default 22 px icon / 11 px label fits
+   comfortably down to 360 px. Only sub-340 px phones still need
+   the icon + label nudge to keep tap targets uncrowded. */
+@media (max-width: 340px) {
+    .bottom-nav-item i { font-size: 19px; }
+    .bottom-nav-item { font-size: 10px; gap: 2px; }
+}
+.bottom-nav-item .nav-badge {
+    position: absolute;
+    top: 4px;
+    right: calc(50% - 1ch);
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: 8px;
+    font-size: 10px;
+    line-height: 16px;
+    text-align: center;
+    background: var(--tg-blue, #2AABEE);
+    color: #fff;
+    font-weight: 600;
+}
+.bottom-nav-item .nav-badge.error { background: var(--tg-red, #E53935); }
+.bottom-nav-item .nav-badge.warning { background: var(--tg-orange, #FF9800); }
+
+/* ============================================================
+   Floating Action Button (mobile only). Above the bottom nav.
+   ============================================================ */
+.fab {
+    position: fixed;
+    right: 16px;
+    bottom: calc(72px + env(safe-area-inset-bottom));
+    width: 56px;
+    height: 56px;
+    border-radius: 28px;
+    background: var(--tg-blue, #2AABEE);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.30);
+    z-index: 36;
+    border: none;
+    cursor: pointer;
+    transition: transform 0.15s ease;
+}
+.fab:active { transform: scale(0.95); }
+.fab i { font-size: 24px; }
+@media (min-width: 768px) { .fab { display: none; } }
+
+/* ============================================================
+   Sheet primitive — bottom-sheet on mobile, centered card on
+   desktop. Driven by sheet.js (openSheet / closeTopSheet).
+   ============================================================ */
+.sheet-root {
+    position: fixed; inset: 0;
+    z-index: 100;
+    display: flex;
+    align-items: flex-end; justify-content: center;
+    pointer-events: none;
+}
+@media (min-width: 768px) {
+    .sheet-root { align-items: center; }
+}
+.sheet-backdrop {
+    position: absolute; inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    opacity: 0;
+    transition: opacity 200ms ease;
+    pointer-events: auto;
+}
+.sheet-card {
+    position: relative;
+    width: 100%;
+    background: var(--tg-panel, #242F3D);
+    color: var(--tg-text, #F5F5F5);
+    border-radius: 14px 14px 0 0;
+    padding: 0 0 12px;
+    transform: translateY(100%);
+    transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    pointer-events: auto;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+@media (min-width: 768px) {
+    .sheet-card {
+        width: auto;
+        min-width: 380px;
+        max-width: min(720px, 92vw);
+        border-radius: 14px;
+        transform: translateY(8px) scale(0.97);
+        opacity: 0;
+        transition: transform 200ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 200ms;
+        margin: 0 16px;
+    }
+}
+.sheet-root.sheet-open .sheet-backdrop { opacity: 1; }
+.sheet-root.sheet-open .sheet-card { transform: translateY(0); opacity: 1; }
+/* Promote the sheet to its own compositor layer only while open;
+   avoids permanent will-change tax when the sheet is idle. */
+.sheet-root.sheet-open .sheet-card { will-change: transform; }
+.sheet-handle {
+    display: block;
+    width: 36px; height: 4px;
+    background: var(--tg-textSecondary, #8B9BAA);
+    opacity: 0.5;
+    border-radius: 2px;
+    margin: 8px auto 0;
+    cursor: grab;
+    touch-action: none;
+}
+@media (min-width: 768px) { .sheet-handle { display: none; } }
+.sheet-header {
+    display: flex; align-items: center;
+    padding: 12px 16px 6px;
+    position: relative;
+}
+.sheet-header .sheet-handle { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); margin: 0; }
+.sheet-title {
+    font-weight: 600;
+    font-size: 16px;
+    flex: 1;
+    margin-top: 16px;
+}
+@media (min-width: 768px) { .sheet-title { margin-top: 0; } }
+.sheet-close {
+    background: transparent; border: none; color: var(--tg-textSecondary, #8B9BAA);
+    font-size: 28px; line-height: 1; cursor: pointer;
+    min-width: 32px; min-height: 32px;
+    display: flex; align-items: center; justify-content: center;
+}
+.sheet-body {
+    padding: 8px 16px 16px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    flex: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+    .sheet-card, .sheet-backdrop { transition: none !important; }
+    .sheet-root.sheet-open .sheet-card { transform: translateY(0) scale(1); }
+}
+
+/* ============================================================
+   Focus visibility — Telegram-style soft ring.
+   ============================================================ */
+:focus-visible {
+    outline: 2px solid var(--tg-blue, #2AABEE);
+    outline-offset: 2px;
+    border-radius: 6px;
+}
+button:focus, input:focus, select:focus, textarea:focus { outline: none; }
+
+/* Safe-area fillers for notched displays (mobile bottom-nav). */
+.pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+.pt-safe { padding-top: env(safe-area-inset-top); }
+/* Notched displays: bump the content-header to keep its 56 px content
+   area under the inset. Browsers without env() support keep h-14 as-is. */
+@supports (padding-top: env(safe-area-inset-top)) {
+    #content-header { height: calc(56px + env(safe-area-inset-top, 0px)); }
+}
+
+/* ============================================================
+   Story-ring around an avatar — used to surface "this group is
+   downloading right now". Static ring = ring=active; spinning
+   gradient = ring=downloading.
+   ============================================================ */
+.avatar-ring {
+    box-shadow:
+        0 0 0 2px var(--tg-sidebar, #0E1621),
+        0 0 0 4px var(--tg-blue, #2AABEE);
+    border-radius: 50%;
+}
+.avatar-ring-active {
+    box-shadow: 0 0 0 2px var(--tg-sidebar, #0E1621);
+    position: relative;
+}
+.avatar-ring-active::before {
+    content: "";
+    position: absolute;
+    inset: -4px;
+    border-radius: 50%;
+    background: conic-gradient(from 0deg,
+        #2AABEE, #4FAE4E, #FF9800, #2AABEE);
+    -webkit-mask:
+        radial-gradient(circle, transparent 53%, #000 55%);
+            mask:
+        radial-gradient(circle, transparent 53%, #000 55%);
+    animation: avatar-ring-spin 2.4s linear infinite;
+    z-index: -1;
+}
+@keyframes avatar-ring-spin {
+    to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .avatar-ring-active::before { animation: none; }
+}
+
+/* ============================================================
+   Telegram-style chat row used by the sidebar groups list, the
+   dialogs picker and (compact) the accounts list.
+   ============================================================ */
+.chat-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    cursor: pointer;
+    position: relative;
+    -webkit-tap-highlight-color: transparent;
+    transition: background-color 120ms ease;
+}
+.chat-row:hover { background: var(--tg-hover, #2B5278); }
+.chat-row.is-selected {
+    background: var(--tg-hover, #2B5278);
+}
+.chat-row.is-selected::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 8px; bottom: 8px;
+    width: 3px;
+    background: var(--tg-blue, #2AABEE);
+    border-radius: 0 3px 3px 0;
+}
+.chat-row .row-text { flex: 1; min-width: 0; }
+.chat-row .row-title {
+    display: flex; align-items: center; gap: 6px;
+    font-weight: 500;
+    color: var(--tg-text, #F5F5F5);
+    min-width: 0;
+}
+.chat-row .row-title-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+.chat-row .row-subtitle {
+    font-size: 12px;
+    color: var(--tg-textSecondary, #8B9BAA);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.chat-row .row-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+    margin-left: auto;
+    color: var(--tg-textSecondary, #8B9BAA);
+    font-size: 11px;
+}
+.chat-row .unread-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 22px; height: 22px;
+    padding: 0 6px;
+    border-radius: 11px;
+    background: var(--tg-blue, #2AABEE);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 600;
+}
+.chat-row .unread-pill.muted { background: var(--tg-textSecondary, #8B9BAA); }
+.chat-row .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+}
+.chat-row .status-pill-active   { background: rgba(79,174,78,0.18);  color: #5BC55A; }
+.chat-row .status-pill-paused   { background: rgba(255,152,0,0.18);  color: #FFB54E; }
+.chat-row .status-pill-add      { background: rgba(255,255,255,0.06); color: var(--tg-textSecondary, #8B9BAA); }
+
+/* Guest sessions hide every element marked admin-only. Single source
+   of truth so we don't have to thread `state.role` through every
+   render path. body[data-role] is set on boot in app.js init() from
+   /api/auth_check before any UI mounts. */
+body[data-role="guest"] [data-admin-only] { display: none !important; }
+/* Onboarding banner is admin-flow only ("paste creds → add account
+   → enable group" — every step is a write a guest can't do).
+   `initOnboarding` already returns early for guest, this rule is
+   the belt-and-suspenders for any race / stale DOM case. */
+body[data-role="guest"] #onboarding-banner { display: none !important; }
+/* Select-mode toggle is only meaningful inside the gallery — show it
+   in the header only when the Viewer page is active. Hidden by
+   default via the `hidden` class; this rule un-hides on viewer. */
+body[data-page="viewer"] #select-mode-btn { display: inline-flex; }
+/* Guest header role pill */
+.role-pill { display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px; font-size: 11px; font-weight: 500;
+    border-radius: 999px; line-height: 1.4; letter-spacing: 0.02em; }
+.role-pill.role-admin { background: rgba(42,171,238,0.15); color: var(--tg-blue, #2AABEE); }
+.role-pill.role-guest { background: rgba(139,155,170,0.18); color: var(--tg-textSecondary, #8B9BAA); }
+
+/* ============================================================
+   Per-page accent — single Telegram-style highlight per top-level
+   page. Drives the header bottom-border tint and any opt-in
+   `var(--page-accent)` consumers.
+   ============================================================ */
+:root { --page-accent: var(--tg-blue, #2AABEE); }
+body[data-page="viewer"]   { --page-accent: var(--tg-blue, #2AABEE); }
+body[data-page="groups"]   { --page-accent: var(--tg-green, #4FAE4E); }
+body[data-page="backfill"] { --page-accent: var(--tg-orange, #FF9800); }
+body[data-page="queue"]    { --page-accent: #29B6F6; }
+body[data-page="settings"] { --page-accent: var(--tg-blue, #2AABEE); }
+body[data-page="maintenance-duplicates"] { --page-accent: var(--tg-orange, #FF9800); }
+body[data-page="maintenance-thumbs"]     { --page-accent: var(--tg-blue, #2AABEE); }
+body[data-page="maintenance-nsfw"]       { --page-accent: #E53935; }
+body[data-page="maintenance-logs"]       { --page-accent: #6E41E2; }
+#content-header {
+    box-shadow: inset 0 -2px 0 var(--page-accent);
+    transition: box-shadow 0.2s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+    #content-header { transition: none; }
+}
+
+/* ============================================================
+   Settings tab strip — sticky tab row that mirrors the Groups
+   page tabs visually (`#groups-tab-*`) but stays in reach while
+   the user scrolls so they can jump between sections without
+   hauling the page back to the top. Sits inside the page's
+   content column (no full-width breakout) so it doesn't read
+   as a foreign banner pasted on top of the cards.
+   ============================================================ */
+.settings-chip-nav {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    display: flex;
+    margin: 0 0 16px;
+    padding: 0;
+    background: var(--tg-bg, #17212B);   /* matches page bg so scrolled cards pass cleanly underneath */
+    border-bottom: 1px solid var(--tg-border, #0D1117);
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+}
+.settings-chip-nav::-webkit-scrollbar { display: none; }
+.settings-chip {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 14px;
+    background: transparent;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;             /* overlap the nav's bottom border */
+    color: var(--tg-textSecondary, #8B9BAA);
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 1.2;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    white-space: nowrap;
+    transition: color 0.15s ease, border-color 0.15s ease, font-weight 0s;
+}
+.settings-chip:hover { color: var(--tg-text, #F5F5F5); }
+.settings-chip[aria-selected="true"] {
+    color: var(--tg-blue, #2AABEE);
+    border-bottom-color: var(--tg-blue, #2AABEE);
+    font-weight: 600;
+}
+.settings-chip i {
+    font-size: 15px;
+    line-height: 1;
+    opacity: 0.75;
+    transition: opacity 0.15s ease;
+}
+.settings-chip:hover i,
+.settings-chip[aria-selected="true"] i { opacity: 1; }
+/* Compensate scroll-target landing for the sticky bar's height. */
+.settings-section { scroll-margin-top: 60px; }
+@media (prefers-reduced-motion: reduce) {
+    .settings-chip,
+    .settings-chip i { transition: none; }
+}

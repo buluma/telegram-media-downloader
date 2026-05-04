@@ -2,6 +2,8 @@ import { api } from './api.js';
 import { showToast, escapeHtml } from './utils.js';
 import * as Notifications from './notifications.js';
 import * as Fonts from './fonts.js';
+import { ws } from './ws.js';
+import { wireJobButton } from './job-buttons.js';
 
 // Tracks whether the font <select> has already had its options +
 // change-listener wired this session. Re-populating on every
@@ -299,6 +301,20 @@ export async function loadSettings() {
             httpsToggle.onclick = async (e) => {
                 e.preventDefault();
                 const next = !httpsToggle.classList.contains('active');
+                // Enabling Force HTTPS without a working TLS cert behind
+                // the reverse proxy locks the operator out — the dashboard
+                // 308-redirects every request to https:// and the browser
+                // can't reach the cert. Confirm sheet on enable, plain
+                // toggle on disable (escape hatch should be friction-free).
+                if (next) {
+                    const ok = await confirmSheet({
+                        title: i18nT('settings.security.force_https_confirm_title', 'Enable Force HTTPS?'),
+                        message: i18nT('settings.security.force_https_confirm_body', 'Every HTTP request will 308-redirect to HTTPS. Make sure your reverse proxy has a working TLS cert and TRUST_PROXY=1 is set, otherwise the dashboard becomes unreachable. Localhost is exempt so you can still recover from the host.'),
+                        confirmLabel: i18nT('settings.security.force_https_confirm_ok', 'Enable Force HTTPS'),
+                        danger: true,
+                    });
+                    if (!ok) return;
+                }
                 try {
                     await api.post('/api/config', { web: { forceHttps: next } });
                     httpsToggle.classList.toggle('active', next);
@@ -670,6 +686,185 @@ async function refreshRescueStats() {
     }
 }
 
+// ---- Auto-save -----------------------------------------------------------
+//
+// Debounced auto-save for every editable Setting field — operators stop
+// having to scroll to the bottom of the page to hit "Save". The button
+// stays as a manual flush escape hatch (still works) and as the visible
+// affordance that says "yes this page persists changes".
+//
+// Lifecycle:
+//   1. Edit a field → onInput → schedule flush in AUTOSAVE_DEBOUNCE_MS.
+//   2. Field blurs early → flush immediately (operator's done with it).
+//   3. Tab visibility flips to hidden → flush immediately (best-effort
+//      "don't lose unsaved changes when the user closes the tab").
+//   4. Status indicator: idle → "Saving…" → "Saved at HH:MM:SS" → idle
+//      after 4 s. Errors stick until the next successful save.
+//
+// `_autoSaveSnapshot` records the last saved JSON of the gathered config
+// so we don't issue a no-op POST when the operator only tabbed through
+// fields without changing values.
+
+const AUTOSAVE_DEBOUNCE_MS = 800;
+let _autoSaveTimer = null;
+let _autoSaveInflight = false;
+let _autoSaveSnapshot = null;
+let _autoSaveStatusFadeTimer = null;
+let _autoSaveBound = false;
+
+function _setAutosaveStatus(state, msg) {
+    const root = document.getElementById('settings-autosave-status');
+    const iconEl = document.getElementById('settings-autosave-icon');
+    const textEl = document.getElementById('settings-autosave-text');
+    if (!root || !iconEl || !textEl) return;
+    if (_autoSaveStatusFadeTimer) { clearTimeout(_autoSaveStatusFadeTimer); _autoSaveStatusFadeTimer = null; }
+    const map = {
+        idle:    { icon: '',                                     color: 'text-tg-textSecondary' },
+        dirty:   { icon: '<i class="ri-edit-2-line"></i>',       color: 'text-tg-textSecondary' },
+        saving:  { icon: '<i class="ri-loader-4-line animate-spin"></i>', color: 'text-tg-textSecondary' },
+        saved:   { icon: '<i class="ri-check-line"></i>',        color: 'text-tg-green' },
+        error:   { icon: '<i class="ri-error-warning-line"></i>', color: 'text-tg-red' },
+    };
+    const m = map[state] || map.idle;
+    iconEl.innerHTML = m.icon;
+    textEl.textContent = msg || '';
+    root.className = root.className.replace(/text-tg-(green|red|textSecondary)/g, '').trim() + ' ' + m.color + ' text-xs mb-2 flex items-center gap-2 min-h-[20px]';
+    if (state === 'saved') {
+        _autoSaveStatusFadeTimer = setTimeout(() => _setAutosaveStatus('idle', ''), 4000);
+    }
+}
+
+async function _autoSaveFlush() {
+    if (_autoSaveInflight) {
+        // Re-arm — the in-flight POST will re-trigger via finally() but
+        // we may have newer edits that landed between the previous flush
+        // and now.
+        _scheduleAutoSave();
+        return;
+    }
+    if (_autoSaveTimer) { clearTimeout(_autoSaveTimer); _autoSaveTimer = null; }
+
+    let payload;
+    try { payload = _gatherSettingsPayload(); }
+    catch (e) { _setAutosaveStatus('error', i18nT('settings.autosave.error', 'Could not gather settings: ') + (e?.message || e)); return; }
+
+    const json = JSON.stringify(payload);
+    if (json === _autoSaveSnapshot) {
+        // No-op — fields visually changed (or focus events fired) but the
+        // serialized payload matches the last saved snapshot.
+        _setAutosaveStatus('idle', '');
+        return;
+    }
+
+    _autoSaveInflight = true;
+    _setAutosaveStatus('saving', i18nT('settings.autosave.saving', 'Saving…'));
+    try {
+        await api.post('/api/config', payload);
+        _autoSaveSnapshot = json;
+        const ts = new Date();
+        const hh = String(ts.getHours()).padStart(2, '0');
+        const mm = String(ts.getMinutes()).padStart(2, '0');
+        const ss = String(ts.getSeconds()).padStart(2, '0');
+        _setAutosaveStatus('saved', i18nTf('settings.autosave.saved', { time: `${hh}:${mm}:${ss}` }, `Saved at ${hh}:${mm}:${ss}`));
+    } catch (e) {
+        _setAutosaveStatus('error', i18nTf('settings.autosave.failed', { msg: e?.message || String(e) }, `Save failed: ${e?.message || e}`));
+    } finally {
+        _autoSaveInflight = false;
+    }
+}
+
+function _scheduleAutoSave() {
+    if (_autoSaveTimer) clearTimeout(_autoSaveTimer);
+    _setAutosaveStatus('dirty', i18nT('settings.autosave.dirty', 'Editing…'));
+    _autoSaveTimer = setTimeout(_autoSaveFlush, AUTOSAVE_DEBOUNCE_MS);
+}
+
+// Single source of truth for the saved JSON shape. Both the manual Save
+// button and the auto-save flush call this — keeps validation / clamping
+// logic in lock-step.
+function _gatherSettingsPayload() {
+    const get = (id) => document.getElementById(id)?.value;
+    const dmActive = document.getElementById('setting-allow-dm')?.classList.contains('active') === true;
+    const rescueDefaultOn = document.getElementById('setting-rescue-default')?.classList.contains('active') === true;
+    const rescueHours = Math.max(1, Math.min(720, parseInt(get('setting-rescue-default-hours'), 10) || 48));
+    const rescueSweep = Math.max(1, Math.min(1440, parseInt(get('setting-rescue-sweep-min'), 10) || 10));
+    return {
+        download: {
+            concurrent: parseInt(get('setting-concurrent')),
+            retries: parseInt(get('setting-retries')),
+            maxSpeed: parseInt(get('setting-max-speed')) || 0,
+        },
+        rateLimits: { requestsPerMinute: parseInt(get('setting-rpm')) },
+        pollingInterval: parseInt(get('setting-polling')),
+        diskManagement: {
+            maxTotalSize: combineDiskCap(get('setting-max-disk-value'), get('setting-max-disk-unit')),
+            maxVideoSize: get('setting-max-video') || null,
+            maxImageSize: get('setting-max-image') || null,
+            enabled: document.getElementById('setting-disk-rotate')?.classList.contains('active') === true,
+        },
+        rescue: { enabled: rescueDefaultOn, retentionHours: rescueHours, sweepIntervalMin: rescueSweep },
+        advanced: gatherAdvanced(),
+        allowDmDownloads: dmActive,
+    };
+}
+
+/**
+ * Wire auto-save listeners. Idempotent — safe to call on every settings
+ * page render; the `_autoSaveBound` flag short-circuits re-binding.
+ *
+ * Watches: `[id^="setting-"]` (every Setting input/select), `.tg-toggle`
+ * (custom-rendered toggles that don't fire native change events on
+ * .classList toggle), and explicit click events for preset buttons.
+ */
+export function setupAutoSave() {
+    if (_autoSaveBound) return;
+    _autoSaveBound = true;
+
+    const root = document.getElementById('page-settings');
+    if (!root) return;
+
+    // Capture the baseline so an "untouched page renders + scrolls" doesn't
+    // trip a save. loadSettings() will fire input events as it populates,
+    // we delay the first arm by a microtask so they don't all queue saves.
+    queueMicrotask(() => {
+        try { _autoSaveSnapshot = JSON.stringify(_gatherSettingsPayload()); } catch {}
+    });
+
+    // Native input/change events from <input> / <select> / <textarea>.
+    root.addEventListener('input', (e) => {
+        const t = e.target;
+        if (!t || !t.id || !t.id.startsWith('setting-')) return;
+        _scheduleAutoSave();
+    });
+    root.addEventListener('change', (e) => {
+        const t = e.target;
+        if (!t || !t.id || !t.id.startsWith('setting-')) return;
+        _scheduleAutoSave();
+    });
+
+    // tg-toggle is a div+class trick — listen on click bubbling.
+    root.addEventListener('click', (e) => {
+        const t = e.target.closest('.tg-toggle');
+        if (!t) return;
+        // Defer so the toggle handler that flips .active runs first.
+        setTimeout(_scheduleAutoSave, 0);
+    });
+
+    // Flush early when the user blurs a field (they're done with it).
+    root.addEventListener('focusout', (e) => {
+        if (!_autoSaveTimer) return;
+        const t = e.target;
+        if (!t || !t.id || !t.id.startsWith('setting-')) return;
+        _autoSaveFlush();
+    });
+
+    // Tab close / hide → best-effort flush so unsaved edits don't vanish
+    // when the operator switches tabs and doesn't come back.
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden && _autoSaveTimer) _autoSaveFlush();
+    });
+}
+
 export async function saveSettings() {
     const get = (id) => document.getElementById(id)?.value;
 
@@ -908,14 +1103,20 @@ function wireMaintenance() {
     once(document.getElementById('maint-db-check-btn'), maintDbIntegrity);
     once(document.getElementById('maint-db-vacuum-btn'), maintDbVacuum);
     once(document.getElementById('maint-verify-btn'), maintVerifyFiles);
-    once(document.getElementById('maint-dedup-btn'), maintFindDuplicates);
+    // The four standalone maintenance pages (added v2.3.48) take over from
+    // the inline sheets these buttons used to open. The sheet-based handlers
+    // (maintFindDuplicates, maintBuildThumbs, maintRebuildThumbs, maintBrowseLogs,
+    // and the NSFW review sheet in nsfw-ui.js) are kept for now as a fallback
+    // in case the SPA needs to fall back to the legacy flow.
+    const _go = (slug) => () => { try { window.navigateTo?.(slug); } catch {} };
+    once(document.getElementById('maint-dedup-btn'), _go('maintenance/duplicates'));
     once(document.getElementById('maint-shares-btn'), maintManageShares);
-    once(document.getElementById('maint-thumbs-build-btn'), maintBuildThumbs);
-    once(document.getElementById('maint-thumbs-rebuild-btn'), maintRebuildThumbs);
+    once(document.getElementById('maint-thumbs-build-btn'), _go('maintenance/thumbs'));
+    once(document.getElementById('maint-thumbs-rebuild-btn'), _go('maintenance/thumbs'));
     once(document.getElementById('maint-update-btn'), maintInstallUpdate);
-    once(document.getElementById('maint-nsfw-scan-btn'), () => _nsfwModule().then(m => m.maintNsfwScan()));
-    once(document.getElementById('maint-nsfw-review-btn'), () => _nsfwModule().then(m => m.maintNsfwReview()));
-    once(document.getElementById('maint-logs-btn'), maintBrowseLogs);
+    once(document.getElementById('maint-nsfw-scan-btn'), _go('maintenance/nsfw'));
+    once(document.getElementById('maint-nsfw-review-btn'), _go('maintenance/nsfw'));
+    once(document.getElementById('maint-logs-btn'), _go('maintenance/logs'));
     once(document.getElementById('maint-config-btn'), maintViewConfig);
     once(document.getElementById('maint-export-btn'), maintExportSession);
     once(document.getElementById('maint-signout-all-btn'), maintRevokeAllSessions);
@@ -924,6 +1125,10 @@ function wireMaintenance() {
     refreshThumbsStats();
     refreshUpdateStatus();
     _nsfwModule().then(m => m.refreshNsfwStatus()).catch(() => {});
+    // Hydrate every fire-and-forget admin button + subscribe to its
+    // `*_done` WS event so a job started on phone re-paints the
+    // desktop's button when it finishes.
+    wireMaintenanceJobToasts();
 }
 
 let _nsfwModulePromise = null;
@@ -945,7 +1150,9 @@ async function refreshThumbsStats() {
     } catch { /* ignore */ }
 }
 
-async function maintBuildThumbs() {
+// Kept as a fallback in case we need to re-wire to a Settings sheet — the
+// canonical entry-point is now the standalone Maintenance → Thumbnails page.
+async function _maintBuildThumbs() {
     const btn = document.getElementById('maint-thumbs-build-btn');
     if (btn) { btn.disabled = true; btn.textContent = i18nT('maintenance.thumbs.building', 'Building…'); }
     try {
@@ -1004,7 +1211,8 @@ async function refreshUpdateStatus() {
     } catch { /* leave blank */ }
 }
 
-async function maintRebuildThumbs() {
+// Kept as a fallback — see _maintBuildThumbs comment above.
+async function _maintRebuildThumbs() {
     const ok = await confirmSheet({
         title: i18nT('maintenance.thumbs.rebuild_title', 'Rebuild thumbnail cache?'),
         body: i18nT('maintenance.thumbs.rebuild_body', 'Wipes every cached thumbnail. The next gallery scroll regenerates them on demand. Useful when previews look stale or after a quality tweak.'),
@@ -1042,7 +1250,8 @@ async function maintManageShares() {
 // byte-identical copies, lets the user pick which to keep, then deletes
 // the rest. Two-step UX: scan first (no destructive op), explicit Delete
 // confirmation second.
-async function maintFindDuplicates() {
+// Kept as a fallback — see _maintBuildThumbs comment above.
+async function _maintFindDuplicates() {
     const btn = document.getElementById('maint-dedup-btn');
     if (btn) { btn.disabled = true; btn.textContent = i18nT('maintenance.dedup.scanning', 'Scanning…'); }
     showToast(i18nT('maintenance.dedup.starting', 'Scanning files — this may take a while on the first run'), 'info');
@@ -1228,18 +1437,24 @@ async function openDedupSheet(sets) {
     });
 }
 
-// Force-run the file-existence sweep (same one that runs hourly via
-// integrity.start). Drops DB rows whose file vanished on disk so the
-// gallery doesn't show ghost thumbs after a manual rm.
+// Settings → Maintenance buttons trigger fire-and-forget admin jobs.
+// Each handler does the up-front confirm dialog (where applicable) and
+// then POSTs the run endpoint; the backend returns 200 immediately and
+// the actual work runs in the background. Result toasts and re-enable
+// of the button live in `wireMaintenanceJobToasts()` (one set of WS
+// subscribers, fired by `${prefix}_done`) so a job started on a phone
+// re-paints the desktop's button when it finishes.
 async function maintVerifyFiles() {
     try {
         showToast(i18nT('maintenance.verify.running', 'Verifying files…'), 'info');
         const r = await api.post('/api/maintenance/files/verify', {});
-        showToast(i18nTf('maintenance.verify.done',
-            { scanned: r.scanned ?? 0, pruned: r.pruned ?? 0 },
-            `Verified ${r.scanned ?? 0} files — pruned ${r.pruned ?? 0} missing rows`),
-            (r.pruned > 0) ? 'warning' : 'success');
+        if (!r?.started && !r?.success) throw new Error('Failed to start');
     } catch (e) {
+        if (e?.data?.code === 'ALREADY_RUNNING') {
+            showToast(i18nT('jobs.already_running',
+                'Already running on another tab — waiting for it to finish.'), 'info');
+            return;
+        }
         showToast(i18nTf('maintenance.failed', { msg: e.message }, `Failed: ${e.message}`), 'error');
     }
 }
@@ -1248,9 +1463,13 @@ async function maintResyncDialogs() {
     try {
         showToast(i18nT('maintenance.resync.running', 'Resyncing dialogs…'), 'info');
         const r = await api.post('/api/maintenance/resync-dialogs', {});
-        showToast(i18nTf('maintenance.resync.done', { updated: r.updated, scanned: r.scanned },
-            `Resynced ${r.updated} of ${r.scanned} groups`), 'success');
+        if (!r?.started && !r?.success) throw new Error('Failed to start');
     } catch (e) {
+        if (e?.data?.code === 'ALREADY_RUNNING') {
+            showToast(i18nT('jobs.already_running',
+                'Already running on another tab — waiting for it to finish.'), 'info');
+            return;
+        }
         showToast(i18nTf('maintenance.failed', { msg: e.message }, `Failed: ${e.message}`), 'error');
     }
 }
@@ -1265,28 +1484,28 @@ async function maintRestartMonitor() {
     try {
         showToast(i18nT('maintenance.restart.running', 'Restarting monitor…'), 'info');
         const r = await api.post('/api/maintenance/restart-monitor', { confirm: true });
-        if (r.restarted) {
-            showToast(i18nT('maintenance.restart.done', 'Monitor restarted'), 'success');
-        } else {
-            showToast(r.note || i18nT('maintenance.restart.idle',
-                'Monitor was not running.'), 'info');
-        }
+        if (!r?.started && !r?.success) throw new Error('Failed to start');
     } catch (e) {
+        if (e?.data?.code === 'ALREADY_RUNNING') {
+            showToast(i18nT('jobs.already_running',
+                'Already running on another tab — waiting for it to finish.'), 'info');
+            return;
+        }
         showToast(i18nTf('maintenance.failed', { msg: e.message }, `Failed: ${e.message}`), 'error');
     }
 }
 
 async function maintDbIntegrity() {
     try {
+        showToast(i18nT('maintenance.db_check.running', 'Checking database integrity…'), 'info');
         const r = await api.post('/api/maintenance/db/integrity', {});
-        if (r.ok) {
-            showToast(i18nT('maintenance.db_check.ok', 'Database integrity: ok'), 'success');
-        } else {
-            const msg = (r.messages || []).slice(0, 3).join(' / ');
-            showToast(i18nTf('maintenance.db_check.bad', { msg },
-                `Database issues: ${msg}`), 'error');
-        }
+        if (!r?.started && !r?.success) throw new Error('Failed to start');
     } catch (e) {
+        if (e?.data?.code === 'ALREADY_RUNNING') {
+            showToast(i18nT('jobs.already_running',
+                'Already running on another tab — waiting for it to finish.'), 'info');
+            return;
+        }
         showToast(i18nTf('maintenance.failed', { msg: e.message }, `Failed: ${e.message}`), 'error');
     }
 }
@@ -1301,15 +1520,142 @@ async function maintDbVacuum() {
     try {
         showToast(i18nT('maintenance.db_vacuum.running', 'Running VACUUM…'), 'info');
         const r = await api.post('/api/maintenance/db/vacuum', { confirm: true });
-        const reclaimed = formatBytesShort(r.reclaimedBytes);
-        showToast(i18nTf('maintenance.db_vacuum.done', { bytes: reclaimed },
-            `VACUUM done — reclaimed ${reclaimed}`), 'success');
+        if (!r?.started && !r?.success) throw new Error('Failed to start');
     } catch (e) {
+        if (e?.data?.code === 'ALREADY_RUNNING') {
+            showToast(i18nT('jobs.already_running',
+                'Already running on another tab — waiting for it to finish.'), 'info');
+            return;
+        }
         showToast(i18nTf('maintenance.failed', { msg: e.message }, `Failed: ${e.message}`), 'error');
     }
 }
 
-async function maintBrowseLogs() {
+// Wire all `*_done` WS subscribers + button hydration once per session.
+// Done events fire here regardless of which client started the job, so
+// a phone-triggered VACUUM still pops a result toast on the desktop.
+let _maintWsWired = false;
+function wireMaintenanceJobToasts() {
+    if (_maintWsWired) return;
+    _maintWsWired = true;
+
+    // files/verify
+    wireJobButton({
+        btn: document.getElementById('maint-verify-btn'),
+        statusUrl: '/api/maintenance/files/verify/status',
+        eventPrefix: 'files_verify',
+        runUrl: '/api/maintenance/files/verify',
+        attachClick: false,
+    });
+    ws.on('files_verify_done', (m) => {
+        if (m?.error) {
+            showToast(i18nTf('maintenance.failed', { msg: m.error }, `Failed: ${m.error}`), 'error');
+            return;
+        }
+        const scanned = m?.scanned ?? 0;
+        const pruned = m?.pruned ?? 0;
+        showToast(i18nTf('maintenance.verify.done',
+            { scanned, pruned },
+            `Verified ${scanned} files — pruned ${pruned} missing rows`),
+            pruned > 0 ? 'warning' : 'success');
+    });
+
+    // db/integrity
+    wireJobButton({
+        btn: document.getElementById('maint-db-check-btn'),
+        statusUrl: '/api/maintenance/db/integrity/status',
+        eventPrefix: 'db_integrity',
+        runUrl: '/api/maintenance/db/integrity',
+        attachClick: false,
+    });
+    ws.on('db_integrity_done', (m) => {
+        if (m?.error) {
+            showToast(i18nTf('maintenance.failed', { msg: m.error }, `Failed: ${m.error}`), 'error');
+            return;
+        }
+        if (m?.ok) {
+            showToast(i18nT('maintenance.db_check.ok', 'Database integrity: ok'), 'success');
+        } else {
+            const msg = (m?.messages || []).slice(0, 3).join(' / ') || 'unknown';
+            showToast(i18nTf('maintenance.db_check.bad', { msg },
+                `Database issues: ${msg}`), 'error');
+        }
+    });
+
+    // db/vacuum — confirm sheet handled by maintDbVacuum, so the
+    // wireJobButton click is suppressed (would double-POST otherwise).
+    wireJobButton({
+        btn: document.getElementById('maint-db-vacuum-btn'),
+        statusUrl: '/api/maintenance/db/vacuum/status',
+        eventPrefix: 'db_vacuum',
+        runUrl: '/api/maintenance/db/vacuum',
+        runBody: { confirm: true },
+        attachClick: false,
+    });
+    ws.on('db_vacuum_done', (m) => {
+        if (m?.error) {
+            showToast(i18nTf('maintenance.failed', { msg: m.error }, `Failed: ${m.error}`), 'error');
+            return;
+        }
+        const reclaimed = formatBytesShort(m?.reclaimedBytes || 0);
+        showToast(i18nTf('maintenance.db_vacuum.done', { bytes: reclaimed },
+            `VACUUM done — reclaimed ${reclaimed}`), 'success');
+    });
+
+    // restart-monitor
+    wireJobButton({
+        btn: document.getElementById('maint-restart-btn'),
+        statusUrl: '/api/maintenance/restart-monitor/status',
+        eventPrefix: 'restart_monitor',
+        runUrl: '/api/maintenance/restart-monitor',
+        runBody: { confirm: true },
+        attachClick: false,
+    });
+    ws.on('restart_monitor_done', (m) => {
+        if (m?.error) {
+            showToast(i18nTf('maintenance.failed', { msg: m.error }, `Failed: ${m.error}`), 'error');
+            return;
+        }
+        if (m?.restarted) {
+            showToast(i18nT('maintenance.restart.done', 'Monitor restarted'), 'success');
+        } else {
+            showToast(m?.note || i18nT('maintenance.restart.idle',
+                'Monitor was not running.'), 'info');
+        }
+    });
+
+    // resync-dialogs
+    wireJobButton({
+        btn: document.getElementById('maint-resync-btn'),
+        statusUrl: '/api/maintenance/resync-dialogs/status',
+        eventPrefix: 'resync_dialogs',
+        runUrl: '/api/maintenance/resync-dialogs',
+        attachClick: false,
+    });
+    ws.on('resync_dialogs_done', (m) => {
+        if (m?.error) {
+            showToast(i18nTf('maintenance.failed', { msg: m.error }, `Failed: ${m.error}`), 'error');
+            return;
+        }
+        showToast(i18nTf('maintenance.resync.done',
+            { updated: m?.updated || 0, scanned: m?.scanned || 0 },
+            `Resynced ${m?.updated || 0} of ${m?.scanned || 0} groups`), 'success');
+    });
+
+    // auto-update — the click handler opens a sheet, so we only wire
+    // the disable-state hydration here. The `update_done` toast happens
+    // automatically; the watchtower restart usually kills the WS first.
+    wireJobButton({
+        btn: document.getElementById('maint-update-btn'),
+        statusUrl: '/api/auto-update/status',
+        eventPrefix: 'update',
+        runUrl: '/api/update',
+        attachClick: false,
+    });
+}
+
+// Kept as a fallback — see _maintBuildThumbs comment above.
+async function _maintBrowseLogs() {
     try {
         const r = await api.get('/api/maintenance/logs');
         const files = r.files || [];

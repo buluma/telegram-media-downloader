@@ -9,12 +9,12 @@
 #
 # Pin a specific patch version. Floating tags drift; this image is reproducible.
 
-FROM node:20.20.2-alpine AS deps
+FROM node:20.20.2-bookworm-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
 
-FROM node:20.20.2-alpine AS runtime
+FROM node:20.20.2-bookworm-slim AS runtime
 
 # Build identity — passed in by CI (`docker build --build-arg GIT_SHA=…
 # --build-arg BUILT_AT=…`) and surfaced via `/api/version` so the
@@ -26,15 +26,22 @@ ENV NODE_ENV=production \
     GIT_SHA=${GIT_SHA} \
     BUILT_AT=${BUILT_AT}
 
-# tini      — proper PID 1 (signal handling + zombie reaping)
-# libstdc++ — needed by better-sqlite3's prebuilt binary + sharp's prebuilt
-# su-exec   — drop from root → node after the entrypoint fixes /app/data perms
-# ffmpeg    — used by src/core/thumbs.js for video first-frame thumbnails
-#             and audio cover-art extraction. The npm package
-#             @ffmpeg-installer/ffmpeg ships glibc binaries only, which
-#             can't run on alpine/musl, so we install the system package.
-#             ~30 MB — tiny next to libvips and node_modules.
-RUN apk add --no-cache tini libstdc++ su-exec ffmpeg
+# tini    — proper PID 1 (signal handling + zombie reaping). Debian ships
+#           the binary at /usr/bin/tini.
+# gosu    — drop from root → node after the entrypoint fixes /app/data perms
+#           (su-exec equivalent on Debian; same `gosu user "$@"` syntax).
+# ffmpeg  — used by src/core/thumbs.js for video first-frame thumbnails
+#           and audio cover-art extraction. ~30 MB — tiny next to libvips
+#           and node_modules.
+#
+# Base is bookworm-slim (glibc) rather than alpine (musl) because
+# `onnxruntime-node` (pulled in by @huggingface/transformers for the NSFW
+# classifier) ships glibc-only prebuilt .so files; loading them on musl
+# crashes the whole process at boot with "ld-linux-x86-64.so.2: No such
+# file or directory". libstdc++ is part of the base image, no install needed.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tini gosu ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
@@ -52,12 +59,12 @@ RUN mkdir -p /app/data /app/data/downloads /app/data/logs /app/data/sessions \
     && chown -R node:node /app
 
 # We deliberately run the entrypoint as root so it can chown the bind-mounted
-# /app/data volume on first boot — su-exec drops to `node` before exec'ing
+# /app/data volume on first boot — gosu drops to `node` before exec'ing
 # CMD, so the actual app process is still non-root.
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD node scripts/healthcheck.js || exit 1
 
-ENTRYPOINT ["/sbin/tini", "--", "/app/scripts/docker-entrypoint.sh"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/app/scripts/docker-entrypoint.sh"]
 CMD ["node", "src/web/server.js"]
