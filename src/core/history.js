@@ -324,7 +324,7 @@ export class HistoryDownloader extends EventEmitter {
                         for await (const msg of workingClient.iterMessages(linkedId, { limit: limit })) {
                             if (!this.running || this.cancelFlag) break;
                             this.stats.processed++;
-                            await this.processMessage(msg, group);
+                            await this.processMessage(msg, group, { isComment: true });
                             if (this.stats.processed % 10 === 0) {
                                 this.emit('progress', { ...this.stats, currentId: msg.id });
                             }
@@ -354,7 +354,7 @@ export class HistoryDownloader extends EventEmitter {
 
 
 
-    async processMessage(message, group) {
+    async processMessage(message, group, opts = {}) {
         // User tracking filter
         if (!this.passUserFilter(message, group)) {
             this.stats.skipped++;
@@ -375,7 +375,7 @@ export class HistoryDownloader extends EventEmitter {
         // Handle Media
         if (this.hasMedia(message)) {
             const mediaType = this.getMediaType(message);
-            
+
             // Check filter (Granular default to true if undefined)
             const filterValue = group.filters?.[mediaType];
             const isAllowed = filterValue !== false;
@@ -385,10 +385,16 @@ export class HistoryDownloader extends EventEmitter {
                 return;
             }
 
+            // Comment messages use a namespaced groupId to avoid dedup
+            // collisions with parent channel message IDs.
+            const effectiveGroupId = opts.isComment
+                ? `comment:${group.id}`
+                : group.id;
+
             // Enqueue (Priority 2 for history, lower than realtime)
             const added = await this.downloader.enqueue({
                 message,
-                groupId: group.id,
+                groupId: effectiveGroupId,
                 groupName: group.name,
                 mediaType
             }, 2);

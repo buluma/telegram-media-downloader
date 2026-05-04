@@ -94,21 +94,23 @@ function _renderSettings(status) {
             phash: caps.phash === true,
         },
     };
-    // Master toggle row sits above the per-cap grid. When it's off every
-    // capability is gated regardless of the per-cap flag — the server
-    // checks both. The body says so explicitly so the operator doesn't
-    // wonder why a "green" capability still 503s.
+    // Master toggle is now STATIC HTML (`#ai-master-card` in index.html) so
+    // it stays visible even if this render path fails. We just sync the
+    // `.active` class + the inline state pill from the live config.
     const masterOn = _capState.master;
-    grid.innerHTML = `
-        <div class="ai-cap-master col-span-full bg-tg-bg/40 rounded-lg p-3 flex items-start gap-3 mb-1">
-            <i class="ri-sparkling-2-line text-tg-blue text-lg mt-0.5"></i>
-            <div class="flex-1 min-w-0">
-                <div class="text-tg-text text-sm font-medium">${escapeHtml(i18nT('maintenance.ai.master.title', 'Enable AI subsystem'))}</div>
-                <p class="text-[11px] text-tg-textSecondary mt-0.5">${escapeHtml(i18nT('maintenance.ai.master.help', 'Master switch. Has to be on before any individual capability runs. Models download lazily on first scan.'))}</p>
-            </div>
-            <div id="setting-adv-ai-enabled" class="tg-toggle shrink-0 mt-0.5${masterOn ? ' active' : ''}" data-cap-toggle="master"></div>
-        </div>
-    ` + CAPS.map((c) => {
+    const masterToggle = document.getElementById('setting-adv-ai-enabled');
+    if (masterToggle) {
+        masterToggle.classList.toggle('active', masterOn);
+        masterToggle.setAttribute('aria-checked', masterOn ? 'true' : 'false');
+    }
+    const masterPill = document.getElementById('ai-master-state-pill');
+    if (masterPill) {
+        masterPill.innerHTML = masterOn
+            ? `<span class="text-tg-green">● <span data-i18n="maintenance.ai.master.state.on">On</span></span>`
+            : `<span class="text-tg-textSecondary">○ <span data-i18n="maintenance.ai.master.state.off">Off</span></span>`;
+    }
+
+    grid.innerHTML = CAPS.map((c) => {
         const enabled = !!_capState.perCap[c.key];
         const label = i18nT(c.titleKey, c.titleFb);
         const help = i18nT(c.helpKey, c.helpFb);
@@ -538,6 +540,87 @@ async function _refreshAll() {
     await Promise.all([_loadPeople(), _loadTags(), _loadPhashGroups()]).catch(() => {});
 }
 
+// Master AI start/stop click. Mirrors the optimistic-flip + PATCH /api/config
+// pattern the per-capability toggles use. Lives outside _renderSettings so
+// the static `#ai-master-card` toggle keeps working even if the grid render
+// path fails (cached old JS, transient /api/ai/status error, etc.).
+async function _onMasterToggleClick(e) {
+    e.preventDefault();
+    const tog = e.currentTarget;
+    if (!tog) return;
+    const willEnable = !tog.classList.contains('active');
+    tog.classList.toggle('active', willEnable);
+    // Sync the inline state pill immediately so the UI doesn't flicker
+    // back-and-forth across the network round trip.
+    const pill = document.getElementById('ai-master-state-pill');
+    if (pill) {
+        pill.innerHTML = willEnable
+            ? `<span class="text-tg-green">● <span data-i18n="maintenance.ai.master.state.on">On</span></span>`
+            : `<span class="text-tg-textSecondary">○ <span data-i18n="maintenance.ai.master.state.off">Off</span></span>`;
+    }
+    try {
+        await api.post('/api/config', { advanced: { ai: { enabled: willEnable } } });
+        _capState.master = willEnable;
+        _refreshAll().catch(() => {});
+        showToast(willEnable
+            ? i18nT('maintenance.ai.master.toast_on',  'AI subsystem enabled.')
+            : i18nT('maintenance.ai.master.toast_off', 'AI subsystem stopped.'),
+            'success');
+    } catch (err) {
+        // Revert on failure.
+        tog.classList.toggle('active', !willEnable);
+        if (pill) {
+            pill.innerHTML = !willEnable
+                ? `<span class="text-tg-green">● <span data-i18n="maintenance.ai.master.state.on">On</span></span>`
+                : `<span class="text-tg-textSecondary">○ <span data-i18n="maintenance.ai.master.state.off">Off</span></span>`;
+        }
+        showToast(i18nTf('maintenance.ai.toggle.failed',
+            { msg: err?.message || err },
+            `Failed: ${err?.message || err}`), 'error');
+    }
+}
+
+// Ping huggingface.co/api/whoami-v2 with the typed (or saved) token. Surfaces
+// success/error inline beneath the input so the operator gets immediate
+// feedback before kicking off a heavy model preload.
+async function _testHfToken() {
+    const btn = $('ai-hf-token-test');
+    const out = $('ai-hf-token-result');
+    const inp = $('setting-adv-ai-hf-token');
+    if (!btn || !out) return;
+    const orig = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = `<i class="ri-loader-4-line animate-spin"></i><span>${escapeHtml(i18nT('common.loading', 'Loading…'))}</span>`;
+    out.innerHTML = '';
+    try {
+        // Pass the typed token directly so the operator can verify a
+        // freshly-pasted value without waiting for the autosave round-
+        // trip. Server falls back to the stored value when this is empty.
+        const typed = (inp?.value || '').trim();
+        const r = await api.post('/api/ai/hf/test', typed ? { token: typed } : {});
+        if (r?.ok) {
+            const name = String(r.name || '').replace(/[<>]/g, '');
+            out.innerHTML = `
+                <i class="ri-check-line text-tg-green"></i>
+                <span class="text-tg-green">${escapeHtml(i18nTf('maintenance.ai.hf_token.test_ok',
+                    { name }, `Token works — signed in as ${name}.`))}</span>`;
+        } else {
+            const msg = r?.message || i18nT('maintenance.ai.hf_token.test_fail_generic', 'Token did not work.');
+            out.innerHTML = `
+                <i class="ri-error-warning-line text-red-400"></i>
+                <span class="text-red-400">${escapeHtml(msg)}</span>`;
+        }
+    } catch (e) {
+        const msg = e?.data?.message || e?.message || 'Test failed';
+        out.innerHTML = `
+            <i class="ri-error-warning-line text-red-400"></i>
+            <span class="text-red-400">${escapeHtml(msg)}</span>`;
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = orig;
+    }
+}
+
 export async function init() {
     _wireWs();
     if (!_initOnce) {
@@ -552,6 +635,17 @@ export async function init() {
         });
         // Refresh model status panel on demand.
         $('ai-models-refresh')?.addEventListener('click', _refreshModels);
+        // HF token — show/hide + Test button.
+        $('ai-hf-token-reveal')?.addEventListener('click', () => {
+            const inp = $('setting-adv-ai-hf-token');
+            if (!inp) return;
+            inp.type = inp.type === 'password' ? 'text' : 'password';
+        });
+        $('ai-hf-token-test')?.addEventListener('click', _testHfToken);
+        // Master AI toggle — lives in static HTML (`#ai-master-card`) so
+        // it's always visible. Same flip-and-PATCH handler the per-cap
+        // toggles use; bound once at init.
+        $('setting-adv-ai-enabled')?.addEventListener('click', _onMasterToggleClick);
         _initOnce = true;
     }
     await _refreshAll();

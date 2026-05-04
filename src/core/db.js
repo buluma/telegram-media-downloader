@@ -538,8 +538,11 @@ export function getAllDownloads(limit = 50, offset = 0, type = 'all', opts = {})
 }
 
 export function getDownloads(groupId, limit = 50, offset = 0, type = 'all', opts = {}) {
-    let query = 'SELECT * FROM downloads WHERE group_id = ?';
-    const params = [groupId];
+    // Include rows for the linked discussion group (comment:${groupId}) so
+    // comment media appears in the same gallery view as the parent channel.
+    const commentGroupId = `comment:${groupId}`;
+    let query = 'SELECT * FROM downloads WHERE (group_id = ? OR group_id = ?)';
+    const params = [groupId, commentGroupId];
 
     if (type !== 'all') {
         const typeMap = {
@@ -566,16 +569,18 @@ export function getDownloads(groupId, limit = 50, offset = 0, type = 'all', opts
     const rows = stmt.all(...params);
     
     // Count total for pagination
-    let countQuery = 'SELECT COUNT(*) as total FROM downloads WHERE group_id = ?';
-    const countParams = [groupId];
-    
-    // We reuse the type filter logic for count but it's cleaner to separate or build dynamically
-    // For simplicity here:
-    if (params.length > 3) { // If type filter was added
-         countQuery += ' AND file_type = ?';
-         countParams.push(params[1]); // existing type param
+    let countQuery = 'SELECT COUNT(*) as total FROM downloads WHERE (group_id = ? OR group_id = ?)';
+    const countParams = [groupId, commentGroupId];
+
+    if (type !== 'all') {
+        const typeMap = { 'images': 'photo', 'videos': 'video', 'documents': 'document', 'audio': 'audio' };
+        if (typeMap[type]) {
+            countQuery += ' AND file_type = ?';
+            countParams.push(typeMap[type]);
+        }
     }
-    
+    if (opts.pinnedOnly) countQuery += ' AND COALESCE(pinned, 0) = 1';
+
     const total = getDb().prepare(countQuery).get(...countParams).total;
 
     return { files: rows, total };

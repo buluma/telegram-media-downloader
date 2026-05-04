@@ -140,6 +140,33 @@ async function _loadClassifier(cfg, onProgress, onLog) {
                 env.backends.onnx.wasm.numThreads = 1;
             }
         } catch {}
+        // HuggingFace token (env var or `config.advanced.ai.hfToken` set
+        // via the dashboard) — same treatment as ai/models.js so the
+        // NSFW classifier also benefits from gated-repo access + rate-
+        // limit bypass.
+        try {
+            let token = process.env.HF_TOKEN
+                || process.env.HUGGINGFACE_TOKEN
+                || process.env.HUGGINGFACEHUB_API_TOKEN
+                || null;
+            if (!token) {
+                try {
+                    const { loadConfig } = await import('../config/manager.js');
+                    const live = loadConfig();
+                    const cfgToken = live?.advanced?.ai?.hfToken;
+                    if (typeof cfgToken === 'string' && cfgToken.trim()) {
+                        token = cfgToken.trim();
+                    }
+                } catch { /* config not ready */ }
+            }
+            if (token) {
+                try { env.token = token; } catch {}
+                try {
+                    if (!env.customHeaders) env.customHeaders = {};
+                    env.customHeaders.Authorization = `Bearer ${token}`;
+                } catch {}
+            }
+        } catch {}
 
         // Try the requested dtype first. If the model doesn't ship that
         // variant on the HF CDN (the unquantized model.onnx is the most

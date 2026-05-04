@@ -11,6 +11,50 @@ All notable changes to this project are documented here. The format is based on 
 - Backfill (`HistoryDownloader`) runs a second pass on the linked discussion group after the main channel pass, respecting the same `limit` and emitting a `💬 Backfilling comment media…` log line in the progress panel.
 - **"Track comment media" toggle** added to the Topics tab of the group settings modal; saved and persisted via `PUT /api/groups/:id`.
 
+## [2.6.7] — 2026-05-05
+
+### Fixed
+- **Default AI face + tag models swapped** to publicly-accessible alternatives. `Xenova/yolov5n-face` and `Xenova/mobilenet_v2` are gated/restricted on HuggingFace (return 401 even with a valid `Read` token, while `Xenova/clip-vit-base-patch32` and other Xenova models work fine). New defaults:
+    - faces: `Xenova/yolos-tiny` (general detector, "person" class drives the clustering pipeline; ~31 MB)
+    - tags: `Xenova/vit-base-patch16-224` (ImageNet-1k head, drop-in replacement for the tag cloud)
+
+### Migration
+Existing configs still pointing at `Xenova/yolov5n-face` / `Xenova/mobilenet_v2` need to be flipped manually: open `/maintenance/ai` → Models panel → paste the new id into the Apply field, click Apply, then preload.
+
+### Internal
+- SW bumped `v266` → `v267`.
+
+## [2.6.6] — 2026-05-05
+
+### Fixed
+- **AI master Start/Stop toggle now lives in static HTML** at the top of `/maintenance/ai`. Was rendered dynamically inside the Capabilities grid, which meant a stale-cache JS bundle (or any render-path failure) hid it entirely — operators saw "Start scan" buttons but no way to actually start the subsystem. Static markup keeps the control visible regardless of what the grid does. State pill (`On` / `Off`) syncs live with the toggle.
+
+### Internal
+- SW bumped `v265` → `v266`.
+
+## [2.6.5] — 2026-05-05
+
+### Added
+- **HuggingFace token "Test" button** on `/maintenance/ai`. Pings `huggingface.co/api/whoami-v2` with the typed (or saved) token. Shows green "signed in as <name>" on success, red "Token rejected by HuggingFace" on 401 — so the operator knows the token works before kicking off a model preload.
+- **Show/hide eye toggle** on the token field so operators can verify they pasted the right value without re-typing.
+- **"Get a token →" link + collapsible How-to** (sign in → Settings → Access Tokens → Read role → paste). Removes the "where do I find this?" friction.
+
+### Internal
+- New endpoint `POST /api/ai/hf/test { token? }` → `{ ok, status, name?, message? }`. Falls back to the saved `advanced.ai.hfToken` when the body's `token` field is empty so a save-then-test flow works too. 5-second timeout, 401/network errors surface verbatim.
+- SW bumped `v264` → `v265`.
+
+## [2.6.4] — 2026-05-05
+
+### Fixed
+- **Share v2 URLs returning "Invalid share link"** — route handler still expected the legacy `?exp=&sig=` shape; URL builder generates `?s=<sig>` (v2). Handler now accepts both, looks up the row first, and verifies the sig against the stored `expires_at`. Filename slug routes (`/share/<id>/<filename>?s=…`) also work.
+- **Stale CSS in production** — `<link href="/css/main.css?v=2.6.0">` was hard-coded. Newer releases shipped CSS classes (`.share-maint-toolbar`, `.log-src-chip`, `.ai-hero`) that the SW kept serving from the v2.6.0 cache. The cache-bust rewriter now covers `/css/` paths too, and the `<link>` no longer carries a stale literal version.
+
+### Added
+- **HuggingFace access token field** on `/maintenance/ai`. Set it from the web instead of needing `HF_TOKEN` in env. Stored in `config.advanced.ai.hfToken`; both NSFW and AI capability loaders read it.
+
+### Internal
+- SW bumped `v263` → `v264`.
+
 ## [2.6.3] — 2026-05-05
 
 ### Fixed

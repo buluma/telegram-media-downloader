@@ -639,6 +639,12 @@ export function loadAdvanced(config) {
     set('setting-adv-nsfw-threshold',   Number.isFinite(ns.threshold) ? ns.threshold : 0.6);
     set('setting-adv-nsfw-concurrency', Number.isFinite(ns.concurrency) ? ns.concurrency : 1);
 
+    // AI subsystem — HuggingFace access token. Optional; surfaces on
+    // /maintenance/ai. We bind through the same autosave pipeline so
+    // changes round-trip via PATCH /api/config.
+    const aiCfg = adv.ai || {};
+    set('setting-adv-ai-hf-token', typeof aiCfg.hfToken === 'string' ? aiCfg.hfToken : '');
+
     // ffmpeg hardware acceleration — written to `advanced.thumbs.hwaccel`.
     // Empty string = off (default); `vaapi` / `qsv` / `cuda` / etc.
     // are passed straight to ffmpeg's `-hwaccel` flag in core/thumbs.js.
@@ -735,6 +741,10 @@ function gatherAdvanced() {
             // values through to the ffmpeg process.
             hwaccel: String(get('setting-adv-ffmpeg-hwaccel') || ''),
             warnMisses: document.getElementById('setting-adv-thumbs-warn-misses')?.classList.contains('active') !== false,
+        },
+        ai: {
+            // HuggingFace access token. Trimmed; empty = unset.
+            hfToken: String(get('setting-adv-ai-hf-token') || '').trim(),
         },
     };
 }

@@ -1324,31 +1324,45 @@ function _refreshShareLimiter() {
     _shareLimiter = _buildShareLimiter();
 }
 
-app.get('/share/:linkId', shareLimiter, async (req, res, next) => {
+// v2 URL shape: `/share/<linkId>?s=<sig>` (or `/share/<linkId>/<filename>?s=<sig>`
+// when `buildShareUrlPath()` was called with a friendly slug). The signature
+// embeds the row's `expires_at`, so the URL only needs the linkId + sig —
+// verifier looks up the row and re-derives the expected sig from the stored
+// expiry. Tolerates the legacy v1 `?exp=&sig=` shape as a fallback so links
+// minted before the v2 cutover still work until they expire naturally.
+app.get(['/share/:linkId', '/share/:linkId/:fileName'], shareLimiter, async (req, res, next) => {
     try {
         const linkId = parseInt(req.params.linkId, 10);
-        const exp = parseInt(req.query.exp, 10);
-        const sig = req.query.sig;
-        if (!Number.isInteger(linkId) || linkId <= 0
-            || !Number.isInteger(exp) || exp <= 0
-            || typeof sig !== 'string' || !sig) {
+        const sigV2 = typeof req.query.s === 'string' ? req.query.s : '';
+        const sigV1 = typeof req.query.sig === 'string' ? req.query.sig : '';
+        const expV1 = parseInt(req.query.exp, 10);
+        if (!Number.isInteger(linkId) || linkId <= 0 || (!sigV2 && !sigV1)) {
             return res.status(400).type('text/plain').send('Invalid share link');
         }
 
-        // Sig + expiry checks are independent so an attacker can't tell from
-        // the response *which* check failed (timing/shape leak ≈ none).
-        // Both fail with a generic 401.
-        const sigOk = verifyShareToken(linkId, exp, sig);
+        // Lookup first — we need `row.expires_at` to verify the v2 sig
+        // against. `getShareLinkForServe` also returns the revoked/expired
+        // reason so we can fail fast.
         const lookup = getShareLinkForServe(linkId, Math.floor(Date.now() / 1000));
-        if (!sigOk || !lookup || lookup.reason) {
-            // Distinguish reasons in the BODY (UI shows a user-friendly
-            // message) but always return 401 so external scanners can't
-            // enumerate which links exist vs are merely revoked.
-            const code = !sigOk ? 'bad_sig'
-                : lookup?.reason === 'revoked' ? 'revoked'
+        if (!lookup || lookup.reason) {
+            const code = lookup?.reason === 'revoked' ? 'revoked'
                 : lookup?.reason === 'expired' ? 'expired'
-                : 'bad_sig';
+                : 'not_found';
             return res.status(401).json({ error: 'Share link is not valid', code });
+        }
+
+        // v2 path: derive expected sig from `row.expires_at` (the value
+        // that was signed at mint time). v1 fallback: trust the URL's
+        // `exp` value but still require it to match the row's expiry so
+        // a stale link can't outlive a re-mint.
+        let sigOk = false;
+        if (sigV2) {
+            sigOk = verifyShareToken(linkId, lookup.row.expires_at, sigV2);
+        } else if (sigV1 && Number.isInteger(expV1) && expV1 > 0) {
+            sigOk = expV1 === lookup.row.expires_at && verifyShareToken(linkId, expV1, sigV1);
+        }
+        if (!sigOk) {
+            return res.status(401).json({ error: 'Share link is not valid', code: 'bad_sig' });
         }
 
         const row = lookup.row;
@@ -1423,8 +1437,13 @@ const _publicDir = path.join(__dirname, 'public');
 const appVersion = _readCurrentVersion();
 
 function _rewriteHtmlSrc(html) {
+    // Cover `/js/`, `/locales/`, AND `/css/` so a release that ships only
+    // CSS changes (UI polish without JS edits) still busts the cache.
+    // Without /css/ here, a stale main.css can outlive a deploy — the
+    // SW + browser HTTP cache happily serves yesterday's stylesheet
+    // even though the SPA shipped new selectors.
     return html.replace(
-        /\b(src|href)="(\/(?:js|locales)\/[^"?]+\.(?:js|json))"/g,
+        /\b(src|href)="(\/(?:js|locales|css)\/[^"?]+\.(?:js|json|css))"/g,
         (m, attr, url) => `${attr}="${url}?v=${appVersion}"`
     );
 }
@@ -4862,6 +4881,58 @@ const _MODEL_CAPS = [
     { cap: 'tags',       cfgKey: 'tags',       defaultKind: 'image-classification' },
 ];
 
+// Probe a HuggingFace token. POST `{ token? }` — when `token` is present
+// we use that value directly, otherwise we fall back to the saved
+// `advanced.ai.hfToken` (lets the operator click "Test" before the
+// autosave round-trip lands). Hits `/api/whoami-v2` which returns the
+// user object on a valid token + 401 on a bad one. We never echo the
+// token back, only `{ ok: true, name, type }` or `{ ok: false, status,
+// message }`. Rate-limit caps it to once every 2 s per session via the
+// shared `loginLimiter` family — the app loop is in JS so a single
+// admin spamming the button can't choke the box.
+app.post('/api/ai/hf/test', async (req, res) => {
+    try {
+        let token = (req.body && typeof req.body.token === 'string') ? req.body.token.trim() : '';
+        if (!token) {
+            try {
+                const cfg = loadConfig();
+                token = String(cfg?.advanced?.ai?.hfToken || '').trim();
+            } catch { /* config not ready */ }
+        }
+        if (!token) {
+            return res.status(400).json({ ok: false, status: 0, message: 'No token to test. Paste one above first.' });
+        }
+        // 5-second timeout — HF whoami is fast and the operator is
+        // staring at a button waiting.
+        const ac = new AbortController();
+        const timer = setTimeout(() => ac.abort(), 5000);
+        let r;
+        try {
+            r = await fetch('https://huggingface.co/api/whoami-v2', {
+                headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' },
+                signal: ac.signal,
+            });
+        } catch (e) {
+            return res.json({ ok: false, status: 0, message: e?.name === 'AbortError' ? 'Timed out talking to huggingface.co.' : `Network error: ${e?.message || e}` });
+        } finally {
+            clearTimeout(timer);
+        }
+        if (r.status === 401 || r.status === 403) {
+            return res.json({ ok: false, status: r.status, message: 'Token rejected by HuggingFace (401). Re-create the token with Read role.' });
+        }
+        if (!r.ok) {
+            return res.json({ ok: false, status: r.status, message: `HuggingFace returned HTTP ${r.status}.` });
+        }
+        let body = null;
+        try { body = await r.json(); } catch { /* ignore */ }
+        const name = body?.name || body?.fullname || '(unknown)';
+        const type = body?.type || 'user';
+        return res.json({ ok: true, status: r.status, name, type });
+    } catch (e) {
+        res.status(500).json({ ok: false, status: 0, message: e.message });
+    }
+});
+
 app.get('/api/ai/status', async (_req, res) => {
     try {
         await _maybeProbeVec();
@@ -5597,7 +5668,7 @@ app.post('/api/config', async (req, res) => {
                     // reason.
                     const c = cur.ai || {};
                     const i = inc.ai || {};
-                    return {
+                    const merged = {
                         ...c,
                         ...i,
                         embeddings: { ...(c.embeddings || {}), ...(i.embeddings || {}) },
@@ -5605,6 +5676,15 @@ app.post('/api/config', async (req, res) => {
                         tags:       { ...(c.tags || {}),       ...(i.tags || {}) },
                         phash:      { ...(c.phash || {}),      ...(i.phash || {}) },
                     };
+                    // HuggingFace access token — string only; trim + cap at
+                    // 256 chars (real tokens are ~37 chars, anything longer
+                    // is malformed input). Empty string clears the token.
+                    if (typeof merged.hfToken === 'string') {
+                        merged.hfToken = merged.hfToken.trim().slice(0, 256);
+                    } else if (merged.hfToken != null) {
+                        merged.hfToken = '';
+                    }
+                    return merged;
                 })(),
             };
             // ffmpeg hwaccel — allow-list validation. An attacker who

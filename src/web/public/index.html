@@ -124,7 +124,7 @@
          ?v=… query so a release bump pierces both the browser HTTP cache and
          the service worker shell cache. The SW also picks /css/* up via the
          isStaticAsset filter in sw.js. -->
-    <link rel="stylesheet" href="/css/main.css?v=2.6.0">
+    <link rel="stylesheet" href="/css/main.css">
     <!-- v2.5.0 — bumped main.css cache-bust + sw VERSION (v240 → v250).
          Backup destinations (S3/local/SFTP), universal background-job
          pattern (13 endpoints converted via JobTracker), share-link v2
@@ -2432,6 +2432,71 @@
                             </button>
                         </div>
                         <div id="ai-models-list" class="ai-models-list" aria-live="polite"></div>
+                    </section>
+
+                    <!-- AI subsystem master switch. Static so it ALWAYS
+                         renders even if `_renderSettings` hasn't fired
+                         yet (or fails). The toggle's `active` class is
+                         synced by maintenance-ai.js from /api/ai/status. -->
+                    <section id="ai-master-card" class="bg-tg-panel rounded-xl p-4 mb-3 flex items-center justify-between gap-3 flex-wrap">
+                        <div class="flex items-start gap-3 min-w-0 flex-1">
+                            <i class="ri-sparkling-2-line text-tg-blue text-2xl shrink-0 mt-0.5"></i>
+                            <div class="min-w-0">
+                                <div class="text-tg-text text-base font-semibold flex items-center gap-2 flex-wrap">
+                                    <span data-i18n="maintenance.ai.master.title">Enable AI subsystem</span>
+                                    <span id="ai-master-state-pill" class="text-[11px] px-2 py-0.5 rounded-full bg-tg-bg/60 text-tg-textSecondary">
+                                        <span data-i18n="maintenance.ai.master.state.off">Off</span>
+                                    </span>
+                                </div>
+                                <p class="text-xs text-tg-textSecondary mt-0.5" data-i18n="maintenance.ai.master.help">Master start/stop. Has to be on before any individual capability runs. Models download lazily on first scan.</p>
+                            </div>
+                        </div>
+                        <div id="setting-adv-ai-enabled" class="tg-toggle shrink-0" data-cap-toggle="master" role="switch" aria-label="Enable AI subsystem"></div>
+                    </section>
+
+                    <!-- HuggingFace access token. Optional — only set this
+                         when the realtime log shows 401 / "Unauthorized
+                         access to file" while loading a model. The token
+                         is sent as `Authorization: Bearer …` on every
+                         transformers.js fetch, which both bypasses
+                         anonymous rate limits and unlocks gated repos. -->
+                    <section class="bg-tg-panel rounded-xl p-3 mb-3">
+                        <div class="flex items-center justify-between gap-2 mb-2 flex-wrap">
+                            <h3 class="text-xs uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.ai.hf_token.heading">HuggingFace access</h3>
+                            <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer"
+                               class="text-[11px] text-tg-blue hover:underline inline-flex items-center gap-1">
+                                <i class="ri-external-link-line"></i>
+                                <span data-i18n="maintenance.ai.hf_token.create_link">Get a token →</span>
+                            </a>
+                        </div>
+                        <label for="setting-adv-ai-hf-token" class="text-tg-text text-xs block mb-1" data-i18n="maintenance.ai.hf_token.label">Access token</label>
+                        <div class="flex items-stretch gap-1.5">
+                            <input id="setting-adv-ai-hf-token" type="password" autocomplete="off" spellcheck="false"
+                                   class="tg-input flex-1 text-sm font-mono"
+                                   placeholder="hf_xxx (optional)">
+                            <button id="ai-hf-token-reveal" type="button"
+                                    class="tg-btn-secondary text-xs px-2 inline-flex items-center justify-center"
+                                    data-i18n-title="maintenance.ai.hf_token.show" title="Show token">
+                                <i class="ri-eye-line"></i>
+                            </button>
+                            <button id="ai-hf-token-test" type="button"
+                                    class="tg-btn-primary text-xs px-3 inline-flex items-center gap-1.5">
+                                <i class="ri-flashlight-line"></i>
+                                <span data-i18n="maintenance.ai.hf_token.test">Test</span>
+                            </button>
+                        </div>
+                        <div id="ai-hf-token-result"
+                             class="text-[11px] mt-2 min-h-[16px] leading-relaxed flex flex-wrap gap-1 items-center"
+                             role="status" aria-live="polite"></div>
+                        <details class="mt-2">
+                            <summary class="text-[11px] text-tg-textSecondary cursor-pointer hover:text-tg-text" data-i18n="maintenance.ai.hf_token.howto_summary">How do I get a token?</summary>
+                            <ol class="text-[10px] text-tg-textSecondary mt-1 ml-4 list-decimal space-y-0.5 leading-relaxed">
+                                <li data-i18n="maintenance.ai.hf_token.howto_1">Sign in at huggingface.co (free account is enough).</li>
+                                <li data-i18n="maintenance.ai.hf_token.howto_2">Open <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer" class="text-tg-blue hover:underline">Settings → Access Tokens</a>.</li>
+                                <li data-i18n="maintenance.ai.hf_token.howto_3">Click "Create new token" → choose <code>Read</code> role → give it any name.</li>
+                                <li data-i18n="maintenance.ai.hf_token.howto_4">Copy the <code>hf_xxx</code> string and paste it above. Click Test.</li>
+                            </ol>
+                        </details>
                     </section>
 
                     <!-- Settings strip (capabilities) -->
