@@ -45,12 +45,16 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..', '..');
 const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
 
+// Default model ids picked for public HF access (no token required, no
+// gated repo). `Xenova/yolov5n-face` + `Xenova/mobilenet_v2` are gated
+// even with a valid token — both fall back to similar-size public
+// alternatives that work out of the box.
 export const AI_DEFAULTS = Object.freeze({
     enabled: false,
     embeddings: { enabled: false, model: 'Xenova/clip-vit-base-patch32' },
-    faces:      { enabled: false, model: 'Xenova/yolov5n-face',
+    faces:      { enabled: false, model: 'Xenova/yolos-tiny',
                   epsilon: 0.55, minPoints: 3 },
-    tags:       { enabled: false, model: 'Xenova/mobilenet_v2', topK: 5 },
+    tags:       { enabled: false, model: 'Xenova/vit-base-patch16-224', topK: 5 },
     phash:      { enabled: false },
     indexConcurrency: 1,
     batchSize: 25,

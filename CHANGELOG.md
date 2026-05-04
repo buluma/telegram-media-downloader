@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.7] — 2026-05-05
+
+### Fixed
+- **Default AI face + tag models swapped** to publicly-accessible alternatives. `Xenova/yolov5n-face` and `Xenova/mobilenet_v2` are gated/restricted on HuggingFace (return 401 even with a valid `Read` token, while `Xenova/clip-vit-base-patch32` and other Xenova models work fine). New defaults:
+    - faces: `Xenova/yolos-tiny` (general detector, "person" class drives the clustering pipeline; ~31 MB)
+    - tags: `Xenova/vit-base-patch16-224` (ImageNet-1k head, drop-in replacement for the tag cloud)
+
+### Migration
+Existing configs still pointing at `Xenova/yolov5n-face` / `Xenova/mobilenet_v2` need to be flipped manually: open `/maintenance/ai` → Models panel → paste the new id into the Apply field, click Apply, then preload.
+
+### Internal
+- SW bumped `v266` → `v267`.
+
 ## [2.6.6] — 2026-05-05
 
 ### Fixed
