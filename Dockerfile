@@ -40,7 +40,7 @@ ENV NODE_ENV=production \
 # crashes the whole process at boot with "ld-linux-x86-64.so.2: No such
 # file or directory". libstdc++ is part of the base image, no install needed.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends tini gosu ffmpeg \
+    && apt-get install -y --no-install-recommends tini gosu ffmpeg procps \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

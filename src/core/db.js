@@ -1269,10 +1269,23 @@ export function listPhotosForTag(tag, { limit = 50, offset = 0 } = {}) {
 // ---- Perceptual hash ------------------------------------------------------
 
 export function setPhash(downloadId, phashU64) {
-    // SQLite INTEGER is 64-bit signed. We store the hash as a BigInt-bit-cast
-    // signed integer; converting back happens in the JS layer when needed.
+    // SQLite INTEGER is 64-bit SIGNED (-2^63 .. 2^63-1). Our pHash is an
+    // UNSIGNED 64-bit value (0 .. 2^64-1) — about half of those land in
+    // the signed range, the other half overflow better-sqlite3's bind
+    // check ("The bound string, buffer, or bigint is too big").
+    //
+    // Two's-complement bit-cast: any value >= 2^63 gets shifted into the
+    // negative range so the same 64 bits round-trip cleanly. The hamming
+    // distance helper masks back to 64 bits before XOR'ing, so a signed
+    // round-trip doesn't perturb the bit-level comparison.
     if (phashU64 == null) return 0;
-    const asSigned = (typeof phashU64 === 'bigint') ? phashU64 : BigInt(phashU64);
+    let big = (typeof phashU64 === 'bigint') ? phashU64 : BigInt(phashU64);
+    const TWO_63 = 1n << 63n;
+    const TWO_64 = 1n << 64n;
+    // Normalise to [0, 2^64).
+    big = ((big % TWO_64) + TWO_64) % TWO_64;
+    // Bit-cast to signed.
+    const asSigned = big >= TWO_63 ? big - TWO_64 : big;
     return getDb().prepare('UPDATE downloads SET phash = ? WHERE id = ?')
         .run(asSigned, Number(downloadId)).changes;
 }
@@ -1280,11 +1293,31 @@ export function setPhash(downloadId, phashU64) {
 export function listAllPhashes({ fileTypes = ['photo'] } = {}) {
     const types = (Array.isArray(fileTypes) && fileTypes.length) ? fileTypes : ['photo'];
     const placeholders = types.map(() => '?').join(',');
-    return getDb().prepare(`
+    // `safeIntegers(true)` makes better-sqlite3 hand BigInt back for every
+    // INTEGER column in the row instead of throwing "value cannot be
+    // represented as a JavaScript number" when phash > 2^53. We coerce
+    // the small-int fields back to Number for downstream callers; phash
+    // stays BigInt (hammingDistance handles BigInt natively + masks to
+    // 64 bits, which undoes the signed-bit-cast we did on write).
+    const stmt = getDb().prepare(`
         SELECT id, file_name, file_path, file_type, file_size, group_id, group_name,
                created_at, phash
           FROM downloads
          WHERE phash IS NOT NULL
            AND file_type IN (${placeholders})
-    `).all(...types);
+    `).safeIntegers(true);
+    const rows = stmt.all(...types);
+    return rows.map((r) => ({
+        ...r,
+        id: typeof r.id === 'bigint' ? Number(r.id) : r.id,
+        file_size: typeof r.file_size === 'bigint' ? Number(r.file_size) : r.file_size,
+        // group_id may overflow 2^53 for some Telegram channels; keep as
+        // string when it does, Number otherwise.
+        group_id: typeof r.group_id === 'bigint'
+            ? (r.group_id <= 9007199254740991n && r.group_id >= -9007199254740991n
+                ? Number(r.group_id) : r.group_id.toString())
+            : r.group_id,
+        created_at: typeof r.created_at === 'bigint' ? Number(r.created_at) : r.created_at,
+        // phash stays BigInt — hammingDistance + bucketByPrefix expect it.
+    }));
 }
