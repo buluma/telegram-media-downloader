@@ -36,13 +36,20 @@ const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
 //   q8  → onnx/model_quantized.onnx  (~85 MB, default — int8 quantized)
 //   fp16→ onnx/model_fp16.onnx       (~165 MB, half precision)
 //   fp32→ onnx/model.onnx            (~330 MB, full precision)
-// q8 is the default because (a) every well-maintained classifier on
-// HuggingFace ships a quantized variant, while the unquantized model.onnx
-// is sometimes missing or behind LFS-CDN issues; (b) the accuracy hit on
-// a binary safe/unsafe classifier is negligible; (c) the smaller download
-// is friendlier to first-run installs on metered connections.
+// q8 is the default because (a) every well-maintained transformers.js
+// classifier ships a quantized variant; (b) the accuracy hit on a binary
+// safe/unsafe classifier is negligible; (c) the smaller download is
+// friendlier to first-run installs on metered connections.
+//
+// Default model: AdamCodd/vit-base-nsfw-detector. It's the de-facto
+// transformers.js NSFW classifier with full ONNX coverage (model.onnx,
+// model_quantized.onnx, model_fp16.onnx, model_q4.onnx, model_int8.onnx,
+// …). The popular `Falconsai/nsfw_image_detection` repo is PyTorch-only
+// — its `onnx/` directory 404s, so transformers.js can't load it. We
+// surface Falconsai as a suggestion still, but operators who want it
+// have to host their own ONNX export.
 export const NSFW_DEFAULTS = Object.freeze({
-    model: 'Falconsai/nsfw_image_detection',
+    model: 'AdamCodd/vit-base-nsfw-detector',
     dtype: 'q8',
     threshold: 0.6,
     concurrency: 1,
@@ -56,8 +63,11 @@ export const NSFW_DEFAULTS = Object.freeze({
 // model that exposes the transformers.js `image-classification` pipeline
 // will work, and the dtype-fallback chain in `_loadClassifier` smooths
 // over models that ship only a subset of ONNX variants.
+//
+// Order matters: AdamCodd first since it's the working default. Marqo
+// is a heavier 384-px alternative for libraries where accuracy beats
+// download size.
 export const NSFW_MODEL_SUGGESTIONS = Object.freeze([
-    'Falconsai/nsfw_image_detection',
     'AdamCodd/vit-base-nsfw-detector',
     'Marqo/nsfw-image-detection-384',
 ]);

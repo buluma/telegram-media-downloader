@@ -623,7 +623,7 @@ export function loadAdvanced(config) {
     };
     wireToggle('setting-adv-nsfw-enabled', ns.enabled === true);
     wireToggle('setting-adv-nsfw-preload', ns.preload === true);
-    set('setting-adv-nsfw-model',       (typeof ns.model === 'string' && ns.model.trim()) ? ns.model.trim() : 'Falconsai/nsfw_image_detection');
+    set('setting-adv-nsfw-model',       (typeof ns.model === 'string' && ns.model.trim()) ? ns.model.trim() : 'AdamCodd/vit-base-nsfw-detector');
     set('setting-adv-nsfw-dtype',       ['q8', 'fp16', 'fp32', 'q4'].includes(ns.dtype) ? ns.dtype : 'q8');
     set('setting-adv-nsfw-threshold',   Number.isFinite(ns.threshold) ? ns.threshold : 0.6);
     set('setting-adv-nsfw-concurrency', Number.isFinite(ns.concurrency) ? ns.concurrency : 1);
@@ -713,7 +713,7 @@ function gatherAdvanced() {
         nsfw: {
             enabled: document.getElementById('setting-adv-nsfw-enabled')?.classList.contains('active') === true,
             preload: document.getElementById('setting-adv-nsfw-preload')?.classList.contains('active') === true,
-            model: String(get('setting-adv-nsfw-model') || '').trim() || 'Falconsai/nsfw_image_detection',
+            model: String(get('setting-adv-nsfw-model') || '').trim() || 'AdamCodd/vit-base-nsfw-detector',
             dtype: String(get('setting-adv-nsfw-dtype') || 'q8'),
             threshold: parseFloat(get('setting-adv-nsfw-threshold')) || 0.6,
             concurrency: num('setting-adv-nsfw-concurrency', 1),
