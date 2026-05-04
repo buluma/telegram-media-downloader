@@ -1857,6 +1857,15 @@
                     <!-- Topics Tab -->
                     <div id="content-topics" class="hidden space-y-4">
                         <div class="p-4 bg-tg-panel rounded-lg border border-tg-border/50">
+                            <label class="flex items-center justify-between">
+                                <div>
+                                    <span class="text-white font-medium" data-i18n="group.comments.title">Track comment media</span>
+                                    <p class="text-xs text-tg-textSecondary mt-0.5" data-i18n="group.comments.help">Download media posted in the comments section of this channel's posts.</p>
+                                </div>
+                                <div class="tg-toggle ml-4 shrink-0" id="track-comments-toggle" onclick="event.preventDefault(); event.stopPropagation(); this.classList.toggle('active');"></div>
+                            </label>
+                        </div>
+                        <div class="p-4 bg-tg-panel rounded-lg border border-tg-border/50">
                             <label class="flex items-center justify-between mb-3">
                                 <span class="text-white font-medium" data-i18n="group.topics.title">Forum-topic filter</span>
                                 <div class="tg-toggle" id="topics-enable-toggle" onclick="event.preventDefault(); event.stopPropagation(); this.classList.toggle('active');"></div>

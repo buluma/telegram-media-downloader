@@ -4244,6 +4244,11 @@ app.put('/api/groups/:id', async (req, res) => {
             };
         }
 
+        // Comment media tracking
+        if (req.body.trackComments !== undefined) {
+            group.trackComments = !!req.body.trackComments;
+        }
+
         // Multi-Account assignments
         if (req.body.monitorAccount !== undefined) {
             if (!req.body.monitorAccount) delete group.monitorAccount;

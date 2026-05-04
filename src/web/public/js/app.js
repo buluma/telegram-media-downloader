@@ -1612,6 +1612,10 @@ async function openGroupSettings(groupId, groupName) {
     const fwdDeleteToggle = document.getElementById('fwd-delete-toggle');
     if (fwdDeleteToggle) fwdDeleteToggle.classList.toggle('active', fwd.deleteAfterForward === true);
 
+    // Comments
+    const commentsToggle = document.getElementById('track-comments-toggle');
+    if (commentsToggle) commentsToggle.classList.toggle('active', group?.trackComments === true);
+
     // Topics
     const topics = group?.topics || {};
     const topicsToggle = document.getElementById('topics-enable-toggle');
@@ -1740,6 +1744,9 @@ async function saveGroupSettings() {
     const monitorAccount = document.getElementById('monitor-account')?.value || '';
     const forwardAccount = document.getElementById('forward-account')?.value || '';
     
+    // Comments
+    const trackComments = document.getElementById('track-comments-toggle')?.classList.contains('active') ?? false;
+
     // Topics
     const topicsEnabled = document.getElementById('topics-enable-toggle')?.classList.contains('active') ?? false;
     const topicsRaw = document.getElementById('topics-ids')?.value || '';
@@ -1773,6 +1780,7 @@ async function saveGroupSettings() {
             mode: topicsEnabled && topicIds.length > 0 ? 'whitelist' : 'all',
             ids: topicIds,
         },
+        trackComments,
         monitorAccount: monitorAccount || null,
         forwardAccount: forwardAccount || null,
         rescueMode,

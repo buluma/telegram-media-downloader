@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.49] — 2026-05-04
+
+### Added
+- **Comment media tracking** — channels with a linked discussion group can now have comment media downloaded alongside post media. Enable per group via `"trackComments": true` in config or the new toggle in the group settings modal (Topics tab → "Track comment media").
+- Real-time monitor discovers the linked discussion group at startup via `GetFullChannel` and routes comment messages through the parent group's existing media filters, download path, and dedup logic.
+- Polling loop extended to also poll linked discussion groups when `trackComments` is enabled.
+- Backfill (`HistoryDownloader`) runs a second pass on the linked discussion group after the main channel pass, respecting the same `limit` and emitting a `💬 Backfilling comment media…` log line in the progress panel.
+- **"Track comment media" toggle** added to the Topics tab of the group settings modal; saved and persisted via `PUT /api/groups/:id`.
+
 ## [2.3.48] — 2026-05-03
 
 ### Added
