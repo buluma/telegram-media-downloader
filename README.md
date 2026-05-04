@@ -2,11 +2,11 @@
 
 Download photos, videos, documents, voice messages, GIFs, stickers, and Stories from any Telegram channel, group, or chat your account can read. Bulk-archive a whole channel, paste a `t.me/` link to grab a single message, capture self-destructing media before it expires, and forward downloads automatically to another chat. Generate signed share-links friends can open without logging in. One-click in-dashboard auto-update via a watchtower sidecar. Web dashboard plus a CLI for headless servers. Runs on Windows, Linux, macOS, and Docker (amd64 + arm64).
 
-[![CI](https://github.com/buluma/telegram-media-downloader/actions/workflows/ci.yml/badge.svg)](https://github.com/buluma/telegram-media-downloader/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/buluma/telegram-media-downloader/actions/workflows/codeql.yml/badge.svg)](https://github.com/buluma/telegram-media-downloader/actions/workflows/codeql.yml)
+[![CI](https://github.com/botnick/telegram-media-downloader/actions/workflows/ci.yml/badge.svg)](https://github.com/botnick/telegram-media-downloader/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/botnick/telegram-media-downloader/actions/workflows/codeql.yml/badge.svg)](https://github.com/botnick/telegram-media-downloader/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
-[![Node.js](https://img.shields.io/badge/Node.js-25.x-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
-[![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?logo=docker&logoColor=white)](https://github.com/buluma/telegram-media-downloader/pkgs/container/telegram-media-downloader)
+[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D20-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?logo=docker&logoColor=white)](https://github.com/botnick/telegram-media-downloader/pkgs/container/telegram-media-downloader)
 
 > **Keywords:** Telegram downloader · Telegram channel scraper · Telegram media backup · download Telegram videos · download Telegram photos · Telegram archive tool · self-hosted Telegram bot alternative · GramJS · MTProto · Telegram Stories downloader · Telegram private channel downloader · t.me link downloader · Telegram TTL self-destruct downloader.
 
@@ -16,9 +16,9 @@ Download photos, videos, documents, voice messages, GIFs, stickers, and Stories 
 
 | Provider | Button |
 | --- | --- |
-| **Render** | [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/buluma/telegram-media-downloader) |
-| **Railway** | [![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/template/?template=https://github.com/buluma/telegram-media-downloader) |
-| **Fly.io / Docker** | `docker run --pull=always -p 3000:3000 -v "$(pwd)/data:/app/data" ghcr.io/buluma/telegram-media-downloader:latest` |
+| **Render** | [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/botnick/telegram-media-downloader) |
+| **Railway** | [![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/template/?template=https://github.com/botnick/telegram-media-downloader) |
+| **Fly.io / Docker** | `docker run --pull=always -p 3000:3000 -v "$(pwd)/data:/app/data" ghcr.io/botnick/telegram-media-downloader:latest` |
 
 After the container is up, open `:3000` and the in-browser setup wizard takes over (set password → enter API creds → add account → download).
 
@@ -70,9 +70,13 @@ A self-hosted application that watches your Telegram chats and downloads new med
 - **Avoid Telegram bot limits** — User API has no 50 MB / 4 GB ceiling that the Bot API imposes.
 - **Forward as you download** — auto-forward to another channel, group, or Saved Messages.
 - **Share without logging in** — admin generates HMAC-signed `/share/<id>` URLs that friends can open or feed to a download manager (TTL configurable, including "never expires").
+- **Backup off-host** — multi-provider mirror to S3-compatible storage (AWS / R2 / B2 / MinIO / Wasabi), an SFTP NAS, or a local mount. Continuous mirror as new files arrive, scheduled tar.gz snapshots, optional client-side AES-256-GCM encryption, persistent retry queue.
 - **Find duplicates** — SHA-256 dedup at download time + on-demand library scan.
 - **Sort 18+ vs not-18+** — opt-in in-process classifier (`@huggingface/transformers`, WASM, runs everywhere) flags photos that don't match the rest of the library so they can be reviewed and purged.
+- **Local AI search & smart organisation** — opt-in CLIP semantic search ("show me beach photos"), face clustering (the **People** view), perceptual near-duplicate dedup, and ImageNet auto-tagging. Everything runs locally via WASM; no cloud APIs, no uploads. See [docs/AI.md](docs/AI.md).
 - **One-click update** — opt-in watchtower sidecar lets the dashboard pull-and-recreate the container itself; data volume + DB are preserved (DB is snapshotted to `data/backups/` first).
+- **Right-click context menu, drag-drop URL, pinned items, picture-in-picture, mini-player, bulk-zip download, system notifications, wake lock, sunset/sunrise theme, customisable keyboard shortcuts** — gallery is a real desktop-class library, not a list of links.
+- **Hash worker pool, HTTP compression, immutable static caching, modulepreload** — fast on a Pi 4 / NAS too. Multi-GB SHA-256 hashing runs on a `worker_threads` pool, `compression` middleware halves text-payload bytes on the wire, static assets serve with 1-year `immutable` Cache-Control behind a `?v=` cache-bust.
 - **Run on a NAS / VPS / Raspberry Pi** — Docker image is multi-arch, runs as non-root.
 
 ## Complete feature list
@@ -127,7 +131,7 @@ A self-hosted application that watches your Telegram chats and downloads new med
 - **Paste t.me link** — drop one or many URLs (newline-separated) to download just those messages.
 - **Stories drawer** — fetch a username's active Stories, pick which ones to save.
 - **Group settings modal** — per-chat media filters (photos, videos, files, voice, gifs, stickers, links), auto-forward destination, monitor / forward account assignment, forum-topic whitelist, per-row cog.
-- **Settings → Advanced** — runtime tunables surfaced as live-editable knobs (worker auto-scale, integrity batch size, polling interval, history retention, share TTL bounds, NSFW threshold + concurrency, auto-backfill knobs, etc.). All clamped server-side; defaults preserve current behaviour.
+- **Settings → Advanced** — system-wide runtime tunables (worker auto-scale, integrity batch size, polling interval, history retention, share TTL bounds, auto-backfill knobs, etc.). All clamped server-side; defaults preserve current behaviour. Per-tool settings (NSFW classifier, ffmpeg decoder, AI capabilities) live on their respective `/maintenance/*` page.
 - **Font picker** — 21 fonts (10 Thai-capable + 10 Latin + system); applied at boot before first paint to avoid FOUC.
 - **Privacy / Force-HTTPS / Rate-limit toggles** — opt-in from the browser, no `.env` editing.
 - **Browser notifications** — opt-in toast for download-complete events, with burst coalescing.
@@ -138,7 +142,7 @@ A self-hosted application that watches your Telegram chats and downloads new med
 ### CLI
 - Interactive main menu with arrow-key navigation.
 - `monitor`, `history`, `dialogs`, `accounts`, `config`, `settings`, `purge`, `auth`, `migrate`, `web` subcommands.
-- Headless watchdog supervisors for production: `runner.js` (cross-platform Node), `runner.sh` (POSIX shell), `watchdog.ps1` (Windows PowerShell). All read `TGDL_RUN` env (default: dashboard/web mode; set `TGDL_RUN=monitor` for headless monitor).
+- Headless watchdog supervisors for production: `runner.js` (cross-platform Node), `runner.sh` (POSIX shell), `watchdog.ps1` (Windows PowerShell). All read `TGDL_RUN` env (default `monitor`).
 - Structured logging via `data/logs/*.log` with a noise classifier so gramJS reconnect chatter doesn't drown out real errors. Set `TGDL_DEBUG=1` to see everything.
 
 ### Filters & limits
@@ -162,7 +166,7 @@ A self-hosted application that watches your Telegram chats and downloads new med
 - **CodeQL + Dependabot** scheduled scans.
 
 ### Operations
-- **Docker image** on GHCR, multi-stage, runs as non-root `node` user, `tini` as PID 1, built-in `HEALTHCHECK` against `/api/auth_check`. Multi-arch (amd64 + arm64). Includes `ffmpeg` (apt) so video / audio thumbnails work on alpine without an extra container.
+- **Docker image** on GHCR, multi-stage, Debian-slim base (glibc — required by `onnxruntime-node` for the optional NSFW classifier), runs as non-root `node` user, `tini` as PID 1, built-in `HEALTHCHECK` against `/api/auth_check`. Multi-arch (amd64 + arm64). Includes `ffmpeg` (apt) so video / audio thumbnails work out of the box without an extra container.
 - **GHCR pull-policy:always** in the bundled compose file — `docker compose up -d` always grabs `:latest`.
 - **`/api/version` + `/api/version/check` + `/metrics`** endpoints — version chip, GitHub-Releases-backed update notifier (cached, fail-soft), and OpenMetrics text format for Prometheus scraping.
 - **Optional in-dashboard auto-update** — opt-in `auto-update` compose profile spins up a watchtower sidecar; a one-click button in Maintenance pulls the new image and recreates the container in place.
@@ -180,7 +184,7 @@ Photos (JPEG, PNG, WebP, BMP), videos (MP4, MKV, AVI, MOV, WebM), audio (MP3, M4
 
 ## Requirements
 
-- **Node.js 25.x** (or Docker — no host Node needed)
+- **Node.js 20+** (or Docker — no host Node needed)
 - A Telegram **API ID** and **API hash** from <https://my.telegram.org> (free, takes 1 minute)
 - Disk space for the media you'll archive
 
@@ -189,7 +193,7 @@ Photos (JPEG, PNG, WebP, BMP), videos (MP4, MKV, AVI, MOV, WebM), audio (MP3, M4
 ### Docker (recommended)
 
 ```bash
-git clone https://github.com/buluma/telegram-media-downloader.git
+git clone https://github.com/botnick/telegram-media-downloader.git
 cd telegram-media-downloader
 docker compose up -d
 ```
@@ -201,34 +205,20 @@ Open `http://localhost:3000`:
 3. **Settings → Telegram Accounts → Add account** — phone number, OTP, optional 2FA.
 4. **Settings → Engine → Start monitor**, or just paste a `t.me/` link in the top bar.
 
-Pre-built image: `ghcr.io/buluma/telegram-media-downloader:latest`.
+Pre-built image: `ghcr.io/botnick/telegram-media-downloader:latest`.
 
 ### Node
 
 ```bash
-git clone https://github.com/buluma/telegram-media-downloader.git
+git clone https://github.com/botnick/telegram-media-downloader.git
 cd telegram-media-downloader
 npm ci
-npm start          # web dashboard (recommended)
-npm run menu       # print CLI commands
+npm run web        # web dashboard
+# or
+npm start          # interactive CLI menu
 ```
 
 Long-running monitor under a watchdog (Linux / macOS): `TGDL_RUN=monitor ./runner.sh`. Windows: `pwsh ./watchdog.ps1`.
-
-### Runtime troubleshooting (Node / ABI)
-
-- Verify runtime health: `npm run doctor`
-- If you ever see `better-sqlite3` ABI mismatch errors (`NODE_MODULE_VERSION`), ensure Node 25 is active and rebuild once:
-
-```bash
-npm rebuild better-sqlite3
-```
-
-- If port 3000 is busy, run with another port:
-
-```bash
-PORT=3001 npm start
-```
 
 ## CLI cheatsheet
 
@@ -241,7 +231,7 @@ The dashboard does almost everything. The CLI subcommands stay around for headle
 | `npm run monitor` | Headless real-time monitor for servers (no dashboard UI). |
 | `npm run history` | Bulk backfill an existing chat. |
 | `npm run auth` | Reset / change the dashboard password from the terminal. |
-| `npm run doctor` | Runtime diagnostics: Node/ABI, localstorage flag, config load, DB load, and port availability. |
+| `npm run doctor` | Diagnostics: Node/ABI, config, SQLite, port, ffmpeg. |
 | `npm run menu` | Full list of subcommands. |
 
 ## Configuration

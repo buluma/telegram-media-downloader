@@ -50,6 +50,24 @@ export function sha256OfFile(absPath) {
     });
 }
 
+/**
+ * Worker-pool-backed equivalent of `sha256OfFile`. Same return value, same
+ * algorithm, but runs the hash on a `worker_threads` pool so the main
+ * event loop stays free for HTTP / WebSocket traffic during multi-GB
+ * post-write hashing. Falls back to the inline streamer if the worker
+ * pool is disabled (`HASH_WORKER_DISABLE=1`) or unavailable.
+ *
+ * Lazy import keeps this module's dep graph free of `worker_threads`
+ * for tests / contexts that never opt into the pool.
+ *
+ * @param {string} absPath
+ * @returns {Promise<string>}
+ */
+export async function sha256OfFileViaPool(absPath) {
+    const mod = await import('./hash-worker.js');
+    return mod.hashFile(absPath, CHECKSUM_ALGO);
+}
+
 /** True when `s` looks like a value produced by sha256OfFile. */
 export function isValidChecksum(s) {
     return typeof s === 'string' && CHECKSUM_HEX_RE.test(s);

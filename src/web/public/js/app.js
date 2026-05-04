@@ -25,6 +25,12 @@ import { initI18n, setLang, getLang, applyToDOM as applyI18n, t as i18nT, tf as 
 import { showBackfillPage, deepLinkFromModal as backfillDeepLink, stopBackfillPage } from './backfill.js';
 import * as Fonts from './fonts.js';
 import { showQueuePage, initQueue } from './queue.js';
+import { initHeaderMobile, pushLogToNotify } from './header-mobile.js';
+import { setupGalleryContextMenu } from './gallery-context.js';
+import { setupDragDropLink } from './dragdrop-link.js';
+import { setupMiniPlayer, shrinkToMini, dismiss as dismissMiniPlayer } from './mini-player.js';
+import { wireChangelogTrigger } from './changelog-viewer.js';
+import * as WakeLock from './wake-lock.js';
 
 // ============ Render coalescing ============
 //
@@ -121,9 +127,44 @@ async function init() {
 
     Viewer.setupViewerEvents();
 
+    // Expose to window for HTML onclick handlers — pulled UP from after
+    // the await chain below because inline `onclick="navigateTo('…')"` on
+    // the sidebar nav-items would throw `ReferenceError: navigateTo is
+    // not defined` whenever loadGroups() / loadStats() / refresh-info
+    // rejected before the original assignment ran. Setting them here means
+    // the bindings are live as soon as the module finishes its synchronous
+    // bootstrap, regardless of any later network failure. Keep this list
+    // in sync with `_setupSidebarGroupsCollapse` and `setupFab` further down.
+    window.navigateTo = navigateTo;
+    window.openGroup = openGroup;
+    window.showAllMedia = showAllMedia;
+    window.openMediaViewer = Viewer.openMediaViewer;
+    window.Viewer = Viewer;
+    window.closeMediaViewer = Viewer.closeMediaViewer;
+    window.openGroupSettings = openGroupSettings;
+    window.closeGroupSettings = closeGroupSettings;
+    window.saveGroupSettings = saveGroupSettings;
+    window.refreshCurrentPage = refreshCurrentPage;
+    window.switchGroupsTab = switchGroupsTab;
+    window.switchSettingsTab = switchSettingsTab;
+    window.toggleGroupEnabled = toggleGroupEnabled;
+    window.closeSidebar = closeSidebar;
+    window.confirmDeleteFile = confirmDeleteFile;
+    window.toggleFwdEnabled = toggleFwdEnabled;
+    // Mini-player public surface — viewer.js can opt into the dock-on-
+    // close behaviour by calling `window.tgdlShrinkToMini()` from the
+    // modal close path. Kept on `window` (instead of imported) so the
+    // viewer module stays free of a back-edge cycle to app.js.
+    window.tgdlShrinkToMini = shrinkToMini;
+    window.tgdlDismissMiniPlayer = dismissMiniPlayer;
+
     // Live updates from the server (engine state, downloads, purges).
     ws.connect();
     ws.on('*', handleEngineWsMessage);
+    // Realtime log channel — every server-side `log()` call broadcasts
+    // a `log` message. The notification bell only surfaces warn / error
+    // entries; the maintenance Logs page subscribes to all of them.
+    ws.on('log', (m) => { try { pushLogToNotify(m); } catch {} });
     ws.on('group_purged', () => loadGroups());
     ws.on('purge_all', () => { loadGroups(); loadStats(); });
     // Auto-prune / disk-rotator / rescue sweeper all broadcast file_deleted —
@@ -208,6 +249,11 @@ async function init() {
 
     // If a download completes for a group whose name we don't know yet,
     // kick off a refresh-info so the next render gets the real label.
+    // Endpoint is now fire-and-forget — the response is `{started:true}`,
+    // not a name list. The canonical update path is the `groups_refreshed`
+    // WS broadcast wired above (line 190); keeping the call here just
+    // triggers it. 409 ALREADY_RUNNING is expected when several rows
+    // come in at once; the in-flight job will broadcast for everyone.
     ws.on('download_complete', (m) => {
         const id = m?.payload?.groupId;
         if (id == null) return;
@@ -216,9 +262,9 @@ async function init() {
         const known = cached || (cfg && !isUnresolvedName(cfg.name, id));
         if (!known && !state._resolvingGroups) {
             state._resolvingGroups = true;
-            api.post('/api/groups/refresh-info').then(r => {
-                if (r?.updates) updateGroupNameCache(r.updates);
-            }).catch(() => {}).finally(() => { state._resolvingGroups = false; });
+            api.post('/api/groups/refresh-info')
+                .catch(() => {})
+                .finally(() => { state._resolvingGroups = false; });
         }
     });
 
@@ -233,6 +279,12 @@ async function init() {
         const had = state.activeRings.has(id);
         if (on) state.activeRings.add(id); else state.activeRings.delete(id);
         if (had !== on) scheduleRender(renderGroupsList);
+        // Wake-lock follows the active-rings count: any active ring → keep
+        // the screen awake; queue drained → release. Feature-detected
+        // inside wake-lock.js so unsupported browsers no-op silently.
+        state.activeJobsCount = state.activeRings.size;
+        WakeLock.acquireIfActive(state.activeJobsCount);
+        WakeLock.releaseIfIdle(state.activeJobsCount);
     }
     ws.on('download_progress', (m) => { if (m.payload?.groupId) markRing(m.payload.groupId, true); });
     ws.on('download_complete', (m) => {
@@ -267,50 +319,57 @@ async function init() {
     // Global keyboard shortcuts (press ? for the cheatsheet).
     initShortcuts();
 
+    // Mobile-friendly header chrome: overflow ⋮ menu (collapses paste-link /
+    // stories / view-mode / refresh on <640 px viewports) + notification
+    // bell that surfaces server-side warn/error events without making the
+    // operator open the maintenance Logs page.
+    initHeaderMobile();
+
+    // v2.6 polish — right-click context menu on gallery tiles, drag-drop
+    // t.me URL onto the dashboard, mini-player handle, in-app changelog
+    // viewer, screen wake-lock during downloads. Each module feature-
+    // detects so unsupported browsers silently no-op.
+    setupGalleryContextMenu();
+    setupDragDropLink();
+    setupMiniPlayer();
+    wireChangelogTrigger();
+    // Wake-lock visibility refresh — browser auto-releases on tab hide,
+    // re-acquire when the tab comes back if jobs are still in flight.
+    WakeLock.attachVisibilityRefresh(() => state.activeJobsCount || 0);
+
     await loadGroups();
     await loadStats();
 
     // First-load name resolve — admin-only because it POSTs and forces a
     // refresh side-effect. Guests see whatever names landed in the DB on
-    // the last admin-side resolve.
+    // the last admin-side resolve. Endpoint is fire-and-forget; the
+    // `groups_refreshed` broadcast handler above merges the resolved
+    // names into the canonical cache when the job finishes.
     if (isAdmin && !state._resolvingGroups) {
         state._resolvingGroups = true;
-        api.post('/api/groups/refresh-info').then(r => {
-            if (r?.updates) updateGroupNameCache(r.updates);
-            if (r?.updated > 0) renderGroupsList();
-        }).catch(() => {}).finally(() => { state._resolvingGroups = false; });
+        api.post('/api/groups/refresh-info')
+            .catch(() => {})
+            .finally(() => { state._resolvingGroups = false; });
     }
     // Routes need to be registered BEFORE router.start() so the initial
     // hash dispatch lands on a real handler.
     registerRoutes();
     setupFab();
     _setupSidebarGroupsCollapse();
+    _setupSidebarMaintenanceCollapse();
     // Wire the Queue store + WS handlers eagerly so its in-memory state
     // (and the bottom-nav badge) tracks live downloads even when the user
     // hasn't visited the page yet. Queue is admin-only — guests never see
     // the page or the badge, so skip the snapshot fetch.
     if (isAdmin) initQueue();
     router.start();
-    
-    // Expose to window for HTML onclick handlers
-    window.navigateTo = navigateTo;
-    window.openGroup = openGroup;
-    window.showAllMedia = showAllMedia;
-    window.openMediaViewer = Viewer.openMediaViewer;
-    // Expose Viewer namespace so other modules (Queue, Backfill, etc.)
-    // can call openMediaViewerSingle without their own import cycle.
-    window.Viewer = Viewer;
-    window.closeMediaViewer = Viewer.closeMediaViewer;
-    window.openGroupSettings = openGroupSettings;
-    window.closeGroupSettings = closeGroupSettings;
-    window.saveGroupSettings = saveGroupSettings;
-    window.refreshCurrentPage = refreshCurrentPage;
-    window.switchGroupsTab = switchGroupsTab;
-    window.switchSettingsTab = switchSettingsTab;
-    window.toggleGroupEnabled = toggleGroupEnabled;
-    window.closeSidebar = closeSidebar;
-    window.confirmDeleteFile = confirmDeleteFile;
-    window.toggleFwdEnabled = toggleFwdEnabled;
+
+    // Window bindings that depend on functions defined LATER in the
+    // module. Pulled out from the main `window.*` block above (which
+    // covers everything declared before init()) — these all live in the
+    // setupFab / Settings / Viewer / etc. closures further down. Safe to
+    // assign post-await because no inline onclick reaches them before
+    // the operator clicks something.
     window.toggleFwdDelete = toggleFwdDelete;
     window.openDestinationPicker = openDestinationPicker;
     window.filterDialogs = filterDialogs;
@@ -318,7 +377,7 @@ async function init() {
     window.showToast = showToast;
     window.purgeGroup = purgeGroup;
     window.purgeAll = purgeAll;
-    
+
     // View-mode picker in the header — dropdown with Grid / Compact / List
     // options (replaces the v2.3.0 cycle button so users can pick directly
     // instead of clicking through). All three modes share the same tile
@@ -377,7 +436,11 @@ async function init() {
 
     // Settings globals
     window.applyPreset = Settings.applyPreset;
-    document.getElementById('save-settings')?.addEventListener('click', Settings.saveSettings);
+    // Manual Save button removed in v2.6 — auto-save handles every edit
+    // 800 ms after the last change, with the inline pill + notification
+    // bell entry for confirmation. The legacy `Settings.saveSettings`
+    // export stays callable for tests + power users who reach for the
+    // console, just no longer wired to a button.
     document.getElementById('save-api-credentials')?.addEventListener('click', Settings.saveApiCredentials);
     document.getElementById('change-password-btn')?.addEventListener('click', Settings.changePassword);
     document.getElementById('logout-btn')?.addEventListener('click', Settings.signOut);
@@ -501,8 +564,21 @@ function renderPage(page, params = {}) {
 
     closeSidebar();
 
+    // Reset the header avatar before each non-viewer render so a previously-
+    // selected group's photo doesn't bleed across pages. The viewer page
+    // either re-applies its own avatar (when a group is selected) or
+    // reverts to the gallery glyph via `showAllMedia()`.
+    if (page !== 'viewer') updateHeaderAvatar(null, null);
+    setHeaderPageIcon(page);
+    setActiveMaintenanceTab(page);
+
     if (page === 'settings') {
         Settings.loadSettings();
+        // Auto-save: every Setting input is watched and a debounced
+        // POST /api/config flushes 800 ms after the last edit. Manual
+        // Save button still works as an early-flush escape hatch. Guests
+        // can't write config so we skip the binding for them entirely.
+        if (state.role === 'admin') Settings.setupAutoSave();
         // Engine controls live in the admin-only System section; guests
         // never see the card, and `initEngine` polls /api/monitor/status
         // (admin-gated) so skip it for them.
@@ -542,6 +618,39 @@ function renderPage(page, params = {}) {
         document.getElementById('page-title').textContent = i18nT('queue.page.title', 'Queue');
         document.getElementById('page-subtitle').textContent = i18nT('queue.page.subtitle', 'Active + pending + recently finished downloads');
         showQueuePage(params).catch(e => console.error('queue page', e));
+    } else if (page === 'maintenance') {
+        // Hub page — single sidebar entry that lists every maintenance
+        // tool as a card. Cleans up the sidebar (used to be 5+ rows of
+        // sub-pages, now one). Power users keep the per-feature deep
+        // links: /maintenance/duplicates etc. still resolve to their
+        // dedicated pages directly.
+        document.getElementById('page-title').textContent = i18nT('maintenance.hub.title', 'Maintenance');
+        document.getElementById('page-subtitle').textContent = i18nT('maintenance.hub.subtitle', 'Catalogue, thumbnails, NSFW review, logs, backup destinations');
+        import('./maintenance-hub.js').then(m => m.init()).catch(e => console.error('maintenance-hub', e));
+    } else if (page === 'maintenance-duplicates') {
+        document.getElementById('page-title').textContent = i18nT('maintenance.duplicates.title', 'Find duplicate files');
+        document.getElementById('page-subtitle').textContent = i18nT('maintenance.duplicates.subtitle', 'Hash every file and reclaim space from byte-identical copies');
+        import('./maintenance-duplicates.js').then(m => m.init()).catch(e => console.error('maintenance-duplicates', e));
+    } else if (page === 'maintenance-thumbs') {
+        document.getElementById('page-title').textContent = i18nT('maintenance.thumbs.page_title', 'Build thumbnails');
+        document.getElementById('page-subtitle').textContent = i18nT('maintenance.thumbs.subtitle', 'Generate WebP previews for older files');
+        import('./maintenance-thumbs.js').then(m => m.init()).catch(e => console.error('maintenance-thumbs', e));
+    } else if (page === 'maintenance-nsfw') {
+        document.getElementById('page-title').textContent = i18nT('maintenance.nsfw.page_title', 'NSFW review');
+        document.getElementById('page-subtitle').textContent = i18nT('maintenance.nsfw.subtitle', "Five-tier classifier review — keep what's confidently 18+, delete what's confidently not, eyeball the borderline cases.");
+        import('./maintenance-nsfw.js').then(m => m.init()).catch(e => console.error('maintenance-nsfw', e));
+    } else if (page === 'maintenance-logs') {
+        document.getElementById('page-title').textContent = i18nT('maintenance.logs.page_title', 'Log viewer');
+        document.getElementById('page-subtitle').textContent = i18nT('maintenance.logs.subtitle', 'Realtime tail of every backend log source');
+        import('./maintenance-logs.js').then(m => m.init()).catch(e => console.error('maintenance-logs', e));
+    } else if (page === 'maintenance-backup') {
+        document.getElementById('page-title').textContent = i18nT('maintenance.backup.page_title', 'Backup destinations');
+        document.getElementById('page-subtitle').textContent = i18nT('maintenance.backup.subtitle', 'Mirror new downloads to S3 / SFTP / local NAS storage');
+        import('./maintenance-backup.js').then(m => m.init()).catch(e => console.error('maintenance-backup', e));
+    } else if (page === 'maintenance-ai') {
+        document.getElementById('page-title').textContent = i18nT('maintenance.ai.title', 'AI Search & Smart Organisation');
+        document.getElementById('page-subtitle').textContent = i18nT('maintenance.ai.subtitle', 'Local-only image embeddings, face clustering, perceptual dedup, and auto-tagging.');
+        import('./maintenance-ai.js').then(m => m.init()).catch(e => console.error('maintenance-ai', e));
     }
 }
 
@@ -595,6 +704,13 @@ function registerRoutes() {
         document.getElementById('stories-btn')?.click();
     });
     router.route('/account/add', () => { window.location.href = '/add-account.html'; });
+    router.route('/maintenance', () => renderPage('maintenance'));
+    router.route('/maintenance/duplicates', () => renderPage('maintenance-duplicates'));
+    router.route('/maintenance/thumbs', () => renderPage('maintenance-thumbs'));
+    router.route('/maintenance/nsfw', () => renderPage('maintenance-nsfw'));
+    router.route('/maintenance/logs', () => renderPage('maintenance-logs'));
+    router.route('/maintenance/backup', () => renderPage('maintenance-backup'));
+    router.route('/maintenance/ai', () => renderPage('maintenance-ai'));
 }
 
 function closeSidebar() {
@@ -739,17 +855,16 @@ function renderGroupsList() {
         _reapplySidebarFilter();
     }
 
-    // Fire a one-shot resolve in the background. We dedupe with an in-flight
-    // flag so a flurry of WS-driven re-renders doesn't hammer the endpoint.
+    // Fire a one-shot resolve in the background. Endpoint is fire-and-
+    // forget; the `groups_refreshed` WS handler covers the cache merge
+    // for every open tab. The dedupe flag prevents a flurry of WS-driven
+    // re-renders from hammering the endpoint, while a 409 from a sibling
+    // client is no-op'd on the server side.
     if (needsResolve && !state._resolvingGroups) {
         state._resolvingGroups = true;
-        api.post('/api/groups/refresh-info').then(r => {
-            // Server now returns { updates: [{id, name}] } — cache them so
-            // every render path picks up the new name immediately. The WS
-            // `groups_refreshed` broadcast covers other open tabs.
-            if (r?.updates) updateGroupNameCache(r.updates);
-            if (r?.updated > 0) loadGroups();
-        }).catch(() => {}).finally(() => { state._resolvingGroups = false; });
+        api.post('/api/groups/refresh-info')
+            .catch(() => {})
+            .finally(() => { state._resolvingGroups = false; });
     }
 
     // Event delegation — click opens the group viewer; click on the
@@ -805,6 +920,48 @@ function openGroup(groupId, groupName) {
     updateHeaderAvatar(groupId, state.currentGroup);
     navigateTo('viewer');
     loadGroupFiles(groupId);
+}
+
+// Per-page icon for the header avatar slot when no group is selected.
+// Picks an icon + a stable colour slot so each page reads as itself
+// instead of all sharing the gallery glyph from the viewer page.
+const PAGE_HEADER_ICON = {
+    viewer:                   'ri-gallery-line',
+    groups:                   'ri-group-line',
+    backfill:                 'ri-history-line',
+    queue:                    'ri-list-check-2',
+    settings:                 'ri-settings-3-line',
+    'maintenance':            'ri-tools-line',
+    'maintenance-duplicates': 'ri-file-copy-2-line',
+    'maintenance-thumbs':     'ri-image-line',
+    'maintenance-nsfw':       'ri-shield-check-line',
+    'maintenance-logs':       'ri-terminal-box-line',
+    'maintenance-backup':     'ri-cloud-line',
+    'maintenance-ai':         'ri-sparkling-2-line',
+};
+
+// Repaint the active state on the maintenance tab strip. CSS hides the
+// strip when not on a per-feature maintenance page, but we still set
+// the data-active attr to reflect the current page so the active style
+// is correct the moment the strip becomes visible.
+function setActiveMaintenanceTab(page) {
+    const root = document.getElementById('maintenance-tabs');
+    if (!root) return;
+    const tabs = root.querySelectorAll('.maintenance-tab[data-mt-page]');
+    tabs.forEach((t) => {
+        const isActive = t.dataset.mtPage === page;
+        t.dataset.active = isActive ? '1' : '0';
+        if (isActive) t.setAttribute('aria-selected', 'true');
+        else t.removeAttribute('aria-selected');
+    });
+}
+
+function setHeaderPageIcon(page) {
+    const el = document.getElementById('header-avatar');
+    if (!el) return;
+    const icon = PAGE_HEADER_ICON[page] || 'ri-gallery-line';
+    el.className = 'tg-avatar tg-avatar-1 w-10 h-10 text-lg flex-shrink-0 flex items-center justify-center text-white';
+    el.innerHTML = `<i class="${icon}"></i>`;
 }
 
 function updateHeaderAvatar(groupId, displayName) {
@@ -888,7 +1045,9 @@ async function loadAllFiles() {
 
     try {
         const type = state.currentFilter && state.currentFilter !== 'all' ? state.currentFilter : 'all';
-        const res = await api.get(`/api/downloads/all?page=${state.page}&limit=${FILES_PER_PAGE}&type=${encodeURIComponent(type)}`);
+        const pinQs = state.pinnedFilter ? '&pinned=1' : '';
+        const pinFirstQs = (localStorage.getItem('tgdl-pinned-first') === '1') ? '&pinnedFirst=1' : '';
+        const res = await api.get(`/api/downloads/all?page=${state.page}&limit=${FILES_PER_PAGE}&type=${encodeURIComponent(type)}${pinQs}${pinFirstQs}`);
         const newFiles = res?.files || [];
 
         let appendFromIndex = 0;
@@ -937,7 +1096,9 @@ async function loadGroupFiles(groupId) {
 
     try {
         const type = state.currentFilter && state.currentFilter !== 'all' ? state.currentFilter : 'all';
-        const res = await api.get(`/api/downloads/${encodeURIComponent(groupId)}?page=${state.page}&limit=${FILES_PER_PAGE}&type=${encodeURIComponent(type)}`);
+        const pinQs = state.pinnedFilter ? '&pinned=1' : '';
+        const pinFirstQs = (localStorage.getItem('tgdl-pinned-first') === '1') ? '&pinnedFirst=1' : '';
+        const res = await api.get(`/api/downloads/${encodeURIComponent(groupId)}?page=${state.page}&limit=${FILES_PER_PAGE}&type=${encodeURIComponent(type)}${pinQs}${pinFirstQs}`);
         const newFiles = res.files || [];
 
         let appendFromIndex = 0;
@@ -979,7 +1140,7 @@ function renderMediaGrid(opts = {}) {
     if (state.files.length === 0) {
         grid.innerHTML = '';
         _renderedFileCount = 0;
-        if (empty) empty.classList.remove('hidden');
+        renderGalleryEmptyState();
         return;
     }
     if (empty) empty.classList.add('hidden');
@@ -1077,12 +1238,24 @@ function renderMediaGrid(opts = {}) {
             const groupLine = file.groupName || file.groupId || '';
             const sizeLine = file.sizeFormatted || (file.size ? formatBytes(file.size) : '');
             const dateLine = file.modified ? formatRelativeTime(file.modified) : '';
+            // Pin chip — appears on hover, golden when pinned. data-tile-pin
+            // is what the gallery delegation handler keys off below.
+            const pinnedCls = file.pinned ? 'is-pinned' : '';
+            const pinTitle = file.pinned
+                ? i18nT('favorites.unpin', 'Unpin')
+                : i18nT('favorites.pin', 'Pin');
+            const pinChip = file.id != null
+                ? `<button type="button" class="pin-chip" data-tile-pin title="${escapeHtml(pinTitle)}" aria-label="${escapeHtml(pinTitle)}">
+                       <i class="ri-pushpin-2-fill"></i>
+                   </button>`
+                : '';
             return `
-            <div class="media-item relative ${selectedCls}" data-index="${originalIndex}" data-path="${escapeHtml(file.fullPath)}"${file.id != null ? ` data-id="${file.id}"` : ''}>
+            <div class="media-item relative ${selectedCls} ${pinnedCls}" data-index="${originalIndex}" data-path="${escapeHtml(file.fullPath)}"${file.id != null ? ` data-id="${file.id}"` : ''} tabindex="0">
                 <div class="tile-thumb relative w-full h-full overflow-hidden">
                     ${thumbInner}
                     ${gridDocLabel}
                 </div>
+                ${pinChip}
                 <div class="tile-text">
                     <div class="tile-name" title="${escapeHtml(file.name || '')}">${escapeHtml(file.name || '')}</div>
                     <div class="tile-sub">${escapeHtml(groupLine)}</div>
@@ -1129,7 +1302,28 @@ let _gridDelegated = false;
 function _wireMediaGridDelegation(grid) {
     if (_gridDelegated) return;
     _gridDelegated = true;
-    grid.addEventListener('click', (ev) => {
+    grid.addEventListener('click', async (ev) => {
+        // Pin chip — toggles pinned state via the API and flips the
+        // visual class in place. Stops propagation so clicking the
+        // chip doesn't also open the viewer.
+        const pinBtn = ev.target.closest('[data-tile-pin]');
+        if (pinBtn) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            const tile = pinBtn.closest('.media-item[data-index]');
+            const idx = tile ? parseInt(tile.dataset.index, 10) : -1;
+            const file = state.files[idx];
+            if (!file || file.id == null) return;
+            const next = !file.pinned;
+            try {
+                await api.post(`/api/downloads/${encodeURIComponent(file.id)}/pin`, { pinned: next });
+                file.pinned = next;
+                tile?.classList.toggle('is-pinned', next);
+            } catch (e) {
+                showToast(e?.message || 'Pin failed', 'error');
+            }
+            return;
+        }
         const el = ev.target.closest('.media-item[data-index]');
         if (!el) return;
         const idx = parseInt(el.dataset.index, 10);
@@ -1170,14 +1364,82 @@ function _removeTileFromGrid({ path, id }) {
     }
     if (el) el.remove();
     // Surface the empty-state when the last tile disappears.
-    if (state.files.length === 0) {
-        const empty = document.getElementById('empty-state');
-        if (empty) empty.classList.remove('hidden');
+    if (state.files.length === 0) renderGalleryEmptyState();
+}
+
+/**
+ * Render the gallery empty-state with actionable guidance. The default
+ * copy ("No media files") doesn't tell the operator WHY the gallery is
+ * empty — so they'd file "ทำไมบางกลุ่มไม่เจอ media" tickets.
+ *
+ *   - On a specific group view: hint that this group has no DB rows yet,
+ *     suggest backfill (admin) or filter check.
+ *   - On All Media with zero rows: hint that nothing has been downloaded,
+ *     suggest opening Settings → Telegram Accounts (likely no account).
+ *   - In select-mode-active (filtered) view: defer to the existing copy.
+ */
+function renderGalleryEmptyState() {
+    const empty = document.getElementById('empty-state');
+    if (!empty) return;
+    const titleEl = document.getElementById('empty-state-title');
+    const bodyEl  = document.getElementById('empty-state-body');
+    const iconEl  = document.getElementById('empty-state-icon');
+    const actionsEl = document.getElementById('empty-state-actions');
+    const isAdmin = state.role === 'admin';
+    const groupId = state.currentGroupId;
+
+    let title, body, icon, actions = [];
+    if (groupId) {
+        icon = 'ri-folder-open-line';
+        title = i18nT('viewer.empty.group_title', 'No downloaded media for this group yet');
+        body = isAdmin
+            ? i18nT('viewer.empty.group_body_admin', 'Either nothing has been downloaded yet or the catalogue is out of sync. Run a Backfill to pull older messages, double-check the media filters in Group Settings, or re-index from disk if files exist on disk but not in the database.')
+            : i18nT('viewer.empty.group_body_guest', 'Either nothing has been downloaded yet or the catalogue is empty for this chat. Ask an admin to run a Backfill.');
+        if (isAdmin) {
+            actions = [
+                { label: i18nT('viewer.empty.action.backfill', 'Run Backfill'), icon: 'ri-history-line', onClick: () => window.navigateTo?.('backfill') },
+                { label: i18nT('viewer.empty.action.group_settings', 'Group Settings'), icon: 'ri-equalizer-line', onClick: () => window.openGroupSettings?.(groupId) },
+                { label: i18nT('viewer.empty.action.reindex', 'Re-index from disk'), icon: 'ri-refresh-line', onClick: () => window.navigateTo?.('maintenance/duplicates') },
+            ];
+        }
+    } else {
+        icon = 'ri-image-line';
+        title = i18nT('viewer.empty', 'No media files');
+        body = isAdmin
+            ? i18nT('viewer.empty.all_body_admin', 'Nothing has been downloaded yet. Add a Telegram account and enable a chat under Groups, or paste a t.me/ link to download a single message.')
+            : i18nT('viewer.empty.all_body_guest', 'Nothing has been downloaded yet. Ask an admin to add a Telegram account and enable some chats.');
+        if (isAdmin) {
+            actions = [
+                { label: i18nT('viewer.empty.action.add_account', 'Add account'), icon: 'ri-user-add-line', onClick: () => window.navigateTo?.('settings/accounts') },
+                { label: i18nT('viewer.empty.action.groups', 'Manage groups'), icon: 'ri-group-line', onClick: () => window.navigateTo?.('groups') },
+            ];
+        }
     }
 
-    // Keep selection bar/button state in sync when the visible subset changes
-    // due to filtering, search, or pagination.
-    updateSelectionBar();
+    if (iconEl) iconEl.className = `${icon} text-5xl text-tg-textSecondary mb-4`;
+    if (titleEl) titleEl.textContent = title;
+    if (bodyEl) {
+        bodyEl.textContent = body;
+        bodyEl.classList.toggle('hidden', !body);
+    }
+    if (actionsEl) {
+        actionsEl.innerHTML = actions.map((a, i) => `
+            <button type="button" data-action-idx="${i}"
+                class="tg-btn-secondary text-xs px-3 py-1.5 flex items-center gap-1.5">
+                <i class="${a.icon}"></i><span>${a.label}</span>
+            </button>
+        `).join('');
+        actionsEl.classList.toggle('hidden', actions.length === 0);
+        // Re-bind click handlers — innerHTML wipes them.
+        actionsEl.querySelectorAll('button[data-action-idx]').forEach((btn) => {
+            const idx = Number(btn.dataset.actionIdx);
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                try { actions[idx]?.onClick?.(); } catch {}
+            });
+        });
+    }
+    empty.classList.remove('hidden');
 }
 
 /**
@@ -1406,18 +1668,124 @@ async function setupMediaSearch() {
             confirmLabel: i18nT('common.delete', 'Delete'),
             danger: true,
         }))) return;
+        // Fire-and-forget — at N=5000 the unlink loop runs minutes. Drop
+        // selected paths from the local view immediately so the user sees
+        // the gallery shrink; the canonical refresh happens via the
+        // existing `bulk_delete` WS broadcast (already wired further up).
+        // Final toast comes from `dedup_delete_done` (shared tracker).
+        const set = new Set(paths);
         try {
             const r = await api.post('/api/downloads/bulk-delete', { paths });
-            showToast(i18nTf('viewer.bulk.deleted', { count: r.unlinked }, `Deleted ${r.unlinked} files`), 'success');
+            if (!r?.started && !r?.success) throw new Error('Failed to start');
             state.selected.clear();
-            // Drop deleted entries from the current view
-            const set = new Set(paths);
             state.files = (state.files || []).filter(f => !set.has(f.fullPath));
             if (state.savedFiles) state.savedFiles = state.savedFiles.filter(f => !set.has(f.fullPath));
             updateSelectionBar();
             renderMediaGrid();
         } catch (e) {
+            if (e?.data?.code === 'ALREADY_RUNNING') {
+                showToast(i18nT('jobs.already_running',
+                    'Already running on another tab — waiting for it to finish.'), 'info');
+                return;
+            }
             showToast(i18nTf('viewer.bulk.failed', { msg: e.message }, `Delete failed: ${e.message}`), 'error');
+        }
+    });
+
+    // Selection-bar: Download ZIP. Pulls every selected tile's DB id
+    // (skipping rows that don't have one — e.g. legacy entries from
+    // before id was surfaced on /api/downloads/:groupId) and POSTs the
+    // list to the streaming bulk-zip endpoint. Server replies with a
+    // ZIP attachment that the browser saves directly.
+    const selZip = document.getElementById('selection-zip');
+    selZip?.addEventListener('click', async () => {
+        if (!state.selected || !state.selected.size) return;
+        const ids = [];
+        const paths = Array.from(state.selected);
+        for (const p of paths) {
+            const f = (state.files || []).find(x => x.fullPath === p);
+            if (f && f.id != null) ids.push(f.id);
+        }
+        if (ids.length === 0) {
+            showToast(i18nT('viewer.selection.zip_no_ids',
+                'Selected files have no DB id — re-open the page to refresh and try again.'), 'error');
+            return;
+        }
+        try {
+            const r = await fetch('/api/downloads/bulk-zip', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ids }),
+            });
+            if (!r.ok) {
+                const err = await r.json().catch(() => ({}));
+                throw new Error(err.error || `HTTP ${r.status}`);
+            }
+            // Stream the body to a Blob → object URL → save-as. For really
+            // big archives the browser will write to disk as it goes.
+            const cd = r.headers.get('content-disposition') || '';
+            const m = /filename="([^"]+)"/.exec(cd);
+            const fileName = m ? m[1] : 'tgdl-bulk.zip';
+            const blob = await r.blob();
+            const u = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = u; a.download = fileName;
+            document.body.appendChild(a); a.click(); a.remove();
+            setTimeout(() => URL.revokeObjectURL(u), 60_000);
+            showToast(i18nT('viewer.selection.zip_done', 'ZIP downloaded'), 'success');
+        } catch (e) {
+            showToast(i18nT('viewer.selection.zip_failed', 'ZIP download failed') + ' — ' + (e?.message || ''), 'error');
+        }
+    });
+
+    // Selection-bar: Pin / Unpin. Toggles every selected tile's pinned
+    // flag in one go. Empty selection = no-op. Mixed-state selection
+    // (some pinned, some not) flips them ALL to pinned for clarity.
+    const selPin = document.getElementById('selection-pin');
+    selPin?.addEventListener('click', async () => {
+        if (!state.selected || !state.selected.size) return;
+        const items = [];
+        for (const p of state.selected) {
+            const f = (state.files || []).find(x => x.fullPath === p);
+            if (f && f.id != null) items.push(f);
+        }
+        if (!items.length) return;
+        const allPinned = items.every(f => f.pinned);
+        const next = !allPinned;
+        let ok = 0, failed = 0;
+        for (const f of items) {
+            try {
+                await api.post(`/api/downloads/${encodeURIComponent(f.id)}/pin`, { pinned: next });
+                f.pinned = next;
+                const tile = document.querySelector(`.media-item[data-id="${CSS.escape(String(f.id))}"]`);
+                tile?.classList.toggle('is-pinned', next);
+                ok++;
+            } catch { failed++; }
+        }
+        showToast(
+            next
+                ? i18nTf('favorites.bulk_pinned', { count: ok }, `Pinned ${ok} item(s)`)
+                : i18nTf('favorites.bulk_unpinned', { count: ok }, `Unpinned ${ok} item(s)`),
+            failed === 0 ? 'success' : 'info'
+        );
+    });
+
+    // Listen for the shared dedup_delete tracker's done event so a
+    // bulk-delete started from the duplicate-finder OR another tab still
+    // surfaces a result toast on the gallery page.
+    _wireGalleryDedupDone();
+}
+
+let _galleryDedupWired = false;
+function _wireGalleryDedupDone() {
+    if (_galleryDedupWired) return;
+    _galleryDedupWired = true;
+    ws.on('dedup_delete_done', (m) => {
+        if (m?.error) return;
+        const removed = m?.unlinked ?? m?.removed ?? 0;
+        if (removed > 0) {
+            showToast(i18nTf('viewer.bulk.deleted',
+                { count: removed }, `Deleted ${removed} files`), 'success');
         }
     });
 }
@@ -1542,6 +1910,26 @@ function filterSidebarGroups(rawQuery) {
 function _reapplySidebarFilter() {
     const input = document.getElementById('sidebar-groups-search');
     if (input && input.value) filterSidebarGroups(input.value);
+}
+
+// Collapse / expand the sidebar's Maintenance subsection. Same pattern
+// as the Downloaded-Groups collapse below — preference persists in
+// localStorage so the operator's last state sticks across reloads.
+function _setupSidebarMaintenanceCollapse() {
+    const btn = document.getElementById('maintenance-section-toggle');
+    const body = document.getElementById('maintenance-nav-body');
+    if (!btn || !body) return;
+    const KEY = 'tgdl.sidebar.maintenance.collapsed';
+    const apply = (collapsed) => {
+        body.setAttribute('aria-hidden', collapsed ? 'true' : 'false');
+        btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    };
+    apply(localStorage.getItem(KEY) === '1');
+    btn.addEventListener('click', () => {
+        const next = body.getAttribute('aria-hidden') !== 'true';
+        try { localStorage.setItem(KEY, next ? '1' : '0'); } catch { /* private mode */ }
+        apply(next);
+    });
 }
 
 // Collapse / expand the "Downloaded Groups" body. Persists across reloads
@@ -1928,7 +2316,27 @@ function resetGalleryFilter() {
 function setupMediaTabs() {
     document.querySelectorAll('#media-tabs .tab-item').forEach(tab => {
         tab.addEventListener('click', () => {
-            document.querySelectorAll('#media-tabs .tab-item').forEach(t => t.classList.remove('active'));
+            // The pinned toggle is a chip, NOT a type tab — it stacks with
+            // the type filter instead of replacing it. Handle it separately.
+            if (tab.dataset.pinnedToggle !== undefined) {
+                const next = tab.getAttribute('aria-pressed') !== 'true';
+                tab.setAttribute('aria-pressed', next ? 'true' : 'false');
+                state.pinnedFilter = next;
+                state.page = 1;
+                state.hasMore = true;
+                state.files = [];
+                if (state.currentPage === 'viewer') {
+                    if (state.currentGroupId) loadGroupFiles(state.currentGroupId);
+                    else loadAllFiles();
+                } else {
+                    renderMediaGrid();
+                }
+                return;
+            }
+            document.querySelectorAll('#media-tabs .tab-item').forEach(t => {
+                if (t.dataset.pinnedToggle !== undefined) return; // leave the chip alone
+                t.classList.remove('active');
+            });
             tab.classList.add('active');
             state.currentFilter = tab.dataset.type || 'all';
             // Server-side filter: reset pagination + re-fetch with the new
@@ -1952,18 +2360,27 @@ function setupMediaTabs() {
 function setupLazyLoading() {
     state.imageObserver = new IntersectionObserver((entries) => {
         entries.forEach(e => {
-            if (e.isIntersecting) {
-                const el = e.target;
-                el.src = el.dataset.src;
-                if (el.tagName === 'VIDEO') {
-                    el.preload = 'metadata';
-                    el.onloadeddata = () => el.classList.add('loaded');
-                } else {
-                    el.onload = () => el.classList.add('loaded');
-                }
-                el.removeAttribute('data-src');
-                state.imageObserver.unobserve(el);
+            if (!e.isIntersecting) return;
+            const el = e.target;
+            // Reveal regardless of success/failure: a broken/404 thumb still
+            // needs to drop out of the opacity:0 skeleton state, otherwise
+            // the tile stays permanently invisible.
+            const reveal = () => el.classList.add('loaded');
+            if (el.tagName === 'VIDEO') {
+                el.preload = 'metadata';
+                el.onloadeddata = reveal;
+                el.onerror = reveal;
+            } else {
+                el.onload = reveal;
+                el.onerror = reveal;
             }
+            el.src = el.dataset.src;
+            el.removeAttribute('data-src');
+            // Cached images can fire `load` synchronously when `src` is
+            // set, before we even get here — without this, a re-rendered
+            // grid full of cache hits would stay invisible forever.
+            if (el.tagName === 'IMG' && el.complete) reveal();
+            state.imageObserver.unobserve(el);
         });
     });
 }
@@ -2255,13 +2672,61 @@ async function loadStats() {
 }
 
 // ============ Purge Functions ============
+//
+// Both purgeGroup() and purgeAll() are fire-and-forget — at 10k files
+// the rm-rf takes minutes, well past Cloudflare's 100 s tunnel timeout.
+// DELETE returns 200 with {started:true} immediately; the final result
+// toast + UI refresh come from `group_purge_done` / `purge_all_done` WS
+// events (subscribed once below). A 409 ALREADY_RUNNING means a sibling
+// client started the same purge — we toast "started elsewhere" and let
+// the WS event clean up state when it lands.
+
+let _purgeWsWired = false;
+function _wirePurgeWs() {
+    if (_purgeWsWired) return;
+    _purgeWsWired = true;
+
+    ws.on('group_purge_done', (m) => {
+        if (m?.error) {
+            showToast(i18nTf('purge.group.failed', { msg: m.error }, 'Failed to delete: ' + m.error), 'error');
+            return;
+        }
+        const d = m?.deleted || {};
+        showToast(i18nTf('purge.group.success',
+            { name: d.group, files: d.files, records: d.dbRecords },
+            `Deleted "${d.group}" -- ${d.files} files, ${d.dbRecords} records`), 'success');
+        const purgedId = m?.groupId;
+        if (purgedId && String(state.currentGroupId) === String(purgedId)) {
+            showAllMedia();
+        }
+        loadStats();
+    });
+
+    ws.on('purge_all_done', (m) => {
+        if (m?.error) {
+            showToast(i18nTf('purge.group.failed', { msg: m.error }, 'Failed to delete: ' + m.error), 'error');
+            return;
+        }
+        const d = m?.deleted || {};
+        showToast(i18nTf('purge.all.success',
+            { files: d.files, records: d.dbRecords },
+            `Deleted all -- ${d.files} files, ${d.dbRecords} records`), 'success');
+        state.groups = [];
+        state.downloads = [];
+        state.files = [];
+        state.allFiles = [];
+        renderGroupsList();
+        if (state.currentPage === 'groups') renderGroupsConfig();
+        if (state.currentPage === 'viewer') showAllMedia();
+        loadStats();
+    });
+}
 
 /**
  * Delete a specific group -- files, DB, config, photo
  */
 async function purgeGroup(groupId, groupName) {
-    // Re-resolve through the canonical store so the confirm/toast messages
-    // match what the rest of the UI shows.
+    _wirePurgeWs();
     groupName = getGroupName(groupId, { fallback: groupName });
     if (!(await confirmSheet({
         title: i18nT('purge.group.title', 'Purge group data?'),
@@ -2272,22 +2737,15 @@ async function purgeGroup(groupId, groupName) {
 
     try {
         showToast(i18nT('purge.group.deleting', 'Deleting...'), 'info');
-        const result = await api.delete(`/api/groups/${encodeURIComponent(groupId)}/purge`);
-        if (result.success) {
-            const d = result.deleted;
-            showToast(i18nTf('purge.group.success', { name: d.group, files: d.files, records: d.dbRecords }, `Deleted "${d.group}" -- ${d.files} files, ${d.dbRecords} records`), 'success');
-            await loadGroups();
-            renderGroupsList();
-            if (state.currentPage === 'groups') renderGroupsConfig();
-            // String() coerce: state.currentGroupId can be a number (set by
-            // openGroup with a freshly-parsed id) while `groupId` here is
-            // the raw value from the click handler — usually a string. The
-            // strict-equal check used to slip past, so the gallery would
-            // keep showing files for a group that just got purged.
-            if (String(state.currentGroupId) === String(groupId)) showAllMedia();
-            loadStats();
-        }
+        const r = await api.delete(`/api/groups/${encodeURIComponent(groupId)}/purge`);
+        if (!r?.started && !r?.success) throw new Error('Failed to start');
+        // Final toast + state refresh come from `group_purge_done` WS event.
     } catch (e) {
+        if (e?.data?.code === 'ALREADY_RUNNING') {
+            showToast(i18nT('jobs.already_running',
+                'Already running on another tab — waiting for it to finish.'), 'info');
+            return;
+        }
         showToast(i18nTf('purge.group.failed', { msg: e.message }, 'Failed to delete: ' + e.message), 'error');
     }
 }
@@ -2296,6 +2754,7 @@ async function purgeGroup(groupId, groupName) {
  * Delete ALL data -- factory reset
  */
 async function purgeAll() {
+    _wirePurgeWs();
     if (!(await confirmSheet({
         title: i18nT('purge.all.title', 'Purge ALL data?'),
         message: i18nT('purge.all.confirm1', 'Delete ALL data?\n\nAll files, database records, group configurations, and photos will be permanently removed.'),
@@ -2311,20 +2770,15 @@ async function purgeAll() {
 
     try {
         showToast(i18nT('purge.all.deleting', 'Deleting all data...'), 'info');
-        const result = await api.delete('/api/purge/all');
-        if (result.success) {
-            const d = result.deleted;
-            showToast(i18nTf('purge.all.success', { files: d.files, records: d.dbRecords }, `Deleted all -- ${d.files} files, ${d.dbRecords} records`), 'success');
-            state.groups = [];
-            state.downloads = [];
-            state.files = [];
-            state.allFiles = [];
-            renderGroupsList();
-            if (state.currentPage === 'groups') renderGroupsConfig();
-            if (state.currentPage === 'viewer') showAllMedia();
-            loadStats();
-        }
+        const r = await api.delete('/api/purge/all');
+        if (!r?.started && !r?.success) throw new Error('Failed to start');
+        // Final toast + state reset come from `purge_all_done` WS event.
     } catch (e) {
+        if (e?.data?.code === 'ALREADY_RUNNING') {
+            showToast(i18nT('jobs.already_running',
+                'Already running on another tab — waiting for it to finish.'), 'info');
+            return;
+        }
         showToast(i18nTf('purge.group.failed', { msg: e.message }, 'Failed to delete: ' + e.message), 'error');
     }
 }

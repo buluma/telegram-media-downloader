@@ -21,7 +21,7 @@
 import fs from 'fs';
 import path from 'path';
 import { getDb } from './db.js';
-import { sha256OfFile } from './checksum.js';
+import { sha256OfFile, sha256OfFileViaPool } from './checksum.js';
 
 // Where the downloader writes by default (relative to the project root).
 // `safeResolveDownload`-style resolution lives in server.js; for the CLI
@@ -48,7 +48,16 @@ function resolveStoredPath(stored) {
 
 // Wrap the canonical helper so existing call sites in this file keep
 // the same name. Hashing semantics are owned by `core/checksum.js`.
-const hashFile = sha256OfFile;
+// Catch-up dedup hashes thousands of multi-MB files in a row — route
+// them through the worker pool so a 2-hour scan doesn't pin the event
+// loop for the full duration.
+async function hashFile(absPath) {
+    try {
+        return await sha256OfFileViaPool(absPath);
+    } catch {
+        return await sha256OfFile(absPath);
+    }
+}
 
 /**
  * Catch-up hash pass + duplicate enumeration.

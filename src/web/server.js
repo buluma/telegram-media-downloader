@@ -14,13 +14,19 @@ import fs from 'fs/promises';
 import fsSync, { existsSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
 import { TelegramClient } from 'telegram';
 import { StringSession } from 'telegram/sessions/index.js';
 import crypto from 'crypto';
 
 import { getOrGenerateSecret } from '../core/secret.js';
 import { getDb, getDownloads, getAllDownloads, getStats as getDbStats, deleteGroupDownloads, deleteAllDownloads, backfillGroupNames, searchDownloads, deleteDownloadsBy,
-    createShareLink, getShareLinkForServe, bumpShareLinkAccess, revokeShareLink, listShareLinks } from '../core/db.js';
+    createShareLink, getShareLinkForServe, bumpShareLinkAccess, revokeShareLink, listShareLinks,
+    getNsfwTierCounts, getNsfwHistogram, getNsfwListByTier, reclassifyNsfw, unwhitelistNsfw, NSFW_TIERS,
+    setDownloadPinned, getDownloadById,
+    getAiCounts, listPeople, listPhotosForPerson, renamePerson, deletePerson,
+    listAllTags, listPhotosForTag } from '../core/db.js';
+import * as ai from '../core/ai/index.js';
 import { sanitizeName } from '../core/downloader.js';
 import { SecureSession } from '../core/security.js';
 import { AccountManager } from '../core/accounts.js';
@@ -36,11 +42,14 @@ import { getOrCreateThumb, purgeThumbsForDownload, purgeAllThumbs,
     ALLOWED_WIDTHS as THUMB_WIDTHS } from '../core/thumbs.js';
 import { startScan as nsfwStartScan, cancelScan as nsfwCancelScan,
     isScanRunning as nsfwIsScanRunning, getScanState as nsfwGetScanState,
+    preloadClassifier as nsfwPreloadClassifier, clearClassifierCache as nsfwClearCache,
+    classifierReady as nsfwClassifierReady,
     NSFW_DEFAULTS, getNsfwStats, getNsfwDeleteCandidates,
     whitelistNsfw } from '../core/nsfw.js';
 import { runAutoUpdate, autoUpdateStatus } from '../core/updater.js';
 import { getRescueSweeper } from '../core/rescue.js';
 import { getRescueStats } from '../core/db.js';
+import * as backup from '../core/backup/index.js';
 import { parseTelegramUrl, parseUrlList, UrlParseError } from '../core/url-resolver.js';
 import { listUserStories, listAllStories, storyToJob } from '../core/stories.js';
 import { metrics } from '../core/metrics.js';
@@ -50,6 +59,7 @@ import {
     revokeAllSessions, revokeAllGuestSessions, startSessionGc,
 } from '../core/web-auth.js';
 import { suppressNoise, wrapConsoleMethod } from '../core/logger.js';
+import { createJobTracker } from '../core/job-tracker.js';
 
 // Demote gramJS reconnect chatter from stderr/stdout to data/logs/network.log.
 // gramJS opens a fresh DC connection per file download (different DCs host
@@ -60,10 +70,49 @@ import { suppressNoise, wrapConsoleMethod } from '../core/logger.js';
 // occasional warning. TGDL_DEBUG=1 brings them back.
 console.log = wrapConsoleMethod(console.log, 'gramjs');
 console.error = wrapConsoleMethod(console.error, 'gramjs');
+// Native-binary load failures from optional deps must NOT crash the
+// process. The most common offender is `onnxruntime-node` (transitive of
+// `@huggingface/transformers`, which our optional NSFW classifier uses):
+// it ships glibc-only Linux prebuilds, so on musl-based images (alpine)
+// the dynamic linker errors with `Error loading shared library
+// ld-linux-x86-64.so.2`. We move the dep to optionalDependencies in
+// package.json so a default install doesn't pull it at all, but a
+// historical install or a re-deploy without `npm prune` may leave the
+// broken module on disk. Catch the rejection here, log once, move on.
+const NATIVE_LOAD_FAIL = /(ld-linux|ld-musl|libonnxruntime|GLIBC_|NODE_MODULE_VERSION|cannot open shared object|Error loading shared library)/i;
+let _nativeLoadFailWarned = false;
 process.on('unhandledRejection', (reason) => {
     const msg = reason?.message || String(reason);
     if (suppressNoise(msg, 'unhandledRejection')) return;
+    if (NATIVE_LOAD_FAIL.test(msg)) {
+        if (!_nativeLoadFailWarned) {
+            _nativeLoadFailWarned = true;
+            console.warn(
+                '[startup] An optional native module failed to load (' + msg.slice(0, 200) + '). ' +
+                'The dashboard will keep running; only the feature that triggered this load will be unavailable. ' +
+                'Most often this is `onnxruntime-node` from the optional NSFW classifier on a musl-based image — ' +
+                'reinstall with `npm install @huggingface/transformers` on a glibc image (Debian, Ubuntu, our default Dockerfile uses bookworm-slim) or remove it with `npm uninstall @huggingface/transformers`.'
+            );
+        }
+        return;
+    }
     console.error('Unhandled rejection:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+    const msg = err?.message || String(err);
+    if (NATIVE_LOAD_FAIL.test(msg)) {
+        if (!_nativeLoadFailWarned) {
+            _nativeLoadFailWarned = true;
+            console.warn('[startup] Native module load failure swallowed:', msg.slice(0, 200));
+        }
+        return;
+    }
+    // Non-native uncaught exceptions are real bugs — surface them and
+    // crash so the watchdog can restart cleanly. Mirroring the Node
+    // default: print stack + exit non-zero.
+    console.error('Uncaught exception:', err);
+    process.exit(1);
 });
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -104,7 +153,7 @@ async function scanDirectorySize(dir) {
             try {
                 const st = await fs.stat(fullPath);
                 if (st.isFile()) total += st.size;
-            } catch { /* file disappeared during scan */ }
+            } catch { /* file disappeared mid-scan */ }
         }
     }
     await walk(dir);
@@ -176,11 +225,27 @@ if (!fsSync.existsSync(PHOTOS_DIR)) {
     fsSync.mkdirSync(PHOTOS_DIR, { recursive: true });
 }
 
-// Trust the first reverse proxy if running behind one (rate-limit needs the
-// real client IP via X-Forwarded-For). Disabled when not behind a proxy.
-if (process.env.TRUST_PROXY) {
-    const v = process.env.TRUST_PROXY;
-    app.set('trust proxy', /^\d+$/.test(v) ? parseInt(v, 10) : v);
+// Trust the first reverse proxy if running behind one (rate-limit needs
+// the real client IP via X-Forwarded-For). When `TRUST_PROXY` is set
+// explicitly we honour that value; otherwise we fall back to `'loopback'`
+// — which trusts X-Forwarded-* only when the immediate hop is loopback
+// (i.e. a sibling reverse proxy on the same host) and otherwise treats
+// the connection IP as authoritative. This kills the noisy
+// `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` validation warning that
+// express-rate-limit emits whenever a Caddy / Traefik / nginx upstream
+// forwards X-Forwarded-For without us trusting it, while still rejecting
+// spoofed X-Forwarded-For headers from arbitrary internet clients.
+//
+// Override examples:
+//   TRUST_PROXY=1            // trust exactly one proxy hop (most setups)
+//   TRUST_PROXY=loopback     // explicit (same as the default)
+//   TRUST_PROXY=10.0.0.0/8   // trust an IP CIDR
+//   TRUST_PROXY=             // empty string → disable (untrusted env)
+const _trustProxyRaw = process.env.TRUST_PROXY;
+if (_trustProxyRaw === undefined) {
+    app.set('trust proxy', 'loopback');
+} else if (_trustProxyRaw !== '') {
+    app.set('trust proxy', /^\d+$/.test(_trustProxyRaw) ? parseInt(_trustProxyRaw, 10) : _trustProxyRaw);
 }
 
 // Force HTTPS — opt-in via config.web.forceHttps (default off, plain HTTP).
@@ -192,7 +257,14 @@ if (process.env.TRUST_PROXY) {
 app.use(async (req, res, next) => {
     const config = await readConfigSafe();
     if (!config.web?.forceHttps) return next();
-    if (req.secure) return next();
+    // HSTS — set on every secure response so browsers remember the
+    // upgrade. 1-year max-age + includeSubDomains is the modern baseline;
+    // we deliberately omit `preload` because the operator has to opt in
+    // to the chrome list separately at hstspreload.org.
+    if (req.secure) {
+        res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+        return next();
+    }
     const ip = req.ip || req.socket?.remoteAddress || '';
     if (ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1') return next();
     if (req.method !== 'GET' && req.method !== 'HEAD') {
@@ -202,6 +274,38 @@ app.use(async (req, res, next) => {
     if (!host) return res.status(400).end();
     return res.redirect(308, `https://${host}${req.originalUrl}`);
 });
+
+// Optional gzip/deflate/br compression for text responses (HTML / JS / CSS /
+// JSON / SVG). The middleware ships as a separate npm package so we
+// `createRequire` it here and silently skip when the host hasn't installed
+// it (e.g. an old `node_modules/`). When present, configure to skip
+// already-compressed media (image/* / video/* / audio/*) and tunable level
+// via `COMPRESSION_LEVEL` (1-9, default 6 — the same default the package
+// uses, exposed for operators on slow CPUs who want a lower setting).
+try {
+    const _localRequire = createRequire(import.meta.url);
+    const compression = _localRequire('compression');
+    const lvlEnv = parseInt(process.env.COMPRESSION_LEVEL, 10);
+    const level = Number.isFinite(lvlEnv) && lvlEnv >= 0 && lvlEnv <= 9 ? lvlEnv : 6;
+    app.use(compression({
+        level,
+        // Skip already-compressed payloads — gzipping a JPEG or MP4 burns
+        // CPU for a fraction of a percent of size win and breaks
+        // range-request semantics that the video player depends on.
+        filter: (req, res) => {
+            if (req.headers['x-no-compression']) return false;
+            const ct = String(res.getHeader('Content-Type') || '');
+            if (/^(image|video|audio)\//i.test(ct)) return false;
+            return compression.filter(req, res);
+        },
+    }));
+    if (process.env.TGDL_DEBUG === '1') {
+        console.log(`[startup] compression middleware enabled (level=${level})`);
+    }
+} catch {
+    // Module not installed — fine, dashboard runs uncompressed (Cloudflare /
+    // a reverse proxy in front will usually handle it instead).
+}
 
 // Security headers. CSP is on but allows the SPA's two CDN dependencies
 // (Tailwind + Remixicon) and the inline event-handlers we still use in
@@ -285,7 +389,7 @@ app.use((req, res, next) => {
         // (Future PWA agent may also set this; if so, theirs runs first via
         // a more specific route — leave their version alone.)
         res.setHeader('Cache-Control', 'no-cache, max-age=0');
-    } else if (p.startsWith('/js/') || p.startsWith('/css/') || p.startsWith('/locales/')) {
+    } else if (p.startsWith('/js/') || p.startsWith('/css/') || p.startsWith('/icons/')) {
         // Asset cache-busting middleware (further down) appends a
         // ?v=<APP_VERSION> query string to every internal `<script>`,
         // `<link>`, and `import` so the URL changes on every release.
@@ -299,6 +403,12 @@ app.use((req, res, next) => {
         } else {
             res.setHeader('Cache-Control', 'public, max-age=3600');
         }
+    } else if (p.startsWith('/locales/')) {
+        // Translations evolve more often than JS / CSS — keep the cap
+        // short (1 h) AND must-revalidate so a hash mismatch on the
+        // strings doesn't ship a week of stale labels. The cache-bust
+        // ?v= still works for instant invalidation when the SPA loads.
+        res.setHeader('Cache-Control', 'public, max-age=3600, must-revalidate');
     }
     next();
 });
@@ -340,6 +450,14 @@ const apiLimiter = rateLimit({
     standardHeaders: 'draft-7',
     legacyHeaders: false,
     skip: (req) => !req.path.startsWith('/api/') || !_rateLimitConfig.enabled,
+    // `xForwardedForHeader` is a self-help diagnostic from express-rate-
+    // limit v7 that flooded stderr with `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR`
+    // every time the upstream proxy forwarded an X-Forwarded-For header
+    // without us trusting it. We've already configured `app.set('trust
+    // proxy', …)` correctly above (loopback by default, overridable via
+    // TRUST_PROXY env) so the validate warning is just noise. Other
+    // validators stay enabled — only this one pair is muted.
+    validate: { xForwardedForHeader: false, trustProxy: false },
 });
 app.use(apiLimiter);
 
@@ -1053,21 +1171,25 @@ app.get('/api/update/status', async (req, res) => {
 });
 
 app.post('/api/update', async (req, res) => {
-    try {
-        const r = await runAutoUpdate();
+    const tracker = _jobTrackers.autoUpdate;
+    const r = tracker.tryStart(async () => {
+        const result = await runAutoUpdate();
         // Heads-up to every open tab — fires BEFORE watchtower kills us so
         // the toast shows up while the WS is still alive. The SPA's
         // existing reconnect logic handles the gap; the new container's
-        // healthcheck has to pass before it's reachable.
-        try { broadcast({ type: 'update_started', backup: r.backup }); } catch {}
-        res.json({ success: true, backup: r.backup });
-    } catch (e) {
-        console.error('auto-update:', e);
-        const status = e.code === 'AUTO_UPDATE_UNAVAILABLE' ? 503
-            : e.code === 'BACKUP_FAILED' ? 500
-            : 500;
-        res.status(status).json({ error: e.message, code: e.code || 'UPDATE_FAILED' });
+        // healthcheck has to pass before it's reachable. Kept alongside
+        // the standard `update_done` event the JobTracker emits.
+        try { broadcast({ type: 'update_started', backup: result.backup }); } catch {}
+        return { backup: result.backup };
+    });
+    if (!r.started) {
+        return res.status(409).json({ error: 'An update is already in progress', code: 'ALREADY_RUNNING' });
     }
+    res.json({ success: true, started: true });
+});
+
+app.get('/api/auto-update/status', async (req, res) => {
+    res.json(_jobTrackers.autoUpdate.getStatus());
 });
 
 app.get('/api/auth_check', async (req, res) => {
@@ -1358,6 +1480,26 @@ app.use((req, res, next) => {
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/photos', express.static(PHOTOS_DIR));
+
+// Serve CHANGELOG.md from the project root for the in-app changelog
+// viewer (changelog-viewer.js). Read on every request so a `git pull`
+// without a process restart picks up the new content. Cap at a sane
+// size so we never accidentally try to stream a 50 MB file. 1 hour
+// browser cache is fine — the SPA invalidates it via the `?v=` token.
+app.get('/CHANGELOG.md', async (req, res) => {
+    try {
+        const p = path.resolve(__dirname, '../../CHANGELOG.md');
+        const st = await fs.stat(p).catch(() => null);
+        if (!st || !st.isFile()) return res.status(404).type('text/plain').send('CHANGELOG not found');
+        if (st.size > 2 * 1024 * 1024) return res.status(413).type('text/plain').send('CHANGELOG too large');
+        const body = await fs.readFile(p, 'utf8');
+        res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+        res.setHeader('Cache-Control', 'public, max-age=3600, must-revalidate');
+        res.send(body);
+    } catch (e) {
+        res.status(500).type('text/plain').send(e.message);
+    }
+});
 
 // ============ API ENDPOINTS ============
 
@@ -1804,6 +1946,18 @@ app.post('/api/history', async (req, res) => {
                 job.finishedAt = Date.now();
                 delete job._runner;
                 broadcast({ type: 'history_error', jobId, error: job.error, group: group.name, groupId: job.groupId });
+                // Surface the failure on the realtime log channel so the
+                // operator sees WHY a backfill flashed red instead of just
+                // "it failed". Hint when the message points at account
+                // access — easy to misread as "downloader is broken" when
+                // the real fix is "log in to a Telegram account that's a
+                // member of the group". Common causes hit by this branch:
+                // session expired, account left the group, FloodWait
+                // bouncing all retries, group went private.
+                const hint = /no available account/i.test(job.error)
+                    ? ' (no logged-in account can read this group — check Settings → Telegram Accounts and make sure at least one is a member)'
+                    : '';
+                log({ source: 'backfill', level: 'error', msg: `backfill failed for "${group.name}" (${group.id}): ${job.error}${hint}` });
                 if (standalone) downloader.stop().catch(() => {});
                 saveHistoryJobsToDisk().catch(() => {});
                 if (_activeBackfillsByGroup.get(groupKey) === jobId) {
@@ -1811,6 +1965,7 @@ app.post('/api/history', async (req, res) => {
                 }
             });
 
+        log({ source: 'backfill', level: 'info', msg: `backfill started for "${group.name}" (${group.id}) — limit=${lim} mode=${job.mode || 'pull-older'}` });
         res.json({ success: true, jobId, group: group.name, limit: lim, mode: job.mode || 'pull-older' });
     } catch (e) {
         console.error('POST /api/history:', e);
@@ -2040,6 +2195,10 @@ runtime.on('event', (e) => {
             filePath: relPath,
             fileSize: p.fileSize || 0,
             status: 'done',
+            // Surfaces "file was already on disk under another (group, msg)
+            // mapping" — `registerDownload()` set this on dedup. The queue UI
+            // renders a small "Duplicate" tag when present.
+            deduped: p.deduped === true,
             addedAt: p.addedAt || null,
             finishedAt: Date.now(),
             error: null,
@@ -2400,9 +2559,13 @@ app.get('/api/stats', async (req, res) => {
         const dbStats = getDbStats(); // From DB
         const config = JSON.parse(await fs.readFile(CONFIG_PATH, 'utf8'));
         
-        // Disk usage: prefer DB rows when the catalog has data. If the DB is
-        // empty, scan the real downloads directory instead of trusting the
-        // legacy JSON cache; manual cleanup can leave that cache wildly stale.
+        // Disk usage: prefer the live `SUM(file_size)` from the DB because
+        // it's always in sync with the row count we just read. If the DB
+        // sum is zero (catalogue empty after a Purge / before first run),
+        // walk `data/downloads/` for the real on-disk size and refresh the
+        // JSON cache — never trust a stale `disk_usage.json` snapshot, the
+        // legacy cache was never invalidated on purge so a wiped dashboard
+        // would footer-report a multi-week-old "930 KB".
         let diskUsage = Number(dbStats.totalSize) || 0;
         if (diskUsage <= 0) {
             diskUsage = await scanDirectorySize(DOWNLOADS_DIR);
@@ -2593,12 +2756,18 @@ function bestGroupName(id, configName, dbName, dialogsName) {
 // rate-limits getDialogs heavily, so we don't want to call it on
 // every /api/groups request.
 let _dialogsNameCache = { at: 0, byId: new Map() };
+// Parallel type cache so the sidebar's Downloaded Groups list can
+// distinguish channel / group / user / bot icons (matches what Manage
+// Groups already shows). Keyed by the same string id; values are one
+// of 'channel' | 'group' | 'user' | 'bot'.
+let _dialogsTypeCache = new Map();
 async function getDialogsNameCache() {
     const now = Date.now();
     if (Math.max(0, now - _dialogsNameCache.at) < 5 * 60 * 1000 && _dialogsNameCache.byId.size > 0) {
         return _dialogsNameCache.byId;
     }
     const byId = new Map();
+    const typeById = new Map();
     try {
         const am = await getAccountManager();
         const clients = [];
@@ -2622,12 +2791,29 @@ async function getDialogsNameCache() {
                     if (name && !nameLooksUnresolved(name, id) && !byId.has(id)) {
                         byId.set(id, name);
                     }
+                    if (!typeById.has(id)) {
+                        let t = 'group';
+                        if (d.isChannel) t = 'channel';
+                        else if (d.isUser && d.entity?.bot) t = 'bot';
+                        else if (d.isUser) t = 'user';
+                        typeById.set(id, t);
+                    }
                 }
             } catch { /* one bad client doesn't kill the whole sweep */ }
         }
     } catch { /* no AM — fresh install */ }
     _dialogsNameCache = { at: now, byId };
+    _dialogsTypeCache = typeById;
     return byId;
+}
+
+// Lookup helper used by /api/groups and /api/downloads to enrich each
+// row with its dialog type. Falls back to null when the type isn't
+// known yet — the front-end then leans on the avatar's id-based
+// heuristic (which is correct often but conflates supergroups with
+// channels because both share the `-100…` id prefix).
+function dialogsTypeFor(id) {
+    return _dialogsTypeCache.get(String(id)) || null;
 }
 
 app.get('/api/groups', async (req, res) => {
@@ -2668,6 +2854,12 @@ app.get('/api/groups', async (req, res) => {
             return {
                 ...group,
                 name: bestGroupName(group.id, group.name, dbNames.get(String(group.id)), dialogsNames.get(String(group.id))),
+                // Sidebar uses `type` to render the right corner icon
+                // (megaphone vs group vs user/bot). Without this the
+                // Downloaded Groups list defaulted to the id-prefix
+                // heuristic in createAvatar() which painted every
+                // supergroup as a channel.
+                type: group.type || dialogsTypeFor(group.id),
                 photoUrl: hasPhoto ? `/photos/${group.id}.jpg` : null
             };
         }));
@@ -2720,6 +2912,10 @@ app.get('/api/downloads', async (req, res) => {
             return {
                 id: r.group_id,
                 name: name,
+                // Type drives the sidebar avatar's corner badge
+                // (channel = megaphone / group = group icon / user / bot).
+                // Prefer config (sticky), fall back to live-dialogs cache.
+                type: cfg?.type || dialogsTypeFor(r.group_id),
                 totalFiles: r.count,
                 sizeFormatted: formatBytes(r.size || 0),
                 photoUrl: hasPhoto ? `/photos/${r.group_id}.jpg` : null,
@@ -2745,7 +2941,12 @@ app.get('/api/downloads/all', async (req, res) => {
         const limit = Math.max(1, Math.min(500, parseInt(req.query.limit, 10) || 50));
         const type  = req.query.type || 'all';
         const offset = (page - 1) * limit;
-        const result = getAllDownloads(limit, offset, type);
+        // Pinned filter chip (`?pinned=1`) and "surface pinned at top"
+        // setting (`?pinnedFirst=1`) — both opt-in, both default off so
+        // existing callers behave identically.
+        const pinnedOnly  = req.query.pinned === '1' || req.query.pinned === 'true';
+        const pinnedFirst = req.query.pinnedFirst === '1' || req.query.pinnedFirst === 'true';
+        const result = getAllDownloads(limit, offset, type, { pinnedOnly, pinnedFirst });
 
         // Same row → tile shape as `/api/downloads/:groupId` so the SPA
         // renderer is unchanged. Per-row group_name + group_id are
@@ -2782,6 +2983,7 @@ app.get('/api/downloads/all', async (req, res) => {
                 groupName: configGroups.get(String(row.group_id))?.name || row.group_name || null,
                 pendingUntil: row.pending_until || null,
                 rescuedAt: row.rescued_at || null,
+                pinned: !!row.pinned,
             };
         });
 
@@ -2812,7 +3014,9 @@ app.get('/api/downloads/:groupId', async (req, res, next) => {
         const dbRow = getDb().prepare('SELECT group_name FROM downloads WHERE group_id = ? AND group_name IS NOT NULL LIMIT 1').get(String(groupId));
         const groupFolder = sanitizeName(configGroup?.name || dbRow?.group_name || 'unknown');
 
-        const result = getDownloads(groupId, limit, offset, type);
+        const pinnedOnly  = req.query.pinned === '1' || req.query.pinned === 'true';
+        const pinnedFirst = req.query.pinnedFirst === '1' || req.query.pinnedFirst === 'true';
+        const result = getDownloads(groupId, limit, offset, type, { pinnedOnly, pinnedFirst });
 
         // DB `file_path` stores the path RELATIVE to data/downloads (set
         // by downloader.js via path.relative(DOWNLOADS_DIR, …)). USE that
@@ -2849,6 +3053,7 @@ app.get('/api/downloads/:groupId', async (req, res, next) => {
                 // Rescue Mode surface — null when not in rescue mode.
                 pendingUntil: row.pending_until || null,
                 rescuedAt: row.rescued_at || null,
+                pinned: !!row.pinned,
             };
         });
 
@@ -2954,25 +3159,34 @@ app.get('/api/downloads/search', async (req, res) => {
 });
 
 // Bulk delete by id list or fullPath list.
+// Bulk-delete by id and/or path — used by the gallery selection bar.
+// At N=5000 the unlink loop runs minutes; converted to fire-and-forget
+// so a Cloudflare timeout can't kill the request mid-stream. Shares the
+// `dedupDelete` tracker with the duplicate finder + gallery selection
+// (semantically same op, single-flight is the right behaviour).
 app.post('/api/downloads/bulk-delete', async (req, res) => {
-    try {
-        const { ids, paths } = req.body || {};
-        const idList = Array.isArray(ids) ? ids.map(Number).filter(Number.isFinite) : [];
-        const pathList = Array.isArray(paths) ? paths : [];
-        if (!idList.length && !pathList.length) {
-            return res.status(400).json({ error: 'ids or paths required' });
-        }
-
-        // Resolve every supplied path safely; ignore those that escape the root.
+    const { ids, paths } = req.body || {};
+    const idList = Array.isArray(ids) ? ids.map(Number).filter(Number.isFinite) : [];
+    const pathList = Array.isArray(paths) ? paths : [];
+    if (!idList.length && !pathList.length) {
+        return res.status(400).json({ error: 'ids or paths required' });
+    }
+    const tracker = _jobTrackers.dedupDelete;
+    const r = tracker.tryStart(async ({ onProgress }) => {
+        const total = idList.length + pathList.length;
+        let processed = 0;
         let unlinked = 0;
+        onProgress({ processed: 0, total, stage: 'deleting_files' });
         for (const p of pathList) {
-            const r = await safeResolveDownload(p);
-            if (r.ok) {
-                try { await fs.unlink(r.real); unlinked++; } catch (e) { if (e.code !== 'ENOENT') throw e; }
+            const sr = await safeResolveDownload(p);
+            if (sr.ok) {
+                try { await fs.unlink(sr.real); unlinked++; } catch (e) { if (e.code !== 'ENOENT') throw e; }
+            }
+            processed += 1;
+            if (processed % 50 === 0 || processed === total) {
+                onProgress({ processed, total, stage: 'deleting_files' });
             }
         }
-        // For id-based deletion we still need to find the on-disk path. The DB
-        // stores file_name only; resolve via the same group-folder mapping.
         if (idList.length) {
             const db = getDb();
             const rows = db.prepare(`SELECT id, group_id, group_name, file_name, file_type FROM downloads WHERE id IN (${idList.map(() => '?').join(',')})`).all(...idList);
@@ -2986,24 +3200,163 @@ app.post('/api/downloads/bulk-delete', async (req, res) => {
                     : row.file_type === 'audio' ? 'audio'
                     : row.file_type === 'sticker' ? 'stickers' : 'documents';
                 const candidate = `${folder}/${typeFolder}/${row.file_name}`;
-                const r = await safeResolveDownload(candidate);
-                if (r.ok) {
-                    try { await fs.unlink(r.real); unlinked++; } catch (e) { if (e.code !== 'ENOENT') throw e; }
+                const sr = await safeResolveDownload(candidate);
+                if (sr.ok) {
+                    try { await fs.unlink(sr.real); unlinked++; } catch (e) { if (e.code !== 'ENOENT') throw e; }
+                }
+                processed += 1;
+                if (processed % 50 === 0 || processed === total) {
+                    onProgress({ processed, total, stage: 'deleting_files' });
                 }
             }
         }
         const dbDeleted = deleteDownloadsBy({ ids: idList, filePaths: pathList });
-        // Drop cached thumbnails for every id we just removed — without
-        // this, the cache would keep handing out a stale WebP for an id
-        // whose source file no longer exists.
+        onProgress({ processed: total, total, stage: 'purging_thumbs' });
         for (const id of idList) {
             try { await purgeThumbsForDownload(id); } catch {}
         }
         broadcast({ type: 'bulk_delete', unlinked, dbDeleted });
-        res.json({ success: true, unlinked, dbDeleted });
-    } catch (e) {
-        console.error('POST /api/downloads/bulk-delete:', e);
-        res.status(500).json({ error: 'Internal error' });
+        return { unlinked, dbDeleted, requested: total };
+    });
+    if (!r.started) {
+        return res.status(409).json({ error: 'A bulk delete is already running', code: 'ALREADY_RUNNING' });
+    }
+    res.json({ success: true, started: true, queued: idList.length + pathList.length });
+});
+
+// Toggle the `pinned` flag on a single download row. Pinned rows survive
+// auto-rotation and (optionally) sort to the top of the gallery. Body is
+// `{ pinned: true | false }` — explicit boolean so a missing key is a 400
+// rather than a silent no-op.
+app.post('/api/downloads/:id/pin', async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'Invalid id' });
+    const { pinned } = req.body || {};
+    if (typeof pinned !== 'boolean') {
+        return res.status(400).json({ error: 'Body must include `pinned` (boolean)' });
+    }
+    const row = getDownloadById(id);
+    if (!row) return res.status(404).json({ error: 'Not found' });
+    const ok = setDownloadPinned(id, pinned);
+    if (!ok) return res.status(500).json({ error: 'Update failed' });
+    broadcast({ type: 'download_pinned', id, pinned });
+    res.json({ success: true, id, pinned });
+});
+
+// Streaming bulk download as a ZIP. Body: `{ ids: [1,2,3] }`. Server walks
+// each id, resolves its on-disk file via the same safe-resolver every other
+// route uses, and pipes a STORE-mode (no compression) ZIP to the response.
+// Filename: `tgdl-<groupNameOr"library">-<count>files-<timestamp>.zip`.
+//
+// Cross-platform: pure JS, no native deps, no archiver package. Streams
+// each file from disk so a 5 GB selection doesn't OOM the server.
+app.post('/api/downloads/bulk-zip', async (req, res) => {
+    try {
+        const { ids } = req.body || {};
+        const idList = Array.isArray(ids) ? ids.map(Number).filter(Number.isFinite) : [];
+        if (idList.length === 0) return res.status(400).json({ error: 'ids required' });
+
+        // Lazy-load to keep the cold start cheap when the bulk-zip endpoint
+        // is never called.
+        const { ZipStream, ZIP_MAX_BYTES, ZIP_MAX_ENTRIES, safeArchiveName }
+            = await import('../core/zip-stream.js');
+
+        if (idList.length > ZIP_MAX_ENTRIES) {
+            return res.status(413).json({ error: `Too many files in one ZIP (cap ${ZIP_MAX_ENTRIES}). Split into smaller batches.` });
+        }
+
+        // Resolve everything up-front so we can size-check + stream sensibly.
+        const db = getDb();
+        const placeholders = idList.map(() => '?').join(',');
+        const rows = db.prepare(`SELECT id, group_id, group_name, file_name, file_size, file_type, file_path FROM downloads WHERE id IN (${placeholders})`)
+            .all(...idList);
+
+        if (rows.length === 0) return res.status(404).json({ error: 'No matching files' });
+
+        let configGroups = new Map();
+        try {
+            const cfg = JSON.parse(await fs.readFile(CONFIG_PATH, 'utf8'));
+            for (const g of (cfg.groups || [])) configGroups.set(String(g.id), g);
+        } catch { /* fall back to row.group_name */ }
+
+        // Build resolved entries. Each entry knows its abs path, the
+        // archive-relative name we want to store it under, and the size.
+        const entries = [];
+        let totalBytes = 0;
+        const seenNames = new Set();
+        for (const row of rows) {
+            const folder = sanitizeName(configGroups.get(String(row.group_id))?.name
+                || row.group_name
+                || String(row.group_id || 'group'));
+            const typeFolder = row.file_type === 'photo' ? 'images'
+                : row.file_type === 'video' ? 'videos'
+                : row.file_type === 'audio' ? 'audio'
+                : row.file_type === 'sticker' ? 'stickers' : 'documents';
+            const stored = (row.file_path || '').replace(/\\/g, '/');
+            const candidate = stored && stored.includes('/')
+                ? stored
+                : `${folder}/${typeFolder}/${row.file_name}`;
+            const sr = await safeResolveDownload(candidate);
+            if (!sr.ok) continue;
+
+            const baseName = safeArchiveName(row.file_name || `file-${row.id}`);
+            // Name collisions get a numeric suffix so two photos with the
+            // same Telegram filename land as `foo.jpg` and `foo (1).jpg`.
+            let archiveName = `${folder}/${baseName}`;
+            let n = 1;
+            while (seenNames.has(archiveName)) {
+                const ext = path.extname(baseName);
+                const stem = baseName.slice(0, baseName.length - ext.length);
+                archiveName = `${folder}/${stem} (${n})${ext}`;
+                n++;
+            }
+            seenNames.add(archiveName);
+            entries.push({ absPath: sr.real, archiveName, size: row.file_size || 0 });
+            totalBytes += row.file_size || 0;
+        }
+
+        if (entries.length === 0) {
+            return res.status(404).json({ error: 'No accessible files in selection' });
+        }
+        if (totalBytes > ZIP_MAX_BYTES) {
+            return res.status(413).json({
+                error: `Selection exceeds 4 GiB ZIP cap (${formatBytes(totalBytes)}). Split into smaller batches.`,
+            });
+        }
+
+        // Pretty filename for the download. Use the first entry's group
+        // folder when every file is from the same group, otherwise fall
+        // back to "library".
+        const firstGroup = entries[0].archiveName.split('/')[0];
+        const allSameGroup = entries.every(e => e.archiveName.startsWith(firstGroup + '/'));
+        const labelGroup = allSameGroup ? firstGroup : 'library';
+        const ts = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 16);
+        const archiveBase = `tgdl-${safeArchiveName(labelGroup)}-${entries.length}files-${ts}.zip`;
+
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader('Content-Disposition', `attachment; filename="${archiveBase}"`);
+        // Streaming archive — no Content-Length, must disable any
+        // intermediate buffering. Cache-Control no-store so a CDN doesn't
+        // try to cache a multi-GB blob keyed on the POST body.
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Transfer-Encoding', 'chunked');
+
+        const zip = new ZipStream();
+        zip.pipe(res);
+        try {
+            for (const e of entries) {
+                if (res.destroyed || res.writableEnded) break;
+                await zip.addFile(e.absPath, e.archiveName);
+            }
+            await zip.finalize();
+        } catch (err) {
+            if (!res.headersSent) res.status(500).json({ error: err.message });
+            else res.destroy(err);
+        }
+    } catch (err) {
+        console.error('POST /api/downloads/bulk-zip:', err);
+        if (!res.headersSent) res.status(500).json({ error: err.message });
+        else res.destroy(err);
     }
 });
 
@@ -3045,20 +3398,28 @@ app.delete('/api/file', async (req, res) => {
 });
 
 // 6b. Purge Group (Files + DB + Config + Photo — No Trace)
+//
+// Fire-and-forget — a chat with 10k files takes minutes of disk I/O to
+// rm. POST returns immediately; per-group tracker key (`group_purge_*`)
+// allows multi-flight across distinct groups while preventing a
+// double-click on the same row from firing twice. Status endpoint:
+// `GET /api/groups/:id/purge/status`.
 app.delete('/api/groups/:id/purge', async (req, res) => {
-    try {
-        const groupId = req.params.id;
+    const groupId = req.params.id;
+    const tracker = _groupPurgeTracker(groupId);
+    const r = tracker.tryStart(async ({ onProgress }) => {
         const config = JSON.parse(await fs.readFile(CONFIG_PATH, 'utf8'));
         const configGroup = (config.groups || []).find(g => String(g.id) === String(groupId));
         const dbRow = getDb().prepare('SELECT group_name FROM downloads WHERE group_id = ? AND group_name IS NOT NULL LIMIT 1').get(String(groupId));
         const groupName = configGroup?.name || dbRow?.group_name || 'unknown';
         const folderName = sanitizeName(groupName);
+        onProgress({ stage: 'counting', groupId });
 
-        // 1. Delete files on disk
+        // 1. Delete files on disk — count first so the UI can render a
+        // determinate bar.
         const folderPath = path.join(DOWNLOADS_DIR, folderName);
         let filesDeleted = 0;
         if (existsSync(folderPath)) {
-            // Count files before deleting
             const countFiles = (dir) => {
                 let count = 0;
                 const items = fsSync.readdirSync(dir, { withFileTypes: true });
@@ -3069,10 +3430,13 @@ app.delete('/api/groups/:id/purge', async (req, res) => {
                 return count;
             };
             filesDeleted = countFiles(folderPath);
+            onProgress({ stage: 'deleting_files', groupId, total: filesDeleted, processed: 0 });
             await fs.rm(folderPath, { recursive: true, force: true });
+            onProgress({ stage: 'deleting_files', groupId, total: filesDeleted, processed: filesDeleted });
         }
 
         // 2. Delete DB records
+        onProgress({ stage: 'deleting_rows', groupId });
         const dbResult = deleteGroupDownloads(groupId);
 
         // 3. Remove from config
@@ -3083,67 +3447,88 @@ app.delete('/api/groups/:id/purge', async (req, res) => {
         const photoPath = path.join(PHOTOS_DIR, `${groupId}.jpg`);
         if (existsSync(photoPath)) await fs.unlink(photoPath);
 
-        console.log(`🗑️ PURGED: ${groupName} — ${filesDeleted} files, ${dbResult.deletedDownloads} DB records`);
+        console.log(`PURGED: ${groupName} — ${filesDeleted} files, ${dbResult.deletedDownloads} DB records`);
         broadcast({ type: 'group_purged', groupId });
-        res.json({
-            success: true,
+        return {
+            groupId,
             deleted: {
                 files: filesDeleted,
                 dbRecords: dbResult.deletedDownloads,
                 queueRecords: dbResult.deletedQueue,
-                group: groupName
-            }
-        });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
+                group: groupName,
+            },
+        };
+    });
+    if (!r.started) {
+        return res.status(409).json({ error: 'A purge for this group is already running', code: 'ALREADY_RUNNING', snapshot: r.snapshot });
     }
+    res.json({ success: true, started: true, groupId });
+});
+
+app.get('/api/groups/:id/purge/status', async (req, res) => {
+    const groupId = req.params.id;
+    const tracker = _groupPurgeTracker(groupId);
+    res.json(tracker.getStatus());
 });
 
 // 6c. Purge ALL (Everything — Factory Reset)
+//
+// Fire-and-forget — a full library wipe is the slowest, most destructive
+// admin action we have. Returns 200 immediately; final counts via
+// `purge_all_done`. Single-flight via the shared tracker.
 app.delete('/api/purge/all', async (req, res) => {
-    try {
-        // 1. Delete all download folders
+    const tracker = _jobTrackers.purgeAll;
+    const r = tracker.tryStart(async ({ onProgress }) => {
         let totalFiles = 0;
-        if (existsSync(DOWNLOADS_DIR)) {
-            const dirs = fsSync.readdirSync(DOWNLOADS_DIR, { withFileTypes: true });
-            for (const dir of dirs) {
-                if (dir.isDirectory()) {
-                    const dirPath = path.join(DOWNLOADS_DIR, dir.name);
-                    totalFiles += fsSync.readdirSync(dirPath, { recursive: true }).length;
-                    await fs.rm(dirPath, { recursive: true, force: true });
-                }
-            }
+        const dirs = existsSync(DOWNLOADS_DIR)
+            ? fsSync.readdirSync(DOWNLOADS_DIR, { withFileTypes: true })
+            : [];
+        const groupDirs = dirs.filter(d => d.isDirectory());
+        const totalGroups = groupDirs.length;
+        let processed = 0;
+        onProgress({ processed: 0, total: totalGroups, stage: 'deleting_files' });
+        for (const dir of groupDirs) {
+            const dirPath = path.join(DOWNLOADS_DIR, dir.name);
+            try {
+                totalFiles += fsSync.readdirSync(dirPath, { recursive: true }).length;
+            } catch {}
+            await fs.rm(dirPath, { recursive: true, force: true });
+            processed += 1;
+            onProgress({ processed, total: totalGroups, stage: 'deleting_files' });
         }
 
-        // 2. Delete all DB records
+        onProgress({ stage: 'deleting_rows' });
         const dbResult = deleteAllDownloads();
 
-        // 3. Clear groups from config
         const config = JSON.parse(await fs.readFile(CONFIG_PATH, 'utf8'));
         config.groups = [];
         await writeConfigAtomic(config);
 
-        // 4. Delete all profile photos
         if (existsSync(PHOTOS_DIR)) {
             const photos = fsSync.readdirSync(PHOTOS_DIR);
             for (const photo of photos) {
-                await fs.unlink(path.join(PHOTOS_DIR, photo));
+                await fs.unlink(path.join(PHOTOS_DIR, photo)).catch(() => {});
             }
         }
 
-        console.log(`🗑️ PURGE ALL: ${totalFiles} files, ${dbResult.deletedDownloads} DB records`);
+        console.log(`PURGE ALL: ${totalFiles} files, ${dbResult.deletedDownloads} DB records`);
         broadcast({ type: 'purge_all' });
-        res.json({
-            success: true,
+        return {
             deleted: {
                 files: totalFiles,
                 dbRecords: dbResult.deletedDownloads,
-                queueRecords: dbResult.deletedQueue
-            }
-        });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
+                queueRecords: dbResult.deletedQueue,
+            },
+        };
+    });
+    if (!r.started) {
+        return res.status(409).json({ error: 'A factory reset is already running', code: 'ALREADY_RUNNING' });
     }
+    res.json({ success: true, started: true });
+});
+
+app.get('/api/purge/all/status', async (req, res) => {
+    res.json(_jobTrackers.purgeAll.getStatus());
 });
 
 // ============ MAINTENANCE ENDPOINTS ===========================================
@@ -3206,42 +3591,56 @@ async function _requirePassword(req, res) {
 // Force re-resolve every group entity (name + photo) against Telegram. This is
 // /api/groups/refresh-info under a friendlier name; the SPA already calls the
 // underlying handler, this is the explicit "Resync now" button.
+//
+// Fire-and-forget — with many accounts × big dialog lists this is multi-
+// second. Progress streams via `resync_dialogs_progress`, final result via
+// `resync_dialogs_done`. Pre-flight account check stays sync so the caller
+// gets an immediate explanation when no Telegram accounts exist.
 app.post('/api/maintenance/resync-dialogs', async (req, res) => {
+    let am;
     try {
-        const am = await getAccountManager();
-        if (am.count === 0) return res.status(409).json({ error: 'No Telegram accounts loaded' });
-        // Drop the entity cache so re-resolution actually hits Telegram.
+        am = await getAccountManager();
+    } catch (e) {
+        const { status, body } = tgAuthErrorBody(e);
+        return res.status(status === 400 ? 500 : status).json(body.error ? body : { error: e.message });
+    }
+    if (am.count === 0) return res.status(409).json({ error: 'No Telegram accounts loaded' });
+    const tracker = _jobTrackers.resyncDialogs;
+    const r = tracker.tryStart(async ({ onProgress }) => {
         try { entityCache.clear(); } catch {}
         const config = JSON.parse(await fs.readFile(CONFIG_PATH, 'utf8'));
         const ids = new Set((config.groups || []).map(g => String(g.id)));
         try {
             const rows = getDb().prepare('SELECT DISTINCT group_id FROM downloads').all();
-            for (const r of rows) ids.add(String(r.group_id));
+            for (const rr of rows) ids.add(String(rr.group_id));
         } catch {}
 
         let updated = 0;
         let mutated = false;
-        // Collect DB updates first; flush them in one transaction at the
-        // end so we don't open and close the WAL writer N times while the
-        // gallery is being read concurrently.
-        const pendingDbUpdates = [];   // [[realName, id], ...]
+        const total = ids.size;
+        let processed = 0;
+        const pendingDbUpdates = [];
+        onProgress({ processed: 0, total, updated: 0, stage: 'resolving' });
         for (const id of ids) {
             const resolved = await resolveEntityAcrossAccounts(id);
-            if (!resolved) continue;
-            const e = resolved.entity;
-            const realName = e?.title
-                || (e?.firstName && (e.firstName + (e.lastName ? ' ' + e.lastName : '')))
-                || e?.username || null;
-            if (realName) {
-                const cg = (config.groups || []).find(g => String(g.id) === id);
-                if (cg && (!cg.name || cg.name === 'Unknown' || cg.name === id || cg.name.startsWith('Group '))) {
-                    cg.name = realName;
-                    mutated = true;
+            if (resolved) {
+                const e = resolved.entity;
+                const realName = e?.title
+                    || (e?.firstName && (e.firstName + (e.lastName ? ' ' + e.lastName : '')))
+                    || e?.username || null;
+                if (realName) {
+                    const cg = (config.groups || []).find(g => String(g.id) === id);
+                    if (cg && (!cg.name || cg.name === 'Unknown' || cg.name === id || cg.name.startsWith('Group '))) {
+                        cg.name = realName;
+                        mutated = true;
+                    }
+                    pendingDbUpdates.push([realName, id]);
+                    updated++;
                 }
-                pendingDbUpdates.push([realName, id]);
-                updated++;
+                await downloadProfilePhoto(id).catch(() => {});
             }
-            await downloadProfilePhoto(id).catch(() => {});
+            processed++;
+            onProgress({ processed, total, updated, stage: 'resolving' });
         }
         if (pendingDbUpdates.length > 0) {
             try {
@@ -3256,88 +3655,170 @@ app.post('/api/maintenance/resync-dialogs', async (req, res) => {
             }
         }
         if (mutated) await writeConfigAtomic(config);
-        // Invalidate the dialogs cache so the next /api/dialogs and the next
-        // /api/groups pick up the freshly-resolved names without waiting for
-        // the 5-min TTL.
         _dialogsResponseCache = { at: 0, body: null };
         _dialogsNameCache = { at: 0, byId: new Map() };
         broadcast({ type: 'config_updated' });
-        res.json({ success: true, scanned: ids.size, updated });
-    } catch (e) {
-        const { status, body } = tgAuthErrorBody(e);
-        res.status(status === 400 ? 500 : status).json(body.error ? body : { error: e.message });
+        return { scanned: total, updated };
+    });
+    if (!r.started) {
+        return res.status(409).json({ error: 'Resync already in progress', code: 'ALREADY_RUNNING' });
     }
+    res.json({ success: true, started: true });
+});
+
+app.get('/api/maintenance/resync-dialogs/status', async (req, res) => {
+    res.json(_jobTrackers.resyncDialogs.getStatus());
 });
 
 // Restart the realtime monitor: stop → start. Useful after settings changes
 // (proxy, accounts, rate limits) without needing to bounce the container.
+// Fire-and-forget for consistency with the other Settings → Maintenance
+// buttons; final status broadcast via `restart_monitor_done`.
 app.post('/api/maintenance/restart-monitor', async (req, res) => {
     if (!_requireConfirm(req, res)) return;
-    try {
+    const t = _jobTrackers.restartMonitor;
+    const r = t.tryStart(async () => {
         const wasRunning = runtime.state === 'running';
         if (runtime.state !== 'stopped') {
             try { await runtime.stop(); } catch (e) { console.warn('restart-monitor stop:', e.message); }
         }
         if (!wasRunning) {
-            return res.json({ success: true, restarted: false, note: 'Monitor was not running; nothing to restart.' });
+            return { restarted: false, note: 'Monitor was not running; nothing to restart.' };
         }
         const am = await getAccountManager();
         if (am.count === 0) {
-            return res.status(409).json({ error: 'No Telegram accounts loaded' });
+            const err = new Error('No Telegram accounts loaded');
+            err.code = 'NO_ACCOUNTS';
+            throw err;
         }
         await runtime.start({ config: loadConfig(), accountManager: am });
-        res.json({ success: true, restarted: true, status: runtime.status() });
-    } catch (e) {
-        res.status(500).json({ error: e.message });
+        return { restarted: true, status: runtime.status() };
+    });
+    if (!r.started) {
+        return res.status(409).json({ error: 'Restart already in progress', code: 'ALREADY_RUNNING' });
     }
+    res.json({ success: true, started: true });
+});
+
+app.get('/api/maintenance/restart-monitor/status', async (req, res) => {
+    res.json(_jobTrackers.restartMonitor.getStatus());
 });
 
 // SQLite integrity check (PRAGMA integrity_check). Returns "ok" on a clean DB
 // or a list of corruption messages. Read-only.
+//
+// Usually fast (~seconds) but on a corrupt DB can spin for a long time —
+// converted to fire-and-forget for symmetry + Cloudflare safety.
 app.post('/api/maintenance/db/integrity', async (req, res) => {
-    try {
+    const t = _jobTrackers.dbIntegrity;
+    const r = t.tryStart(async () => {
         const db = getDb();
         const rows = db.prepare('PRAGMA integrity_check').all();
-        const messages = rows.map(r => r.integrity_check).filter(Boolean);
+        const messages = rows.map(rr => rr.integrity_check).filter(Boolean);
         const ok = messages.length === 1 && messages[0] === 'ok';
-        res.json({ success: true, ok, messages });
-    } catch (e) {
-        res.status(500).json({ error: e.message });
+        return { ok, messages };
+    });
+    if (!r.started) {
+        return res.status(409).json({ error: 'An integrity check is already running', code: 'ALREADY_RUNNING' });
     }
+    res.json({ success: true, started: true });
+});
+
+app.get('/api/maintenance/db/integrity/status', async (req, res) => {
+    res.json(_jobTrackers.dbIntegrity.getStatus());
 });
 
 // Walk every download row, drop the ones whose file is missing or
 // 0 bytes. Same logic as the periodic boot-time sweep, surfaced as a
 // button so users can force-clean stale entries on demand.
+//
+// Fire-and-forget — a 50k-row library can take a minute, well past
+// Cloudflare's 100 s tunnel timeout when the user has had the dashboard
+// open for a while. POST returns 200 immediately; progress + result land
+// over WS as `files_verify_progress` / `files_verify_done`. Page hydrates
+// running state from `/files/verify/status` on mount.
 app.post('/api/maintenance/files/verify', async (req, res) => {
-    try {
-        const result = await integrity.sweep();
-        res.json({ success: true, ...result });
-    } catch (e) {
-        res.status(500).json({ error: e.message });
+    const t = _jobTrackers.filesVerify;
+    const r = t.tryStart(async ({ onProgress }) => {
+        return await integrity.sweep(onProgress);
+    });
+    if (!r.started) {
+        return res.status(409).json({ error: 'A verify is already running', code: 'ALREADY_RUNNING' });
     }
+    res.json({ success: true, started: true });
+});
+
+app.get('/api/maintenance/files/verify/status', async (req, res) => {
+    res.json(_jobTrackers.filesVerify.getStatus());
+});
+
+// Re-index from disk — the inverse of /files/verify. Walks
+// data/downloads/ and inserts rows for files the catalogue doesn't
+// know about. Idempotent (INSERT OR IGNORE on (group_id, message_id)).
+// Used to recover a wiped DB (Purge all, fresh install over an existing
+// downloads/ tree, restore from backups/ snapshot) without re-downloading
+// from Telegram. Background-driven; progress broadcast via WS
+// `reindex_progress` and final `reindex_done` so the page can render a
+// determinate bar without polling.
+let _reindexBgRunning = false;
+app.post('/api/maintenance/reindex', async (req, res) => {
+    if (_reindexBgRunning || integrity.isReindexRunning()) {
+        return res.status(409).json({ error: 'already_running' });
+    }
+    _reindexBgRunning = true;
+    res.json({ ok: true, started: true });
+    // Fire-and-forget — the result lands over WS. Caller already got 200.
+    (async () => {
+        try {
+            const cfg = await readConfigSafe();
+            const groups = Array.isArray(cfg?.groups) ? cfg.groups : [];
+            const result = await integrity.reindexFromDisk(groups, (p) => {
+                try { broadcast({ type: 'reindex_progress', ...p }); } catch {}
+            });
+            try { broadcast({ type: 'reindex_done', ...result }); } catch {}
+        } catch (e) {
+            try { broadcast({ type: 'reindex_done', error: e?.message || String(e) }); } catch {}
+        } finally {
+            _reindexBgRunning = false;
+        }
+    })();
+});
+
+app.get('/api/maintenance/reindex/status', async (req, res) => {
+    res.json({ running: _reindexBgRunning || integrity.isReindexRunning() });
 });
 
 // VACUUM the SQLite database. Reclaims space after lots of deletions.
 // Locks the DB briefly — guard with confirm so the user can't trigger it by
 // accident in the middle of a heavy backfill.
+//
+// Fire-and-forget: VACUUM blocks the process for the duration of the
+// rebuild (multiple minutes on a multi-GB library), well past Cloudflare's
+// edge timeout. POST returns 200 immediately; final reclaim numbers land
+// via `db_vacuum_done` WS event.
 app.post('/api/maintenance/db/vacuum', async (req, res) => {
     if (!_requireConfirm(req, res)) return;
-    try {
+    const t = _jobTrackers.dbVacuum;
+    const r = t.tryStart(async () => {
         const db = getDb();
         const beforePages = db.pragma('page_count', { simple: true });
         const pageSize = db.pragma('page_size', { simple: true });
         db.exec('VACUUM');
         const afterPages = db.pragma('page_count', { simple: true });
-        res.json({
-            success: true,
+        return {
             beforeBytes: Number(beforePages) * Number(pageSize),
             afterBytes: Number(afterPages) * Number(pageSize),
             reclaimedBytes: Math.max(0, (Number(beforePages) - Number(afterPages)) * Number(pageSize)),
-        });
-    } catch (e) {
-        res.status(500).json({ error: e.message });
+        };
+    });
+    if (!r.started) {
+        return res.status(409).json({ error: 'A vacuum is already running', code: 'ALREADY_RUNNING' });
     }
+    res.json({ success: true, started: true });
+});
+
+app.get('/api/maintenance/db/vacuum/status', async (req, res) => {
+    res.json(_jobTrackers.dbVacuum.getStatus());
 });
 
 // ====== Duplicate finder (checksum-based) ==================================
@@ -3354,51 +3835,116 @@ app.post('/api/maintenance/db/vacuum', async (req, res) => {
 // Two-step UX: scan returns the duplicate sets to the client, the user
 // picks which copies to keep, and the explicit /delete call removes the
 // rest. The endpoint never auto-deletes.
+// Fire-and-forget pattern — same as thumbs/build-all and nsfw/scan.
+// On a 50 GB library the SHA-256 sweep can take minutes; previously we
+// awaited the result inside the POST handler, which Cloudflare's tunnel
+// timeout (100 s default) would 524 long before the scan finished. The
+// scan now runs in the background; clients learn about progress and the
+// final duplicate sets via WS (`dedup_progress`, `dedup_done`) and can
+// recover the in-flight state via GET `/dedup/status` after a tab close.
 let _dedupRunning = false;
+let _dedupState = {
+    running: false, stage: 'idle',
+    processed: 0, total: 0, hashed: 0, groups: 0,
+    startedAt: 0, finishedAt: 0,
+    result: null, error: null,
+};
 app.post('/api/maintenance/dedup/scan', async (req, res) => {
     if (_dedupRunning) {
-        return res.status(409).json({ error: 'A dedup scan is already running' });
+        return res.status(409).json({ error: 'A dedup scan is already running', code: 'ALREADY_RUNNING' });
     }
     _dedupRunning = true;
-    try {
-        const result = await dedupFindDuplicates({
-            onProgress: (p) => {
-                try { broadcast({ type: 'dedup_progress', ...p }); } catch {}
-            },
-        });
-        res.json({ success: true, ...result });
-    } catch (e) {
-        console.error('dedup/scan:', e);
-        res.status(500).json({ error: e.message });
-    } finally {
-        _dedupRunning = false;
-    }
+    _dedupState = {
+        running: true, stage: 'starting',
+        processed: 0, total: 0, hashed: 0, groups: 0,
+        startedAt: Date.now(), finishedAt: 0,
+        result: null, error: null,
+    };
+    res.json({ success: true, started: true });
+    try { broadcast({ type: 'dedup_progress', ..._dedupState }); } catch {}
+    log({ source: 'dedup', level: 'info', msg: 'dedup scan starting' });
+    (async () => {
+        try {
+            const result = await dedupFindDuplicates({
+                onProgress: (p) => {
+                    Object.assign(_dedupState, p, { running: true });
+                    try { broadcast({ type: 'dedup_progress', ...p, running: true }); } catch {}
+                },
+            });
+            _dedupState = {
+                ..._dedupState, ...result,
+                running: false, stage: 'done',
+                finishedAt: Date.now(),
+                result,
+            };
+            try { broadcast({ type: 'dedup_done', ...result }); } catch {}
+            log({ source: 'dedup', level: 'info',
+                msg: `dedup scan done — groups=${result?.groups?.length ?? 0} duplicates=${result?.totalDuplicates ?? 0}` });
+        } catch (e) {
+            _dedupState = {
+                ..._dedupState,
+                running: false, stage: 'error',
+                error: e?.message || String(e),
+                finishedAt: Date.now(),
+            };
+            try { broadcast({ type: 'dedup_done', error: e?.message || String(e) }); } catch {}
+            log({ source: 'dedup', level: 'error', msg: `dedup scan failed: ${e?.message || e}` });
+        } finally {
+            _dedupRunning = false;
+        }
+    })();
 });
 
+// Status endpoint — returns the latest scan state including the result
+// payload from the most recent completed run, so a re-opened page can
+// render the duplicate-sets table without re-running the scan.
+app.get('/api/maintenance/dedup/status', async (req, res) => {
+    res.json({ ..._dedupState, running: _dedupRunning });
+});
+
+// Bulk-delete N files. Used by both the duplicate finder ("delete the
+// non-keep copies") and the gallery selection bar ("delete N tiles").
+// At N=10k disk I/O can run for minutes — fire-and-forget so the request
+// returns instantly and progress streams over WS.
+//
+// Validates synchronously; only the actual delete loop runs in the
+// background. Status is per-shared-tracker, NOT per-call — concurrent
+// gallery-selection deletes are serialised, the second caller gets 409.
 app.post('/api/maintenance/dedup/delete', async (req, res) => {
-    try {
-        const { ids } = req.body || {};
-        if (!Array.isArray(ids) || !ids.length) {
-            return res.status(400).json({ error: 'ids array required' });
-        }
-        // Coerce to integers and drop anything bogus.
-        const cleanIds = ids.map(n => Number(n)).filter(n => Number.isInteger(n) && n > 0);
-        if (!cleanIds.length) {
-            return res.status(400).json({ error: 'No valid ids supplied' });
-        }
-        const r = dedupDeleteByIds(cleanIds);
-        // Drop cached thumbnails for every removed id so the cache doesn't
-        // keep handing out stale WebPs after the source file is gone.
+    const { ids } = req.body || {};
+    if (!Array.isArray(ids) || !ids.length) {
+        return res.status(400).json({ error: 'ids array required' });
+    }
+    const cleanIds = ids.map(n => Number(n)).filter(n => Number.isInteger(n) && n > 0);
+    if (!cleanIds.length) {
+        return res.status(400).json({ error: 'No valid ids supplied' });
+    }
+    const tracker = _jobTrackers.dedupDelete;
+    const r = tracker.tryStart(async ({ onProgress }) => {
+        const total = cleanIds.length;
+        onProgress({ processed: 0, total, stage: 'deleting' });
+        const result = dedupDeleteByIds(cleanIds);
+        // Thumbnails purge is the slow part on a big delete (one fs walk
+        // per id). Stream progress so the gallery-select UI can show a bar.
+        let processed = 0;
         for (const id of cleanIds) {
             try { await purgeThumbsForDownload(id); } catch {}
+            processed += 1;
+            if (processed % 50 === 0 || processed === total) {
+                onProgress({ processed, total, stage: 'purging_thumbs' });
+            }
         }
-        // Tell every open tab that some files vanished so galleries refresh.
         try { broadcast({ type: 'bulk_delete', ids: cleanIds }); } catch {}
-        res.json({ success: true, ...r });
-    } catch (e) {
-        console.error('dedup/delete:', e);
-        res.status(500).json({ error: e.message });
+        return { ...result, requested: cleanIds.length, ids: cleanIds };
+    });
+    if (!r.started) {
+        return res.status(409).json({ error: 'A bulk delete is already running', code: 'ALREADY_RUNNING' });
     }
+    res.json({ success: true, started: true, queued: cleanIds.length });
+});
+
+app.get('/api/maintenance/dedup/delete/status', async (req, res) => {
+    res.json(_jobTrackers.dedupDelete.getStatus());
 });
 
 // ====== Thumbnails =========================================================
@@ -3413,6 +3959,21 @@ app.post('/api/maintenance/dedup/delete', async (req, res) => {
 //
 // Returns 404 when the source is not thumbnailable (audio/document) so
 // the SPA's <img onerror> fallback can kick in and render an icon.
+// Throttle log spam — a 1000-tile gallery scrolling past missing files
+// would otherwise flood the buffer. Three layers of quieting:
+//   1. WINDOW_MS — count is bucketed into 15-minute windows (was 1 min,
+//      then 5 min — busy operators still saw it as flood)
+//   2. FLOOR — a window only warns if the burst crossed 200 misses;
+//      small bursts (a few audio rows scrolled past) stay silent
+//   3. COOLDOWN_MS — after one warning fires, the next one is held off
+//      for 30 minutes regardless of count, so a chatty afternoon emits
+//      at most ~2 warnings instead of 4
+// Operators who want it fully silent set `advanced.thumbs.warnMisses`
+// to false in /api/config (validated server-side as boolean).
+const THUMB_MISS_WINDOW_MS = 15 * 60_000;
+const THUMB_MISS_FLOOR = 200;
+const THUMB_MISS_COOLDOWN_MS = 30 * 60_000;
+let _thumbMissBatch = { count: 0, resetAt: 0, lastWarnedAt: 0 };
 app.get('/api/thumbs/:id', async (req, res) => {
     try {
         const id = parseInt(req.params.id, 10);
@@ -3420,7 +3981,32 @@ app.get('/api/thumbs/:id', async (req, res) => {
             return res.status(400).type('text/plain').send('Bad id');
         }
         const thumb = await getOrCreateThumb(id, req.query.w);
-        if (!thumb) return res.status(404).type('text/plain').send('No thumb');
+        if (!thumb) {
+            const now = Date.now();
+            if (now - _thumbMissBatch.resetAt > THUMB_MISS_WINDOW_MS) {
+                // Window rollover — emit a consolidated warning if (a) the
+                // burst crossed the floor AND (b) we're past the cooldown
+                // since the last emission. Both gates have to pass; either
+                // alone leaves it quiet.
+                let warnMisses = true;
+                try {
+                    const cfg = loadConfig();
+                    warnMisses = cfg?.advanced?.thumbs?.warnMisses !== false;
+                } catch { /* no config yet → default on */ }
+                if (warnMisses
+                    && _thumbMissBatch.count >= THUMB_MISS_FLOOR
+                    && (now - _thumbMissBatch.lastWarnedAt) >= THUMB_MISS_COOLDOWN_MS) {
+                    const mins = Math.round(THUMB_MISS_WINDOW_MS / 60_000);
+                    log({ source: 'thumbs', level: 'warn', msg: `${_thumbMissBatch.count} thumb misses in the last ${mins} min (DB row missing, file off disk, or source not thumbnailable). Try Maintenance → Verify files / Re-index.` });
+                    _thumbMissBatch.lastWarnedAt = now;
+                }
+                _thumbMissBatch.count = 1;
+                _thumbMissBatch.resetAt = now;
+            } else {
+                _thumbMissBatch.count += 1;
+            }
+            return res.status(404).type('text/plain').send('No thumb');
+        }
 
         res.setHeader('Content-Type', 'image/webp');
         // Aggressive cache — the URL embeds id+width which is content-
@@ -3446,39 +4032,132 @@ app.get('/api/thumbs/:id', async (req, res) => {
 // "Rebuild thumbnails" UI to force regeneration (e.g. after a quality
 // tweak or a corruption scare). On-demand generation refills the cache
 // on the next gallery scroll, gated by the thumbs.js semaphores.
+//
+// Fire-and-forget: a 100k-thumb cache can take a noticeable amount of
+// time to walk and unlink. POST returns immediately; final count lands
+// via `thumbs_rebuild_done` WS event.
 app.post('/api/maintenance/thumbs/rebuild', async (req, res) => {
-    try {
+    const tracker = _jobTrackers.thumbsRebuild;
+    const r = tracker.tryStart(async () => {
         const removed = await purgeAllThumbs();
-        res.json({ success: true, removed });
-    } catch (e) {
-        console.error('thumbs/rebuild:', e);
-        res.status(500).json({ error: e.message });
+        return { removed };
+    });
+    if (!r.started) {
+        return res.status(409).json({ error: 'A thumbnail wipe is already running', code: 'ALREADY_RUNNING' });
     }
+    res.json({ success: true, started: true });
+});
+
+app.get('/api/maintenance/thumbs/rebuild/status', async (req, res) => {
+    res.json(_jobTrackers.thumbsRebuild.getStatus());
 });
 
 // Maintenance — generate thumbnails for every download row that doesn't
 // already have one cached at the default width. Covers downloads that
 // landed before pre-generation existed. Honours the per-kind concurrency
-// caps in thumbs.js so the gallery stays responsive while the sweep
-// runs. Single in-flight guard.
+// caps in thumbs.js so the gallery stays responsive while the sweep runs.
+//
+// Fire-and-forget: returns 200 with `started: true` immediately. The
+// actual build runs in the background, broadcasting `thumbs_progress`
+// over WS and a final `thumbs_done`. A re-opened page can call
+// `/api/maintenance/thumbs/build/status` to recover the in-flight state.
+// Field names mirror what `buildAllThumbnails()` returns + emits via
+// onProgress: `processed / total / built / skipped / errored / scanned`.
+// Renamed from `done/errors` (the original placeholders) so the status
+// JSON, the WS frames, and the log line all agree — previously the log
+// printed `done=undefined errors=undefined`.
 let _thumbBuildRunning = false;
+let _thumbBuildState = {
+    running: false,
+    stage: 'idle',
+    processed: 0, total: 0,
+    built: 0, skipped: 0, errored: 0, scanned: 0,
+    startedAt: 0, finishedAt: 0, error: null,
+};
 app.post('/api/maintenance/thumbs/build-all', async (req, res) => {
     if (_thumbBuildRunning) {
         return res.status(409).json({ error: 'A thumbnail build is already running' });
     }
     _thumbBuildRunning = true;
+    _thumbBuildState = {
+        running: true, stage: 'starting',
+        processed: 0, total: 0,
+        built: 0, skipped: 0, errored: 0, scanned: 0,
+        startedAt: Date.now(), finishedAt: 0, error: null,
+    };
+    res.json({ success: true, started: true });
+    log({ source: 'thumbs', level: 'info', msg: 'thumbs build-all starting' });
+    (async () => {
+        try {
+            const r = await buildAllThumbnails({
+                onProgress: (p) => {
+                    // Server-side state stays the source of truth for the
+                    // /build/status endpoint; broadcast forwards the same
+                    // shape to WS subscribers.
+                    Object.assign(_thumbBuildState, p, { running: true });
+                    try { broadcast({ type: 'thumbs_progress', ...p }); } catch {}
+                },
+            });
+            _thumbBuildState = {
+                ..._thumbBuildState, ...r,
+                running: false, stage: 'done',
+                finishedAt: Date.now(),
+            };
+            try { broadcast({ type: 'thumbs_done', ...r }); } catch {}
+            log({ source: 'thumbs', level: 'info',
+                msg: `thumbs build-all done — scanned=${r?.scanned ?? 0} built=${r?.built ?? 0} skipped=${r?.skipped ?? 0} errored=${r?.errored ?? 0}` });
+        } catch (e) {
+            _thumbBuildState = {
+                ..._thumbBuildState,
+                running: false, stage: 'error',
+                error: e?.message || String(e),
+                finishedAt: Date.now(),
+            };
+            try { broadcast({ type: 'thumbs_done', error: e?.message || String(e) }); } catch {}
+            log({ source: 'thumbs', level: 'error', msg: `thumbs build-all failed: ${e?.message || e}` });
+        } finally {
+            _thumbBuildRunning = false;
+        }
+    })();
+});
+
+app.get('/api/maintenance/thumbs/build/status', async (req, res) => {
+    res.json({ ..._thumbBuildState, running: _thumbBuildRunning });
+});
+
+// Probe which ffmpeg hardware-acceleration backends actually work on
+// this host. Runs `ffmpeg -hide_banner -hwaccels` and returns the parsed
+// list. Used by Settings → Advanced → Video thumb hardware acceleration
+// → "Detect available" so the admin doesn't have to SSH in to find out
+// whether VAAPI/QSV/CUDA/etc. are available on the host's ffmpeg build.
+app.get('/api/maintenance/thumbs/hwaccel-probe', async (req, res) => {
     try {
-        const r = await buildAllThumbnails({
-            onProgress: (p) => {
-                try { broadcast({ type: 'thumbs_progress', ...p }); } catch {}
-            },
+        const { spawn } = await import('child_process');
+        const thumbs = await import('../core/thumbs.js');
+        const bin = thumbs.resolveFfmpegBin?.() || 'ffmpeg';
+        const out = await new Promise((resolve, reject) => {
+            const p = spawn(bin, ['-hide_banner', '-hwaccels'], { windowsHide: true });
+            const chunks = [];
+            p.stdout.on('data', (c) => chunks.push(c));
+            p.stderr.on('data', () => {});
+            p.on('error', reject);
+            p.on('close', () => resolve(Buffer.concat(chunks).toString('utf8')));
+        }).catch(() => '');
+        // Output shape (ffmpeg ≥4.x):
+        //   Hardware acceleration methods:\nvaapi\nqsv\ncuda\nvideotoolbox\n
+        const KNOWN = new Set(['vaapi', 'qsv', 'cuda', 'videotoolbox', 'd3d11va', 'dxva2', 'opencl', 'vulkan', 'drm']);
+        const available = out.split(/\r?\n/)
+            .map((s) => s.trim().toLowerCase())
+            .filter((s) => KNOWN.has(s));
+        res.json({
+            available,
+            ffmpegPath: bin,
+            // The dropdown only exposes options we have UI rows for; the
+            // others come back so docs / debugging surface them.
+            recommended: available.find((b) => ['vaapi', 'qsv', 'cuda', 'videotoolbox', 'd3d11va'].includes(b)) || null,
         });
-        res.json({ success: true, ...r });
     } catch (e) {
-        console.error('thumbs/build-all:', e);
-        res.status(500).json({ error: e.message });
-    } finally {
-        _thumbBuildRunning = false;
+        res.status(500).json({ error: e?.message || String(e), available: [] });
     }
 });
 
@@ -3560,20 +4239,47 @@ app.post('/api/maintenance/nsfw/scan', async (req, res) => {
         const cfg = _nsfwCfg();
         if (!cfg.enabled) {
             return res.status(503).json({
-                error: 'NSFW review is disabled. Enable it in Settings → Advanced first.',
+                error: 'NSFW review is disabled. Open Maintenance → NSFW review and toggle it on first.',
                 code: 'NSFW_DISABLED',
             });
         }
         if (nsfwIsScanRunning()) {
             return res.status(409).json({ error: 'A scan is already running', code: 'ALREADY_RUNNING' });
         }
+        log({ source: 'nsfw', level: 'info', msg: `scan starting — model=${cfg.model} threshold=${cfg.threshold} fileTypes=[${(cfg.fileTypes || []).join(',')}] concurrency=${cfg.concurrency}` });
+        let _lastLoggedScanned = 0;
         const r = await nsfwStartScan(cfg,
-            (p) => { try { broadcast({ type: 'nsfw_progress', ...p }); } catch {} },
-            (p) => { try { broadcast({ type: 'nsfw_done', ...p }); } catch {} },
-            (p) => { try { broadcast({ type: 'nsfw_model_downloading', ...p }); } catch {} },
+            (p) => {
+                try { broadcast({ type: 'nsfw_progress', ...p }); } catch {}
+                // Throttle log spam — emit at most every 25 rows so a 10 000
+                // row library doesn't pump 10 000 lines into the web log.
+                if (typeof p?.scanned === 'number' && (p.scanned - _lastLoggedScanned) >= 25) {
+                    _lastLoggedScanned = p.scanned;
+                    log({ source: 'nsfw', level: 'info', msg: `scan progress — ${p.scanned}/${p.total} (candidates=${p.candidates ?? 0}, keep=${p.keep ?? 0})` });
+                }
+            },
+            (p) => {
+                try { broadcast({ type: 'nsfw_done', ...p }); } catch {}
+                if (p?.error) {
+                    log({ source: 'nsfw', level: 'error', msg: `scan finished with error: ${p.error}` });
+                } else {
+                    log({ source: 'nsfw', level: 'info', msg: `scan done — scanned=${p?.scanned ?? 0} candidates=${p?.candidates ?? 0} keep=${p?.keep ?? 0} elapsed=${p?.finishedAt && p?.startedAt ? Math.round((p.finishedAt - p.startedAt) / 1000) + 's' : 'n/a'}` });
+                }
+            },
+            (p) => {
+                try { broadcast({ type: 'nsfw_model_downloading', ...p }); } catch {}
+                log({ source: 'nsfw', level: 'info', msg: `model load — ${p?.status || 'progress'} ${p?.file || ''} ${p?.progress != null ? Math.round(p.progress) + '%' : ''}` });
+            },
+            // onLog — internal nsfw.js events flow into the same realtime
+            // log stream the v2 page subscribes to.
+            (entry) => log(entry),
         );
+        if (r?.alreadyRunning) {
+            log({ source: 'nsfw', level: 'warn', msg: 'scan request rejected — already running' });
+        }
         res.json({ success: true, ...r });
     } catch (e) {
+        log({ source: 'nsfw', level: 'error', msg: `scan failed to start: ${e?.message || e} (code=${e?.code || 'UNKNOWN'})` });
         console.error('nsfw/scan:', e);
         const status = e.code === 'NSFW_LIB_MISSING' ? 503 : 500;
         res.status(status).json({ error: e.message, code: e.code || 'UNKNOWN' });
@@ -3583,6 +4289,46 @@ app.post('/api/maintenance/nsfw/scan', async (req, res) => {
 app.post('/api/maintenance/nsfw/scan/cancel', async (req, res) => {
     const ok = nsfwCancelScan();
     res.json({ success: true, cancelled: ok });
+});
+
+// Pre-fetch the classifier weights without scanning a single file. Lets
+// the operator warm the cache from the UI so the next scan starts
+// instantly. Returns immediately; download progress flows over the
+// existing `nsfw_model_downloading` WS event + realtime log channel.
+app.post('/api/maintenance/nsfw/preload', async (req, res) => {
+    try {
+        const cfg = _nsfwCfg();
+        const r = await nsfwPreloadClassifier(cfg,
+            (p) => { try { broadcast({ type: 'nsfw_model_downloading', ...p }); } catch {} },
+            (entry) => log(entry),
+        );
+        res.json({ success: true, ...r });
+    } catch (e) {
+        log({ source: 'nsfw', level: 'error', msg: `preload failed to start: ${e?.message || e}` });
+        const status = e.code === 'NSFW_LIB_MISSING' ? 503 : 500;
+        res.status(status).json({ error: e.message, code: e.code || 'UNKNOWN' });
+    }
+});
+
+// Snapshot of the in-process classifier load state. Polled by the
+// /maintenance/nsfw page so the model-status pill reflects reality
+// even between WS messages.
+app.get('/api/maintenance/nsfw/model-status', async (req, res) => {
+    res.json({ success: true, ...nsfwClassifierReady() });
+});
+
+// Wipe the cached weights on disk. Confirm-gated in the UI; safe-by-
+// design here (the cache dir is allow-listed via _resolveCacheDirAbs
+// inside nsfw.js — there's no caller-supplied path).
+app.delete('/api/maintenance/nsfw/cache', async (req, res) => {
+    try {
+        const cfg = _nsfwCfg();
+        const r = await nsfwClearCache(cfg);
+        log({ source: 'nsfw', level: 'info', msg: `cleared model cache — removed ${r.files} file(s) / ${r.bytes} bytes` });
+        res.json({ success: true, ...r });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
 });
 
 app.get('/api/maintenance/nsfw/results', async (req, res) => {
@@ -3661,6 +4407,798 @@ function _nsfwStateLight() {
         return { ...s, running: nsfwIsScanRunning() };
     } catch { return {}; }
 }
+
+// ---- NSFW v2 (tier-aware review page) -------------------------------------
+//
+// The original endpoints (status / scan / results / delete / whitelist) are
+// preserved so existing UI keeps working. The v2 endpoints power the
+// dedicated /maintenance/nsfw page, which shows per-tier stats, a score
+// histogram, paginated browse-by-tier, and bulk score-range actions.
+
+// Expose the tier dictionary so the front-end doesn't have to hard-code
+// the boundaries — change the bands in db.js and the UI follows.
+app.get('/api/maintenance/nsfw/v2/tiers-meta', async (req, res) => {
+    res.json({ tiers: NSFW_TIERS });
+});
+
+app.get('/api/maintenance/nsfw/v2/tiers', async (req, res) => {
+    try {
+        const cfg = _nsfwCfg();
+        const counts = getNsfwTierCounts(cfg.fileTypes);
+        log({ source: 'nsfw', level: 'info', msg: `tier counts polled — scanned=${counts.scanned}/${counts.totalEligible}` });
+        res.json({ ...counts, threshold: cfg.threshold, tiers_meta: NSFW_TIERS });
+    } catch (e) {
+        log({ source: 'nsfw', level: 'error', msg: `nsfw/v2/tiers failed: ${e?.message || e}` });
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.get('/api/maintenance/nsfw/v2/histogram', async (req, res) => {
+    try {
+        const cfg = _nsfwCfg();
+        const bins = Number(req.query.bins) || 20;
+        res.json(getNsfwHistogram(cfg.fileTypes, bins));
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.get('/api/maintenance/nsfw/v2/list', async (req, res) => {
+    try {
+        const cfg = _nsfwCfg();
+        const list = getNsfwListByTier({
+            tier: req.query.tier || null,
+            fileTypes: cfg.fileTypes,
+            groupId: req.query.group || null,
+            includeWhitelisted: req.query.include_whitelisted === '1',
+            page: Number(req.query.page) || 1,
+            limit: Number(req.query.limit) || 50,
+        });
+        res.json(list);
+    } catch (e) {
+        log({ source: 'nsfw', level: 'error', msg: `nsfw/v2/list failed: ${e?.message || e}` });
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Resolve a bulk-action filter into an explicit id list, then run the
+// requested action. Single funnel keeps the four bulk endpoints (delete /
+// whitelist / unwhitelist / reclassify) consistent — they all accept the
+// same `{ tier?, scoreMax?, scoreMin?, groupId?, fileTypes?, ids? }` body.
+async function _resolveBulkIds(body) {
+    if (Array.isArray(body?.ids) && body.ids.length) {
+        return body.ids.map(Number).filter((n) => Number.isInteger(n) && n > 0);
+    }
+    const cfg = _nsfwCfg();
+    const fileTypes = Array.isArray(body?.fileTypes) && body.fileTypes.length
+        ? body.fileTypes
+        : cfg.fileTypes;
+    // Walk the entire matching set page-by-page so very large tiers (15 000
+    // rows in `def_not`) don't exceed any single-query limit.
+    const all = [];
+    let page = 1;
+    while (true) {
+        const r = getNsfwListByTier({
+            tier: body?.tier || null,
+            fileTypes,
+            groupId: body?.groupId || null,
+            includeWhitelisted: body?.includeWhitelisted === true,
+            page,
+            limit: 200,
+        });
+        for (const row of r.rows) {
+            const sc = Number(row.nsfw_score);
+            if (Number.isFinite(body?.scoreMax) && sc >= body.scoreMax) continue;
+            if (Number.isFinite(body?.scoreMin) && sc < body.scoreMin) continue;
+            all.push(row.id);
+        }
+        if (page >= r.totalPages) break;
+        page += 1;
+    }
+    return all;
+}
+
+// All four NSFW v2 bulk endpoints share a single `nsfwBulk` tracker so
+// they're mutually exclusive — the operations all touch the same review
+// queue and racing them would produce inconsistent counts. Each endpoint
+// returns 200 with `{started:true}` immediately; the resolved id list +
+// final result land via `nsfw_bulk_done` (with an `op` field so the UI
+// can branch on which one finished).
+//
+// Cancellation is supported by the tracker but the actual DB operations
+// run in a tight loop and complete fast enough that we don't honour the
+// signal mid-batch — a click on Cancel just stops re-broadcasting
+// progress; the in-flight DB tx finishes naturally.
+app.post('/api/maintenance/nsfw/v2/bulk-delete', async (req, res) => {
+    if (!_requireConfirm(req, res)) return;
+    const body = req.body || {};
+    const tracker = _jobTrackers.nsfwBulk;
+    const r = tracker.tryStart(async ({ onProgress }) => {
+        onProgress({ stage: 'resolving', op: 'delete' });
+        const ids = await _resolveBulkIds(body);
+        if (!ids.length) return { op: 'delete', deleted: 0, ids: [] };
+        log({ source: 'nsfw', level: 'warn', msg: `bulk-delete starting: ${ids.length} rows` });
+        const total = ids.length;
+        onProgress({ stage: 'deleting', op: 'delete', processed: 0, total });
+        const result = dedupDeleteByIds(ids);
+        let processed = 0;
+        for (const id of ids) {
+            try { await purgeThumbsForDownload(id); } catch {}
+            processed += 1;
+            if (processed % 50 === 0 || processed === total) {
+                onProgress({ stage: 'purging_thumbs', op: 'delete', processed, total });
+            }
+        }
+        try { broadcast({ type: 'bulk_delete', ids }); } catch {}
+        try { broadcast({ type: 'nsfw_progress', ..._nsfwStateLight() }); } catch {}
+        log({ source: 'nsfw', level: 'info', msg: `bulk-delete done: removed=${result?.deleted ?? result?.removed ?? ids.length}` });
+        return { op: 'delete', deleted: ids.length, ids, ...result };
+    });
+    if (!r.started) {
+        return res.status(409).json({ error: 'A bulk NSFW operation is already running', code: 'ALREADY_RUNNING' });
+    }
+    res.json({ success: true, started: true });
+});
+
+app.post('/api/maintenance/nsfw/v2/bulk-whitelist', async (req, res) => {
+    const body = req.body || {};
+    const tracker = _jobTrackers.nsfwBulk;
+    const r = tracker.tryStart(async ({ onProgress }) => {
+        onProgress({ stage: 'resolving', op: 'whitelist' });
+        const ids = await _resolveBulkIds(body);
+        if (!ids.length) return { op: 'whitelist', updated: 0, ids: [] };
+        onProgress({ stage: 'updating', op: 'whitelist', total: ids.length });
+        const updated = whitelistNsfw(ids);
+        try { broadcast({ type: 'nsfw_progress', ..._nsfwStateLight() }); } catch {}
+        log({ source: 'nsfw', level: 'info', msg: `bulk-whitelist: marked ${updated} rows as 18+` });
+        return { op: 'whitelist', updated, ids };
+    });
+    if (!r.started) {
+        return res.status(409).json({ error: 'A bulk NSFW operation is already running', code: 'ALREADY_RUNNING' });
+    }
+    res.json({ success: true, started: true });
+});
+
+app.post('/api/maintenance/nsfw/v2/unwhitelist', async (req, res) => {
+    const ids = (req.body?.ids || []).map(Number).filter((n) => Number.isInteger(n) && n > 0);
+    if (!ids.length) return res.status(400).json({ error: 'ids array required' });
+    const tracker = _jobTrackers.nsfwBulk;
+    const r = tracker.tryStart(async ({ onProgress }) => {
+        onProgress({ stage: 'updating', op: 'unwhitelist', total: ids.length });
+        const updated = unwhitelistNsfw(ids);
+        try { broadcast({ type: 'nsfw_progress', ..._nsfwStateLight() }); } catch {}
+        log({ source: 'nsfw', level: 'info', msg: `unwhitelist: ${updated} rows back into review` });
+        return { op: 'unwhitelist', updated, ids };
+    });
+    if (!r.started) {
+        return res.status(409).json({ error: 'A bulk NSFW operation is already running', code: 'ALREADY_RUNNING' });
+    }
+    res.json({ success: true, started: true });
+});
+
+app.post('/api/maintenance/nsfw/v2/reclassify', async (req, res) => {
+    const body = req.body || {};
+    const tracker = _jobTrackers.nsfwBulk;
+    const r = tracker.tryStart(async ({ onProgress }) => {
+        onProgress({ stage: 'resolving', op: 'reclassify' });
+        const ids = await _resolveBulkIds(body);
+        if (!ids.length) return { op: 'reclassify', cleared: 0, ids: [] };
+        onProgress({ stage: 'clearing', op: 'reclassify', total: ids.length });
+        const cleared = reclassifyNsfw(ids);
+        log({ source: 'nsfw', level: 'info', msg: `reclassify: cleared ${cleared} rows for re-scan` });
+        return { op: 'reclassify', cleared, ids };
+    });
+    if (!r.started) {
+        return res.status(409).json({ error: 'A bulk NSFW operation is already running', code: 'ALREADY_RUNNING' });
+    }
+    res.json({ success: true, started: true });
+});
+
+app.get('/api/maintenance/nsfw/v2/bulk/status', async (req, res) => {
+    res.json(_jobTrackers.nsfwBulk.getStatus());
+});
+
+// ====== Backup destinations ================================================
+//
+// Multi-provider mirror + snapshot system. Admin-only via the chokepoint
+// (none of these paths live on the guest allowlist). The backup manager
+// owns workers, snapshot crons, encryption keys; this layer is just the
+// HTTP shim. Every state-changing endpoint also writes a structured log
+// entry so the realtime Logs page surfaces operations without polling.
+
+app.get('/api/backup/providers', async (_req, res) => {
+    try {
+        res.json({ success: true, providers: backup.listProviders() });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.get('/api/backup/destinations', async (_req, res) => {
+    try {
+        res.json({ success: true, destinations: backup.listDestinations() });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/backup/destinations', async (req, res) => {
+    try {
+        const id = backup.addDestination(req.body || {});
+        log({ source: 'backup', level: 'info', msg: `destination created (#${id})` });
+        const dest = backup.listDestinations().find((d) => d.id === id);
+        res.json({ success: true, id, destination: dest });
+    } catch (e) {
+        log({ source: 'backup', level: 'warn', msg: `destination create rejected: ${e.message}` });
+        res.status(400).json({ error: e.message });
+    }
+});
+
+app.put('/api/backup/destinations/:id', async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'bad id' });
+    try {
+        const updated = backup.updateDestination(id, req.body || {});
+        log({ source: 'backup', level: 'info', msg: `destination updated (#${id})` });
+        res.json({ success: true, destination: updated });
+    } catch (e) {
+        res.status(400).json({ error: e.message });
+    }
+});
+
+app.delete('/api/backup/destinations/:id', async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'bad id' });
+    try {
+        const ok = backup.removeDestination(id);
+        log({ source: 'backup', level: 'info', msg: `destination removed (#${id})` });
+        res.json({ success: ok });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/backup/destinations/:id/test', async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'bad id' });
+    try {
+        const r = await backup.testConnection(id);
+        log({ source: 'backup', level: r.ok ? 'info' : 'warn',
+            msg: `test connection on #${id}: ${r.detail || (r.ok ? 'ok' : 'failed')}` });
+        res.json({ success: true, ...r });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// `/run` returns 200 immediately. The backup manager starts work in the
+// background; the dashboard subscribes to WS events for progress.
+// Without the early-return, a snapshot upload of a multi-GB tar.gz would
+// hold the connection past Cloudflare's 100 s edge timeout.
+app.post('/api/backup/destinations/:id/run', async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'bad id' });
+    try {
+        backup.runBackup(id).catch((e) => {
+            log({ source: 'backup', level: 'error', msg: `run failed for #${id}: ${e.message}` });
+        });
+        res.json({ success: true, started: true });
+    } catch (e) {
+        res.status(400).json({ error: e.message });
+    }
+});
+
+app.post('/api/backup/destinations/:id/pause', async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'bad id' });
+    try {
+        backup.pause(id);
+        log({ source: 'backup', level: 'info', msg: `paused #${id}` });
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/backup/destinations/:id/resume', async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'bad id' });
+    try {
+        backup.resume(id);
+        log({ source: 'backup', level: 'info', msg: `resumed #${id}` });
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/backup/destinations/:id/encryption', async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'bad id' });
+    try {
+        const { enabled, passphrase } = req.body || {};
+        const out = backup.setEncryption(id, { enabled: !!enabled, passphrase });
+        res.json({ success: true, destination: out });
+    } catch (e) {
+        res.status(400).json({ error: e.message });
+    }
+});
+
+app.post('/api/backup/destinations/:id/unlock', async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'bad id' });
+    try {
+        backup.unlockEncryption(id, req.body?.passphrase || '');
+        res.json({ success: true });
+    } catch (e) {
+        res.status(400).json({ error: e.message });
+    }
+});
+
+app.get('/api/backup/destinations/:id/status', async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'bad id' });
+    try {
+        res.json({ success: true, ...backup.getDestinationStatus(id) });
+    } catch (e) {
+        res.status(404).json({ error: e.message });
+    }
+});
+
+app.get('/api/backup/destinations/:id/jobs', async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'bad id' });
+    try {
+        const status = req.query.status ? String(req.query.status) : null;
+        const limit = Math.min(500, Number(req.query.limit) || 50);
+        const offset = Math.max(0, Number(req.query.offset) || 0);
+        const jobs = backup.listJobs({ destinationId: id, status, limit, offset });
+        res.json({ success: true, jobs });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.get('/api/backup/jobs/recent', async (req, res) => {
+    try {
+        const limit = Math.min(200, Number(req.query.limit) || 20);
+        res.json({ success: true, jobs: backup.listRecent(limit) });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/backup/jobs/:id/retry', async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'bad id' });
+    try {
+        const ok = backup.retryJob(id);
+        if (ok) log({ source: 'backup', level: 'info', msg: `manual retry on job #${id}` });
+        res.json({ success: ok });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// ====== AI subsystem (v2.6.0) =============================================
+//
+// Local-only image embeddings, face clustering, perceptual dedup, and auto-
+// tagging. Default-OFF; every capability is opt-in via `config.advanced.ai`.
+// All long-running scans go through the JobTracker pattern so they return
+// 200 immediately and stream progress over WebSocket.
+//
+// Models live in `data/models/` (override via AI_MODELS_DIR env var) and
+// downloads only happen when the operator enables a capability. The
+// classifier path inherits the WASM execution provider trick from NSFW so
+// it works identically on Windows / macOS / glibc / musl / Docker / ARM.
+//
+// Admin-only by virtue of the chokepoint (none of these paths live on the
+// guest allowlist).
+
+function _aiCfg() {
+    try {
+        const live = loadConfig();
+        const cfg = live.advanced?.ai || {};
+        return {
+            enabled: cfg.enabled === true,
+            embeddings: {
+                enabled: cfg.embeddings?.enabled === true,
+                model: cfg.embeddings?.model || ai.AI_DEFAULTS.embeddings.model,
+            },
+            faces: {
+                enabled: cfg.faces?.enabled === true,
+                model: cfg.faces?.model || ai.AI_DEFAULTS.faces.model,
+                epsilon: Number.isFinite(cfg.faces?.epsilon) ? cfg.faces.epsilon : ai.AI_DEFAULTS.faces.epsilon,
+                minPoints: Number.isFinite(cfg.faces?.minPoints) ? cfg.faces.minPoints : ai.AI_DEFAULTS.faces.minPoints,
+            },
+            tags: {
+                enabled: cfg.tags?.enabled === true,
+                model: cfg.tags?.model || ai.AI_DEFAULTS.tags.model,
+                topK: Number.isFinite(cfg.tags?.topK) ? cfg.tags.topK : ai.AI_DEFAULTS.tags.topK,
+            },
+            phash: { enabled: cfg.phash?.enabled === true },
+            indexConcurrency: Number.isFinite(cfg.indexConcurrency) ? cfg.indexConcurrency : ai.AI_DEFAULTS.indexConcurrency,
+            batchSize: Number.isFinite(cfg.batchSize) ? cfg.batchSize : ai.AI_DEFAULTS.batchSize,
+            fileTypes: (Array.isArray(cfg.fileTypes) && cfg.fileTypes.length) ? cfg.fileTypes : ai.AI_DEFAULTS.fileTypes,
+        };
+    } catch {
+        return { ...ai.AI_DEFAULTS };
+    }
+}
+
+// Probe sqlite-vec lazily on the first AI status hit. Result is cached so
+// we don't re-probe on every poll.
+let _aiVecProbed = false;
+async function _maybeProbeVec() {
+    if (_aiVecProbed) return;
+    _aiVecProbed = true;
+    try { await ai.loadVecExtension(getDb, log); } catch {}
+}
+
+// Wire Transformers.js progress callbacks into the WS bus so the model
+// status panel can show live download bytes without polling. Idempotent —
+// the hook is registered once at module evaluation; subsequent reloads
+// (e.g. test re-imports) overwrite the same slot.
+try {
+    ai.setModelProgressHook?.(({ kind, modelId, progress }) => {
+        try {
+            broadcast({
+                type: 'ai_model_progress',
+                kind, modelId,
+                progress: progress || null,
+                ts: Date.now(),
+            });
+        } catch { /* swallow — never crash the loader */ }
+    });
+} catch { /* setModelProgressHook is optional */ }
+
+// Per-capability descriptors used by the model-status endpoint. Mirrors
+// the names the dashboard already uses. The kind is the Transformers.js
+// pipeline kind — needed because the same model id can be loaded under
+// two kinds (CLIP image vs text).
+const _MODEL_CAPS = [
+    { cap: 'embeddings', cfgKey: 'embeddings', defaultKind: 'image-feature-extraction' },
+    { cap: 'faces',      cfgKey: 'faces',      defaultKind: 'object-detection' },
+    { cap: 'tags',       cfgKey: 'tags',       defaultKind: 'image-classification' },
+];
+
+app.get('/api/ai/status', async (_req, res) => {
+    try {
+        await _maybeProbeVec();
+        const cfg = _aiCfg();
+        const counts = getAiCounts({ fileTypes: cfg.fileTypes });
+        res.json({
+            success: true,
+            enabled: cfg.enabled,
+            capabilities: {
+                master:     cfg.enabled,
+                embeddings: cfg.embeddings.enabled,
+                faces:      cfg.faces.enabled,
+                tags:       cfg.tags.enabled,
+                phash:      cfg.phash.enabled,
+            },
+            models: {
+                embeddings: cfg.embeddings.model,
+                faces:      cfg.faces.model,
+                tags:       cfg.tags.model,
+            },
+            counts,
+            loadedPipelines: ai.loadedPipelines(),
+        });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/ai/index/scan', async (_req, res) => {
+    const cfg = _aiCfg();
+    if (!cfg.enabled) {
+        return res.status(503).json({ error: 'AI subsystem disabled. Toggle "Enable AI subsystem" in Maintenance → AI search.', code: 'AI_DISABLED' });
+    }
+    const tracker = _jobTrackers.aiIndex;
+    const r = tracker.tryStart(async ({ onProgress, signal }) => {
+        return ai.runIndexScan(cfg, { onProgress, signal, onLog: log });
+    });
+    if (!r.started) return res.status(409).json({ error: 'AI index scan already running', code: 'ALREADY_RUNNING' });
+    res.json({ success: true, started: true });
+});
+
+app.get('/api/ai/index/scan/status', async (_req, res) => {
+    res.json(_jobTrackers.aiIndex.getStatus());
+});
+
+app.post('/api/ai/index/cancel', async (_req, res) => {
+    const ok = _jobTrackers.aiIndex.cancel();
+    res.json({ success: true, cancelled: ok });
+});
+
+app.post('/api/ai/search', async (req, res) => {
+    try {
+        const { query, limit, fileTypes } = req.body || {};
+        if (typeof query !== 'string' || !query.trim()) {
+            return res.status(400).json({ error: 'query required' });
+        }
+        const cfg = _aiCfg();
+        if (!cfg.enabled || !cfg.embeddings.enabled) {
+            return res.status(503).json({ error: 'AI embeddings are disabled', code: 'EMBEDDINGS_DISABLED' });
+        }
+        const r = await ai.searchByText(query.trim(), cfg, {
+            limit: Number(limit) || 20,
+            fileTypes: Array.isArray(fileTypes) && fileTypes.length ? fileTypes : null,
+            onLog: log,
+        });
+        res.json({ success: true, ...r });
+    } catch (e) {
+        log({ source: 'ai', level: 'error', msg: `search failed: ${e?.message || e}` });
+        res.status(500).json({ error: e.message, code: e.code || 'UNKNOWN' });
+    }
+});
+
+app.post('/api/ai/people/scan', async (_req, res) => {
+    const cfg = _aiCfg();
+    if (!cfg.enabled || !cfg.faces.enabled) {
+        return res.status(503).json({ error: 'Face clustering is disabled', code: 'FACES_DISABLED' });
+    }
+    const tracker = _jobTrackers.aiPeople;
+    const r = tracker.tryStart(async ({ onProgress, signal }) => {
+        return ai.runFaceClustering(cfg, { onProgress, signal, onLog: log });
+    });
+    if (!r.started) return res.status(409).json({ error: 'Face clustering already running', code: 'ALREADY_RUNNING' });
+    res.json({ success: true, started: true });
+});
+
+app.get('/api/ai/people/scan/status', async (_req, res) => {
+    res.json(_jobTrackers.aiPeople.getStatus());
+});
+
+app.get('/api/ai/people', async (req, res) => {
+    try {
+        const limit = Number(req.query.limit) || 200;
+        const offset = Number(req.query.offset) || 0;
+        res.json({ success: true, ...listPeople({ limit, offset }) });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.put('/api/ai/people/:id', async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'bad id' });
+    try {
+        const label = req.body?.label;
+        const updated = renamePerson(id, label == null ? null : String(label).slice(0, 80));
+        log({ source: 'ai', level: 'info', msg: `person #${id} renamed to "${label}"` });
+        res.json({ success: true, updated });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.delete('/api/ai/people/:id', async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'bad id' });
+    try {
+        const deleted = deletePerson(id);
+        log({ source: 'ai', level: 'info', msg: `person #${id} deleted (faces unclustered)` });
+        res.json({ success: true, deleted });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.get('/api/ai/people/:id/photos', async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'bad id' });
+    try {
+        const limit = Number(req.query.limit) || 50;
+        const offset = Number(req.query.offset) || 0;
+        res.json({ success: true, ...listPhotosForPerson(id, { limit, offset }) });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/ai/perceptual-dedup/scan', async (_req, res) => {
+    const cfg = _aiCfg();
+    if (!cfg.enabled || !cfg.phash.enabled) {
+        return res.status(503).json({ error: 'Perceptual dedup is disabled', code: 'PHASH_DISABLED' });
+    }
+    const tracker = _jobTrackers.aiPhash;
+    const r = tracker.tryStart(async ({ onProgress, signal }) => {
+        return ai.runPhashScan({ onProgress, signal, onLog: log, fileTypes: cfg.fileTypes });
+    });
+    if (!r.started) return res.status(409).json({ error: 'phash scan already running', code: 'ALREADY_RUNNING' });
+    res.json({ success: true, started: true });
+});
+
+app.get('/api/ai/perceptual-dedup/scan/status', async (_req, res) => {
+    res.json(_jobTrackers.aiPhash.getStatus());
+});
+
+app.get('/api/ai/perceptual-dedup/groups', async (req, res) => {
+    try {
+        const threshold = Math.max(0, Math.min(20, Number(req.query.threshold) || 6));
+        const cfg = _aiCfg();
+        const r = ai.findPhashGroups({ threshold, fileTypes: cfg.fileTypes });
+        res.json({ success: true, ...r });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/ai/tags/scan', async (_req, res) => {
+    const cfg = _aiCfg();
+    if (!cfg.enabled || !cfg.tags.enabled) {
+        return res.status(503).json({ error: 'Auto-tagging is disabled', code: 'TAGS_DISABLED' });
+    }
+    const tracker = _jobTrackers.aiTags;
+    // Reuse the full index scan with only tags enabled — keeps the backfill
+    // logic centralised. Other capabilities are tri-state (cap.* missing
+    // = skip) so this only computes tags for the rows it visits.
+    const onlyTags = {
+        ...cfg,
+        embeddings: { ...cfg.embeddings, enabled: false },
+        faces:      { ...cfg.faces, enabled: false },
+        phash:      { enabled: false },
+    };
+    const r = tracker.tryStart(async ({ onProgress, signal }) => {
+        return ai.runIndexScan(onlyTags, { onProgress, signal, onLog: log });
+    });
+    if (!r.started) return res.status(409).json({ error: 'tags scan already running', code: 'ALREADY_RUNNING' });
+    res.json({ success: true, started: true });
+});
+
+app.get('/api/ai/tags/scan/status', async (_req, res) => {
+    res.json(_jobTrackers.aiTags.getStatus());
+});
+
+app.get('/api/ai/tags', async (req, res) => {
+    try {
+        const minCount = Math.max(1, Number(req.query.min_count) || 1);
+        res.json({ success: true, tags: listAllTags({ minCount }) });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.get('/api/ai/tags/:tag/photos', async (req, res) => {
+    try {
+        const tag = String(req.params.tag || '').trim();
+        if (!tag) return res.status(400).json({ error: 'tag required' });
+        const limit = Number(req.query.limit) || 50;
+        const offset = Number(req.query.offset) || 0;
+        res.json({ success: true, ...listPhotosForTag(tag, { limit, offset }) });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// ---- Model status + swap (v2.6 - operator visibility) -------------------
+//
+// The dashboard's "Models" panel asks: which AI models are loaded, how
+// big are their on-disk caches, and what's the most recent download
+// progress event? Single endpoint per page render — live progress arrives
+// via the `ai_model_progress` WS event wired above.
+app.get('/api/ai/models/status', async (_req, res) => {
+    try {
+        const cfg = _aiCfg();
+        const meta = ai.pipelineMetaSnapshot();
+        const errors = ai.pipelineErrorsSnapshot();
+        const metaByKey = new Map(meta.map((m) => [m.key, m]));
+        const errsByKey = new Map(errors.map((e) => [e.key, e]));
+
+        const out = {};
+        for (const desc of _MODEL_CAPS) {
+            const capCfg = cfg[desc.cfgKey] || {};
+            const modelId = capCfg.model || ai.AI_MODEL_DEFAULTS[desc.cfgKey]?.modelId || '';
+            const kind = ai.AI_MODEL_DEFAULTS[desc.cfgKey]?.kind || desc.defaultKind;
+            const key = `${kind}::${modelId}`;
+            const m = metaByKey.get(key);
+            const err = errsByKey.get(key);
+            const cache = await ai.inspectModelCache(modelId, cfg.cacheDir);
+            out[desc.cap] = {
+                modelId,
+                kind,
+                enabled: capCfg.enabled === true,
+                loaded: !!(m && m.loadedAt),
+                loading: !!(m && !m.loadedAt),
+                lastLoadedAt: m?.loadedAt || null,
+                startedAt: m?.startedAt || null,
+                lastProgress: m?.lastProgress || null,
+                error: err ? err.message : null,
+                cacheBytes: cache.bytes,
+                cacheFiles: cache.files,
+                cacheDir: cache.dir,
+            };
+        }
+        res.json({
+            success: true,
+            cacheRoot: ai.resolveCacheDir(cfg.cacheDir),
+            models: out,
+        });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Wipe the cached weights for a single model id. The next scan / search
+// will redownload from huggingface.co. Confirm-gated on the client.
+app.delete('/api/ai/models/cache', async (req, res) => {
+    try {
+        const modelId = String(req.query.model || req.body?.model || '').trim();
+        if (!modelId) return res.status(400).json({ error: 'model id required' });
+        const cfg = _aiCfg();
+        // Drop the in-process pipeline first so the on-disk wipe doesn't
+        // leave a stale handle wired to deleted weights.
+        try { await ai.clearPipelineForModel(modelId); } catch { /* ignore */ }
+        const r = await ai.deleteModelCache(modelId, cfg.cacheDir);
+        log({ source: 'ai', level: 'info', msg: `model cache wiped: ${modelId} (${r.bytes} bytes)` });
+        res.json({ success: true, ...r });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// "More like this" — top-K rows by cosine similarity against the source
+// row's embedding. Reuses the in-memory vector cache from vector-store.js
+// so a second similar-search after a text search is essentially free
+// (same cache hit).
+app.post('/api/ai/search/similar', async (req, res) => {
+    try {
+        const downloadId = Number(req.body?.downloadId);
+        if (!Number.isInteger(downloadId) || downloadId <= 0) {
+            return res.status(400).json({ error: 'downloadId required' });
+        }
+        const cfg = _aiCfg();
+        if (!cfg.enabled || !cfg.embeddings.enabled) {
+            return res.status(503).json({ error: 'AI embeddings are disabled', code: 'EMBEDDINGS_DISABLED' });
+        }
+        const limit = Math.max(1, Math.min(200, Number(req.body?.limit) || 24));
+        // Pull every embedding (cache-friendly via vector-store.topK
+        // re-using the same listing) so we can grab the source row's
+        // vector without a new SELECT path.
+        const { listAllImageEmbeddings } = await import('../core/db.js');
+        const rows = listAllImageEmbeddings({ fileTypes: cfg.fileTypes });
+        const src = rows.find((r) => r.download_id === downloadId);
+        if (!src || !src.embedding) {
+            return res.status(404).json({ error: 'no embedding for that download' });
+        }
+        const { blobToVector } = await import('../core/ai/vector-store.js');
+        const vec = blobToVector(src.embedding);
+        if (!vec) return res.status(500).json({ error: 'embedding decode failed' });
+        // Run topK; remove the source row itself from the result list.
+        const { topK } = await import('../core/ai/vector-store.js');
+        const top = topK(vec, { limit: limit + 1, fileTypes: cfg.fileTypes });
+        const results = top
+            .filter((r) => r.download_id !== downloadId)
+            .slice(0, limit)
+            .map((r) => ({
+                download_id: r.download_id,
+                score: r.score,
+                file_name: r.row.file_name,
+                file_path: r.row.file_path,
+                file_type: r.row.file_type,
+                file_size: r.row.file_size,
+                group_id:  r.row.group_id,
+                group_name: r.row.group_name,
+                created_at: r.row.created_at,
+            }));
+        res.json({
+            success: true,
+            source: {
+                download_id: src.download_id,
+                file_name: src.file_name,
+                group_id: src.group_id,
+                group_name: src.group_name,
+            },
+            results,
+            total: results.length,
+        });
+    } catch (e) {
+        log({ source: 'ai', level: 'error', msg: `similar search failed: ${e?.message || e}` });
+        res.status(500).json({ error: e.message });
+    }
+});
 
 // ====== Share-link admin API ===============================================
 //
@@ -4047,7 +5585,40 @@ app.post('/api/config', async (req, res) => {
                     ...(cur.nsfw || {}),
                     ...(inc.nsfw || {}),
                 },
+                thumbs: {
+                    ...(cur.thumbs || {}),
+                    ...(inc.thumbs || {}),
+                },
+                ai: (() => {
+                    // Two-level deep-merge for the AI namespace so the
+                    // model-swap UI can PATCH a single capability's model
+                    // id without flattening the others. Per-capability
+                    // sub-objects are spread individually for the same
+                    // reason.
+                    const c = cur.ai || {};
+                    const i = inc.ai || {};
+                    return {
+                        ...c,
+                        ...i,
+                        embeddings: { ...(c.embeddings || {}), ...(i.embeddings || {}) },
+                        faces:      { ...(c.faces || {}),      ...(i.faces || {}) },
+                        tags:       { ...(c.tags || {}),       ...(i.tags || {}) },
+                        phash:      { ...(c.phash || {}),      ...(i.phash || {}) },
+                    };
+                })(),
             };
+            // ffmpeg hwaccel — allow-list validation. An attacker who
+            // got past the admin gate could otherwise pass arbitrary
+            // text into the ffmpeg `-hwaccel <…>` arg. Allow-list keeps
+            // the universe of accepted values explicit; anything off-list
+            // falls back to '' (CPU). Documented in docs/DEPLOY.md.
+            const HWACCEL_ALLOW = new Set(['', 'vaapi', 'qsv', 'cuda', 'videotoolbox', 'd3d11va', 'dxva2']);
+            const hwIn = String(merged.thumbs?.hwaccel || '').toLowerCase().trim();
+            merged.thumbs.hwaccel = HWACCEL_ALLOW.has(hwIn) ? hwIn : '';
+            // warnMisses — boolean, default true. Coerce non-false to true
+            // so a hand-edited string ("yes", 1) doesn't quietly disable
+            // the helpful warning.
+            merged.thumbs.warnMisses = merged.thumbs.warnMisses !== false;
             // Clamp every numeric so a typo can't ban the user from logging
             // in (sessionTtlDays=0) or hose the downloader (minConcurrency=0).
             const d = merged.downloader;
@@ -4099,6 +5670,13 @@ app.post('/api/config', async (req, res) => {
             // validation only (string coerce, allowlist-strip).
             ns.model = (typeof ns.model === 'string' && ns.model.trim())
                 ? ns.model.trim() : NSFW_DEFAULTS.model;
+            // dtype controls which ONNX variant is fetched from HuggingFace.
+            // Allow-list keeps a typo from sending arbitrary text to the
+            // transformers.js loader and helps the UI fall back to the
+            // documented default when the operator clears the field.
+            const NSFW_DTYPES = new Set(['q8', 'fp16', 'fp32', 'q4']);
+            const dIn = String(ns.dtype || '').toLowerCase().trim();
+            ns.dtype = NSFW_DTYPES.has(dIn) ? dIn : NSFW_DEFAULTS.dtype;
             ns.cacheDir = (typeof ns.cacheDir === 'string' && ns.cacheDir.trim())
                 ? ns.cacheDir.trim() : NSFW_DEFAULTS.cacheDir;
             const ALLOWED_TYPES = ['photo', 'video', 'sticker', 'document'];
@@ -4157,6 +5735,25 @@ app.post('/api/config', async (req, res) => {
         // Refresh the cached rate-limit config so the toggle / RPM change
         // takes effect immediately instead of waiting for the 30s sweep.
         if (req.body.web?.rateLimit) refreshRateLimitConfig();
+
+        // Drop cached AI pipelines for any capability whose model id
+        // changed. Without this, a save through the model-swap UI would
+        // not take effect until the process restarted because the old
+        // pipeline handle is still cached under the old id.
+        if (req.body.advanced?.ai) {
+            try {
+                const oldAi = currentConfig.advanced?.ai || {};
+                const newAi = newConfig.advanced?.ai || {};
+                const _drop = async (oldId) => {
+                    if (oldId) await ai.clearPipelineForModel(oldId);
+                };
+                for (const cap of ['embeddings', 'faces', 'tags']) {
+                    const o = oldAi[cap]?.model || '';
+                    const n = newAi[cap]?.model || '';
+                    if (o && o !== n) _drop(o).catch(() => {});
+                }
+            } catch (e) { console.warn('[ai] pipeline reset failed:', e.message); }
+        }
 
         // Restart the disk rotator if the user changed any diskManagement
         // field — picks up the new cap / enabled / interval on the very next
@@ -4381,6 +5978,13 @@ async function _spawnInternalBackfill({ groupId, limit, mode = 'pull-older', rea
             job.finishedAt = Date.now();
             delete job._runner;
             broadcast({ type: 'history_error', jobId, error: job.error, group: group.name, groupId: groupKey });
+            // Same hint flow as the user-triggered branch above so auto-
+            // backfills (first-add bootstrap, post-restart catch-up) get
+            // a readable diagnostic when they fail.
+            const hint = /no available account/i.test(job.error)
+                ? ' (no logged-in account can read this group — check Settings → Telegram Accounts)'
+                : '';
+            log({ source: 'backfill', level: 'error', msg: `auto-backfill failed for "${group.name}" (${groupKey}): ${job.error}${hint}` });
             if (standalone) downloader.stop().catch(() => {});
             saveHistoryJobsToDisk().catch(() => {});
             if (_activeBackfillsByGroup.get(groupKey) === jobId) _activeBackfillsByGroup.delete(groupKey);
@@ -4429,73 +6033,99 @@ app.get('/api/groups/:id/photo', async (req, res) => {
 // Walks every group (config-defined and DB-only) and tries to resolve a
 // human-readable name + cached profile photo. Used by the SPA when it
 // detects a row whose name is "Unknown" or just the numeric id.
+//
+// Fire-and-forget — with 100 groups × Telegram rate limits this can take
+// 30+ s. POST returns instantly; per-id progress streams via
+// `groups_refresh_info_progress`, the final `updates` array via
+// `groups_refresh_info_done`. The legacy `groups_refreshed` broadcast is
+// preserved for clients that already subscribe to it.
 app.post('/api/groups/refresh-info', async (req, res) => {
-    try {
+    const tracker = _jobTrackers.groupsRefreshInfo;
+    const r = tracker.tryStart(async ({ onProgress }) => {
         const config = JSON.parse(await fs.readFile(CONFIG_PATH, 'utf8'));
         const ids = new Set((config.groups || []).map(g => String(g.id)));
-        // Add IDs that exist in DB but not in config (e.g. paste-link only).
         try {
             const rows = getDb().prepare('SELECT DISTINCT group_id, group_name FROM downloads').all();
-            for (const r of rows) ids.add(String(r.group_id));
+            for (const rr of rows) ids.add(String(rr.group_id));
         } catch {}
 
         let updated = 0;
         let mutatedConfig = false;
-        // Per-id name pairs broadcast to every connected SPA so each tab
-        // can merge them into its canonical `state.groupNameCache` without
-        // a full /api/groups round-trip. Also returned in the HTTP body
-        // so the caller can update its own state immediately.
         const updates = [];
+        const total = ids.size;
+        let processed = 0;
+        onProgress({ processed: 0, total, updated: 0, stage: 'resolving' });
         for (const id of ids) {
             const resolved = await resolveEntityAcrossAccounts(id);
-            if (!resolved) continue;
-            const { entity } = resolved;
-            const realName = entity?.title
-                || (entity?.firstName && (entity.firstName + (entity.lastName ? ' ' + entity.lastName : '')))
-                || entity?.username || null;
-            if (realName) {
-                // Update config entry name (if exists).
-                const cg = (config.groups || []).find(g => String(g.id) === id);
-                if (cg && (!cg.name || cg.name === 'Unknown' || cg.name === id || cg.name.startsWith('Group '))) {
-                    cg.name = realName;
-                    mutatedConfig = true;
+            if (resolved) {
+                const { entity } = resolved;
+                const realName = entity?.title
+                    || (entity?.firstName && (entity.firstName + (entity.lastName ? ' ' + entity.lastName : '')))
+                    || entity?.username || null;
+                if (realName) {
+                    const cg = (config.groups || []).find(g => String(g.id) === id);
+                    if (cg && (!cg.name || cg.name === 'Unknown' || cg.name === id || cg.name.startsWith('Group '))) {
+                        cg.name = realName;
+                        mutatedConfig = true;
+                    }
+                    try {
+                        const stmt = getDb().prepare(`UPDATE downloads SET group_name = ? WHERE group_id = ? AND (group_name IS NULL OR group_name = '' OR group_name = 'Unknown' OR group_name = ?)`);
+                        stmt.run(realName, id, id);
+                    } catch {}
+                    updates.push({ id, name: realName });
+                    updated++;
                 }
-                // Update DB rows that still have the placeholder.
-                try {
-                    const stmt = getDb().prepare(`UPDATE downloads SET group_name = ? WHERE group_id = ? AND (group_name IS NULL OR group_name = '' OR group_name = 'Unknown' OR group_name = ?)`);
-                    stmt.run(realName, id, id);
-                } catch {}
-                updates.push({ id, name: realName });
-                updated++;
+                await downloadProfilePhoto(id).catch(() => {});
             }
-            // Photo (best-effort)
-            await downloadProfilePhoto(id).catch(() => {});
+            processed += 1;
+            onProgress({ processed, total, updated, stage: 'resolving' });
         }
         if (mutatedConfig) await writeConfigAtomic(config);
         if (updates.length) {
             try { broadcast({ type: 'groups_refreshed', updates }); } catch {}
         }
-        res.json({ success: true, updated, scanned: ids.size, updates });
-    } catch (e) {
-        console.error('refresh-info:', e);
-        res.status(500).json({ error: e.message });
+        return { updated, scanned: total, updates };
+    });
+    if (!r.started) {
+        // Hydrate the snapshot so the front-end keeps the button disabled
+        // and doesn't show a misleading "failed" toast.
+        return res.status(409).json({ error: 'Group refresh already in progress', code: 'ALREADY_RUNNING', snapshot: r.snapshot });
     }
+    res.json({ success: true, started: true });
+});
+
+app.get('/api/groups/refresh-info/status', async (req, res) => {
+    res.json(_jobTrackers.groupsRefreshInfo.getStatus());
 });
 
 app.post('/api/groups/refresh-photos', async (req, res) => {
-   try {
-       const config = JSON.parse(await fs.readFile(CONFIG_PATH, 'utf8'));
-       const results = [];
-       for (const group of config.groups || []) {
-           const url = await downloadProfilePhoto(group.id);
-           results.push({ id: group.id, url });
-       }
-       res.json({ success: true, results });
-   } catch (e) {
-       res.status(500).json({ error: e.message });
-   }
+    const tracker = _jobTrackers.groupsRefreshPhotos;
+    const r = tracker.tryStart(async ({ onProgress }) => {
+        const config = JSON.parse(await fs.readFile(CONFIG_PATH, 'utf8'));
+        const groups = config.groups || [];
+        const total = groups.length;
+        let processed = 0;
+        const results = [];
+        onProgress({ processed: 0, total, stage: 'downloading' });
+        for (const group of groups) {
+            const url = await downloadProfilePhoto(group.id).catch(() => null);
+            results.push({ id: group.id, url });
+            processed += 1;
+            onProgress({ processed, total, stage: 'downloading' });
+        }
+        return { results };
+    });
+    if (!r.started) {
+        return res.status(409).json({ error: 'Photo refresh already in progress', code: 'ALREADY_RUNNING' });
+    }
+    res.json({ success: true, started: true });
 });
 
+app.get('/api/groups/refresh-photos/status', async (req, res) => {
+    res.json(_jobTrackers.groupsRefreshPhotos.getStatus());
+});
+
+// ============ FILE SERVING ============
 // Serve files from data/downloads. Uses safeResolveDownload to reject path
 // traversal, NUL bytes, and symlink escapes. Adds Content-Disposition so a
 // rogue HTML file can't be rendered inline (the browser still inlines images
@@ -4547,11 +6177,51 @@ app.use('/files', async (req, res, next) => {
             'Content-Disposition',
             `${dispKind}; filename*=UTF-8''${encodeURIComponent(baseName)}`
         );
+
+        // HEIC / HEIF inline view — browsers don't render the format
+        // natively (Safari excepted, and even there only on iOS / macOS).
+        // For inline requests we transcode on the fly to JPEG via sharp's
+        // built-in libheif (compiled into the prebuilt sharp binary), and
+        // cache the result so the second open is a static stream. Disk
+        // download (`?inline=1` absent) keeps the original .heic bytes.
+        const heicExt = path.extname(r.real).toLowerCase();
+        if (inline && (heicExt === '.heic' || heicExt === '.heif')) {
+            try {
+                const cachePath = await _heicInlineCache(r.real);
+                res.setHeader('Content-Type', 'image/jpeg');
+                res.setHeader('Cache-Control', 'private, max-age=86400');
+                return res.sendFile(cachePath);
+            } catch (e) {
+                console.warn('[heic] inline transcode failed:', baseName, e?.message || e);
+                // Fall through to raw .heic — Safari users still get the file.
+            }
+        }
         res.sendFile(r.real);
     } catch (e) {
         next();
     }
 });
+
+// HEIC inline cache — a single transcoded JPEG per source file. Keyed by
+// (path, mtime) so an edited / replaced .heic re-renders. Cache directory
+// is the same one thumbs.js owns, namespaced under heic-cache/ so the
+// thumb purge button doesn't sweep these mid-view.
+const _HEIC_CACHE_DIR = path.join(DATA_DIR, 'thumbs', 'heic-cache');
+async function _heicInlineCache(srcAbs) {
+    await fs.mkdir(_HEIC_CACHE_DIR, { recursive: true });
+    const st = await fs.stat(srcAbs);
+    const key = crypto.createHash('sha1').update(`${srcAbs}\0${st.mtimeMs}`).digest('hex');
+    const dst = path.join(_HEIC_CACHE_DIR, `${key}.jpg`);
+    if (existsSync(dst)) return dst;
+    // Rotate honors EXIF orientation; quality 85 / progressive trades a
+    // little CPU for visibly nicer rendering vs the default 80.
+    const sharp = (await import('sharp')).default;
+    await sharp(srcAbs, { failOn: 'none' })
+        .rotate()
+        .jpeg({ quality: 85, progressive: true })
+        .toFile(dst);
+    return dst;
+}
 
 
 // ============ TELEGRAM CONNECTION ============
@@ -4685,6 +6355,96 @@ function broadcast(data) {
     });
 }
 
+// ---- In-memory log ring + WS stream ---------------------------------------
+//
+// Keeps the last LOG_BUFFER_SIZE structured log entries so the
+// /maintenance/logs page can render history on first paint instead of
+// waiting for live events. Each entry is also broadcast over WS as a
+// `log` message — admin clients hold an open socket and tail in real time.
+//
+// Each entry: { ts:number(ms), source:string, level:'info'|'warn'|'error', msg:string }
+//
+// The buffer is bounded so a chatty failure mode (e.g. an integrity sweep
+// looping on a missing file) can't grow it without limit.
+const LOG_BUFFER_SIZE = 1000;
+const _logBuffer = [];
+
+function log({ source = 'app', level = 'info', msg = '' }) {
+    const entry = { ts: Date.now(), source, level, msg: String(msg).slice(0, 4000) };
+    _logBuffer.push(entry);
+    if (_logBuffer.length > LOG_BUFFER_SIZE) _logBuffer.shift();
+    try { broadcast({ type: 'log', ...entry }); } catch {}
+    // Mirror to stdout/stderr so the docker logs / journald path keeps
+    // working — the web view is additive, not a replacement.
+    const line = `[${new Date(entry.ts).toISOString()}] [${source}] [${level}] ${entry.msg}`;
+    if (level === 'error') console.error(line);
+    else if (level === 'warn') console.warn(line);
+    else console.log(line);
+}
+
+// ---- Shared job-tracker registry -----------------------------------------
+//
+// One tracker per logical job kind. Defined here so they have access to
+// the closures over `broadcast` and `log` declared above. The set is
+// referenced from Maintenance + Groups endpoints further up the file.
+//
+// Per-group purge is keyed dynamically because multi-flight is OK
+// across distinct groups (purging chat A and chat B in parallel doesn't
+// conflict). Single-flight is enforced per group id.
+const _jobTrackers = {
+    filesVerify:        createJobTracker({ kind: 'filesVerify',        broadcast, log, eventPrefix: 'files_verify' }),
+    dbVacuum:           createJobTracker({ kind: 'dbVacuum',           broadcast, log, eventPrefix: 'db_vacuum' }),
+    dbIntegrity:        createJobTracker({ kind: 'dbIntegrity',        broadcast, log, eventPrefix: 'db_integrity' }),
+    restartMonitor:     createJobTracker({ kind: 'restartMonitor',     broadcast, log, eventPrefix: 'restart_monitor' }),
+    resyncDialogs:      createJobTracker({ kind: 'resyncDialogs',      broadcast, log, eventPrefix: 'resync_dialogs' }),
+    dedupDelete:        createJobTracker({ kind: 'dedupDelete',        broadcast, log, eventPrefix: 'dedup_delete' }),
+    nsfwBulk:           createJobTracker({ kind: 'nsfwBulk',           broadcast, log, eventPrefix: 'nsfw_bulk' }),
+    thumbsRebuild:      createJobTracker({ kind: 'thumbsRebuild',      broadcast, log, eventPrefix: 'thumbs_rebuild' }),
+    autoUpdate:         createJobTracker({ kind: 'autoUpdate',         broadcast, log, eventPrefix: 'update' }),
+    groupsRefreshInfo:  createJobTracker({ kind: 'groupsRefreshInfo',  broadcast, log, eventPrefix: 'groups_refresh_info' }),
+    groupsRefreshPhotos:createJobTracker({ kind: 'groupsRefreshPhotos',broadcast, log, eventPrefix: 'groups_refresh_photos' }),
+    purgeAll:           createJobTracker({ kind: 'purgeAll',           broadcast, log, eventPrefix: 'purge_all' }),
+    // AI subsystem (v2.6.0) — one tracker per long-running scan kind.
+    aiIndex:            createJobTracker({ kind: 'aiIndex',            broadcast, log, eventPrefix: 'ai_index' }),
+    aiPeople:           createJobTracker({ kind: 'aiPeople',           broadcast, log, eventPrefix: 'ai_people' }),
+    aiPhash:            createJobTracker({ kind: 'aiPhash',            broadcast, log, eventPrefix: 'ai_phash' }),
+    aiTags:             createJobTracker({ kind: 'aiTags',             broadcast, log, eventPrefix: 'ai_tags' }),
+};
+// One tracker per group id for `/api/groups/:id/purge`. Lazily created
+// because we don't know the group ids in advance, and a group that's
+// finished its purge can be GC'd from this map. Keep last 32 to bound.
+const _groupPurgeTrackers = new Map();
+function _groupPurgeTracker(groupId) {
+    const k = `groupPurge:${groupId}`;
+    if (!_groupPurgeTrackers.has(k)) {
+        if (_groupPurgeTrackers.size >= 32) {
+            // Evict the oldest non-running tracker.
+            for (const [oldKey, t] of _groupPurgeTrackers) {
+                if (!t.isRunning()) { _groupPurgeTrackers.delete(oldKey); break; }
+            }
+        }
+        _groupPurgeTrackers.set(k, createJobTracker({
+            kind: k, broadcast, log, eventPrefix: 'group_purge',
+        }));
+    }
+    return _groupPurgeTrackers.get(k);
+}
+
+// Snapshot for GET /api/maintenance/logs/recent — newest first, capped.
+app.get('/api/maintenance/logs/recent', async (req, res) => {
+    const limit = Math.max(1, Math.min(LOG_BUFFER_SIZE, Number(req.query.limit) || 200));
+    const sources = (req.query.source ? String(req.query.source).split(',') : null);
+    const minLevel = req.query.level || null; // 'info'|'warn'|'error'
+    const levelOrder = { info: 0, warn: 1, error: 2 };
+    const minLvl = minLevel ? (levelOrder[minLevel] ?? 0) : 0;
+    const filtered = _logBuffer.filter((e) => {
+        if (sources && !sources.includes(e.source)) return false;
+        if ((levelOrder[e.level] ?? 0) < minLvl) return false;
+        return true;
+    });
+    res.json({ logs: filtered.slice(-limit) });
+});
+
 wss.on('connection', (ws) => {
     clients.add(ws);
     ws.on('close', () => clients.delete(ws));
@@ -4785,6 +6545,43 @@ ${tip}
         sweeper.start();
     } catch (e) {
         console.warn('[rescue] start failed:', e.message);
+    }
+
+    // Backup subsystem — multi-provider mirror + snapshot worker. The
+    // manager hooks the runtime's download_complete event so newly-arrived
+    // files fan out to every enabled mirror destination automatically.
+    // Any persisted destination from a previous boot has its worker
+    // restarted (and stuck `uploading` rows reset to `pending`) inside
+    // backup.init().
+    try {
+        backup.init({
+            broadcast,
+            log,
+            getShareSecret: () => {
+                try {
+                    const cfg = JSON.parse(fsSync.readFileSync(CONFIG_PATH, 'utf8'));
+                    return cfg?.web?.shareSecret || null;
+                } catch { return null; }
+            },
+            runtime,
+        });
+    } catch (e) {
+        console.warn('[backup] init failed:', e.message);
+    }
+
+    // Pre-fetch the NSFW classifier in the background when the operator
+    // has enabled both `advanced.nsfw.enabled` and `advanced.nsfw.preload`.
+    // Fire-and-forget — boot is never blocked by the model download.
+    try {
+        const cfg = _nsfwCfg();
+        if (cfg.enabled && cfg.preload === true) {
+            nsfwPreloadClassifier(cfg,
+                (p) => { try { broadcast({ type: 'nsfw_model_downloading', ...p }); } catch {} },
+                (entry) => log(entry),
+            ).catch(() => { /* errors land in the realtime log via onLog */ });
+        }
+    } catch (e) {
+        console.warn('[nsfw] preload-on-boot skipped:', e.message);
     }
 
     // Resolve group names from Telegram for any DB records still unnamed

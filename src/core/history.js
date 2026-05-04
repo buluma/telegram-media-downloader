@@ -336,6 +336,15 @@ export class HistoryDownloader extends EventEmitter {
             }
         } catch (error) {
             this.emit('error', error);
+            // Re-throw so the Promise returned by downloadHistory rejects.
+            // Without this re-throw, server.js's `.then(...).catch(...)`
+            // pattern only ever hit `.then()` — no matter how the run
+            // failed — and the dashboard would flash a green "Done" pill
+            // a few milliseconds after Start. The most common surface
+            // was "discoverClientForGroup returned null" (no account in
+            // the group), which threw here, was emitted on the EE, then
+            // got smothered when the function returned normally.
+            throw error;
         } finally {
             const cancelled = this.cancelFlag === true;
             this.running = false;

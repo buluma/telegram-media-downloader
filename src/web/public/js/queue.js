@@ -40,6 +40,9 @@ const PAGE_SIZE = 50;
 const RENDER_COALESCE_MS = 60;  // collapse WS bursts into one rAF tick
 
 // Filter chip definitions. Order matters — also drives the keyboard tab order.
+// `dupe` is a cross-cutting filter (any status, but only rows the
+// downloader flagged as duplicates) — surfaces the rows that produced no
+// new bytes on disk, so the operator can see "what got skipped today".
 const STATUS_FILTERS = [
     { id: 'all',     i18n: 'queue.chip.all',     fallback: 'All',     match: () => true },
     { id: 'active',  i18n: 'queue.chip.active',  fallback: 'Active',  match: (j) => j.status === 'active' },
@@ -47,6 +50,7 @@ const STATUS_FILTERS = [
     { id: 'paused',  i18n: 'queue.chip.paused',  fallback: 'Paused',  match: (j) => j.status === 'paused' },
     { id: 'failed',  i18n: 'queue.chip.failed',  fallback: 'Failed',  match: (j) => j.status === 'failed' },
     { id: 'done',    i18n: 'queue.chip.done',    fallback: 'Done',    match: (j) => j.status === 'done' },
+    { id: 'dupe',    i18n: 'queue.chip.dupe',    fallback: 'Duplicate', match: (j) => j.deduped === true },
 ];
 
 // ============ Store ============
@@ -278,6 +282,10 @@ function handleWs(msg) {
             bps: 0,
             eta: 0,
             status: 'done',
+            // `deduped` rides on the same WS event from server.js. Surfaces
+            // a "Duplicate" tag in the row so the operator can see at a
+            // glance which finishes shared an existing on-disk file.
+            deduped: p.deduped === true,
             addedAt: p.addedAt || Date.now(),
             finishedAt: Date.now(),
             filePath: p.filePath || null,
@@ -642,6 +650,15 @@ function renderRow(j) {
     }[j.status] || 'bg-gray-700/40 text-gray-300';
     const pillLabel = i18nT(`queue.status.${j.status}`, j.status);
 
+    // "Duplicate" tag — emitted when the downloader finished but the file
+    // hash matched an existing on-disk row. The file isn't downloaded
+    // again (`bytesAddedToDisk = 0`) but the (group, msg) → file mapping
+    // is still recorded so it shows in the gallery. The tag stays after
+    // dismiss/close — purely informational.
+    const dupBadge = j.deduped
+        ? `<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-tg-orange/15 text-tg-orange ml-1.5 inline-flex items-center gap-0.5" title="${escapeHtml(i18nT('queue.duplicate.tooltip', 'Same file already exists on disk — no new bytes written, this row points at the existing copy.'))}"><i class="ri-file-copy-2-line"></i><span data-i18n="queue.duplicate">Duplicate</span></span>`
+        : '';
+
     // Click-to-view: a finished row whose filePath we know becomes a link
     // to the in-app media viewer. Nothing else changes (drag-select etc.
     // still fires through the same handler).
@@ -712,7 +729,7 @@ function renderRow(j) {
             </div>
             <div data-row-meta class="text-xs text-tg-textSecondary text-right tabular-nums">${escapeHtml(speedStr)}</div>
             <div class="text-xs text-tg-textSecondary text-right tabular-nums">${escapeHtml(etaStr)}</div>
-            <div><span data-row-status data-status="${escapeHtml(j.status)}" class="text-[11px] px-2 py-0.5 rounded-full ${pillCls}">${escapeHtml(pillLabel)}</span></div>
+            <div><span data-row-status data-status="${escapeHtml(j.status)}" class="text-[11px] px-2 py-0.5 rounded-full ${pillCls}">${escapeHtml(pillLabel)}</span>${dupBadge}</div>
             <div class="flex items-center justify-end gap-1">${actions.join('')}</div>
         </div>`;
 }

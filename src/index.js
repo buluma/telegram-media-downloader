@@ -3,6 +3,8 @@
  * Multi-Account Support
  */
 
+import { TelegramClient } from 'telegram';
+import { StringSession } from 'telegram/sessions/index.js';
 import readline from 'readline';
 import fs from 'fs';
 import path from 'path';
@@ -11,13 +13,15 @@ import os from 'os';
 import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
-import { loadConfig, saveConfig } from './config/manager.js';
+import { loadConfig, saveConfig, addGroup } from './config/manager.js';
 import { hashPassword } from './core/web-auth.js';
 import { suppressNoise, wrapConsoleMethod } from './core/logger.js';
+import { RateLimiter, SecureSession } from './core/security.js';
 import { ConnectionManager } from './core/connection.js';
 import { AccountManager } from './core/accounts.js';
 import { colorize, clearScreen, formatBytes } from './cli/colors.js';
 import { resilience } from './core/resilience.js';
+import { getOrGenerateSecret } from './core/secret.js';
 import { getDb, getStats as getDbStats, deleteGroupDownloads, deleteAllDownloads, backfillGroupNames } from './core/db.js';
 import { sanitizeName, migrateFolders } from './core/downloader.js';
 
@@ -30,9 +34,18 @@ const CONFIG_PATH = path.join(__dirname, '../data/config.json');
 // at debug level instead of dropping them silently — a previous version
 // of this file used a regex-string-includes filter that swallowed real
 // errors that happened to contain the same words.
+// Same native-binary-load guard the web server uses — keeps a CLI run
+// from dying on `Error loading shared library ld-linux-…` when an
+// optional dep (most often `onnxruntime-node`, transitively from the
+// optional NSFW classifier) ships glibc-only prebuilds on a musl image.
+const _NATIVE_LOAD_FAIL_CLI = /(ld-linux|ld-musl|libonnxruntime|GLIBC_|NODE_MODULE_VERSION|cannot open shared object|Error loading shared library)/i;
 process.on('unhandledRejection', (reason) => {
     const msg = reason?.message || String(reason);
     if (suppressNoise(msg, 'unhandledRejection')) return;
+    if (_NATIVE_LOAD_FAIL_CLI.test(msg)) {
+        console.warn('[startup] An optional native module failed to load:', msg.slice(0, 200));
+        return;
+    }
     console.error('Unhandled rejection:', reason);
 });
 
@@ -51,27 +64,6 @@ function question(query) {
             resolve(answer);
         });
     });
-}
-
-function assertNodeCompatible() {
-    const major = Number(String(process.versions.node || '').split('.')[0]);
-    if (major === 25) return;
-    console.error(colorize(
-        `❌ Unsupported Node.js ${process.versions.node} at ${process.execPath}. Use Node 25 exactly (see .nvmrc).`,
-        'red',
-        'bold',
-    ));
-    process.exit(1);
-}
-
-function printRuntimeDiagnostics() {
-    const localstorageArg = process.execArgv.find((a) => a.startsWith('--localstorage-file='));
-    const localstoragePath = localstorageArg ? localstorageArg.split('=')[1] : '(not set)';
-    console.log(colorize(
-        `[runtime] node=${process.versions.node} abi=${process.versions.modules} exec=${process.execPath}`,
-        'dim',
-    ));
-    console.log(colorize(`[runtime] localstorage-file=${localstoragePath}`, 'dim'));
 }
 
 function checkPortAvailable(port) {
@@ -99,18 +91,12 @@ function checkFfmpeg() {
 
 async function runDoctor() {
     const checks = [];
+
     const major = Number(String(process.versions.node || '').split('.')[0]);
     checks.push({
         name: 'Node runtime',
-        level: major === 25 ? 'ok' : 'fail',
-        detail: `v${process.versions.node} (ABI ${process.versions.modules}, ${process.platform}/${process.arch}) at ${process.execPath}`,
-    });
-
-    const localstorageArg = process.execArgv.find((a) => a.startsWith('--localstorage-file='));
-    checks.push({
-        name: 'Node localstorage flag',
-        level: localstorageArg ? 'ok' : 'fail',
-        detail: localstorageArg || 'missing --localstorage-file=<path>',
+        level: major >= 20 ? 'ok' : 'fail',
+        detail: `v${process.versions.node} (ABI ${process.versions.modules}, ${process.platform}/${process.arch}) — engines requires >=20`,
     });
 
     try {
@@ -182,6 +168,26 @@ async function runDoctor() {
         detail: ff.detail,
     });
 
+    // Optional NSFW classifier — moved to optionalDependencies in v2.4.0
+    // because `onnxruntime-node` (transitively pulled in) ships glibc-only
+    // prebuilt binaries that explode on musl-based Linux. We surface the
+    // availability as a `warn` (not `fail`) when missing — most operators
+    // never enable the NSFW review feature, so its absence is fine.
+    try {
+        await import('@huggingface/transformers');
+        checks.push({ name: 'NSFW classifier (optional)', level: 'ok', detail: '@huggingface/transformers loaded' });
+    } catch (e) {
+        const msg = e?.message || String(e);
+        const native = /(ld-linux|libonnxruntime|GLIBC_|NODE_MODULE_VERSION|cannot open shared object)/i.test(msg);
+        checks.push({
+            name: 'NSFW classifier (optional)',
+            level: 'warn',
+            detail: native
+                ? 'native binary missing (' + msg.slice(0, 120) + ') — reinstall on a glibc image or `npm uninstall @huggingface/transformers` to silence'
+                : 'not installed — `npm install @huggingface/transformers` if you want the NSFW review feature',
+        });
+    }
+
     console.log();
     console.log(colorize('🩺 Telegram Downloader — Doctor', 'cyan', 'bold'));
     console.log(colorize(`   host=${os.hostname()} platform=${process.platform} arch=${process.arch}`, 'dim'));
@@ -209,14 +215,9 @@ async function runDoctor() {
 }
 
 async function main() {
-    assertNodeCompatible();
-    printRuntimeDiagnostics();
+    resilience.init();
+
     const command = process.argv[2];
-    const isWebMode = !command || command === 'web';
-    // The web server has its own unhandled-rejection policy in web/server.js.
-    // Keeping the CLI fatal trap active there makes transient async blips
-    // terminate the whole HTTP process.
-    if (!isWebMode) resilience.init();
 
     // Default behaviour with no subcommand: launch the web dashboard.
     // Everything (accounts, groups, history, monitor, settings, link
@@ -239,6 +240,8 @@ async function main() {
         showMenu();
         return;
     }
+
+    // Diagnostics — non-interactive, safe to run in headless / CI / Docker.
     if (command === 'doctor') {
         await runDoctor();
         return;
@@ -959,6 +962,7 @@ async function configureGroups(accountManager, config) {
     });
 
     // Update config
+    let toggledCount = 0;
     for (const item of selection) {
         const configIndex = config.groups.findIndex(g => String(g.id) === String(item.id));
 
@@ -970,6 +974,7 @@ async function configureGroups(accountManager, config) {
             if (item.autoForward) {
                 config.groups[configIndex].autoForward = item.autoForward;
             }
+            toggledCount++;
         } else if (item.enabled) {
             // Add new enabled group
             config.groups.push({
@@ -981,6 +986,7 @@ async function configureGroups(accountManager, config) {
                 trackUsers: { enabled: false, users: [] },
                 topics: { enabled: false, ids: [] }
             });
+            toggledCount++;
         }
     }
 
@@ -1049,7 +1055,7 @@ async function startMonitor(accountManager, config) {
         }
     });
 
-    downloader.on('error', ({ error }) => {
+    downloader.on('error', ({ job, error }) => {
         console.log(colorize(`❌ Error: `, 'red') + error);
     });
 
@@ -1113,7 +1119,7 @@ async function startMonitor(accountManager, config) {
     });
 }
 
-async function startHistory(accountManager, config, _connManager) {
+async function startHistory(accountManager, config, connManager) {
     const startTime = Date.now();
     clearScreen();
     console.log(colorize('╔════════════════════════════════════════╗', 'magenta'));
@@ -1174,6 +1180,7 @@ async function startHistory(accountManager, config, _connManager) {
     const { DownloadManager } = await import('./core/downloader.js');
     const { HistoryDownloader } = await import('./core/history.js');
     const { RateLimiter } = await import('./core/security.js');
+    const { AutoForwarder } = await import('./core/forwarder.js');
 
     // Migrate old folder names (space → underscore) before downloading
     await migrateFolders(config.download?.path);
@@ -1336,6 +1343,7 @@ async function startHistory(accountManager, config, _connManager) {
     const choice = choiceStr.trim();
 
     let limit = 100;
+    let offsetId = 0;
     let offsetDate = 0;
 
     // Setup Downloader (Early init for scanning)
@@ -1499,7 +1507,7 @@ async function startHistory(accountManager, config, _connManager) {
         console.log(colorize(`✅ Saved: `, 'green') + path.basename(job.filePath));
     });
 
-    downloader.on('error', ({ error }) => {
+    downloader.on('error', ({ job, error }) => {
         errorCount++;
         console.log(colorize(`❌ Error: `, 'red') + error);
     });

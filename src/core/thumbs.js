@@ -50,10 +50,9 @@ const THUMBS_DIR = path.resolve(PROJECT_ROOT, 'data', 'thumbs');
 
 // Resolve the ffmpeg binary lazily and in priority order:
 //   1. FFMPEG_PATH env var (operator override).
-//   2. System `/usr/bin/ffmpeg` — what `apk add ffmpeg` installs in the
-//      Docker container, and the only thing that actually runs on
-//      alpine/musl. The published image ships ffmpeg this way so
-//      video / audio-cover thumbs work out of the box.
+//   2. System `/usr/bin/ffmpeg` — what `apt-get install ffmpeg` installs
+//      in the Docker container. The published image ships ffmpeg this
+//      way so video / audio-cover thumbs work out of the box.
 //   3. `@ffmpeg-installer/ffmpeg` — bundles prebuilt binaries for
 //      Windows / macOS / glibc-Linux (great DX on the maintainer's
 //      laptop). Loaded via createRequire so a missing or incompatible
@@ -62,6 +61,9 @@ const THUMBS_DIR = path.resolve(PROJECT_ROOT, 'data', 'thumbs');
 //   4. Plain `ffmpeg` and let PATH resolve it.
 const _localRequire = createRequire(import.meta.url);
 let _ffmpegBinResolved = null;
+// Exported via `resolveFfmpegBin` below so server.js's hwaccel-probe
+// endpoint hits the same resolution logic without duplicating env-var
+// + path-fallback rules.
 function _resolveFfmpegBin() {
     if (_ffmpegBinResolved !== null) return _ffmpegBinResolved;
     if (process.env.FFMPEG_PATH && existsSync(process.env.FFMPEG_PATH)) {
@@ -75,6 +77,10 @@ function _resolveFfmpegBin() {
     } catch { /* package missing or wrong arch — fall through */ }
     return (_ffmpegBinResolved = 'ffmpeg');
 }
+
+// Public-friendly wrapper for the resolver above — same value, just
+// callable from outside the module (server.js hwaccel-probe endpoint).
+export function resolveFfmpegBin() { return _resolveFfmpegBin(); }
 
 // Returns true if a workable ffmpeg is on this host. The video / audio
 // generators consult this so a host without ffmpeg cleanly returns null
@@ -239,6 +245,62 @@ function _runFfmpeg(args) {
     });
 }
 
+// Hardware acceleration prefix for ffmpeg. Two configuration paths,
+// both opt-in (default off → pure-CPU decode that works everywhere):
+//
+//   1. **Admin UI**: Settings → Advanced → "Video thumb hardware
+//      acceleration" dropdown (`config.advanced.thumbs.hwaccel`). Live-
+//      reads on every thumb job so changes take effect without a
+//      restart. The setter is validated against the allow-list below.
+//   2. **Env var override**: `FFMPEG_HWACCEL=<backend>` for headless
+//      deploys where the operator can't reach the dashboard yet. Wins
+//      over the config when set.
+//
+// Allow-listed backends:
+//   vaapi        — Intel iGPU + AMD on Linux/Docker (needs /dev/dri)
+//   qsv          — Intel Quick Sync (alternative VAAPI driver)
+//   cuda         — NVIDIA NVDEC
+//   videotoolbox — macOS (Intel + Apple Silicon)
+//   d3d11va      — Windows 8+ DirectX 11 video acceleration
+//   dxva2        — older Windows DirectX video acceleration
+//
+// Anything else (including empty / unknown) falls through to a no-op.
+//
+// The single-pass libwebp encode path needs frames in CPU memory by
+// the time the encoder runs, so we ask the decoder to upload to GPU
+// (`-hwaccel <x>`) but skip the `-hwaccel_output_format` flag. ffmpeg
+// does an implicit download before the encoder. Net win is ~3-5× on
+// Intel iGPU vs. pure CPU decode even without staying on the GPU.
+const _HWACCEL_ALLOW = new Set(['vaapi', 'cuda', 'qsv', 'videotoolbox', 'd3d11va', 'dxva2']);
+
+let _hwaccelConfigCache = { at: 0, value: '' };
+const _HWACCEL_CACHE_TTL_MS = 30 * 1000;
+
+async function _hwaccelFromConfig() {
+    const now = Date.now();
+    if ((now - _hwaccelConfigCache.at) < _HWACCEL_CACHE_TTL_MS) return _hwaccelConfigCache.value;
+    let value = '';
+    try {
+        const cfgPath = path.join(PROJECT_ROOT, 'data', 'config.json');
+        if (existsSync(cfgPath)) {
+            const raw = await fs.readFile(cfgPath, 'utf8');
+            const parsed = JSON.parse(raw);
+            const v = String(parsed?.advanced?.thumbs?.hwaccel || '').toLowerCase().trim();
+            if (_HWACCEL_ALLOW.has(v)) value = v;
+        }
+    } catch { /* missing / corrupt config → CPU fallback, never throw */ }
+    _hwaccelConfigCache = { at: now, value };
+    return value;
+}
+
+async function _hwaccelPrefix() {
+    // Env var takes precedence — power-user / headless override.
+    const env = String(process.env.FFMPEG_HWACCEL || '').toLowerCase().trim();
+    if (env && _HWACCEL_ALLOW.has(env)) return ['-hwaccel', env];
+    const cfg = await _hwaccelFromConfig();
+    return cfg ? ['-hwaccel', cfg] : [];
+}
+
 async function _generateVideoThumb(srcAbs, width, dstAbs) {
     // Two paths, picked once at boot from `_ffmpegHasLibwebp()`:
     //   • Fast (libwebp present): single-pass — seek + scale + libwebp encode
@@ -250,10 +312,12 @@ async function _generateVideoThumb(srcAbs, width, dstAbs) {
     // The seek tries 1 s first (skips opening titles); a fallback to 0 s
     // handles ultra-short clips where seeking past the end yields no frame.
     const useSinglePass = _ffmpegHasLibwebp();
+    const hwa = await _hwaccelPrefix();
     const tryAt = useSinglePass
         ? async (sec) => {
             const args = [
                 '-hide_banner', '-loglevel', 'error',
+                ...hwa,
                 '-ss', String(sec),
                 '-i', srcAbs,
                 '-frames:v', '1',

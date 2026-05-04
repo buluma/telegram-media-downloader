@@ -1,5 +1,15 @@
 # Troubleshooting
 
+## First stop: `npm run doctor`
+
+One-shot diagnostics — Node version + ABI, config load, `better-sqlite3` open + row count, `data/` writability, port availability (honours `PORT`), and `ffmpeg` on `PATH`. Cross-platform, non-interactive (safe to run inside CI / Docker / over SSH). Exits `1` on any blocking failure.
+
+```bash
+npm run doctor
+```
+
+If a check fails it prints what to do next. The most common hit is `SQLite (better-sqlite3): NODE_MODULE_VERSION ... was compiled against a different Node.js version` after a Node upgrade — `npm rebuild better-sqlite3` clears it.
+
 ## "Web dashboard not initialised — run `npm run auth`"
 
 The dashboard fails closed when no password is configured. Either:
@@ -69,7 +79,7 @@ Use the official account-recovery flow at <https://telegram.org/support>. We can
 
 ## Thumbnails don't render for video files
 
-`/api/thumbs/<id>` needs `ffmpeg` on PATH for video first-frame extraction. The Docker image includes it via `apk add ffmpeg`. For standalone installs the optional `@ffmpeg-installer/ffmpeg` npm package ships static binaries for Win / macOS / glibc-Linux. Alpine without the apk package falls through to "image-only" — Settings → Maintenance shows `ffmpeg unavailable — image-only` in that state. Override with the `FFMPEG_PATH` env var if needed.
+`/api/thumbs/<id>` needs `ffmpeg` on PATH for video first-frame extraction. The Docker image includes it via `apt-get install ffmpeg`. For standalone installs the optional `@ffmpeg-installer/ffmpeg` npm package ships static binaries for Win / macOS / glibc-Linux. Hosts without a system `ffmpeg` and without the npm shim fall through to "image-only" — Settings → Maintenance shows `ffmpeg unavailable — image-only` in that state. Override with the `FFMPEG_PATH` env var if needed.
 
 ## NSFW scan fails with "Failed to load @huggingface/transformers"
 

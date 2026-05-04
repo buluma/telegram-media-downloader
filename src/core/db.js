@@ -91,6 +91,16 @@ function initSchema() {
         'ALTER TABLE downloads ADD COLUMN nsfw_score REAL',
         'ALTER TABLE downloads ADD COLUMN nsfw_checked_at INTEGER',
         'ALTER TABLE downloads ADD COLUMN nsfw_whitelist INTEGER DEFAULT 0',
+        // AI subsystem (v2.6.0): per-row sparse columns. Most rows stay NULL
+        // until the corresponding feature is enabled and the indexer visits
+        // them.
+        //   phash          — 64-bit perceptual hash (DCT) for near-duplicate
+        //                    detection. Stored as INTEGER; SQLite handles 64-bit.
+        //   ai_indexed_at  — unix-ms of the most recent successful AI index pass
+        //                    (any of: embedding / faces / tags / phash). NULL =
+        //                    never indexed.
+        'ALTER TABLE downloads ADD COLUMN phash INTEGER',
+        'ALTER TABLE downloads ADD COLUMN ai_indexed_at INTEGER',
     ];
     for (const sql of migrations) {
         try { db.exec(sql); } catch { /* column already exists */ }
@@ -105,6 +115,54 @@ function initSchema() {
     //   - "show flagged sorted by score desc" (whitelist=0 AND score >= threshold)
     try { db.exec('CREATE INDEX IF NOT EXISTS idx_nsfw_unscanned ON downloads(file_type, nsfw_checked_at) WHERE nsfw_checked_at IS NULL'); } catch {}
     try { db.exec('CREATE INDEX IF NOT EXISTS idx_nsfw_review ON downloads(nsfw_score, nsfw_whitelist) WHERE nsfw_score IS NOT NULL'); } catch {}
+    // AI subsystem indexes — driven by the perceptual-dedup grouping pass and
+    // the "what's left to AI-index?" backfill query.
+    try { db.exec('CREATE INDEX IF NOT EXISTS idx_phash ON downloads(phash) WHERE phash IS NOT NULL'); } catch {}
+    try { db.exec('CREATE INDEX IF NOT EXISTS idx_ai_unindexed ON downloads(file_type, ai_indexed_at) WHERE ai_indexed_at IS NULL'); } catch {}
+
+    // AI subsystem auxiliary tables. All four are opt-in; rows only land
+    // here once the operator enables the relevant capability in
+    // config.advanced.ai and runs a scan. Schema is kept narrow on purpose —
+    // every column maps to a load-bearing query in src/core/ai/*.
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS image_embeddings (
+            download_id INTEGER PRIMARY KEY,
+            embedding   BLOB    NOT NULL,
+            model       TEXT    NOT NULL,
+            indexed_at  INTEGER NOT NULL,
+            FOREIGN KEY (download_id) REFERENCES downloads(id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS people (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            label              TEXT,
+            embedding_centroid BLOB    NOT NULL,
+            face_count         INTEGER NOT NULL DEFAULT 0,
+            created_at         INTEGER NOT NULL,
+            updated_at         INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS faces (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            download_id INTEGER NOT NULL,
+            x           REAL    NOT NULL,
+            y           REAL    NOT NULL,
+            w           REAL    NOT NULL,
+            h           REAL    NOT NULL,
+            embedding   BLOB    NOT NULL,
+            person_id   INTEGER,
+            FOREIGN KEY (download_id) REFERENCES downloads(id) ON DELETE CASCADE,
+            FOREIGN KEY (person_id)   REFERENCES people(id)    ON DELETE SET NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_faces_download ON faces(download_id);
+        CREATE INDEX IF NOT EXISTS idx_faces_person ON faces(person_id);
+        CREATE TABLE IF NOT EXISTS image_tags (
+            download_id INTEGER NOT NULL,
+            tag         TEXT    NOT NULL,
+            score       REAL    NOT NULL,
+            PRIMARY KEY (download_id, tag),
+            FOREIGN KEY (download_id) REFERENCES downloads(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_tags_tag_score ON image_tags(tag, score DESC);
+    `);
 
     // Smoke-test every column the rest of the code path depends on. The
     // ALTER TABLE migrations above swallow "column already exists" so they
@@ -113,7 +171,7 @@ function initSchema() {
     // halfway through a download — as a generic "no such column" runtime
     // error. Forcing the SELECT here makes us fail at boot instead.
     try {
-        db.prepare('SELECT pinned, pending_until, rescued_at, ttl_seconds, file_hash, nsfw_score, nsfw_checked_at, nsfw_whitelist FROM downloads LIMIT 0').all();
+        db.prepare('SELECT pinned, pending_until, rescued_at, ttl_seconds, file_hash, nsfw_score, nsfw_checked_at, nsfw_whitelist, phash, ai_indexed_at FROM downloads LIMIT 0').all();
     } catch (e) {
         throw new Error(`DB schema migration incomplete — column missing after ALTER TABLE: ${e.message}. Inspect data/db.sqlite or restore from backup.`);
     }
@@ -156,6 +214,58 @@ function initSchema() {
         CREATE INDEX IF NOT EXISTS idx_share_links_download ON share_links(download_id);
         CREATE INDEX IF NOT EXISTS idx_share_links_expiry ON share_links(expires_at);
     `);
+
+    // Backup destinations + per-destination job queue. The destination row
+    // owns provider config (encrypted at rest by core/backup/credentials.js
+    // — config_blob is opaque ciphertext, never plaintext on disk) and the
+    // optional encryption salt for client-side AES-256-GCM uploads. Jobs
+    // are append-only rows the per-destination worker drains; status flips
+    // pending → uploading → done|failed|skipped.
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS backup_destinations (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            name            TEXT    NOT NULL,
+            provider        TEXT    NOT NULL,
+            config_blob     BLOB    NOT NULL,
+            enabled         INTEGER NOT NULL DEFAULT 1,
+            encryption      INTEGER NOT NULL DEFAULT 0,
+            encryption_salt BLOB,
+            mode            TEXT    NOT NULL DEFAULT 'mirror',
+            cron            TEXT,
+            retain_count    INTEGER DEFAULT 7,
+            last_success_at INTEGER,
+            last_failure_at INTEGER,
+            last_error      TEXT,
+            total_bytes     INTEGER NOT NULL DEFAULT 0,
+            total_files     INTEGER NOT NULL DEFAULT 0,
+            throttle_bps    INTEGER,
+            created_at      INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS backup_jobs (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            destination_id  INTEGER NOT NULL,
+            download_id     INTEGER,
+            snapshot_path   TEXT,
+            status          TEXT    NOT NULL DEFAULT 'pending',
+            attempts        INTEGER NOT NULL DEFAULT 0,
+            max_attempts    INTEGER NOT NULL DEFAULT 5,
+            next_retry_at   INTEGER,
+            started_at      INTEGER,
+            finished_at     INTEGER,
+            bytes_uploaded  INTEGER NOT NULL DEFAULT 0,
+            error           TEXT,
+            remote_path     TEXT,
+            FOREIGN KEY (destination_id) REFERENCES backup_destinations(id) ON DELETE CASCADE,
+            FOREIGN KEY (download_id) REFERENCES downloads(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_backup_jobs_pending ON backup_jobs(destination_id, status, next_retry_at);
+        CREATE INDEX IF NOT EXISTS idx_backup_jobs_download ON backup_jobs(download_id);
+    `);
+    // throttle_bps was added after the initial backup release — wrap the
+    // ALTER in try/catch so the column is present on upgrades and the
+    // CREATE-IF-NOT-EXISTS path on fresh DBs is unaffected.
+    try { db.exec('ALTER TABLE backup_destinations ADD COLUMN throttle_bps INTEGER'); } catch {}
+
     // FK enforcement is per-connection in SQLite — flip it on once we know
     // the table exists. Without this, ON DELETE CASCADE silently no-ops.
     try { db.pragma('foreign_keys = ON'); } catch {}
@@ -398,18 +508,28 @@ export function getMessageIdRange(groupId) {
  * infinite-scroll across the full library (previous All-Media path was
  * capped at 20 groups × 20 files = ~400 max — see v2.3.6 blocker).
  */
-export function getAllDownloads(limit = 50, offset = 0, type = 'all') {
+export function getAllDownloads(limit = 50, offset = 0, type = 'all', opts = {}) {
     const lim = Math.max(1, Math.min(500, parseInt(limit, 10) || 50));
     const off = Math.max(0, parseInt(offset, 10) || 0);
     const typeMap = { images: 'photo', videos: 'video', documents: 'document', audio: 'audio' };
+    const clauses = [];
     const params = [];
-    let where = '';
     if (type !== 'all' && typeMap[type]) {
-        where = ' WHERE file_type = ?';
+        clauses.push('file_type = ?');
         params.push(typeMap[type]);
     }
+    if (opts.pinnedOnly) {
+        clauses.push('COALESCE(pinned, 0) = 1');
+    }
+    const where = clauses.length ? ' WHERE ' + clauses.join(' AND ') : '';
+    // `pinnedFirst` surfaces pinned rows above the rest while keeping
+    // chronological order within each group. The default sort is unchanged
+    // so existing callers behave identically.
+    const orderBy = opts.pinnedFirst
+        ? 'COALESCE(pinned, 0) DESC, datetime(created_at) DESC, id DESC'
+        : 'datetime(created_at) DESC, id DESC';
     const rows = getDb()
-        .prepare(`SELECT * FROM downloads${where} ORDER BY datetime(created_at) DESC, id DESC LIMIT ? OFFSET ?`)
+        .prepare(`SELECT * FROM downloads${where} ORDER BY ${orderBy} LIMIT ? OFFSET ?`)
         .all(...params, lim, off);
     const total = getDb()
         .prepare(`SELECT COUNT(*) AS c FROM downloads${where}`)
@@ -417,7 +537,7 @@ export function getAllDownloads(limit = 50, offset = 0, type = 'all') {
     return { files: rows, total };
 }
 
-export function getDownloads(groupId, limit = 50, offset = 0, type = 'all') {
+export function getDownloads(groupId, limit = 50, offset = 0, type = 'all', opts = {}) {
     let query = 'SELECT * FROM downloads WHERE group_id = ?';
     const params = [groupId];
 
@@ -435,7 +555,11 @@ export function getDownloads(groupId, limit = 50, offset = 0, type = 'all') {
         }
     }
 
-    query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
+    if (opts.pinnedOnly) query += ' AND COALESCE(pinned, 0) = 1';
+
+    query += opts.pinnedFirst
+        ? ' ORDER BY COALESCE(pinned, 0) DESC, created_at DESC LIMIT ? OFFSET ?'
+        : ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
     params.push(limit, offset);
 
     const stmt = getDb().prepare(query);
@@ -481,6 +605,34 @@ export function searchDownloads(query, opts = {}) {
         .prepare(`SELECT COUNT(*) as c FROM downloads WHERE ${where}`)
         .get(...params).c;
     return { files: rows, total };
+}
+
+/**
+ * Toggle / set the `pinned` flag on a download row. Pinned rows are
+ * protected from auto-rotation sweeps (see disk-rotator.js) AND surface
+ * at the top of gallery views when the operator opts in via Settings →
+ * Library → "Surface pinned at the top".
+ *
+ * @param {number} id        download row id
+ * @param {boolean} pinned   new state (true → 1, false → 0)
+ * @returns {boolean}        true if a row was updated
+ */
+export function setDownloadPinned(id, pinned) {
+    const numId = Number(id);
+    if (!Number.isFinite(numId) || numId <= 0) return false;
+    const r = getDb().prepare('UPDATE downloads SET pinned = ? WHERE id = ?')
+        .run(pinned ? 1 : 0, numId);
+    return r.changes > 0;
+}
+
+/**
+ * Lookup helper for the bulk-zip endpoint and other id-based admin tools.
+ * Returns the row or null. Cheap (PK lookup); safe to call N times in a row.
+ */
+export function getDownloadById(id) {
+    const numId = Number(id);
+    if (!Number.isFinite(numId) || numId <= 0) return null;
+    return getDb().prepare('SELECT * FROM downloads WHERE id = ?').get(numId) || null;
 }
 
 /** Bulk-delete by ids (preferred) or file_paths. Returns the number removed. */
@@ -729,4 +881,443 @@ export function whitelistNsfw(ids) {
     return getDb().prepare(
         `UPDATE downloads SET nsfw_whitelist = 1 WHERE id IN (${ph})`
     ).run(...cleanIds).changes;
+}
+
+// Tier definitions — higher score = more likely 18+ (the convention the
+// classifier uses internally). Five tiers give the operator more nuance
+// than the original binary "above/below threshold" view, and let the
+// review page surface bulk actions like "delete everything in not_18+
+// tier" without having to scroll a list of 8000 rows.
+//
+// Boundaries are inclusive on the LEFT, exclusive on the RIGHT (except
+// def_18 which is closed on both sides because 1.0 is the max possible
+// score — a row stored at exactly 1.0 must land in def_18, not nowhere).
+//
+// Names favour readability in the UI over brevity:
+//   def_not  — Definitely not 18+      [0.0, 0.3)
+//   maybe_not — Probably not 18+       [0.3, 0.5)
+//   uncertain — Borderline / review    [0.5, 0.7)
+//   maybe    — Probably 18+            [0.7, 0.9)
+//   def      — Definitely 18+          [0.9, 1.0]
+export const NSFW_TIERS = [
+    { id: 'def_not',   min: 0.0, max: 0.3, label: 'Definitely not 18+' },
+    { id: 'maybe_not', min: 0.3, max: 0.5, label: 'Probably not 18+' },
+    { id: 'uncertain', min: 0.5, max: 0.7, label: 'Borderline / review' },
+    { id: 'maybe',     min: 0.7, max: 0.9, label: 'Probably 18+' },
+    { id: 'def',       min: 0.9, max: 1.01, label: 'Definitely 18+' },
+];
+
+function _tierBounds(tierId) {
+    const t = NSFW_TIERS.find((x) => x.id === tierId);
+    if (!t) return null;
+    return { min: t.min, max: t.max };
+}
+
+/**
+ * Per-tier counts. `whitelist` rows count toward `whitelistTotal` and are
+ * NOT included in tier counts (they were admin-confirmed 18+ even when
+ * the score might disagree). The UI uses this to render the stats cards.
+ */
+export function getNsfwTierCounts(fileTypes) {
+    const types = (Array.isArray(fileTypes) && fileTypes.length) ? fileTypes : ['photo'];
+    const placeholders = types.map(() => '?').join(',');
+    const db = getDb();
+    const out = { tiers: {}, scanned: 0, unscanned: 0, whitelisted: 0, totalEligible: 0 };
+    for (const tier of NSFW_TIERS) {
+        const n = db.prepare(`
+            SELECT COUNT(*) AS n FROM downloads
+             WHERE file_type IN (${placeholders})
+               AND nsfw_score IS NOT NULL
+               AND nsfw_score >= ?
+               AND nsfw_score < ?
+               AND nsfw_whitelist = 0
+        `).get(...types, tier.min, tier.max).n;
+        out.tiers[tier.id] = n;
+    }
+    out.scanned = db.prepare(
+        `SELECT COUNT(*) AS n FROM downloads WHERE file_type IN (${placeholders}) AND nsfw_checked_at IS NOT NULL`
+    ).get(...types).n;
+    out.totalEligible = db.prepare(
+        `SELECT COUNT(*) AS n FROM downloads WHERE file_type IN (${placeholders})`
+    ).get(...types).n;
+    out.unscanned = Math.max(0, out.totalEligible - out.scanned);
+    out.whitelisted = db.prepare(
+        `SELECT COUNT(*) AS n FROM downloads WHERE nsfw_whitelist = 1`
+    ).get().n;
+    return out;
+}
+
+/**
+ * Score histogram — N bins across [0, 1]. Drives the small inline chart
+ * on the review page so the operator can spot model bias / clustering at
+ * a glance (e.g. classifier scoring everything in 0.4-0.6 = the model is
+ * uncertain; consider a different model).
+ */
+export function getNsfwHistogram(fileTypes, bins = 20) {
+    const types = (Array.isArray(fileTypes) && fileTypes.length) ? fileTypes : ['photo'];
+    const placeholders = types.map(() => '?').join(',');
+    const n = Math.max(4, Math.min(50, Number(bins) || 20));
+    const out = new Array(n).fill(0);
+    const rows = getDb().prepare(
+        `SELECT nsfw_score FROM downloads WHERE file_type IN (${placeholders}) AND nsfw_score IS NOT NULL`
+    ).all(...types);
+    for (const r of rows) {
+        let idx = Math.floor(Number(r.nsfw_score) * n);
+        if (idx >= n) idx = n - 1;
+        if (idx < 0) idx = 0;
+        out[idx] += 1;
+    }
+    return { bins: n, counts: out };
+}
+
+/**
+ * Paginated list filtered by tier (or score range), file type, and
+ * group. The new review page uses this in place of the old
+ * delete-candidates query so the operator can step through ANY tier,
+ * not only the ones below the deletion threshold.
+ */
+export function getNsfwListByTier({ tier = null, fileTypes, groupId = null, includeWhitelisted = false, page = 1, limit = 50 }) {
+    const types = (Array.isArray(fileTypes) && fileTypes.length) ? fileTypes : ['photo'];
+    const placeholders = types.map(() => '?').join(',');
+    const where = [`file_type IN (${placeholders})`, 'nsfw_score IS NOT NULL'];
+    const params = [...types];
+    if (tier) {
+        const bounds = _tierBounds(tier);
+        if (bounds) {
+            where.push('nsfw_score >= ?');
+            where.push('nsfw_score < ?');
+            params.push(bounds.min, bounds.max);
+        }
+    }
+    if (!includeWhitelisted) where.push('nsfw_whitelist = 0');
+    if (groupId) {
+        where.push('group_id = ?');
+        params.push(String(groupId));
+    }
+    const p = Math.max(1, Number(page) || 1);
+    const lim = Math.max(1, Math.min(200, Number(limit) || 50));
+    const offset = (p - 1) * lim;
+    const whereSql = where.join(' AND ');
+    const db = getDb();
+    const totalRow = db.prepare(`SELECT COUNT(*) AS n FROM downloads WHERE ${whereSql}`).get(...params);
+    const rows = db.prepare(`
+        SELECT id, group_id, group_name, file_name, file_path, file_type, file_size,
+               created_at, nsfw_score, nsfw_checked_at, nsfw_whitelist
+          FROM downloads
+         WHERE ${whereSql}
+         ORDER BY nsfw_score ASC, id ASC
+         LIMIT ? OFFSET ?
+    `).all(...params, lim, offset);
+    return { rows, total: totalRow.n, page: p, totalPages: Math.max(1, Math.ceil(totalRow.n / lim)) };
+}
+
+/**
+ * Bulk reclassify — clear `nsfw_checked_at` so the next scan run picks
+ * the rows up again. Useful after switching the model or threshold
+ * without having to wipe the entire `nsfw_*` column trio.
+ */
+export function reclassifyNsfw(ids) {
+    if (!Array.isArray(ids) || !ids.length) return 0;
+    const cleanIds = ids.map(Number).filter((n) => Number.isInteger(n) && n > 0);
+    if (!cleanIds.length) return 0;
+    const ph = cleanIds.map(() => '?').join(',');
+    return getDb().prepare(
+        `UPDATE downloads SET nsfw_checked_at = NULL, nsfw_score = NULL WHERE id IN (${ph})`
+    ).run(...cleanIds).changes;
+}
+
+/**
+ * Un-whitelist — flip nsfw_whitelist back to 0 so the next scan / review
+ * page sees the row again. Counterpart to `whitelistNsfw`.
+ */
+export function unwhitelistNsfw(ids) {
+    if (!Array.isArray(ids) || !ids.length) return 0;
+    const cleanIds = ids.map(Number).filter((n) => Number.isInteger(n) && n > 0);
+    if (!cleanIds.length) return 0;
+    const ph = cleanIds.map(() => '?').join(',');
+    return getDb().prepare(
+        `UPDATE downloads SET nsfw_whitelist = 0 WHERE id IN (${ph})`
+    ).run(...cleanIds).changes;
+}
+
+// ---- AI subsystem (v2.6.0) ------------------------------------------------
+//
+// Helper queries for src/core/ai/*. Each capability persists into a different
+// table but the read paths are concentrated here so the modules stay small.
+
+/**
+ * Rows that haven't been visited yet by the AI indexer. Photos only — videos
+ * + documents are out of scope for the v2.6 subsystem (they'd need a frame-
+ * extraction pre-pass and a different model). Sorted oldest-first so a
+ * resumed scan picks up backlog before newly-arrived rows.
+ */
+export function getUnindexedAiBatch({ fileTypes = ['photo'], limit = 50 } = {}) {
+    const types = (Array.isArray(fileTypes) && fileTypes.length) ? fileTypes : ['photo'];
+    const placeholders = types.map(() => '?').join(',');
+    return getDb().prepare(`
+        SELECT id, group_id, group_name, file_name, file_path, file_type, file_size, created_at
+          FROM downloads
+         WHERE file_type IN (${placeholders})
+           AND ai_indexed_at IS NULL
+         ORDER BY created_at ASC, id ASC
+         LIMIT ?
+    `).all(...types, Math.max(1, Math.min(500, Number(limit) || 50)));
+}
+
+export function setAiIndexedAt(downloadId, now = Date.now()) {
+    return getDb().prepare(
+        'UPDATE downloads SET ai_indexed_at = ? WHERE id = ?'
+    ).run(Math.floor(now), Number(downloadId)).changes;
+}
+
+export function getAiCounts({ fileTypes = ['photo'] } = {}) {
+    const types = (Array.isArray(fileTypes) && fileTypes.length) ? fileTypes : ['photo'];
+    const placeholders = types.map(() => '?').join(',');
+    const db = getDb();
+    const total = db.prepare(
+        `SELECT COUNT(*) AS n FROM downloads WHERE file_type IN (${placeholders})`
+    ).get(...types).n;
+    const indexed = db.prepare(
+        `SELECT COUNT(*) AS n FROM downloads WHERE file_type IN (${placeholders}) AND ai_indexed_at IS NOT NULL`
+    ).get(...types).n;
+    const withEmbedding = db.prepare(`SELECT COUNT(*) AS n FROM image_embeddings`).get().n;
+    const withFaces = db.prepare(`SELECT COUNT(DISTINCT download_id) AS n FROM faces`).get().n;
+    const withTags = db.prepare(`SELECT COUNT(DISTINCT download_id) AS n FROM image_tags`).get().n;
+    const withPhash = db.prepare(
+        `SELECT COUNT(*) AS n FROM downloads WHERE phash IS NOT NULL AND file_type IN (${placeholders})`
+    ).get(...types).n;
+    return {
+        totalEligible: total,
+        indexed,
+        unindexed: Math.max(0, total - indexed),
+        withEmbedding,
+        withFaces,
+        withTags,
+        withPhash,
+    };
+}
+
+// ---- Image embeddings -----------------------------------------------------
+
+export function setImageEmbedding(downloadId, embeddingBlob, model, now = Date.now()) {
+    return getDb().prepare(`
+        INSERT INTO image_embeddings (download_id, embedding, model, indexed_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(download_id) DO UPDATE SET
+            embedding  = excluded.embedding,
+            model      = excluded.model,
+            indexed_at = excluded.indexed_at
+    `).run(Number(downloadId), embeddingBlob, String(model), Math.floor(now)).changes;
+}
+
+/**
+ * Stream every embedding row for the in-memory cosine-sim path. Joins
+ * `downloads` so the search result can return file metadata in one round
+ * trip (no per-id follow-up SELECTs).
+ */
+export function listAllImageEmbeddings({ fileTypes = null } = {}) {
+    let where = '';
+    const params = [];
+    if (Array.isArray(fileTypes) && fileTypes.length) {
+        where = ` WHERE d.file_type IN (${fileTypes.map(() => '?').join(',')})`;
+        params.push(...fileTypes);
+    }
+    return getDb().prepare(`
+        SELECT e.download_id, e.embedding, e.model, e.indexed_at,
+               d.id, d.group_id, d.group_name, d.file_name, d.file_path,
+               d.file_type, d.file_size, d.created_at
+          FROM image_embeddings e
+          JOIN downloads d ON d.id = e.download_id
+          ${where}
+    `).all(...params);
+}
+
+// ---- Faces & people -------------------------------------------------------
+
+export function insertFace({ downloadId, x, y, w, h, embeddingBlob, personId = null }) {
+    return getDb().prepare(`
+        INSERT INTO faces (download_id, x, y, w, h, embedding, person_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(Number(downloadId), Number(x), Number(y), Number(w), Number(h), embeddingBlob, personId == null ? null : Number(personId));
+}
+
+export function deleteFacesForDownload(downloadId) {
+    return getDb().prepare('DELETE FROM faces WHERE download_id = ?').run(Number(downloadId)).changes;
+}
+
+export function listAllFaces() {
+    return getDb().prepare(`SELECT id, download_id, x, y, w, h, embedding, person_id FROM faces`).all();
+}
+
+export function setFacePerson(faceId, personId) {
+    return getDb().prepare('UPDATE faces SET person_id = ? WHERE id = ?')
+        .run(personId == null ? null : Number(personId), Number(faceId)).changes;
+}
+
+export function clearAllPeople() {
+    const db = getDb();
+    const tx = db.transaction(() => {
+        db.prepare('UPDATE faces SET person_id = NULL').run();
+        db.prepare('DELETE FROM people').run();
+    });
+    tx();
+}
+
+export function insertPerson({ label = null, centroidBlob, faceCount = 0 }) {
+    const now = Date.now();
+    const r = getDb().prepare(`
+        INSERT INTO people (label, embedding_centroid, face_count, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+    `).run(label, centroidBlob, Math.max(0, Number(faceCount) || 0), now, now);
+    return r.lastInsertRowid;
+}
+
+export function listPeople({ limit = 500, offset = 0 } = {}) {
+    const lim = Math.max(1, Math.min(1000, Number(limit) || 500));
+    const off = Math.max(0, Number(offset) || 0);
+    const rows = getDb().prepare(`
+        SELECT p.id, p.label, p.face_count, p.created_at, p.updated_at,
+               (SELECT f.download_id FROM faces f WHERE f.person_id = p.id LIMIT 1) AS cover_download_id
+          FROM people p
+         ORDER BY p.face_count DESC, p.id ASC
+         LIMIT ? OFFSET ?
+    `).all(lim, off);
+    const total = getDb().prepare('SELECT COUNT(*) AS n FROM people').get().n;
+    return { people: rows, total };
+}
+
+export function renamePerson(id, label) {
+    return getDb().prepare(`
+        UPDATE people SET label = ?, updated_at = ? WHERE id = ?
+    `).run(label == null ? null : String(label), Date.now(), Number(id)).changes;
+}
+
+export function deletePerson(id) {
+    // ON DELETE SET NULL on faces.person_id keeps the face rows around so a
+    // re-cluster can re-assign them — we don't lose embeddings.
+    return getDb().prepare('DELETE FROM people WHERE id = ?').run(Number(id)).changes;
+}
+
+export function listPhotosForPerson(personId, { limit = 50, offset = 0 } = {}) {
+    const lim = Math.max(1, Math.min(500, Number(limit) || 50));
+    const off = Math.max(0, Number(offset) || 0);
+    const rows = getDb().prepare(`
+        SELECT DISTINCT d.*
+          FROM faces f
+          JOIN downloads d ON d.id = f.download_id
+         WHERE f.person_id = ?
+         ORDER BY d.created_at DESC, d.id DESC
+         LIMIT ? OFFSET ?
+    `).all(Number(personId), lim, off);
+    const total = getDb().prepare(`
+        SELECT COUNT(DISTINCT download_id) AS n FROM faces WHERE person_id = ?
+    `).get(Number(personId)).n;
+    return { files: rows, total };
+}
+
+// ---- Image tags -----------------------------------------------------------
+
+export function setImageTags(downloadId, tags) {
+    if (!Array.isArray(tags) || !tags.length) return 0;
+    const db = getDb();
+    const ins = db.prepare(`
+        INSERT INTO image_tags (download_id, tag, score) VALUES (?, ?, ?)
+        ON CONFLICT(download_id, tag) DO UPDATE SET score = excluded.score
+    `);
+    const tx = db.transaction(() => {
+        let n = 0;
+        for (const t of tags) {
+            if (!t || !t.tag) continue;
+            ins.run(Number(downloadId), String(t.tag).slice(0, 80), Number(t.score) || 0);
+            n += 1;
+        }
+        return n;
+    });
+    return tx();
+}
+
+export function clearImageTagsForDownload(downloadId) {
+    return getDb().prepare('DELETE FROM image_tags WHERE download_id = ?').run(Number(downloadId)).changes;
+}
+
+export function listAllTags({ minCount = 1 } = {}) {
+    return getDb().prepare(`
+        SELECT tag, COUNT(*) AS count, AVG(score) AS avg_score
+          FROM image_tags
+         GROUP BY tag
+        HAVING count >= ?
+         ORDER BY count DESC, tag ASC
+         LIMIT 1000
+    `).all(Math.max(1, Number(minCount) || 1));
+}
+
+export function listPhotosForTag(tag, { limit = 50, offset = 0 } = {}) {
+    const lim = Math.max(1, Math.min(500, Number(limit) || 50));
+    const off = Math.max(0, Number(offset) || 0);
+    const rows = getDb().prepare(`
+        SELECT d.*, t.score AS tag_score
+          FROM image_tags t
+          JOIN downloads d ON d.id = t.download_id
+         WHERE t.tag = ?
+         ORDER BY t.score DESC, d.created_at DESC
+         LIMIT ? OFFSET ?
+    `).all(String(tag), lim, off);
+    const total = getDb().prepare('SELECT COUNT(*) AS n FROM image_tags WHERE tag = ?').get(String(tag)).n;
+    return { files: rows, total };
+}
+
+// ---- Perceptual hash ------------------------------------------------------
+
+export function setPhash(downloadId, phashU64) {
+    // SQLite INTEGER is 64-bit SIGNED (-2^63 .. 2^63-1). Our pHash is an
+    // UNSIGNED 64-bit value (0 .. 2^64-1) — about half of those land in
+    // the signed range, the other half overflow better-sqlite3's bind
+    // check ("The bound string, buffer, or bigint is too big").
+    //
+    // Two's-complement bit-cast: any value >= 2^63 gets shifted into the
+    // negative range so the same 64 bits round-trip cleanly. The hamming
+    // distance helper masks back to 64 bits before XOR'ing, so a signed
+    // round-trip doesn't perturb the bit-level comparison.
+    if (phashU64 == null) return 0;
+    let big = (typeof phashU64 === 'bigint') ? phashU64 : BigInt(phashU64);
+    const TWO_63 = 1n << 63n;
+    const TWO_64 = 1n << 64n;
+    // Normalise to [0, 2^64).
+    big = ((big % TWO_64) + TWO_64) % TWO_64;
+    // Bit-cast to signed.
+    const asSigned = big >= TWO_63 ? big - TWO_64 : big;
+    return getDb().prepare('UPDATE downloads SET phash = ? WHERE id = ?')
+        .run(asSigned, Number(downloadId)).changes;
+}
+
+export function listAllPhashes({ fileTypes = ['photo'] } = {}) {
+    const types = (Array.isArray(fileTypes) && fileTypes.length) ? fileTypes : ['photo'];
+    const placeholders = types.map(() => '?').join(',');
+    // `safeIntegers(true)` makes better-sqlite3 hand BigInt back for every
+    // INTEGER column in the row instead of throwing "value cannot be
+    // represented as a JavaScript number" when phash > 2^53. We coerce
+    // the small-int fields back to Number for downstream callers; phash
+    // stays BigInt (hammingDistance handles BigInt natively + masks to
+    // 64 bits, which undoes the signed-bit-cast we did on write).
+    const stmt = getDb().prepare(`
+        SELECT id, file_name, file_path, file_type, file_size, group_id, group_name,
+               created_at, phash
+          FROM downloads
+         WHERE phash IS NOT NULL
+           AND file_type IN (${placeholders})
+    `).safeIntegers(true);
+    const rows = stmt.all(...types);
+    return rows.map((r) => ({
+        ...r,
+        id: typeof r.id === 'bigint' ? Number(r.id) : r.id,
+        file_size: typeof r.file_size === 'bigint' ? Number(r.file_size) : r.file_size,
+        // group_id may overflow 2^53 for some Telegram channels; keep as
+        // string when it does, Number otherwise.
+        group_id: typeof r.group_id === 'bigint'
+            ? (r.group_id <= 9007199254740991n && r.group_id >= -9007199254740991n
+                ? Number(r.group_id) : r.group_id.toString())
+            : r.group_id,
+        created_at: typeof r.created_at === 'bigint' ? Number(r.created_at) : r.created_at,
+        // phash stays BigInt — hammingDistance + bucketByPrefix expect it.
+    }));
 }

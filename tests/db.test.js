@@ -1,14 +1,13 @@
-// Integration test for the DB layer. Point the module at an isolated temp
-// data dir before dynamic import so local development runs never touch the
-// user's real data/db.sqlite.
+// Integration test for the DB layer. We isolate the test by pointing
+// `TGDL_DATA_DIR` at an `os.tmpdir` mkdtemp before the dynamic import of
+// src/core/db.js, so the singleton picks up the throwaway path and the
+// user's real data/db.sqlite is never touched.
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
-import { fileURLToPath } from 'url';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'tgdl-db-test-'));
 
 let db;

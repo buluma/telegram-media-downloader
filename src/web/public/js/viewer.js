@@ -787,6 +787,17 @@ class VideoPlayer {
 
 export function closeMediaViewer() {
     const modal = document.getElementById('media-modal');
+    // If the user is closing while a video is mid-playback, hand off to
+    // the mini-player BEFORE we tear the modal video down so playback
+    // continues seamlessly. Opt-in: only shrinks when the user has set
+    // `viewer-shrink-on-close=1` (Settings → Video Player), so the
+    // existing close-stops-everything behaviour stays the default.
+    const big = document.getElementById('modal-video');
+    const isVideoLive = big && !big.paused && (big.currentSrc || big.src);
+    if (isVideoLive && localStorage.getItem('viewer-shrink-on-close') === '1'
+        && typeof window.tgdlShrinkToMini === 'function') {
+        try { window.tgdlShrinkToMini(); } catch {}
+    }
     modal.classList.add('hidden');
     document.body.style.overflow = '';
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});

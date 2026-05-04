@@ -24,6 +24,14 @@ services:
       - NODE_ENV=production
       - TZ=${TZ:-UTC}
       - TGDL_DEBUG=${TGDL_DEBUG:-}
+      # Default to trusting one hop of `X-Forwarded-For` because most
+      # Docker deployments sit behind a reverse proxy (Caddy / Traefik /
+      # nginx). Without this, express-rate-limit floods stderr with
+      # `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` validation warnings on every
+      # request. Override to a different value (loopback, uniquelocal, IP
+      # list) or empty string to disable when running directly on the
+      # host without a proxy.
+      - TRUST_PROXY=${TRUST_PROXY:-1}
       # Auto-update wiring — only consulted when the `auto-update` profile
       # is enabled. With these set, Settings → Maintenance shows an
       # **Install update** button that hands the swap off to the watchtower

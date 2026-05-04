@@ -119,1482 +119,29 @@
         })();
     </script>
 
-    <style>
-        :root {
-            --tgdl-font-family: 'IBM Plex Sans', 'IBM Plex Sans Thai', 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            /* Theme tokens — single source of truth for inline-CSS consumers
-               (`.engine-status-pill`, `.media-item`, `.sheet-card`, `.chat-row`,
-               `.role-pill`, etc. — anything reading `var(--tg-…)`). Tailwind
-               utility classes like `bg-tg-blue` are still swapped via the
-               `html.theme-light .bg-tg-…` overrides further down; both paths
-               must agree per theme. Light variants of brand status colors are
-               darkened to clear WCAG AA on the white panel/sidebar surfaces
-               (e.g. `#2AABEE` → `#1976A8`, ratio jumps 2.84:1 → 4.61:1). */
-            --tg-blue: #2AABEE;
-            --tg-darkBlue: #229ED9;
-            --tg-bg: #17212B;
-            --tg-sidebar: #0E1621;
-            --tg-panel: #242F3D;
-            --tg-hover: #2B5278;
-            --tg-border: #0D1117;
-            --tg-text: #F5F5F5;
-            --tg-textSecondary: #8B9BAA;
-            --tg-green: #4FAE4E;
-            --tg-red: #E53935;
-            --tg-orange: #FF9800;
-            --tg-lightBg: #182533;
-        }
-        html.theme-light {
-            /* Light variants chosen to match existing `.text-tg-*` utility
-               overrides further down so var-consumers and Tailwind-utility
-               consumers paint the same colour per surface. */
-            --tg-blue: #0E78C2;
-            --tg-darkBlue: #0E5A86;
-            --tg-bg: #FFFFFF;
-            --tg-sidebar: #F4F4F5;
-            --tg-panel: #F0F4F7;
-            --tg-hover: #DCEDFF;
-            --tg-border: #D1D5DB;
-            --tg-text: #1F2937;
-            --tg-textSecondary: #4B5563;
-            --tg-green: #008A6E;
-            --tg-red: #B91C1C;
-            --tg-orange: #B8860B;
-            --tg-lightBg: #FFFFFF;
-        }
-        * {
-            font-family: var(--tgdl-font-family);
-            box-sizing: border-box;
-            -webkit-tap-highlight-color: transparent;
-        }
-        /* Disable iOS Safari double-tap-to-zoom across the whole app.
-           `touch-action: manipulation` permits scroll + pinch but kills
-           the double-tap-zoom gesture — needed because the HTML
-           viewport's `user-scalable=no` is intentionally ignored on
-           iOS 10+ (Apple removed the kill-switch for accessibility).
-           Override per-element where a custom touch interpretation is
-           needed (e.g. `#image-container` uses `touch-action: none`
-           for its own zoom math, lasso-active does the same). */
-        body { touch-action: manipulation; }
-        /* Mono font hooks — Tailwind's `font-mono` and any inline mono
-           class now resolve to IBM Plex Mono so the time block + log
-           viewer + queue size column read consistently. Mono stays IBM
-           Plex regardless of UI font choice — most Thai-friendly
-           webfonts don't ship a mono companion, and a mono unit width
-           is more important here than family consistency. */
-        .font-mono, code, pre, kbd, samp,
-        [class*="tabular-nums"] {
-            font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-        }
-
-        body {
-            background: #17212B;
-            color: #F5F5F5;
-            overscroll-behavior: none;
-        }
-        /* Reserve room for the status bar on desktop and for the bottom-nav
-           on mobile so fixed-position bars never cover content. Guest sessions
-           hide the desktop status bar (admin-only), so drop the reservation
-           too — otherwise the page ends with an empty 32 px footer gap. */
-        @media (max-width: 767.98px) {
-            body { padding-bottom: calc(56px + env(safe-area-inset-bottom)); }
-        }
-        @media (min-width: 768px) {
-            body { padding-bottom: 32px; }
-            body[data-role="guest"] { padding-bottom: 0; }
-        }
-
-        /* ===== Light theme overrides =====
-           When html.theme-light is set, replace the dark Tailwind colours
-           with a Telegram-light-inspired palette. Uses class-level overrides
-           so the existing markup doesn't have to change. */
-        html.theme-light body { background: #FFFFFF; color: #232E3C; }
-        html.theme-light .bg-tg-bg { background-color: #FFFFFF !important; }
-        html.theme-light .bg-tg-sidebar { background-color: #F4F4F5 !important; }
-        html.theme-light .bg-tg-panel { background-color: #F0F4F7 !important; }
-        html.theme-light .bg-tg-lightBg { background-color: #FFFFFF !important; }
-        html.theme-light .text-tg-text { color: #1F2937 !important; }
-        /* Bumped from #65737E so labels like "Downloaded Groups" and footer
-           captions stay readable on the light sidebar background without
-           needing hover. */
-        html.theme-light .text-tg-textSecondary { color: #4B5563 !important; }
-        html.theme-light .text-white { color: #1F2937 !important; }
-        html.theme-light .border-tg-border { border-color: #E1E5EA !important; }
-        html.theme-light .hover\:bg-tg-hover:hover { background-color: #DCEDFF !important; }
-        html.theme-light .bg-tg-hover { background-color: #DCEDFF !important; }
-        html.theme-light ::-webkit-scrollbar-thumb { background: #C1C9D2 !important; }
-        html.theme-light .modal-backdrop { background-color: rgba(0, 0, 0, 0.45) !important; }
-        html.theme-light .tg-input { background: #FFFFFF !important; color: #1F2937 !important; border-color: #E1E5EA !important; }
-
-        /* ----- Slash-modifier (rgba) variants of the dark tokens -----
-           Tailwind compiles `bg-tg-bg/40` to an rgba derived from the dark
-           hex (#17212B), so the no-slash override above doesn't catch them.
-           Newer panels (Queue, Maintenance, Backfill, Rescue, Engine card)
-           lean on these for sub-cards / progress tracks / chip backgrounds.
-           Map them to a soft neutral so panels stay readable in light mode. */
-        html.theme-light .bg-tg-bg\/30 { background-color: rgba(225, 229, 234, 0.55) !important; }
-        html.theme-light .bg-tg-bg\/40 { background-color: rgba(225, 229, 234, 0.65) !important; }
-        html.theme-light .bg-tg-bg\/50 { background-color: rgba(225, 229, 234, 0.75) !important; }
-        html.theme-light .bg-tg-bg\/60 { background-color: rgba(225, 229, 234, 0.85) !important; }
-        html.theme-light .hover\:bg-tg-bg\/60:hover { background-color: rgba(225, 229, 234, 0.85) !important; }
-        html.theme-light .hover\:bg-tg-hover\/40:hover { background-color: rgba(220, 237, 255, 0.55) !important; }
-
-        /* Selected-chip / hovered-row tints. Tailwind `bg-tg-blue/20` etc
-           render an rgba off the brand blue, which already reads fine on
-           light — but the hover row in the queue table needs softening so
-           the row text stays legible over the wash. */
-        html.theme-light .hover\:bg-tg-blue\/10:hover { background-color: rgba(42, 171, 238, 0.10) !important; }
-
-        /* Border slash variants — used for divider rows in queue / backfill. */
-        html.theme-light .border-tg-border\/40 { border-color: rgba(0, 0, 0, 0.08) !important; }
-        html.theme-light .border-tg-border\/50 { border-color: rgba(0, 0, 0, 0.10) !important; }
-
-        /* Some text utilities are dark-only too. */
-        html.theme-light .hover\:text-tg-text:hover { color: #1F2937 !important; }
-        html.theme-light .text-gray-300 { color: #4B5563 !important; }
-        html.theme-light .text-gray-500 { color: #6B7280 !important; }
-        html.theme-light .bg-gray-700 { background-color: #E5E7EB !important; }
-        html.theme-light .bg-gray-700\/40 { background-color: rgba(229, 231, 235, 0.7) !important; }
-
-        /* Light-mode override of the base .tg-btn-secondary defined above. */
-        html.theme-light .tg-btn-secondary {
-            background: #E1E5EA !important;
-            color: #1F2937 !important;
-            border-color: #D1D5DB !important;
-        }
-        html.theme-light .tg-btn-secondary:hover {
-            background: #D1D5DB !important;
-            border-color: #9CA3AF !important;
-        }
-
-        /* Rescue-mode chips (per-group modal). The active chip already
-           uses brand blue; inactive chips use bg-tg-bg/40 which the slash
-           rule above covers — but the hover state needs a soft tint. */
-        html.theme-light .rescue-chip:not(.active):hover { background-color: #DCEDFF !important; color: #1F2937 !important; }
-
-        /* Sheet primitive — inline `var(--tg-panel)` falls back to the
-           dark default, so override the computed background here too. */
-        html.theme-light .sheet-card { background: #F0F4F7 !important; color: #1F2937 !important; }
-        html.theme-light .sheet-close { color: #65737E !important; }
-
-        /* Selection footer uses .bg-tg-panel (covered) but also a pill
-           border that we want soft in light mode. */
-        html.theme-light #selection-bar { box-shadow: 0 4px 16px rgba(0, 0, 0, 0.10); }
-
-        /* Bottom nav + status bar surfaces use CSS variables that fall
-           back to dark hexes — re-paint them for light. */
-        html.theme-light .bottom-nav { background: #F4F4F5 !important; border-top-color: #E1E5EA !important; }
-        html.theme-light .bottom-nav-item { color: #65737E; }
-
-        /* Video player controls — the player chrome still needs a dark
-           gradient over the video (so white controls remain legible
-           against arbitrary footage), but the speed-menu pop-over uses a
-           hard-coded `bg-[#212121]/95` which can stay dark in either
-           theme — that's a deliberate floating-overlay-on-video idiom.
-           No override needed there. */
-        html.theme-light .video-controls { /* keep dark gradient — readability over video */ }
-
-        /* ============================================================
-           v2.3.44 — theme contrast pass.
-           Findings (audit run on the v2.3.43 snapshot):
-             A. `--tg-*` were never defined → fixed at top with :root + .theme-light blocks.
-             B. WCAG AA failures on white for brand colours → fixed via the
-                Tailwind utility overrides further up + var redef.
-             C. `:focus { outline: none }` clobbered `:focus-visible` → fixed below.
-                `.nav-item.active` had no CSS rule → fixed below.
-                Status pills, skeletons, select-badge, tab-item, .unread-pill.muted
-                had no light variant → fixed below.
-                Missing slash-variant overrides for yellow, red, blue → fixed below.
-           ============================================================ */
-
-        /* Restore keyboard focus rings — the global `button:focus,
-           input:focus, … { outline: none }` rule otherwise wins by source
-           order and erases `:focus-visible`. Scope the suppression so only
-           mouse-click focus loses the ring; keyboard focus keeps it. */
-        button:focus:not(:focus-visible),
-        input:focus:not(:focus-visible),
-        select:focus:not(:focus-visible),
-        textarea:focus:not(:focus-visible),
-        a:focus:not(:focus-visible) { outline: none; }
-
-        /* Default placeholder colour for both themes — UA default on the
-           dark panel was barely legible. */
-        .tg-input::placeholder,
-        input::placeholder,
-        textarea::placeholder { color: var(--tg-textSecondary, #8B9BAA); opacity: 0.75; }
-
-        /* Sidebar nav active state — toggled by app.js renderPage() but
-           had no matching CSS, so the active page was invisible in the
-           sidebar. Surface a left-accent + tinted background. */
-        .nav-item.active { background-color: var(--tg-hover, #2B5278); position: relative; }
-        .nav-item.active::before {
-            content: '';
-            position: absolute;
-            left: 0; top: 6px; bottom: 6px;
-            width: 3px;
-            background: var(--tg-blue, #2AABEE);
-            border-radius: 0 2px 2px 0;
-        }
-        .nav-item.active i, .nav-item.active span { color: var(--tg-blue, #2AABEE); }
-
-        /* Disabled buttons — visually distinct from enabled (saturate-out
-           + opacity), with `cursor: not-allowed`. Applies to both .tg-btn
-           and .tg-btn-secondary. */
-        .tg-btn:disabled,
-        .tg-btn[disabled],
-        .tg-btn-secondary:disabled,
-        .tg-btn-secondary[disabled] {
-            opacity: 0.5;
-            cursor: not-allowed;
-            filter: saturate(0.55);
-        }
-        .tg-btn:disabled:hover,
-        .tg-btn-secondary:disabled:hover { background: inherit; }
-
-        /* Selection-bar buttons (Select all / Clear) — hover affordance
-           upgraded from text-colour-only to an underline reveal so the
-           click target reads as a button, not body copy. */
-        #selection-all, #selection-clear {
-            text-decoration: underline;
-            text-decoration-color: transparent;
-            text-underline-offset: 3px;
-            transition: text-decoration-color 0.15s ease;
-        }
-        #selection-all:hover, #selection-clear:hover { text-decoration-color: currentColor; }
-
-        /* Light-theme overrides for surfaces that were missing — these
-           bypassed the existing class-override pass. */
-
-        /* Modal hover: white-on-white invisible patch */
-        html.theme-light .hover\:bg-white\/10:hover { background-color: rgba(0, 0, 0, 0.06) !important; }
-
-        /* Yellow alert family (Backfill warnings, etc.) — no overrides existed. */
-        html.theme-light .text-yellow-400 { color: #B45309 !important; }
-        html.theme-light .text-yellow-300 { color: #B45309 !important; }
-        html.theme-light .bg-yellow-500\/10 { background-color: rgba(245, 158, 11, 0.14) !important; }
-        html.theme-light .border-yellow-500\/20 { border-color: rgba(245, 158, 11, 0.40) !important; }
-        html.theme-light .bg-tg-orange\/20 { background-color: rgba(180, 134, 11, 0.18) !important; }
-
-        /* Red family — only /10 and /20 were covered before. Now /5,/15,/25,/30
-           and the `red-600` solid + `red-700` hover (Purge button etc.). */
-        html.theme-light .bg-red-500\/5 { background-color: rgba(185, 28, 28, 0.06) !important; }
-        html.theme-light .bg-red-500\/15 { background-color: rgba(185, 28, 28, 0.10) !important; }
-        html.theme-light .bg-red-500\/25 { background-color: rgba(185, 28, 28, 0.14) !important; }
-        html.theme-light .bg-red-500\/30 { background-color: rgba(185, 28, 28, 0.18) !important; }
-        html.theme-light .hover\:bg-red-500\/30:hover { background-color: rgba(185, 28, 28, 0.18) !important; }
-        html.theme-light .bg-red-600 { background-color: #B91C1C !important; }
-        html.theme-light .hover\:bg-red-700:hover { background-color: #991B1B !important; }
-        html.theme-light .border-red-400\/60 { border-color: rgba(185, 28, 28, 0.45) !important; }
-        html.theme-light .hover\:text-red-400:hover { color: #B91C1C !important; }
-        html.theme-light .hover\:border-red-400\/60:hover { border-color: rgba(185, 28, 28, 0.45) !important; }
-
-        /* Brand-blue slash variants beyond /10 + /20. */
-        html.theme-light .bg-tg-blue\/15 { background-color: rgba(14, 120, 194, 0.12) !important; }
-        html.theme-light .bg-tg-blue\/25 { background-color: rgba(14, 120, 194, 0.18) !important; }
-        html.theme-light .hover\:bg-tg-blue\/20:hover { background-color: rgba(14, 120, 194, 0.18) !important; }
-        html.theme-light .hover\:bg-tg-blue\/25:hover { background-color: rgba(14, 120, 194, 0.20) !important; }
-        html.theme-light .border-tg-blue\/30 { border-color: rgba(14, 120, 194, 0.40) !important; }
-        html.theme-light .hover\:bg-tg-green\/20:hover { background-color: rgba(0, 138, 110, 0.18) !important; }
-        html.theme-light .hover\:bg-tg-orange\/20:hover { background-color: rgba(184, 134, 11, 0.18) !important; }
-        html.theme-light .border-tg-green\/30 { border-color: rgba(0, 138, 110, 0.40) !important; }
-        html.theme-light .border-tg-orange\/30 { border-color: rgba(184, 134, 11, 0.40) !important; }
-
-        /* Standalone gray status dots — `.status-dot`, `.status-ws` use
-           `bg-gray-500` which had no light override. */
-        html.theme-light .bg-gray-500 { background-color: #6B7280 !important; }
-        html.theme-light .bg-gray-700 { background-color: #E5E7EB !important; }
-
-        /* Status pills inside chat rows — the green/orange/grey hard-coded
-           on dark were illegible on light surfaces. Recoloured for AA. */
-        html.theme-light .chat-row .status-pill-active { background: rgba(0, 138, 110, 0.16); color: #006A52; }
-        html.theme-light .chat-row .status-pill-paused { background: rgba(184, 134, 11, 0.18); color: #8A6A00; }
-        html.theme-light .chat-row .status-pill-add { background: rgba(0, 0, 0, 0.06); color: #4B5563; }
-
-        /* Loading skeletons — pure dark hex shimmer left a navy stripe on
-           white pages. Lighten for the light theme. */
-        html.theme-light .skeleton {
-            background: linear-gradient(90deg, #E5E7EB 25%, #D1D5DB 50%, #E5E7EB 75%);
-            background-size: 200% 100%;
-        }
-
-        /* Tabs (`.tab-item` family inside Viewer media tabs + Settings tabs) —
-           default rule used dark hex with no light counterpart. */
-        html.theme-light .tab-item { color: #4B5563; }
-        html.theme-light .tab-item:hover { color: #1F2937; }
-        html.theme-light .tab-item.active { color: #0E78C2; border-bottom-color: #0E78C2; }
-
-        /* Selection badge on media tiles — `rgba(255,255,255,…)` on white
-           is invisible. Flip to dark-on-white for light theme. */
-        html.theme-light .media-item .select-badge {
-            background: rgba(255, 255, 255, 0.92);
-            color: rgba(0, 0, 0, 0.65);
-            border-color: rgba(0, 0, 0, 0.45);
-        }
-        html.theme-light .media-item.is-selected .select-badge {
-            background: var(--tg-blue, #0E78C2);
-            color: #FFFFFF;
-            border-color: var(--tg-blue, #0E78C2);
-        }
-
-        /* Unread / muted pills — gray bg + white text washes out on light. */
-        html.theme-light .unread-pill { background: var(--tg-blue, #0E78C2); color: #FFFFFF; }
-        html.theme-light .unread-pill.muted { background: #6B7280; color: #FFFFFF; }
-
-        /* Engine pill pulse halo — alpha 0.20 was invisible on a near-white
-           header. Bump alpha + recolour for the light surface. */
-        html.theme-light .engine-status-pill[data-state="running"] .engine-status-dot {
-            box-shadow: 0 0 0 2px rgba(0, 138, 110, 0.45);
-            animation-name: engine-pulse-light;
-        }
-        html.theme-light .engine-status-pill[data-state="error"] .engine-status-dot { box-shadow: 0 0 0 2px rgba(185, 28, 28, 0.40); }
-        html.theme-light .engine-status-pill[data-state="reconnecting"] .engine-status-dot,
-        html.theme-light .engine-status-pill[data-state="starting"] .engine-status-dot,
-        html.theme-light .engine-status-pill[data-state="stopping"] .engine-status-dot { box-shadow: 0 0 0 2px rgba(184, 134, 11, 0.40); }
-        html.theme-light .engine-status-pill .engine-status-dot { box-shadow: 0 0 0 2px rgba(75, 85, 99, 0.30); }
-        @keyframes engine-pulse-light {
-            0%, 100% { box-shadow: 0 0 0 2px rgba(0, 138, 110, 0.45); }
-            50%      { box-shadow: 0 0 0 4px rgba(0, 138, 110, 0.20); }
-        }
-
-        /* Brand utilities used as solid backgrounds (primary CTA, FAB,
-           settings-chip active, nav-badge, theme buttons). White-on-#2AABEE
-           is 2.84:1 → we darken to #0E78C2 (4.93:1). */
-        html.theme-light .bg-tg-blue { background-color: #0E78C2 !important; }
-        html.theme-light .hover\:bg-tg-blue:hover { background-color: #0A5E96 !important; }
-        html.theme-light .border-tg-blue { border-color: #0E78C2 !important; }
-        html.theme-light .ring-tg-blue { --tw-ring-color: #0E78C2 !important; }
-        html.theme-light .focus\:ring-tg-blue:focus { --tw-ring-color: #0E78C2 !important; }
-        html.theme-light .focus\:border-tg-blue:focus { border-color: #0E78C2 !important; }
-        /* tg-darkBlue is the primary-button hover; align to the new brand. */
-        html.theme-light .hover\:bg-tg-darkBlue:hover { background-color: #0A5E96 !important; }
-
-        /* Borders that need to actually show on a panel / sidebar rather
-           than blend into them. Card / list dividers reach for D1D5DB. */
-        html.theme-light .border-tg-border\/30 { border-color: rgba(0, 0, 0, 0.06) !important; }
-        html.theme-light .border-tg-border\/60 { border-color: rgba(0, 0, 0, 0.12) !important; }
-
-        /* ----- Additional light-theme polish for newer surfaces ----- */
-        /* Status bar */
-        html.theme-light #status-bar { background: #F4F4F5 !important; border-top-color: #E1E5EA !important; }
-        html.theme-light #status-bar .text-tg-textSecondary { color: #65737E !important; }
-        html.theme-light #status-version { color: rgba(101, 115, 126, 0.85) !important; }
-
-        /* Engine/queue/maintenance pills + status colours */
-        html.theme-light .bg-tg-blue\/10 { background-color: rgba(42, 171, 238, 0.12) !important; }
-        html.theme-light .bg-tg-blue\/20 { background-color: rgba(42, 171, 238, 0.18) !important; color: #0769B5 !important; }
-        html.theme-light .bg-tg-green\/20 { background-color: rgba(0, 168, 132, 0.16) !important; color: #007A5E !important; }
-        html.theme-light .bg-tg-orange\/20 { background-color: rgba(244, 180, 0, 0.20) !important; color: #8A6A00 !important; }
-        html.theme-light .bg-red-500\/10 { background-color: rgba(239, 68, 68, 0.10) !important; }
-        html.theme-light .bg-red-500\/20 { background-color: rgba(239, 68, 68, 0.16) !important; color: #B91C1C !important; }
-        html.theme-light .text-tg-blue { color: #0E78C2 !important; }
-        html.theme-light .text-tg-green { color: #008A6E !important; }
-        html.theme-light .text-tg-orange { color: #B8860B !important; }
-        html.theme-light .text-red-300 { color: #B91C1C !important; }
-        html.theme-light .text-red-400 { color: #B91C1C !important; }
-
-        /* Borders + ring slash variants */
-        html.theme-light .border-red-500\/20 { border-color: rgba(239, 68, 68, 0.30) !important; }
-        html.theme-light .border-red-500\/30 { border-color: rgba(239, 68, 68, 0.45) !important; }
-        html.theme-light .border-red-500\/40 { border-color: rgba(239, 68, 68, 0.55) !important; }
-
-        /* Maintenance + Queue helper text — make sure subdued copy stays
-           readable on the lighter card backgrounds. */
-        html.theme-light .text-tg-textSecondary\/70 { color: rgba(101, 115, 126, 0.85) !important; }
-
-        /* Auto-fill datalist / number inputs read white-on-white in some
-           browsers. Force a stronger visible border so users can find the
-           setting-max-disk + setting-rate-limit-rpm fields by sight. */
-        /* Cover both <input> and <select> — selects were borderless before. */
-        html.theme-light .tg-input { border: 1px solid #D1D5DB !important; }
-        html.theme-light .tg-input:hover { border-color: #9CA3AF !important; }
-        html.theme-light .tg-input:focus { border-color: #2AABEE !important; box-shadow: 0 0 0 3px rgba(42,171,238,0.18) !important; }
-        html.theme-light .tg-input::placeholder { color: #9CA3AF !important; }
-
-        /* Tg-toggle inactive track is too dark in light mode. */
-        html.theme-light .tg-toggle { background: #CBD5DD !important; }
-        html.theme-light .tg-toggle.active { background: #2AABEE !important; }
-
-        /* Rescue badge tweaks for light: keep the pills visible against
-           the lighter media tile backgrounds. */
-        html.theme-light .badge-rescued { background: rgba(14, 120, 194, 0.95) !important; }
-        html.theme-light .badge-pending { background: rgba(184, 134, 11, 0.95) !important; color: #FFFFFF !important; }
-
-        ::-webkit-scrollbar {
-            width: 6px;
-            height: 6px;
-        }
-
-        ::-webkit-scrollbar-track {
-            background: transparent;
-        }
-
-        ::-webkit-scrollbar-thumb {
-            background: #3A4A5C;
-            border-radius: 3px;
-        }
-
-        .chat-item {
-            transition: background 0.15s ease;
-        }
-
-        .chat-item:hover,
-        .chat-item.active {
-            background: #2B5278;
-        }
-
-        /* Show delete button on group hover */
-        .group-item:hover .purge-btn {
-            opacity: 1 !important;
-        }
-
-        /* Telegram Avatar Gradients */
-        .tg-avatar {
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-weight: 500;
-        }
-
-        .tg-avatar-1 {
-            background: linear-gradient(135deg, #FF845E 0%, #FF516A 100%);
-        }
-
-        .tg-avatar-2 {
-            background: linear-gradient(135deg, #FFD95A 0%, #F5A623 100%);
-        }
-
-        .tg-avatar-3 {
-            background: linear-gradient(135deg, #A695E7 0%, #7B68EE 100%);
-        }
-
-        .tg-avatar-4 {
-            background: linear-gradient(135deg, #7FD6F5 0%, #5BC8EB 100%);
-        }
-
-        .tg-avatar-5 {
-            background: linear-gradient(135deg, #5BCAAF 0%, #3BA99C 100%);
-        }
-
-        .tg-avatar-6 {
-            background: linear-gradient(135deg, #F599C7 0%, #E573A8 100%);
-        }
-
-        .tg-avatar-7 {
-            background: linear-gradient(135deg, #6EC9CB 0%, #4EBFC2 100%);
-        }
-
-        /* ===== Gallery view modes (v2.3.35) =====================
-           Three modes — all share the same renderRow HTML so a mode
-           switch is pure CSS (no re-render, no DOM thrash):
-
-             grid    — default, square thumbnails, ~150-180 px wide
-             compact — denser, square thumbnails, ~80-100 px wide
-             list    — single column rows, thumb + name + meta + size + date
-
-           Every tile carries .tile-text and .tile-meta children that are
-           DISPLAY:NONE in grid/compact and revealed in list. CSS Grid for
-           the list keeps columns aligned; hover fills the row background.
-        */
-
-        /* GRID mode (default) */
-        .media-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-            gap: 4px;
-        }
-        @media (min-width: 640px)  { .media-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); } }
-        @media (min-width: 1024px) { .media-grid { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); } }
-
-        /* COMPACT mode — denser square tiles. */
-        .media-grid.view-compact {
-            grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
-            gap: 3px;
-        }
-        @media (min-width: 640px) { .media-grid.view-compact { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); } }
-
-        /* LIST mode — Telegram/Mac Finder-style row layout. */
-        .media-grid.view-list {
-            grid-template-columns: 1fr;
-            gap: 0;
-        }
-        .media-grid.view-list .media-item {
-            aspect-ratio: auto;
-            display: grid;
-            /* thumb · name+meta (flex-grow) · size · date · actions */
-            grid-template-columns: 56px minmax(0, 1fr) 90px 110px auto;
-            grid-template-areas: "thumb text size date actions";
-            align-items: center;
-            gap: 12px;
-            padding: 8px 14px;
-            background: transparent;
-            border-radius: 0;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-            transition: background-color 0.12s ease;
-        }
-        .media-grid.view-list .media-item:first-child { border-top-left-radius: 10px; border-top-right-radius: 10px; }
-        .media-grid.view-list .media-item:last-child  { border-bottom-left-radius: 10px; border-bottom-right-radius: 10px; border-bottom: none; }
-        .media-grid.view-list .media-item:hover {
-            background: rgba(255, 255, 255, 0.04);
-        }
-        html.theme-light .media-grid.view-list .media-item {
-            border-bottom-color: rgba(0, 0, 0, 0.06);
-        }
-        html.theme-light .media-grid.view-list .media-item:hover {
-            background: rgba(0, 0, 0, 0.03);
-        }
-        .media-grid.view-list .media-item .tile-thumb {
-            grid-area: thumb;
-            width: 56px;
-            height: 56px;
-            border-radius: 8px;
-            overflow: hidden;
-            position: relative;
-            background: var(--tg-panel, #17212B);
-        }
-        .media-grid.view-list .media-item .tile-thumb img,
-        .media-grid.view-list .media-item .tile-thumb video {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-        }
-        .media-grid.view-list .media-item .tile-text  { grid-area: text; min-width: 0; }
-        .media-grid.view-list .media-item .tile-name  {
-            font-size: 14px;
-            color: var(--tg-text, #E2E8F0);
-            font-weight: 500;
-            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-        }
-        .media-grid.view-list .media-item .tile-sub {
-            font-size: 12px;
-            color: var(--tg-textSecondary, #8B9BAA);
-            margin-top: 2px;
-            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-        }
-        .media-grid.view-list .media-item .tile-size {
-            grid-area: size;
-            font-size: 12px;
-            color: var(--tg-textSecondary, #8B9BAA);
-            text-align: right;
-            font-variant-numeric: tabular-nums;
-        }
-        .media-grid.view-list .media-item .tile-date {
-            grid-area: date;
-            font-size: 12px;
-            color: var(--tg-textSecondary, #8B9BAA);
-            text-align: right;
-            font-variant-numeric: tabular-nums;
-        }
-        .media-grid.view-list .media-item .tile-actions { grid-area: actions; display: flex; gap: 4px; }
-        .media-grid.view-list .media-item .select-badge { top: 14px; left: 14px; }
-        /* Hide list-only columns on narrow viewports — keep just thumb + name. */
-        @media (max-width: 640px) {
-            .media-grid.view-list .media-item {
-                grid-template-columns: 48px minmax(0, 1fr) auto;
-                grid-template-areas: "thumb text actions";
-                padding: 8px 10px;
-            }
-            .media-grid.view-list .media-item .tile-thumb { width: 48px; height: 48px; }
-            .media-grid.view-list .media-item .tile-size,
-            .media-grid.view-list .media-item .tile-date { display: none; }
-        }
-
-        /* Tile-text + tile-meta are list-only — hidden in grid/compact. */
-        .media-grid:not(.view-list) .media-item .tile-text,
-        .media-grid:not(.view-list) .media-item .tile-size,
-        .media-grid:not(.view-list) .media-item .tile-date,
-        .media-grid:not(.view-list) .media-item .tile-actions { display: none; }
-
-        .media-item {
-            position: relative;
-            aspect-ratio: 1 / 1;
-            overflow: hidden;
-            cursor: pointer;
-            background: var(--tg-panel, #242F3D);
-            content-visibility: auto;
-            contain-intrinsic-size: auto 200px;
-        }
-
-        /* ===== Selection mode (v2.3.36) =================================
-           Click → toggle one
-           Ctrl/Cmd + click → toggle one (auto-enables select mode)
-           Shift + click → range from last anchor
-           Drag from empty space → lasso rectangle (multi-select by overlap)
-           Ctrl/Cmd + A → select all visible
-           Esc → exit select mode
-           Long-press (touch) → enter select mode + toggle (existing)
-
-           In-place: toggling .is-selected on a tile flips the ring + ✓
-           with no re-render of the surrounding grid.
-        */
-        .media-item .select-badge {
-            position: absolute;
-            top: 6px; left: 6px;
-            width: 22px; height: 22px;
-            border-radius: 50%;
-            display: none;
-            align-items: center;
-            justify-content: center;
-            font-size: 13px;
-            background: rgba(0, 0, 0, 0.45);
-            color: rgba(255, 255, 255, 0.6);
-            border: 1.5px solid rgba(255, 255, 255, 0.4);
-            transition: background 0.12s ease, color 0.12s ease, transform 0.12s ease;
-            z-index: 2;
-            pointer-events: none;
-        }
-        .media-grid.in-select-mode .media-item .select-badge { display: flex; }
-        .media-item.is-selected {
-            outline: 2px solid var(--tg-blue, #2AABEE);
-            outline-offset: -2px;
-        }
-        .media-item.is-selected .select-badge {
-            background: var(--tg-blue, #2AABEE);
-            color: #fff;
-            border-color: var(--tg-blue, #2AABEE);
-            transform: scale(1.05);
-        }
-        /* During an active lasso drag, prevent text selection on the grid
-           so the rectangle doesn't accidentally highlight text. Also
-           disable touch panning ON THE GRID DURING THE DRAG ONLY — the
-           rest of the time normal vertical scroll works as expected. */
-        .media-grid.lasso-active { user-select: none; -webkit-user-select: none; touch-action: none; }
-        .media-grid.lasso-active .media-item { cursor: default; }
-        /* Tiles disable browser long-press context menus on touch — we
-           own the long-press gesture for entering select mode. */
-        .media-item { -webkit-touch-callout: none; }
-
-        /* The rubber-band lasso rectangle. Position: fixed so it tracks
-           the mouse in viewport coordinates regardless of scroll. */
-        #gallery-lasso {
-            position: fixed;
-            display: none;
-            background: rgba(42, 171, 238, 0.16);
-            border: 1px solid var(--tg-blue, #2AABEE);
-            border-radius: 2px;
-            pointer-events: none;
-            z-index: 40;
-        }
-        #gallery-lasso.visible { display: block; }
-        /* Subtle highlight while a tile is in the rectangle but the
-           drag hasn't been committed yet. */
-        .media-item.is-marquee {
-            outline: 2px dashed rgba(42, 171, 238, 0.7);
-            outline-offset: -2px;
-        }
-
-        /* View-mode picker dropdown (header) */
-        .view-mode-menu {
-            position: absolute;
-            right: 0;
-            top: calc(100% + 4px);
-            min-width: 180px;
-            max-width: min(240px, calc(100vw - 24px));
-            transform-origin: top right;
-            background: var(--tg-panel, #17212B);
-            border: 1px solid var(--tg-border, rgba(255,255,255,0.08));
-            border-radius: 10px;
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-            padding: 4px;
-            z-index: 50;
-            display: none;
-        }
-        .view-mode-menu.open { display: block; }
-        .view-mode-menu button {
-            display: flex; align-items: center; gap: 10px;
-            width: 100%;
-            padding: 8px 10px;
-            border-radius: 6px;
-            text-align: left;
-            color: var(--tg-text, #E2E8F0);
-            font-size: 13px;
-            transition: background 0.1s ease;
-        }
-        .view-mode-menu button:hover { background: rgba(255,255,255,0.06); }
-        .view-mode-menu button[data-active="1"] { background: rgba(42, 171, 238, 0.14); color: var(--tg-blue, #2AABEE); }
-        .view-mode-menu button i { font-size: 18px; }
-        .view-mode-menu button .vm-label { flex: 1; }
-        .view-mode-menu button .vm-check { font-size: 14px; opacity: 0; }
-        .view-mode-menu button[data-active="1"] .vm-check { opacity: 1; }
-        html.theme-light .view-mode-menu { background: #FFFFFF; box-shadow: 0 8px 24px rgba(0,0,0,0.12); }
-        html.theme-light .view-mode-menu button:hover { background: rgba(0,0,0,0.04); }
-
-        .media-item img {
-            opacity: 0;
-            transition: opacity 0.18s ease;
-        }
-        .media-item video {
-            opacity: 0;
-            transition: opacity 0.3s ease;
-        }
-
-        .media-item img.loaded,
-        .media-item video.loaded {
-            opacity: 1;
-        }
-        @media (prefers-reduced-motion: reduce) {
-            .media-item img,
-            .media-item video { transition: none; }
-        }
-
-        .media-item:hover .media-overlay {
-            opacity: 1;
-        }
-
-        .media-overlay {
-            position: absolute;
-            inset: 0;
-            background: rgba(0, 0, 0, 0.4);
-            opacity: 0;
-            transition: opacity 0.2s;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .skeleton {
-            background: linear-gradient(90deg, #242F3D 25%, #2B3A4A 50%, #242F3D 75%);
-            background-size: 200% 100%;
-            animation: shimmer 1.5s infinite;
-        }
-
-        @keyframes shimmer {
-            0% {
-                background-position: 200% 0;
-            }
-
-            100% {
-                background-position: -200% 0;
-            }
-        }
-
-        .tg-btn {
-            background: #2AABEE;
-            color: white;
-            padding: 10px 20px;
-            border-radius: 8px;
-            font-weight: 500;
-            transition: all 0.2s;
-        }
-
-        .tg-btn:hover {
-            background: #229ED9;
-        }
-
-        .tg-btn:active {
-            transform: scale(0.98);
-        }
-
-        /* Used everywhere in the SPA for non-primary actions (Save credentials,
-           Export, Resync, Restart, log View/Copy/Download, Backfill presets,
-           remove-account, etc.). Was relying on a hypothetical JS-injected
-           runtime style that never existed, so dark-mode buttons fell back to
-           the browser default and looked broken. */
-        .tg-btn-secondary {
-            background: #2F3B4A;
-            color: #F5F5F5;
-            padding: 8px 14px;
-            border-radius: 8px;
-            border: 1px solid #38444D;
-            font-weight: 500;
-            font-size: 13px;
-            line-height: 1.2;
-            cursor: pointer;
-            transition: background 0.15s, border-color 0.15s, transform 0.15s;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: 6px;
-            white-space: nowrap;
-        }
-
-        .tg-btn-secondary:hover {
-            background: #3A4A5C;
-            border-color: #4A5C6E;
-        }
-
-        .tg-btn-secondary:active {
-            transform: scale(0.98);
-        }
-
-        .tg-btn-secondary:disabled,
-        .tg-btn-secondary[disabled] {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-
-        .tg-toggle {
-            width: 44px;
-            height: 24px;
-            background: #3A4A5C;
-            border-radius: 12px;
-            position: relative;
-            cursor: pointer;
-            transition: background 0.2s;
-            flex-shrink: 0;
-        }
-
-        .tg-toggle.active {
-            background: #2AABEE;
-        }
-
-        /* Rescue Mode chip group: active chip gets the brand-blue fill so the
-           selection stays visible against the panel. Used in the per-group
-           settings modal; rendered by data-rescue-value buttons. */
-        .rescue-chip.active {
-            background: #2AABEE;
-            color: #fff;
-            font-weight: 500;
-        }
-
-        /* Inline gallery badges for Rescue Mode tiles. The "rescued" lifebuoy
-           pill marks files whose source got deleted (kept forever); the
-           hourglass pill marks pending files (auto-prune at countdown). */
-        .badge-rescued, .badge-pending {
-            position: absolute;
-            top: 4px;
-            right: 4px;
-            padding: 2px 6px;
-            font-size: 10px;
-            border-radius: 6px;
-            line-height: 1.2;
-            color: #fff;
-            backdrop-filter: blur(4px);
-            background: rgba(0,0,0,0.55);
-            pointer-events: none;
-        }
-        .badge-rescued { background: rgba(42,171,238,0.85); }
-        .badge-pending { background: rgba(244,180,0,0.85); color: #1f1300; }
-
-        .tg-toggle::after {
-            content: '';
-            position: absolute;
-            width: 20px;
-            height: 20px;
-            background: white;
-            border-radius: 50%;
-            top: 2px;
-            left: 2px;
-            transition: transform 0.2s;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.25);
-        }
-
-        .tg-toggle.active::after {
-            transform: translateX(20px);
-        }
-
-        .tg-input {
-            background: #242F3D;
-            /* Subtle border so inputs and selects are visually bounded
-               against the panel — borderless inputs blended into card
-               backgrounds in dark mode. */
-            border: 1px solid #38444D;
-            border-radius: 8px;
-            padding: 11px 16px;
-            color: #F5F5F5;
-            width: 100%;
-            outline: none;
-        }
-
-        .tg-input:hover {
-            border-color: #4A5C6E;
-        }
-
-        .tg-input:focus {
-            border-color: #2AABEE;
-            box-shadow: 0 0 0 2px rgba(42, 171, 238, 0.25);
-        }
-
-        /* Branded range slider — covers the player volume bar, the
-           Settings → Video Player default-volume slider, and any
-           future range input. UA defaults are inconsistent
-           (Chromium thumb comically large; Firefox thumb invisible). */
-        input[type="range"].tg-range,
-        #video-volume,
-        #setting-viewer-default-volume {
-            -webkit-appearance: none;
-            appearance: none;
-            background: transparent;
-            outline: none;
-            height: 18px;
-        }
-        input[type="range"].tg-range::-webkit-slider-thumb,
-        #video-volume::-webkit-slider-thumb,
-        #setting-viewer-default-volume::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            appearance: none;
-            width: 14px;
-            height: 14px;
-            border-radius: 50%;
-            background: #FFFFFF;
-            border: 2px solid #2AABEE;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
-            cursor: pointer;
-            margin-top: -5px;   /* centre over the 4px track */
-        }
-        input[type="range"].tg-range::-moz-range-thumb,
-        #video-volume::-moz-range-thumb,
-        #setting-viewer-default-volume::-moz-range-thumb {
-            width: 14px;
-            height: 14px;
-            border-radius: 50%;
-            background: #FFFFFF;
-            border: 2px solid #2AABEE;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
-            cursor: pointer;
-        }
-        input[type="range"].tg-range::-webkit-slider-runnable-track,
-        #video-volume::-webkit-slider-runnable-track,
-        #setting-viewer-default-volume::-webkit-slider-runnable-track {
-            height: 4px;
-            border-radius: 9999px;
-            background: rgba(120, 130, 145, 0.35);
-        }
-        input[type="range"].tg-range::-moz-range-track,
-        #video-volume::-moz-range-track,
-        #setting-viewer-default-volume::-moz-range-track {
-            height: 4px;
-            border-radius: 9999px;
-            background: rgba(120, 130, 145, 0.35);
-        }
-        /* Volume slider in the player sits on a dark gradient — keep
-           the track subtle there. */
-        #video-volume::-webkit-slider-runnable-track,
-        #video-volume::-moz-range-track {
-            background: rgba(255, 255, 255, 0.25);
-        }
-
-        .modal-backdrop {
-            background: rgba(0, 0, 0, 0.92);
-        }
-
-        .tab-item {
-            padding: 12px 16px;
-            color: #8B9BAA;
-            cursor: pointer;
-            position: relative;
-            transition: color 0.2s;
-            white-space: nowrap;
-        }
-
-        .tab-item:hover {
-            color: #F5F5F5;
-        }
-
-        .tab-item.active {
-            color: #2AABEE;
-        }
-
-        .tab-item.active::after {
-            content: '';
-            position: absolute;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            height: 3px;
-            background: #2AABEE;
-            border-radius: 3px 3px 0 0;
-        }
-
-        .sidebar-mobile {
-            transform: translateX(-100%);
-            transition: transform 0.3s ease;
-        }
-
-        .sidebar-mobile.open {
-            transform: translateX(0);
-        }
-
-        /* ============================================================
-           Engine status pill (top header) — replaces the dropped Engine
-           bottom-nav tab. Tappable, navigates to #/settings/engine, and
-           reflects monitor state via [data-state] driven from
-           js/statusbar.js applyState(). Keeps the #engine-nav-badge span
-           inside so existing queue+active count logic stays untouched.
-           ============================================================ */
-        .engine-status-pill {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            height: 36px;
-            min-height: 36px;
-            padding: 0 10px;
-            margin-right: 4px;
-            border-radius: 999px;
-            font-size: 12px;
-            line-height: 1;
-            color: var(--tg-textSecondary, #8B9BAA);
-            text-decoration: none;
-            -webkit-tap-highlight-color: transparent;
-            transition: background-color 0.15s ease, color 0.15s ease;
-        }
-        .engine-status-pill:hover { background: var(--tg-hover, #2B5278); }
-        .engine-status-pill .engine-status-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: var(--tg-textSecondary, #8B9BAA);
-            box-shadow: 0 0 0 2px rgba(139,155,170,0.18);
-            transition: background-color 0.15s ease, box-shadow 0.15s ease;
-        }
-        .engine-status-pill[data-state="running"] { color: var(--tg-green, #4FAE4E); }
-        .engine-status-pill[data-state="running"] .engine-status-dot {
-            background: var(--tg-green, #4FAE4E);
-            box-shadow: 0 0 0 2px rgba(79,174,78,0.20);
-            animation: engine-pulse 2.4s ease-in-out infinite;
-        }
-        .engine-status-pill[data-state="error"] { color: var(--tg-red, #E53935); }
-        .engine-status-pill[data-state="error"] .engine-status-dot {
-            background: var(--tg-red, #E53935);
-            box-shadow: 0 0 0 2px rgba(229,57,53,0.20);
-        }
-        .engine-status-pill[data-state="reconnecting"],
-        .engine-status-pill[data-state="starting"],
-        .engine-status-pill[data-state="stopping"] { color: var(--tg-orange, #FF9800); }
-        .engine-status-pill[data-state="reconnecting"] .engine-status-dot,
-        .engine-status-pill[data-state="starting"] .engine-status-dot,
-        .engine-status-pill[data-state="stopping"] .engine-status-dot {
-            background: var(--tg-orange, #FF9800);
-            box-shadow: 0 0 0 2px rgba(255,152,0,0.20);
-        }
-        @keyframes engine-pulse {
-            0%, 100% { box-shadow: 0 0 0 2px rgba(79,174,78,0.20); }
-            50% { box-shadow: 0 0 0 4px rgba(79,174,78,0.10); }
-        }
-        @media (max-width: 420px) {
-            .engine-status-pill .engine-status-label { display: none; }
-            .engine-status-pill { padding: 0 6px; }
-        }
-        @media (prefers-reduced-motion: reduce) {
-            .engine-status-pill,
-            .engine-status-pill .engine-status-dot { transition: none; }
-            .engine-status-pill[data-state="running"] .engine-status-dot { animation: none; }
-        }
-
-        /* ============================================================
-           Bottom navigation (mobile-only).
-           Visible below md (768px). 4 items + safe-area-inset-bottom.
-           ============================================================ */
-        @media (max-width: 767.98px) {
-            body.has-bottom-nav { padding-bottom: calc(56px + env(safe-area-inset-bottom)); }
-        }
-        .bottom-nav {
-            position: fixed;
-            left: 0; right: 0; bottom: 0;
-            height: 56px;
-            display: flex;
-            align-items: stretch;
-            justify-content: space-around;
-            background: var(--tg-sidebar, #0E1621);
-            border-top: 1px solid var(--tg-border, #0D1117);
-            z-index: 35;
-            padding-bottom: env(safe-area-inset-bottom);
-        }
-        @media (min-width: 768px) { .bottom-nav { display: none; } }
-        .bottom-nav-item {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            min-height: 44px;
-            color: var(--tg-textSecondary, #8B9BAA);
-            text-decoration: none;
-            font-size: 11px;
-            line-height: 1;
-            gap: 3px;
-            cursor: pointer;
-            position: relative;
-            -webkit-tap-highlight-color: transparent;
-        }
-        .bottom-nav-item.active { color: var(--tg-blue, #2AABEE); }
-        .bottom-nav-item i { font-size: 22px; }
-        .bottom-nav-item span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-        /* Five-tab bottom nav: the default 22 px icon / 11 px label fits
-           comfortably down to 360 px. Only sub-340 px phones still need
-           the icon + label nudge to keep tap targets uncrowded. */
-        @media (max-width: 340px) {
-            .bottom-nav-item i { font-size: 19px; }
-            .bottom-nav-item { font-size: 10px; gap: 2px; }
-        }
-        .bottom-nav-item .nav-badge {
-            position: absolute;
-            top: 4px;
-            right: calc(50% - 1ch);
-            min-width: 16px;
-            height: 16px;
-            padding: 0 4px;
-            border-radius: 8px;
-            font-size: 10px;
-            line-height: 16px;
-            text-align: center;
-            background: var(--tg-blue, #2AABEE);
-            color: #fff;
-            font-weight: 600;
-        }
-        .bottom-nav-item .nav-badge.error { background: var(--tg-red, #E53935); }
-        .bottom-nav-item .nav-badge.warning { background: var(--tg-orange, #FF9800); }
-
-        /* ============================================================
-           Floating Action Button (mobile only). Above the bottom nav.
-           ============================================================ */
-        .fab {
-            position: fixed;
-            right: 16px;
-            bottom: calc(72px + env(safe-area-inset-bottom));
-            width: 56px;
-            height: 56px;
-            border-radius: 28px;
-            background: var(--tg-blue, #2AABEE);
-            color: #fff;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            box-shadow: 0 6px 18px rgba(0, 0, 0, 0.30);
-            z-index: 36;
-            border: none;
-            cursor: pointer;
-            transition: transform 0.15s ease;
-        }
-        .fab:active { transform: scale(0.95); }
-        .fab i { font-size: 24px; }
-        @media (min-width: 768px) { .fab { display: none; } }
-
-        /* ============================================================
-           Sheet primitive — bottom-sheet on mobile, centered card on
-           desktop. Driven by sheet.js (openSheet / closeTopSheet).
-           ============================================================ */
-        .sheet-root {
-            position: fixed; inset: 0;
-            z-index: 100;
-            display: flex;
-            align-items: flex-end; justify-content: center;
-            pointer-events: none;
-        }
-        @media (min-width: 768px) {
-            .sheet-root { align-items: center; }
-        }
-        .sheet-backdrop {
-            position: absolute; inset: 0;
-            background: rgba(0, 0, 0, 0.55);
-            opacity: 0;
-            transition: opacity 200ms ease;
-            pointer-events: auto;
-        }
-        .sheet-card {
-            position: relative;
-            width: 100%;
-            background: var(--tg-panel, #242F3D);
-            color: var(--tg-text, #F5F5F5);
-            border-radius: 14px 14px 0 0;
-            padding: 0 0 12px;
-            transform: translateY(100%);
-            transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
-            pointer-events: auto;
-            max-height: 85vh;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-        }
-        @media (min-width: 768px) {
-            .sheet-card {
-                width: auto;
-                min-width: 380px;
-                max-width: min(720px, 92vw);
-                border-radius: 14px;
-                transform: translateY(8px) scale(0.97);
-                opacity: 0;
-                transition: transform 200ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 200ms;
-                margin: 0 16px;
-            }
-        }
-        .sheet-root.sheet-open .sheet-backdrop { opacity: 1; }
-        .sheet-root.sheet-open .sheet-card { transform: translateY(0); opacity: 1; }
-        /* Promote the sheet to its own compositor layer only while open;
-           avoids permanent will-change tax when the sheet is idle. */
-        .sheet-root.sheet-open .sheet-card { will-change: transform; }
-        .sheet-handle {
-            display: block;
-            width: 36px; height: 4px;
-            background: var(--tg-textSecondary, #8B9BAA);
-            opacity: 0.5;
-            border-radius: 2px;
-            margin: 8px auto 0;
-            cursor: grab;
-            touch-action: none;
-        }
-        @media (min-width: 768px) { .sheet-handle { display: none; } }
-        .sheet-header {
-            display: flex; align-items: center;
-            padding: 12px 16px 6px;
-            position: relative;
-        }
-        .sheet-header .sheet-handle { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); margin: 0; }
-        .sheet-title {
-            font-weight: 600;
-            font-size: 16px;
-            flex: 1;
-            margin-top: 16px;
-        }
-        @media (min-width: 768px) { .sheet-title { margin-top: 0; } }
-        .sheet-close {
-            background: transparent; border: none; color: var(--tg-textSecondary, #8B9BAA);
-            font-size: 28px; line-height: 1; cursor: pointer;
-            min-width: 32px; min-height: 32px;
-            display: flex; align-items: center; justify-content: center;
-        }
-        .sheet-body {
-            padding: 8px 16px 16px;
-            overflow-y: auto;
-            -webkit-overflow-scrolling: touch;
-            flex: 1;
-        }
-        @media (prefers-reduced-motion: reduce) {
-            .sheet-card, .sheet-backdrop { transition: none !important; }
-            .sheet-root.sheet-open .sheet-card { transform: translateY(0) scale(1); }
-        }
-
-        /* ============================================================
-           Focus visibility — Telegram-style soft ring.
-           ============================================================ */
-        :focus-visible {
-            outline: 2px solid var(--tg-blue, #2AABEE);
-            outline-offset: 2px;
-            border-radius: 6px;
-        }
-        button:focus, input:focus, select:focus, textarea:focus { outline: none; }
-
-        /* Safe-area fillers for notched displays (mobile bottom-nav). */
-        .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
-        .pt-safe { padding-top: env(safe-area-inset-top); }
-        /* Notched displays: bump the content-header to keep its 56 px content
-           area under the inset. Browsers without env() support keep h-14 as-is. */
-        @supports (padding-top: env(safe-area-inset-top)) {
-            #content-header { height: calc(56px + env(safe-area-inset-top, 0px)); }
-        }
-
-        /* ============================================================
-           Story-ring around an avatar — used to surface "this group is
-           downloading right now". Static ring = ring=active; spinning
-           gradient = ring=downloading.
-           ============================================================ */
-        .avatar-ring {
-            box-shadow:
-                0 0 0 2px var(--tg-sidebar, #0E1621),
-                0 0 0 4px var(--tg-blue, #2AABEE);
-            border-radius: 50%;
-        }
-        .avatar-ring-active {
-            box-shadow: 0 0 0 2px var(--tg-sidebar, #0E1621);
-            position: relative;
-        }
-        .avatar-ring-active::before {
-            content: "";
-            position: absolute;
-            inset: -4px;
-            border-radius: 50%;
-            background: conic-gradient(from 0deg,
-                #2AABEE, #4FAE4E, #FF9800, #2AABEE);
-            -webkit-mask:
-                radial-gradient(circle, transparent 53%, #000 55%);
-                    mask:
-                radial-gradient(circle, transparent 53%, #000 55%);
-            animation: avatar-ring-spin 2.4s linear infinite;
-            z-index: -1;
-        }
-        @keyframes avatar-ring-spin {
-            to { transform: rotate(360deg); }
-        }
-        @media (prefers-reduced-motion: reduce) {
-            .avatar-ring-active::before { animation: none; }
-        }
-
-        /* ============================================================
-           Telegram-style chat row used by the sidebar groups list, the
-           dialogs picker and (compact) the accounts list.
-           ============================================================ */
-        .chat-row {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            padding: 10px 12px;
-            border-radius: 10px;
-            cursor: pointer;
-            position: relative;
-            -webkit-tap-highlight-color: transparent;
-            transition: background-color 120ms ease;
-        }
-        .chat-row:hover { background: var(--tg-hover, #2B5278); }
-        .chat-row.is-selected {
-            background: var(--tg-hover, #2B5278);
-        }
-        .chat-row.is-selected::before {
-            content: "";
-            position: absolute;
-            left: 0; top: 8px; bottom: 8px;
-            width: 3px;
-            background: var(--tg-blue, #2AABEE);
-            border-radius: 0 3px 3px 0;
-        }
-        .chat-row .row-text { flex: 1; min-width: 0; }
-        .chat-row .row-title {
-            display: flex; align-items: center; gap: 6px;
-            font-weight: 500;
-            color: var(--tg-text, #F5F5F5);
-            min-width: 0;
-        }
-        .chat-row .row-title-name {
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-            min-width: 0;
-        }
-        .chat-row .row-subtitle {
-            font-size: 12px;
-            color: var(--tg-textSecondary, #8B9BAA);
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-        .chat-row .row-meta {
-            display: flex;
-            flex-direction: column;
-            align-items: flex-end;
-            gap: 4px;
-            margin-left: auto;
-            color: var(--tg-textSecondary, #8B9BAA);
-            font-size: 11px;
-        }
-        .chat-row .unread-pill {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            min-width: 22px; height: 22px;
-            padding: 0 6px;
-            border-radius: 11px;
-            background: var(--tg-blue, #2AABEE);
-            color: #fff;
-            font-size: 12px;
-            font-weight: 600;
-        }
-        .chat-row .unread-pill.muted { background: var(--tg-textSecondary, #8B9BAA); }
-        .chat-row .status-pill {
-            display: inline-flex;
-            align-items: center;
-            gap: 4px;
-            padding: 2px 8px;
-            border-radius: 10px;
-            font-size: 11px;
-            font-weight: 600;
-        }
-        .chat-row .status-pill-active   { background: rgba(79,174,78,0.18);  color: #5BC55A; }
-        .chat-row .status-pill-paused   { background: rgba(255,152,0,0.18);  color: #FFB54E; }
-        .chat-row .status-pill-add      { background: rgba(255,255,255,0.06); color: var(--tg-textSecondary, #8B9BAA); }
-
-        /* Guest sessions hide every element marked admin-only. Single source
-           of truth so we don't have to thread `state.role` through every
-           render path. body[data-role] is set on boot in app.js init() from
-           /api/auth_check before any UI mounts. */
-        body[data-role="guest"] [data-admin-only] { display: none !important; }
-        /* Onboarding banner is admin-flow only ("paste creds → add account
-           → enable group" — every step is a write a guest can't do).
-           `initOnboarding` already returns early for guest, this rule is
-           the belt-and-suspenders for any race / stale DOM case. */
-        body[data-role="guest"] #onboarding-banner { display: none !important; }
-        /* Select-mode toggle is only meaningful inside the gallery — show it
-           in the header only when the Viewer page is active. Hidden by
-           default via the `hidden` class; this rule un-hides on viewer. */
-        body[data-page="viewer"] #select-mode-btn { display: inline-flex; }
-        /* Guest header role pill */
-        .role-pill { display: inline-flex; align-items: center; gap: 4px;
-            padding: 2px 8px; font-size: 11px; font-weight: 500;
-            border-radius: 999px; line-height: 1.4; letter-spacing: 0.02em; }
-        .role-pill.role-admin { background: rgba(42,171,238,0.15); color: var(--tg-blue, #2AABEE); }
-        .role-pill.role-guest { background: rgba(139,155,170,0.18); color: var(--tg-textSecondary, #8B9BAA); }
-
-        /* ============================================================
-           Per-page accent — single Telegram-style highlight per top-level
-           page. Drives the header bottom-border tint and any opt-in
-           `var(--page-accent)` consumers.
-           ============================================================ */
-        :root { --page-accent: var(--tg-blue, #2AABEE); }
-        body[data-page="viewer"]   { --page-accent: var(--tg-blue, #2AABEE); }
-        body[data-page="groups"]   { --page-accent: var(--tg-green, #4FAE4E); }
-        body[data-page="backfill"] { --page-accent: var(--tg-orange, #FF9800); }
-        body[data-page="queue"]    { --page-accent: #29B6F6; }
-        body[data-page="settings"] { --page-accent: var(--tg-blue, #2AABEE); }
-        #content-header {
-            box-shadow: inset 0 -2px 0 var(--page-accent);
-            transition: box-shadow 0.2s ease;
-        }
-        @media (prefers-reduced-motion: reduce) {
-            #content-header { transition: none; }
-        }
-
-        /* ============================================================
-           Settings tab strip — sticky tab row that mirrors the Groups
-           page tabs visually (`#groups-tab-*`) but stays in reach while
-           the user scrolls so they can jump between sections without
-           hauling the page back to the top. Sits inside the page's
-           content column (no full-width breakout) so it doesn't read
-           as a foreign banner pasted on top of the cards.
-           ============================================================ */
-        .settings-chip-nav {
-            position: sticky;
-            top: 0;
-            z-index: 5;
-            display: flex;
-            margin: 0 0 16px;
-            padding: 0;
-            background: var(--tg-bg, #17212B);   /* matches page bg so scrolled cards pass cleanly underneath */
-            border-bottom: 1px solid var(--tg-border, #0D1117);
-            overflow-x: auto;
-            overflow-y: hidden;
-            -webkit-overflow-scrolling: touch;
-            scrollbar-width: none;
-        }
-        .settings-chip-nav::-webkit-scrollbar { display: none; }
-        .settings-chip {
-            flex: 0 0 auto;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 10px 14px;
-            background: transparent;
-            border: 0;
-            border-bottom: 2px solid transparent;
-            margin-bottom: -1px;             /* overlap the nav's bottom border */
-            color: var(--tg-textSecondary, #8B9BAA);
-            font-size: 14px;
-            font-weight: 500;
-            line-height: 1.2;
-            cursor: pointer;
-            -webkit-tap-highlight-color: transparent;
-            white-space: nowrap;
-            transition: color 0.15s ease, border-color 0.15s ease, font-weight 0s;
-        }
-        .settings-chip:hover { color: var(--tg-text, #F5F5F5); }
-        .settings-chip[aria-selected="true"] {
-            color: var(--tg-blue, #2AABEE);
-            border-bottom-color: var(--tg-blue, #2AABEE);
-            font-weight: 600;
-        }
-        .settings-chip i {
-            font-size: 15px;
-            line-height: 1;
-            opacity: 0.75;
-            transition: opacity 0.15s ease;
-        }
-        .settings-chip:hover i,
-        .settings-chip[aria-selected="true"] i { opacity: 1; }
-        /* Compensate scroll-target landing for the sticky bar's height. */
-        .settings-section { scroll-margin-top: 60px; }
-        @media (prefers-reduced-motion: reduce) {
-            .settings-chip,
-            .settings-chip i { transition: none; }
-        }
-    </style>
+    <!-- Main stylesheet — extracted from the inline <style> block in v2.4.0
+         (was ~1500 lines of CSS pasted into index.html). Versioned via the
+         ?v=… query so a release bump pierces both the browser HTTP cache and
+         the service worker shell cache. The SW also picks /css/* up via the
+         isStaticAsset filter in sw.js. -->
+    <link rel="stylesheet" href="/css/main.css?v=2.6.0">
+    <!-- v2.5.0 — bumped main.css cache-bust + sw VERSION (v240 → v250).
+         Backup destinations (S3/local/SFTP), universal background-job
+         pattern (13 endpoints converted via JobTracker), share-link v2
+         URL format, Telegram-themed share-error page. -->
+
+    <!-- Modulepreload — kick off the SPA's hot-path import graph in
+         parallel instead of waiting for the discover-then-fetch waterfall
+         that <script type="module"> would otherwise do. Cuts time-to-
+         interactive on a fresh page-load, especially on slow links.
+         Same `?v=` cache-bust as the stylesheet so a release bumps both. -->
+    <link rel="modulepreload" href="/js/app.js?v=2.5.0">
+    <link rel="modulepreload" href="/js/api.js?v=2.5.0">
+    <link rel="modulepreload" href="/js/ws.js?v=2.5.0">
+    <link rel="modulepreload" href="/js/router.js?v=2.5.0">
+    <link rel="modulepreload" href="/js/i18n.js?v=2.5.0">
+    <link rel="modulepreload" href="/js/store.js?v=2.5.0">
+    <link rel="modulepreload" href="/js/utils.js?v=2.5.0">
 </head>
 
 <body class="h-screen overflow-hidden" data-role="">
@@ -1645,6 +192,30 @@
                     onclick="navigateTo('settings')">
                     <i class="ri-settings-3-line text-xl text-tg-textSecondary"></i>
                     <span class="text-tg-text" data-i18n="nav.settings">Settings</span>
+                </div>
+                <!-- Maintenance — single sidebar row that opens a hub
+                     page with a card grid for every tool. v2.6
+                     consolidation: the previous 5 sub-rows cluttered both
+                     mobile + desktop, so they collapse into one entry.
+                     Power users keep the deep links —
+                     /maintenance/duplicates etc. still resolve directly. -->
+                <div class="nav-item flex items-center gap-3 p-3 cursor-pointer hover:bg-tg-hover" data-page="maintenance" data-admin-only
+                    onclick="navigateTo('maintenance')">
+                    <i class="ri-tools-line text-xl text-tg-textSecondary"></i>
+                    <span class="text-tg-text" data-i18n="nav.maintenance.section">Maintenance</span>
+                </div>
+                <!-- Hidden anchors so existing inline-onclick deep-links
+                     (settings.js maint cards) keep working without code
+                     changes — they call navigateTo('maintenance/<slug>')
+                     and the router still resolves to the per-feature
+                     page. No nav row rendered. -->
+                <div class="hidden">
+                    <div data-page="maintenance-duplicates"></div>
+                    <div data-page="maintenance-thumbs"></div>
+                    <div data-page="maintenance-nsfw"></div>
+                    <div data-page="maintenance-logs"></div>
+                    <div data-page="maintenance-backup"></div>
+                    <div data-page="maintenance-ai"></div>
                 </div>
             </nav>
 
@@ -1935,25 +506,32 @@
         <main class="flex-1 flex flex-col h-full overflow-hidden">
 
             <!-- Header -->
-            <header id="content-header" class="h-14 bg-tg-bg border-b border-tg-border flex items-center px-3 sm:px-4 pt-safe">
+            <!-- Mobile rule: <640px collapses paste-link / stories / view-mode /
+                 refresh into the overflow ⋮ menu so the title and the
+                 always-on bits (engine pill, notify bell, select-mode) keep
+                 their breathing room. The subtitle drops out at the same
+                 breakpoint — there's no horizontal room for it next to a
+                 long page-title without text wrap. -->
+            <header id="content-header" class="h-14 bg-tg-bg border-b border-tg-border flex items-center px-2 sm:px-4 pt-safe gap-1 sm:gap-2">
                 <button id="menu-btn" type="button"
-                    class="md:hidden w-10 h-10 flex items-center justify-center rounded-full hover:bg-tg-hover mr-2"
+                    class="md:hidden w-10 h-10 flex items-center justify-center rounded-full hover:bg-tg-hover shrink-0"
                     data-i18n-aria-label="header.menu" aria-label="Open menu">
                     <i class="ri-menu-line text-xl text-tg-textSecondary" aria-hidden="true"></i>
                 </button>
 
-                <div class="flex items-center gap-3 flex-1 min-w-0">
-                    <div id="header-avatar" class="tg-avatar tg-avatar-1 w-10 h-10 text-lg flex-shrink-0">
+                <div class="flex items-center gap-2 sm:gap-3 flex-1 min-w-0">
+                    <div id="header-avatar" class="tg-avatar tg-avatar-1 w-9 h-9 sm:w-10 sm:h-10 text-base sm:text-lg shrink-0">
                         <i class="ri-gallery-line"></i>
                     </div>
-                    <div class="min-w-0">
-                        <h1 id="page-title" class="font-medium text-tg-text truncate" data-i18n="nav.viewer">Viewer</h1>
-                        <p id="page-subtitle" class="text-xs text-tg-textSecondary" data-i18n="nav.viewer_sub">View downloaded files</p>
+                    <div class="min-w-0 flex-1">
+                        <h1 id="page-title" class="font-medium text-tg-text truncate text-sm sm:text-base" data-i18n="nav.viewer">Viewer</h1>
+                        <p id="page-subtitle" class="text-xs text-tg-textSecondary truncate hidden sm:block" data-i18n="nav.viewer_sub">View downloaded files</p>
                     </div>
-                    <span id="role-pill" class="role-pill ml-2 hidden" aria-label="Account role"></span>
+                    <span id="role-pill" class="role-pill hidden shrink-0" aria-label="Account role"></span>
                 </div>
 
-                <div class="flex items-center gap-1">
+                <div class="flex items-center gap-0.5 sm:gap-1 shrink-0">
+                    <!-- Always visible: engine pill + notify bell + select-mode. -->
                     <a id="engine-status-pill" href="#/settings/engine" data-admin-only
                         class="engine-status-pill"
                         data-i18n-aria-label="header.engine" aria-label="Engine status">
@@ -1961,19 +539,53 @@
                         <span class="engine-status-label" data-i18n="status.idle">Idle</span>
                         <span id="engine-nav-badge" class="nav-badge hidden"></span>
                     </a>
+
+                    <div class="relative" data-admin-only>
+                        <button id="notify-bell-btn" type="button"
+                            class="w-10 h-10 min-w-[44px] min-h-[44px] rounded-full hover:bg-tg-hover flex items-center justify-center relative"
+                            aria-haspopup="menu" aria-expanded="false"
+                            data-i18n-aria-label="header.notifications" aria-label="Notifications">
+                            <i class="ri-notification-3-line text-xl text-tg-textSecondary" aria-hidden="true"></i>
+                            <span id="notify-bell-badge" class="absolute top-1.5 right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-tg-red text-white text-[10px] font-medium leading-[18px] text-center hidden">0</span>
+                        </button>
+                        <div id="notify-bell-menu" class="view-mode-menu notify-menu" role="menu" aria-labelledby="notify-bell-btn">
+                            <div class="notify-header flex items-center justify-between gap-2 px-3 py-2 border-b border-tg-border mb-1">
+                                <span class="text-xs font-semibold tracking-wide uppercase text-tg-textSecondary" data-i18n="header.notifications">Notifications</span>
+                                <button id="notify-clear-btn" type="button"
+                                    class="w-7 h-7 rounded-full inline-flex items-center justify-center text-tg-textSecondary hover:text-tg-text hover:bg-tg-hover transition-colors"
+                                    data-i18n-title="header.notifications.clear" title="Clear all"
+                                    data-i18n-aria-label="header.notifications.clear" aria-label="Clear all">
+                                    <i class="ri-eraser-line text-[14px]"></i>
+                                </button>
+                            </div>
+                            <div id="notify-list" class="max-h-[60vh] overflow-y-auto"></div>
+                            <div id="notify-empty" class="px-3 py-6 text-center text-xs text-tg-textSecondary" data-i18n="header.notifications.empty">No notifications yet.</div>
+                        </div>
+                    </div>
+
+                    <button id="select-mode-btn" type="button" data-admin-only
+                        class="w-10 h-10 min-w-[44px] min-h-[44px] rounded-full hover:bg-tg-hover items-center justify-center hidden"
+                        data-i18n-aria-label="viewer.select_mode" aria-label="Toggle selection mode"
+                        data-i18n-title="viewer.select_mode" title="Toggle selection mode">
+                        <i class="ri-checkbox-multiple-line text-xl text-tg-textSecondary" aria-hidden="true"></i>
+                    </button>
+
+                    <!-- Desktop-only buttons. On <640px these collapse into the
+                         overflow menu below — keeps a 320 px iPhone SE header
+                         from cramming nine 44 px tap targets onto one row. -->
                     <button id="paste-url-btn" type="button" data-admin-only
-                        class="w-10 h-10 min-w-[44px] min-h-[44px] rounded-full hover:bg-tg-hover flex items-center justify-center"
+                        class="hidden sm:flex w-10 h-10 min-w-[44px] min-h-[44px] rounded-full hover:bg-tg-hover items-center justify-center"
                         data-i18n-aria-label="header.paste_link" aria-label="Download from a Telegram link"
                         data-i18n-title="header.paste_link" title="Download from a Telegram link">
                         <i class="ri-link-m text-xl text-tg-textSecondary" aria-hidden="true"></i>
                     </button>
                     <button id="stories-btn" type="button" data-admin-only
-                        class="w-10 h-10 min-w-[44px] min-h-[44px] rounded-full hover:bg-tg-hover flex items-center justify-center"
+                        class="hidden sm:flex w-10 h-10 min-w-[44px] min-h-[44px] rounded-full hover:bg-tg-hover items-center justify-center"
                         data-i18n-aria-label="header.stories" aria-label="Download Telegram Stories"
                         data-i18n-title="header.stories" title="Download Telegram Stories">
                         <i class="ri-camera-line text-xl text-tg-textSecondary" aria-hidden="true"></i>
                     </button>
-                    <div class="relative">
+                    <div class="relative hidden sm:block">
                         <button id="view-mode-btn" type="button"
                             class="w-10 h-10 min-w-[44px] min-h-[44px] rounded-full hover:bg-tg-hover flex items-center justify-center"
                             aria-haspopup="menu" aria-expanded="false"
@@ -1998,18 +610,53 @@
                             </button>
                         </div>
                     </div>
-                    <button id="select-mode-btn" type="button" data-admin-only
-                        class="w-10 h-10 min-w-[44px] min-h-[44px] rounded-full hover:bg-tg-hover items-center justify-center hidden"
-                        data-i18n-aria-label="viewer.select_mode" aria-label="Toggle selection mode"
-                        data-i18n-title="viewer.select_mode" title="Toggle selection mode">
-                        <i class="ri-checkbox-multiple-line text-xl text-tg-textSecondary" aria-hidden="true"></i>
-                    </button>
                     <button id="refresh-btn" type="button"
-                        class="w-10 h-10 min-w-[44px] min-h-[44px] rounded-full hover:bg-tg-hover flex items-center justify-center"
+                        class="hidden sm:flex w-10 h-10 min-w-[44px] min-h-[44px] rounded-full hover:bg-tg-hover items-center justify-center"
                         data-i18n-aria-label="header.refresh" aria-label="Refresh"
                         onclick="refreshCurrentPage()">
                         <i class="ri-refresh-line text-xl text-tg-textSecondary" aria-hidden="true"></i>
                     </button>
+
+                    <!-- Mobile-only overflow ⋮ menu — hosts paste-link / stories
+                         / view-mode-{grid,compact,list} / refresh. Each entry
+                         delegates to the desktop button via .click() so the
+                         business logic lives in one place. -->
+                    <div class="relative sm:hidden">
+                        <button id="header-overflow-btn" type="button"
+                            class="w-10 h-10 min-w-[44px] min-h-[44px] rounded-full hover:bg-tg-hover flex items-center justify-center"
+                            aria-haspopup="menu" aria-expanded="false"
+                            data-i18n-aria-label="header.more" aria-label="More actions">
+                            <i class="ri-more-2-fill text-xl text-tg-textSecondary" aria-hidden="true"></i>
+                        </button>
+                        <div id="header-overflow-menu" class="view-mode-menu" role="menu" aria-labelledby="header-overflow-btn">
+                            <button type="button" data-overflow="paste-url" data-admin-only role="menuitem">
+                                <i class="ri-link-m"></i>
+                                <span class="vm-label" data-i18n="header.paste_link">Download from a Telegram link</span>
+                            </button>
+                            <button type="button" data-overflow="stories" data-admin-only role="menuitem">
+                                <i class="ri-camera-line"></i>
+                                <span class="vm-label" data-i18n="header.stories">Download Telegram Stories</span>
+                            </button>
+                            <div class="border-t border-tg-border my-1"></div>
+                            <button type="button" data-overflow="vm-grid" role="menuitem">
+                                <i class="ri-layout-grid-line"></i>
+                                <span class="vm-label" data-i18n="header.view_mode.grid">Grid</span>
+                            </button>
+                            <button type="button" data-overflow="vm-compact" role="menuitem">
+                                <i class="ri-grid-line"></i>
+                                <span class="vm-label" data-i18n="header.view_mode.compact">Compact</span>
+                            </button>
+                            <button type="button" data-overflow="vm-list" role="menuitem">
+                                <i class="ri-list-check-2"></i>
+                                <span class="vm-label" data-i18n="header.view_mode.list">List</span>
+                            </button>
+                            <div class="border-t border-tg-border my-1"></div>
+                            <button type="button" data-overflow="refresh" role="menuitem">
+                                <i class="ri-refresh-line"></i>
+                                <span class="vm-label" data-i18n="header.refresh">Refresh</span>
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </header>
 
@@ -2020,10 +667,50 @@
                 <div class="tab-item" data-type="videos" data-i18n="viewer.tab.videos">Videos</div>
                 <div class="tab-item" data-type="documents" data-i18n="viewer.tab.documents">Files</div>
                 <div class="tab-item" data-type="audio" data-i18n="viewer.tab.audio">Audio</div>
+                <!-- Pinned: independent toggle (sits next to the type tabs but
+                     reads as a chip, since it stacks with the type filter
+                     instead of replacing it). -->
+                <div class="tab-item tab-item--toggle" data-pinned-toggle
+                     data-i18n-title="favorites.filter_title" title="Show only pinned"
+                     role="button" aria-pressed="false">
+                    <i class="ri-pushpin-2-line mr-1" aria-hidden="true"></i><span data-i18n="favorites.filter">Pinned</span>
+                </div>
             </div>
 
             <!-- Content Area -->
             <div id="content-area" class="flex-1 overflow-y-auto overscroll-contain p-2 sm:p-4 bg-tg-lightBg">
+
+                <!-- Maintenance tab strip — admin-only, only rendered when
+                     the user is on a per-feature maintenance page (NOT on
+                     the hub itself). Lets the operator hop between tools
+                     without a sidebar trip. Active tab highlighted by
+                     app.js's renderPage(); a back arrow on the left
+                     returns to the hub. Mobile: horizontal scroll. -->
+                <nav id="maintenance-tabs" class="maintenance-tabs hidden mb-3 max-w-5xl mx-auto" data-admin-only role="tablist" aria-label="Maintenance tools">
+                    <a class="maintenance-tab-back" href="#/maintenance" data-i18n-aria-label="maintenance.tabs.back" aria-label="Back to hub">
+                        <i class="ri-arrow-left-s-line"></i>
+                    </a>
+                    <div class="maintenance-tabs-scroll">
+                        <a class="maintenance-tab" data-mt-page="maintenance-duplicates" href="#/maintenance/duplicates" role="tab">
+                            <i class="ri-file-copy-2-line"></i><span data-i18n="nav.maintenance.duplicates">Duplicates</span>
+                        </a>
+                        <a class="maintenance-tab" data-mt-page="maintenance-thumbs" href="#/maintenance/thumbs" role="tab">
+                            <i class="ri-image-2-line"></i><span data-i18n="nav.maintenance.thumbs">Thumbnails</span>
+                        </a>
+                        <a class="maintenance-tab" data-mt-page="maintenance-nsfw" href="#/maintenance/nsfw" role="tab">
+                            <i class="ri-alarm-warning-line"></i><span data-i18n="nav.maintenance.nsfw">NSFW</span>
+                        </a>
+                        <a class="maintenance-tab" data-mt-page="maintenance-ai" href="#/maintenance/ai" role="tab">
+                            <i class="ri-sparkling-2-line"></i><span data-i18n="nav.maintenance.ai">AI search</span>
+                        </a>
+                        <a class="maintenance-tab" data-mt-page="maintenance-backup" href="#/maintenance/backup" role="tab">
+                            <i class="ri-cloud-line"></i><span data-i18n="nav.maintenance.backup">Backup</span>
+                        </a>
+                        <a class="maintenance-tab" data-mt-page="maintenance-logs" href="#/maintenance/logs" role="tab">
+                            <i class="ri-terminal-box-line"></i><span data-i18n="nav.maintenance.logs">Logs</span>
+                        </a>
+                    </div>
+                </nav>
 
                 <!-- Viewer Page -->
                 <div id="page-viewer">
@@ -2052,10 +739,20 @@
                          the grid so it can extend past the grid bounds
                          without altering layout. -->
                     <div id="gallery-lasso" aria-hidden="true"></div>
+                    <!-- Empty-state with actionable hints. Defaults to the
+                         neutral "No media files" copy; renderEmptyGroupState()
+                         in app.js swaps in group-specific guidance (run
+                         backfill / check filters / re-index from disk) when
+                         the user lands on a per-group view that turned up
+                         zero rows. Without those hints users were filing
+                         "ทำไมบางกลุ่มไม่เจอ media" without knowing where to
+                         look. -->
                     <div id="empty-state"
-                        class="hidden flex flex-col items-center justify-center h-64 text-center px-4">
-                        <i class="ri-image-line text-5xl text-tg-textSecondary mb-4"></i>
-                        <p class="text-tg-textSecondary" data-i18n="viewer.empty">No media files</p>
+                        class="hidden flex flex-col items-center justify-center min-h-[16rem] text-center px-4 py-8">
+                        <i id="empty-state-icon" class="ri-image-line text-5xl text-tg-textSecondary mb-4"></i>
+                        <p id="empty-state-title" class="text-tg-text font-medium mb-1" data-i18n="viewer.empty">No media files</p>
+                        <p id="empty-state-body" class="text-xs text-tg-textSecondary max-w-sm hidden"></p>
+                        <div id="empty-state-actions" class="mt-4 flex flex-wrap gap-2 justify-center hidden"></div>
                     </div>
                     <div id="loading" class="hidden flex justify-center py-8">
                         <div class="w-8 h-8 border-2 border-tg-blue border-t-transparent rounded-full animate-spin">
@@ -2065,7 +762,7 @@
                 </div>
 
                 <!-- Groups Config Page -->
-                <div id="page-groups" class="hidden max-w-2xl mx-auto">
+                <div id="page-groups" class="hidden max-w-5xl mx-auto px-3 sm:px-4">
                     <!-- Tabs -->
                     <div class="flex border-b border-tg-border mb-4">
                         <button id="groups-tab-all" onclick="switchGroupsTab('all')"
@@ -2096,7 +793,7 @@
                 </div>
 
                 <!-- Settings Page -->
-                <div id="page-settings" class="hidden max-w-2xl mx-auto px-3 sm:px-4">
+                <div id="page-settings" class="hidden max-w-5xl mx-auto px-3 sm:px-4">
 
                     <!-- Sticky chip-nav. Drives smooth-scroll to the five
                          anchored sections below (System / Accounts /
@@ -2105,25 +802,50 @@
                          bottom of the page mirrors active section back
                          to the chip via [aria-selected]. -->
                     <nav class="settings-chip-nav" role="tablist" aria-label="Settings sections">
-                        <button type="button" role="tab" id="settings-chip-system" data-admin-only class="settings-chip" data-chip="system" aria-controls="settings-system" aria-selected="true">
-                            <i class="ri-cpu-line" aria-hidden="true"></i>
-                            <span data-i18n="settings.section.system">System</span>
+                        <!-- Per-card chips, trimmed to the essentials.
+                             Sub-cards (Telegram API, Quick Presets, Rescue,
+                             Privacy, Proxy) are reachable by scrolling to
+                             their parent section; chip-nav surfaces the
+                             top-level cards only. -->
+                        <button type="button" role="tab" data-admin-only class="settings-chip" data-chip="card-engine" aria-selected="true">
+                            <i class="ri-broadcast-line" aria-hidden="true"></i>
+                            <span data-i18n="settings.engine">Engine</span>
                         </button>
-                        <button type="button" role="tab" id="settings-chip-accounts" data-admin-only class="settings-chip" data-chip="accounts" aria-controls="settings-accounts" aria-selected="false">
+                        <button type="button" role="tab" data-admin-only class="settings-chip" data-chip="card-maintenance" aria-selected="false">
+                            <i class="ri-tools-line" aria-hidden="true"></i>
+                            <span data-i18n="maintenance.title">Maintenance</span>
+                        </button>
+                        <button type="button" role="tab" data-admin-only class="settings-chip" data-chip="card-advanced" aria-selected="false">
+                            <i class="ri-tools-fill" aria-hidden="true"></i>
+                            <span data-i18n="settings.advanced.title">Advanced</span>
+                        </button>
+                        <button type="button" role="tab" data-admin-only class="settings-chip" data-chip="card-accounts" aria-selected="false">
                             <i class="ri-user-line" aria-hidden="true"></i>
-                            <span data-i18n="settings.section.accounts">Accounts</span>
+                            <span data-i18n="settings.accounts">Accounts</span>
                         </button>
-                        <button type="button" role="tab" id="settings-chip-downloads" data-admin-only class="settings-chip" data-chip="downloads" aria-controls="settings-downloads" aria-selected="false">
-                            <i class="ri-download-cloud-2-line" aria-hidden="true"></i>
-                            <span data-i18n="settings.section.downloads">Downloads</span>
+                        <button type="button" role="tab" data-admin-only class="settings-chip" data-chip="card-download" aria-selected="false">
+                            <i class="ri-download-line" aria-hidden="true"></i>
+                            <span data-i18n="settings.download">Download</span>
                         </button>
-                        <button type="button" role="tab" id="settings-chip-appearance" class="settings-chip" data-chip="appearance" aria-controls="settings-appearance" aria-selected="false">
+                        <button type="button" role="tab" data-admin-only class="settings-chip" data-chip="card-rate" aria-selected="false">
+                            <i class="ri-speed-line" aria-hidden="true"></i>
+                            <span data-i18n="settings.rate.title">Rate Limits</span>
+                        </button>
+                        <button type="button" role="tab" data-admin-only class="settings-chip" data-chip="card-size" aria-selected="false">
+                            <i class="ri-hard-drive-2-line" aria-hidden="true"></i>
+                            <span data-i18n="settings.size.title">Size Limits</span>
+                        </button>
+                        <button type="button" role="tab" class="settings-chip" data-chip="card-appearance" aria-selected="false">
                             <i class="ri-palette-line" aria-hidden="true"></i>
-                            <span data-i18n="settings.section.appearance">Look &amp; Feel</span>
+                            <span data-i18n="settings.appearance">Appearance</span>
                         </button>
-                        <button type="button" role="tab" id="settings-chip-network" data-admin-only class="settings-chip" data-chip="network" aria-controls="settings-network" aria-selected="false">
-                            <i class="ri-shield-keyhole-line" aria-hidden="true"></i>
-                            <span data-i18n="settings.section.network">Privacy &amp; Net</span>
+                        <button type="button" role="tab" class="settings-chip" data-chip="card-video" aria-selected="false">
+                            <i class="ri-film-line" aria-hidden="true"></i>
+                            <span data-i18n="settings.video_player.title">Video Player</span>
+                        </button>
+                        <button type="button" role="tab" data-admin-only class="settings-chip" data-chip="card-security" aria-selected="false">
+                            <i class="ri-lock-2-line" aria-hidden="true"></i>
+                            <span data-i18n="settings.security">Security</span>
                         </button>
                     </nav>
 
@@ -2141,9 +863,9 @@
                         <i class="ri-arrow-right-s-line text-tg-textSecondary ml-auto" aria-hidden="true"></i>
                     </button>
 
-                    <section data-settings-section="system" id="settings-system" role="tabpanel" aria-labelledby="settings-chip-system" data-admin-only class="settings-section space-y-4 mb-6">
+                    <section id="settings-system" role="tabpanel" data-admin-only class="settings-section space-y-4 mb-6">
                     <!-- Engine / monitor -->
-                    <div class="bg-tg-panel rounded-xl p-4 mb-4">
+                    <div id="settings-card-engine" data-settings-section="card-engine" class="bg-tg-panel rounded-xl p-4 mb-4 scroll-mt-24">
                         <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
                             <i class="ri-broadcast-line text-tg-green"></i> <span data-i18n="settings.engine">Engine</span>
                             <span id="engine-pill" class="ml-auto text-xs px-2 py-0.5 rounded-full bg-gray-700 text-gray-300" data-i18n="settings.engine.stopped">Stopped</span>
@@ -2171,7 +893,7 @@
                     </div>
 
                     <!-- Maintenance -->
-                    <div class="mt-6 bg-tg-panel rounded-xl p-4" data-admin-only>
+                    <div id="settings-card-maintenance" data-settings-section="card-maintenance" class="mt-6 bg-tg-panel rounded-xl p-4 scroll-mt-24" data-admin-only>
                         <h3 class="text-tg-text font-medium mb-1 flex items-center gap-2">
                             <i class="ri-tools-line text-tg-blue"></i> <span data-i18n="maintenance.title">Maintenance</span>
                         </h3>
@@ -2316,7 +1038,7 @@
                         main "Save Settings" button above. Server clamps every
                         value, so a typo can't brick the install.
                     -->
-                    <div class="mt-6 bg-tg-panel rounded-xl p-4" data-admin-only>
+                    <div id="settings-card-advanced" data-settings-section="card-advanced" class="mt-6 bg-tg-panel rounded-xl p-4 scroll-mt-24" data-admin-only>
                         <h3 class="text-tg-text font-medium mb-1 flex items-center gap-2">
                             <i class="ri-tools-fill text-tg-orange"></i> <span data-i18n="settings.advanced.title">Advanced</span>
                         </h3>
@@ -2454,40 +1176,13 @@
                                 </div>
                             </div>
 
-                            <!-- NSFW review tool -->
-                            <div class="mt-4 pt-4 border-t border-tg-border/30">
-                                <h4 class="text-tg-text text-sm font-medium mb-2 flex items-center gap-2">
-                                    <i class="ri-alert-line text-tg-orange"></i>
-                                    <span data-i18n="settings.advanced.nsfw">NSFW review tool</span>
-                                </h4>
-                                <p class="text-[11px] text-tg-textSecondary mb-3" data-i18n="settings.advanced.nsfw_help">Off by default. Enable to surface a Maintenance button that scans every photo, classifies 18+ vs not-18+, and lists the not-18+ rows for admin review + delete. Runs entirely on this server (no external service); the model downloads once on first scan.</p>
-                                <div class="flex items-start justify-between gap-3 py-1">
-                                    <div class="min-w-0">
-                                        <div class="text-tg-text text-sm" data-i18n="settings.advanced.nsfw_enable">Enable NSFW review</div>
-                                        <p class="text-[11px] text-tg-textSecondary mt-0.5" data-i18n="settings.advanced.nsfw_enable_help">Adds the "Scan images for NSFW" button to Maintenance.</p>
-                                    </div>
-                                    <div id="setting-adv-nsfw-enabled" class="tg-toggle shrink-0 mt-0.5"></div>
-                                </div>
-                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
-                                    <div>
-                                        <label for="setting-adv-nsfw-threshold" class="text-tg-text text-xs block mb-1" data-i18n="settings.advanced.nsfw_threshold">Threshold (0.10–0.99)</label>
-                                        <input id="setting-adv-nsfw-threshold" type="number" min="0.10" max="0.99" step="0.05" class="tg-input w-full text-sm" placeholder="0.60">
-                                        <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.advanced.nsfw_threshold_help">Score &gt;= this counts as 18+ (kept). Below = surfaced for review. Higher = stricter (more rows surfaced as &quot;possibly not 18+&quot;).</p>
-                                    </div>
-                                    <div>
-                                        <label for="setting-adv-nsfw-concurrency" class="text-tg-text text-xs block mb-1" data-i18n="settings.advanced.nsfw_concurrency">Concurrency (1–4)</label>
-                                        <input id="setting-adv-nsfw-concurrency" type="number" min="1" max="4" class="tg-input w-full text-sm" placeholder="1">
-                                        <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.advanced.nsfw_concurrency_help">Parallel inferences. Higher uses more CPU/RAM during scan; defaults to 1 to keep the server responsive.</p>
-                                    </div>
-                                </div>
-                            </div>
                         </div>
                     </div>
                     </section>
 
-                    <section data-settings-section="accounts" id="settings-accounts" role="tabpanel" aria-labelledby="settings-chip-accounts" data-admin-only class="settings-section space-y-4 mb-6">
+                    <section id="settings-accounts" role="tabpanel" data-admin-only class="settings-section space-y-4 mb-6">
                     <!-- Telegram Accounts -->
-                    <div class="bg-tg-panel rounded-xl p-4 mb-4" data-admin-only>
+                    <div id="settings-card-accounts" data-settings-section="card-accounts" class="bg-tg-panel rounded-xl p-4 mb-4 scroll-mt-24" data-admin-only>
                         <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
                             <i class="ri-user-line text-tg-blue"></i> <span data-i18n="settings.accounts">Telegram Accounts</span>
                             <a href="/add-account.html" class="ml-auto tg-btn-secondary text-xs px-3 py-1 inline-flex items-center gap-1">
@@ -2501,7 +1196,7 @@
                     </div>
 
                     <!-- Telegram API credentials -->
-                    <div class="bg-tg-panel rounded-xl p-4 mb-4" data-admin-only>
+                    <div id="settings-card-tg-api" data-settings-section="card-tg-api" class="bg-tg-panel rounded-xl p-4 mb-4 scroll-mt-24" data-admin-only>
                         <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
                             <i class="ri-key-2-line text-tg-blue"></i> <span data-i18n="settings.tg_api">Telegram API</span>
                         </h3>
@@ -2522,9 +1217,9 @@
                     </div>
                     </section>
 
-                    <section data-settings-section="downloads" id="settings-downloads" role="tabpanel" aria-labelledby="settings-chip-downloads" data-admin-only class="settings-section space-y-4 mb-6">
+                    <section id="settings-downloads" role="tabpanel" data-admin-only class="settings-section space-y-4 mb-6">
                     <!-- Download Settings -->
-                    <div class="bg-tg-panel rounded-xl p-4 mb-4" data-admin-only>
+                    <div id="settings-card-download" data-settings-section="card-download" class="bg-tg-panel rounded-xl p-4 mb-4 scroll-mt-24" data-admin-only>
                         <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
                             <i class="ri-download-line text-tg-blue"></i> <span data-i18n="settings.download">Download</span>
                         </h3>
@@ -2591,7 +1286,7 @@
                     </div>
 
                     <!-- Rate Limits -->
-                    <div class="bg-tg-panel rounded-xl p-4 mb-4">
+                    <div id="settings-card-rate" data-settings-section="card-rate" class="bg-tg-panel rounded-xl p-4 mb-4 scroll-mt-24">
                         <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
                             <i class="ri-speed-line text-tg-orange"></i> <span data-i18n="settings.rate.title">Rate Limits</span>
                             <span
@@ -2625,7 +1320,7 @@
                     </div>
 
                     <!-- Size Limits -->
-                    <div class="bg-tg-panel rounded-xl p-4 mb-4">
+                    <div id="settings-card-size" data-settings-section="card-size" class="bg-tg-panel rounded-xl p-4 mb-4 scroll-mt-24">
                         <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
                             <i class="ri-hard-drive-2-line text-tg-green"></i> <span data-i18n="settings.size.title">Size Limits</span>
                         </h3>
@@ -2680,7 +1375,7 @@
                     <!-- Rescue Mode (global default). Per-group rescueMode='auto'
                          follows this toggle; 'on'/'off' overrides it. The sweep
                          interval applies to every group with rescue active. -->
-                    <div class="bg-tg-panel rounded-xl p-4 mb-4" data-settings-section="rescue" data-admin-only>
+                    <div id="settings-card-rescue" data-settings-section="card-rescue" class="bg-tg-panel rounded-xl p-4 mb-4 scroll-mt-24" data-admin-only>
                         <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
                             <i class="ri-lifebuoy-line text-tg-blue" aria-hidden="true"></i>
                             <span data-i18n="settings.rescue.title">Rescue mode</span>
@@ -2704,7 +1399,7 @@
                     </div>
 
                     <!-- Quick Presets -->
-                    <div class="bg-tg-panel rounded-xl p-4 mb-4" data-admin-only>
+                    <div id="settings-card-presets" data-settings-section="card-presets" class="bg-tg-panel rounded-xl p-4 mb-4 scroll-mt-24" data-admin-only>
                         <h3 class="text-tg-text font-medium mb-3" data-i18n="settings.preset.title">Quick Presets</h3>
                         <div class="grid grid-cols-3 gap-2">
                             <button onclick="applyPreset('safe')"
@@ -2726,9 +1421,9 @@
                     </div>
                     </section>
 
-                    <section data-settings-section="appearance" id="settings-appearance" role="tabpanel" aria-labelledby="settings-chip-appearance" class="settings-section space-y-4 mb-6">
+                    <section id="settings-appearance" role="tabpanel" class="settings-section space-y-4 mb-6">
                     <!-- Appearance -->
-                    <div class="bg-tg-panel rounded-xl p-4 mb-4">
+                    <div id="settings-card-appearance" data-settings-section="card-appearance" class="bg-tg-panel rounded-xl p-4 mb-4 scroll-mt-24">
                         <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
                             <i class="ri-palette-line text-tg-blue" aria-hidden="true"></i>
                             <span data-i18n="settings.appearance">Appearance</span>
@@ -2770,7 +1465,7 @@
                          persisted in localStorage). Each toggle/select
                          maps 1:1 to a key the viewer module reads on
                          every clip load. -->
-                    <div class="bg-tg-panel rounded-xl p-4 mb-4" data-settings-section="video-player">
+                    <div id="settings-card-video" data-settings-section="card-video" class="bg-tg-panel rounded-xl p-4 mb-4 scroll-mt-24">
                         <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
                             <i class="ri-play-circle-line text-tg-blue" aria-hidden="true"></i>
                             <span data-i18n="settings.video_player.title">Video Player</span>
@@ -2930,7 +1625,7 @@
                     </div>
 
                     <!-- Security (web auth) -->
-                    <div class="bg-tg-panel rounded-xl p-4 mb-4" data-admin-only>
+                    <div id="settings-card-security" data-settings-section="card-security" class="bg-tg-panel rounded-xl p-4 mb-4 scroll-mt-24" data-admin-only>
                         <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
                             <i class="ri-lock-2-line text-tg-blue"></i> <span data-i18n="settings.security">Dashboard security</span>
                         </h3>
@@ -3001,9 +1696,20 @@
                     </div>
                     </section>
 
-                    <button id="save-settings" class="tg-btn w-full" data-admin-only>
-                        <i class="ri-save-line mr-2"></i><span data-i18n="settings.save">Save Settings</span>
-                    </button>
+                    <!-- Auto-save status pill. Sits where the manual Save
+                         button used to live, but only when there's something
+                         to communicate (idle = invisible). The check-mark
+                         pulse + chip-fade animations replace the explicit
+                         "Save" affordance, and a parallel notification bell
+                         entry lets the operator confirm the save landed
+                         even if they were scrolling away.
+                         ARIA polite live region so screen readers hear
+                         "Saved at 12:34:56" without losing focus. -->
+                    <div id="settings-autosave-status" class="settings-autosave-pill" data-state="idle"
+                         role="status" aria-live="polite" aria-atomic="true" data-admin-only>
+                        <span id="settings-autosave-icon" class="settings-autosave-icon" aria-hidden="true"></span>
+                        <span id="settings-autosave-text"></span>
+                    </div>
 
                     <!-- Danger Zone -->
                     <div class="mt-6 bg-red-500/5 border border-red-500/20 rounded-xl p-4" data-admin-only>
@@ -3067,7 +1773,7 @@
                      Backfill feature). Three stacked cards, populated by
                      js/backfill.js: Active jobs / Start a new backfill /
                      Recent jobs (last 30 days). -->
-                <div id="page-backfill" class="hidden max-w-2xl mx-auto">
+                <div id="page-backfill" class="hidden max-w-5xl mx-auto px-3 sm:px-4">
                     <!-- Card A — Active jobs -->
                     <section class="bg-tg-panel rounded-xl p-4 mb-4">
                         <h3 class="text-tg-text font-medium mb-3 flex items-center gap-2">
@@ -3150,7 +1856,7 @@
                      fixed-height spacer so the virtualiser only renders
                      visible rows + a small over-scroll buffer (see
                      js/queue.js for the math). -->
-                <div id="page-queue" class="hidden max-w-5xl mx-auto">
+                <div id="page-queue" class="hidden max-w-5xl mx-auto px-3 sm:px-4">
                     <!-- Top toolbar — chips, sort, search, global actions -->
                     <section class="bg-tg-panel rounded-xl p-3 mb-3">
                         <div id="queue-chips" class="flex flex-wrap gap-1.5 mb-3"></div>
@@ -3238,6 +1944,554 @@
                     </section>
                 </div>
 
+                <!-- Maintenance hub page (admin-only) — single landing
+                     surface that lists every tool as a card. Lives at
+                     `/maintenance`. Replaces the previous "5 sidebar
+                     entries" approach so the sidebar stays clean on
+                     both mobile + desktop. -->
+                <div id="page-maintenance" class="hidden max-w-5xl mx-auto px-3 sm:px-4" data-admin-only
+                     data-page-title-key="maintenance.hub.title"
+                     data-page-subtitle-key="maintenance.hub.subtitle">
+                    <section class="bg-tg-panel rounded-xl p-4 mb-4">
+                        <div class="flex items-start justify-between gap-3 flex-wrap">
+                            <div class="min-w-0">
+                                <h2 class="text-tg-text text-base font-semibold flex items-center gap-2">
+                                    <i class="ri-tools-line text-tg-blue"></i>
+                                    <span data-i18n="maintenance.hub.title">Maintenance</span>
+                                </h2>
+                                <p class="text-xs text-tg-textSecondary mt-0.5" data-i18n="maintenance.hub.subtitle">Catalogue, thumbnails, NSFW review, logs, backup destinations — and AI search when enabled.</p>
+                            </div>
+                        </div>
+                    </section>
+                    <div id="hub-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>
+                </div>
+
+                <!-- Maintenance / Duplicates page (admin-only) -->
+                <div id="page-maintenance-duplicates" class="hidden max-w-5xl mx-auto px-3 sm:px-4" data-admin-only
+                     data-page-title-key="maintenance.duplicates.title"
+                     data-page-subtitle-key="maintenance.duplicates.subtitle">
+                    <section class="bg-tg-panel rounded-xl p-4 mb-3">
+                        <div class="flex items-start justify-between gap-3 flex-wrap">
+                            <div class="min-w-0">
+                                <h2 class="text-tg-text text-base font-semibold" data-i18n="maintenance.duplicates.title">Find duplicate files</h2>
+                                <p class="text-xs text-tg-textSecondary mt-0.5" data-i18n="maintenance.duplicates.subtitle">Hash every file and reclaim space from byte-identical copies. The first run is slow on large libraries; subsequent runs only hash newly-downloaded files.</p>
+                            </div>
+                            <div class="flex items-center gap-2 shrink-0">
+                                <button id="dup-reindex-btn" class="tg-btn-secondary text-xs px-3 py-1.5" data-i18n="maintenance.reindex.button">Re-index from disk</button>
+                                <button id="dup-scan-btn" class="tg-btn text-xs px-3 py-1.5" data-i18n="maintenance.duplicates.scan">Scan</button>
+                            </div>
+                        </div>
+                        <div id="dup-reindex-progress" class="hidden mt-3">
+                            <div class="text-xs text-tg-textSecondary mb-1"><span data-i18n="maintenance.reindex.running">Re-indexing…</span> <span id="dup-reindex-status"></span></div>
+                            <div class="h-1.5 bg-tg-bg/60 rounded overflow-hidden">
+                                <div id="dup-reindex-progress-bar" class="h-full bg-tg-orange transition-all" style="width:0%"></div>
+                            </div>
+                        </div>
+                        <div id="dup-progress" class="hidden mt-3">
+                            <div class="text-xs text-tg-textSecondary mb-1" id="dup-progress-stage"></div>
+                            <div class="h-1.5 bg-tg-bg/60 rounded overflow-hidden">
+                                <div id="dup-progress-bar" class="h-full bg-tg-blue transition-all" style="width:0%"></div>
+                            </div>
+                        </div>
+                    </section>
+                    <section class="bg-tg-panel rounded-xl p-4">
+                        <div id="dup-totals" class="text-sm text-tg-text mb-2"></div>
+                        <!-- Bulk keep-decisions — applies the rule to every
+                             set in one click. Hidden when the list is empty. -->
+                        <div id="dup-bulk-bar" class="hidden flex items-center justify-between gap-2 flex-wrap mb-3 pb-3 border-b border-tg-border/30">
+                            <span class="text-[11px] uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.duplicates.bulk.heading">Apply to all sets</span>
+                            <div class="flex items-center gap-1.5 flex-wrap">
+                                <button id="dup-bulk-oldest" type="button" class="tg-btn-secondary text-xs px-3 py-1.5 inline-flex items-center gap-1.5">
+                                    <i class="ri-time-line"></i><span data-i18n="maintenance.duplicates.bulk.keep_oldest">Keep oldest in every set</span>
+                                </button>
+                                <button id="dup-bulk-newest" type="button" class="tg-btn-secondary text-xs px-3 py-1.5 inline-flex items-center gap-1.5">
+                                    <i class="ri-flashlight-line"></i><span data-i18n="maintenance.duplicates.bulk.keep_newest">Keep newest in every set</span>
+                                </button>
+                                <button id="dup-bulk-clear" type="button" class="tg-btn-secondary text-xs px-3 py-1.5 inline-flex items-center gap-1.5">
+                                    <i class="ri-eraser-line"></i><span data-i18n="maintenance.duplicates.bulk.clear">Clear selection</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div id="dup-empty" class="text-center py-8 text-sm text-tg-textSecondary" data-i18n="maintenance.duplicates.empty">No scan yet — click "Scan" to begin.</div>
+                        <div id="dup-list" class="max-h-[60vh] overflow-y-auto pr-1"></div>
+                        <div class="mt-3 flex items-center justify-between gap-3 flex-wrap">
+                            <div id="dup-summary" class="text-xs text-tg-textSecondary"></div>
+                            <button id="dup-delete-btn" type="button" class="px-4 py-2 rounded-lg bg-red-500/20 text-red-300 hover:bg-red-500/30 font-medium text-sm transition">
+                                <i class="ri-delete-bin-line mr-1"></i><span data-i18n="maintenance.duplicates.delete_selected">Delete selected</span>
+                            </button>
+                        </div>
+                    </section>
+                </div>
+
+                <!-- Maintenance / Thumbnails page (admin-only) -->
+                <div id="page-maintenance-thumbs" class="hidden max-w-5xl mx-auto px-3 sm:px-4" data-admin-only
+                     data-page-title-key="maintenance.thumbs.page_title"
+                     data-page-subtitle-key="maintenance.thumbs.subtitle">
+                    <section class="bg-tg-panel rounded-xl p-4 mb-3">
+                        <div class="flex items-start justify-between gap-3 flex-wrap">
+                            <div class="min-w-0">
+                                <h2 class="text-tg-text text-base font-semibold" data-i18n="maintenance.thumbs.page_title">Build thumbnails</h2>
+                                <p class="text-xs text-tg-textSecondary mt-0.5" data-i18n="maintenance.thumbs.subtitle">Generate WebP previews for older files in the library. New downloads are thumbnailed automatically; this sweep covers anything that landed before the feature shipped.</p>
+                                <div id="thumbs-no-ffmpeg" class="hidden mt-2 inline-flex items-center gap-2 px-2 py-1 rounded-md bg-yellow-500/15 text-yellow-300 text-xs">
+                                    <i class="ri-error-warning-line"></i>
+                                    <span data-i18n="maintenance.thumbs.no_ffmpeg_chip">Video / audio thumbs disabled — ffmpeg missing on PATH</span>
+                                </div>
+                            </div>
+                            <div class="flex items-center gap-2 shrink-0">
+                                <button id="thumbs-wipe-btn" class="tg-btn-secondary text-xs px-3 py-1.5" data-i18n="maintenance.thumbs.wipe_cache">Wipe cache</button>
+                                <button id="thumbs-build-btn" class="tg-btn text-xs px-3 py-1.5" data-i18n="maintenance.thumbs.build_all">Build all</button>
+                            </div>
+                        </div>
+                        <div id="thumbs-progress" class="hidden mt-3">
+                            <div class="text-xs text-tg-textSecondary mb-1" id="thumbs-progress-status"></div>
+                            <div class="h-1.5 bg-tg-bg/60 rounded overflow-hidden">
+                                <div id="thumbs-progress-bar" class="h-full bg-tg-blue transition-all" style="width:0%"></div>
+                            </div>
+                        </div>
+                    </section>
+                    <section class="bg-tg-panel rounded-xl p-4">
+                        <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-3">
+                            <div class="bg-tg-bg/40 rounded-lg p-3 text-center">
+                                <div class="text-xs text-tg-textSecondary uppercase tracking-wide" data-i18n="maintenance.thumbs.cached">Cached</div>
+                                <div id="thumbs-stat-count" class="text-2xl font-semibold text-tg-text tabular-nums">—</div>
+                            </div>
+                            <div class="bg-tg-bg/40 rounded-lg p-3 text-center">
+                                <div class="text-xs text-tg-textSecondary uppercase tracking-wide" data-i18n="maintenance.thumbs.disk">Disk</div>
+                                <div id="thumbs-stat-bytes" class="text-2xl font-semibold text-tg-text tabular-nums">—</div>
+                            </div>
+                            <div class="bg-tg-bg/40 rounded-lg p-3 col-span-2 sm:col-span-1 flex flex-col items-center justify-center text-center">
+                                <div class="text-xs text-tg-textSecondary uppercase tracking-wide mb-1.5" data-i18n="maintenance.thumbs.widths">Widths</div>
+                                <!-- Render as chips (px / px / …) instead of a slash-joined string;
+                                     the previous tabular-nums monospace flat string read like a phone
+                                     number and didn't communicate "these are picker options". -->
+                                <div id="thumbs-stat-widths" class="flex flex-wrap items-center justify-center gap-1"></div>
+                            </div>
+                        </div>
+                        <div id="thumbs-breakdown" class="grid grid-cols-3 gap-2"></div>
+                    </section>
+
+                    <!-- Decoder backend + warn-misses toggle. Per-tool
+                         settings live with their tool, not in
+                         Settings → Advanced (no duplication). -->
+                    <section class="bg-tg-panel rounded-xl p-4 mt-3">
+                        <h3 class="text-tg-text text-sm font-medium mb-2 flex items-center gap-2">
+                            <i class="ri-cpu-line text-tg-textSecondary"></i>
+                            <span data-i18n="maintenance.thumbs.hwaccel">Video thumb hardware acceleration</span>
+                        </h3>
+                        <div class="space-y-3">
+                            <div>
+                                <label for="setting-adv-ffmpeg-hwaccel" class="text-tg-text text-xs block mb-1" data-i18n="maintenance.thumbs.hwaccel_label">Decoder backend</label>
+                                <select id="setting-adv-ffmpeg-hwaccel" class="tg-input w-full text-sm">
+                                    <option value=""             data-i18n="maintenance.thumbs.hwaccel.off">Off (CPU only)</option>
+                                    <option value="vaapi"        data-i18n="maintenance.thumbs.hwaccel.vaapi">VAAPI — Intel iGPU / AMD on Linux</option>
+                                    <option value="qsv"          data-i18n="maintenance.thumbs.hwaccel.qsv">QSV — Intel Quick Sync</option>
+                                    <option value="cuda"         data-i18n="maintenance.thumbs.hwaccel.cuda">CUDA / NVDEC — NVIDIA</option>
+                                    <option value="videotoolbox" data-i18n="maintenance.thumbs.hwaccel.videotoolbox">VideoToolbox — macOS</option>
+                                    <option value="d3d11va"      data-i18n="maintenance.thumbs.hwaccel.d3d11va">D3D11VA — Windows</option>
+                                </select>
+                                <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="maintenance.thumbs.hwaccel_help">Off is the safe default. Pick the matching backend if the host has the matching driver + Docker has device passthrough (`/dev/dri` for VAAPI/QSV). Falls back to CPU silently if the chosen backend isn't available.</p>
+                            </div>
+                            <div class="bg-tg-bg/30 rounded-lg p-3 border border-tg-border/40">
+                                <div class="flex items-center justify-between gap-2 flex-wrap mb-2">
+                                    <div class="text-xs text-tg-text font-medium" data-i18n="maintenance.thumbs.hwaccel_probe_label">Test what this server can use</div>
+                                    <button id="setting-adv-ffmpeg-hwaccel-probe" type="button"
+                                        class="tg-btn-secondary text-xs px-3 py-1.5 inline-flex items-center justify-center gap-1.5 shrink-0">
+                                        <i class="ri-radar-line"></i>
+                                        <span data-i18n="maintenance.thumbs.hwaccel_probe">Run hardware probe</span>
+                                    </button>
+                                </div>
+                                <div id="setting-adv-ffmpeg-hwaccel-probe-result"
+                                     class="text-[11px] text-tg-textSecondary leading-relaxed min-h-[24px] flex flex-wrap gap-1 items-center"
+                                     role="status" aria-live="polite"></div>
+                                <p class="text-[10px] text-tg-textSecondary mt-2 leading-relaxed" data-i18n="maintenance.thumbs.hwaccel_probe_help">Click to ask the running ffmpeg which acceleration backends are actually usable on this host. Backends shown are both compiled into ffmpeg AND reachable. Pick a matching value above; leave Off if nothing shows up.</p>
+                            </div>
+                        </div>
+
+                        <div class="flex items-start justify-between gap-3 mt-4 pt-3 border-t border-tg-border/30">
+                            <div class="min-w-0">
+                                <div class="text-tg-text text-sm" data-i18n="maintenance.thumbs.warn_misses">Warn about thumb misses</div>
+                                <p class="text-[11px] text-tg-textSecondary mt-0.5" data-i18n="maintenance.thumbs.warn_misses_help">When on, emits one consolidated "X thumb misses" warning every 30 minutes if the rate is high. Turn off if you find the warnings noisy and you've already verified your library.</p>
+                            </div>
+                            <div id="setting-adv-thumbs-warn-misses" class="tg-toggle shrink-0 mt-0.5"></div>
+                        </div>
+                    </section>
+                </div>
+
+                <!-- Maintenance / NSFW review page (admin-only) -->
+                <div id="page-maintenance-nsfw" class="hidden max-w-5xl mx-auto px-3 sm:px-4" data-admin-only
+                     data-page-title-key="maintenance.nsfw.page_title"
+                     data-page-subtitle-key="maintenance.nsfw.subtitle">
+                    <header class="bg-tg-panel rounded-xl p-4 mb-3">
+                        <h2 class="text-tg-text text-base font-semibold" data-i18n="maintenance.nsfw.page_title">Scan images for NSFW (18+)</h2>
+                        <p class="text-xs text-tg-textSecondary mt-0.5" data-i18n="maintenance.nsfw.subtitle">Five-tier classifier review — keep what's confidently 18+, delete what's confidently not, eyeball the borderline cases.</p>
+                    </header>
+
+                    <div id="nsfw-empty-db-banner" class="hidden bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 mb-3 text-xs text-yellow-300" data-i18n="maintenance.nsfw.empty_db_hint">
+                        Library has no scannable photos — try Maintenance → Re-index from disk first if files exist on disk but the catalogue is empty.
+                    </div>
+
+                    <!-- Classifier settings + actions. The whole config
+                         lives here (no duplicate in Settings → Advanced
+                         per the project's split rule: per-tool knobs go
+                         to per-tool maintenance pages). -->
+                    <section class="bg-tg-panel rounded-xl p-4 mb-3">
+                        <div class="flex items-start justify-between gap-3 flex-wrap">
+                            <div class="min-w-0">
+                                <h3 class="text-tg-text text-sm font-medium flex items-center gap-2">
+                                    <i class="ri-shield-check-line text-tg-orange"></i>
+                                    <span data-i18n="maintenance.nsfw.settings_heading">Classifier settings</span>
+                                </h3>
+                                <p class="text-[11px] text-tg-textSecondary mt-0.5" data-i18n="maintenance.nsfw.settings_help">Off by default. The model downloads once on first scan (or click "Preload" to fetch it now). Runs entirely on this server — no third-party service.</p>
+                            </div>
+                            <div class="flex items-center gap-2 shrink-0">
+                                <span id="nsfw-model-status" class="inline-flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-full bg-tg-bg/40 text-tg-textSecondary" role="status" aria-live="polite">
+                                    <span class="w-1.5 h-1.5 rounded-full bg-tg-textSecondary"></span>
+                                    <span data-i18n="maintenance.nsfw.model_status.idle">Not loaded</span>
+                                </span>
+                            </div>
+                        </div>
+
+                        <div class="flex items-start justify-between gap-3 py-2 mt-3 border-t border-tg-border/30">
+                            <div class="min-w-0">
+                                <div class="text-tg-text text-sm" data-i18n="maintenance.nsfw.enable">Enable NSFW review</div>
+                                <p class="text-[11px] text-tg-textSecondary mt-0.5" data-i18n="maintenance.nsfw.enable_help">Surfaces this Maintenance tool + scores newly-downloaded photos in the background.</p>
+                            </div>
+                            <div id="setting-adv-nsfw-enabled" class="tg-toggle shrink-0 mt-0.5"></div>
+                        </div>
+
+                        <div class="flex items-start justify-between gap-3 py-2 border-t border-tg-border/30">
+                            <div class="min-w-0">
+                                <div class="text-tg-text text-sm" data-i18n="maintenance.nsfw.preload_on_start">Preload on server start</div>
+                                <p class="text-[11px] text-tg-textSecondary mt-0.5" data-i18n="maintenance.nsfw.preload_on_start_help">Download + warm the model in the background when the server boots, so the first scan starts instantly.</p>
+                            </div>
+                            <div id="setting-adv-nsfw-preload" class="tg-toggle shrink-0 mt-0.5"></div>
+                        </div>
+
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3 pt-3 border-t border-tg-border/30">
+                            <div class="sm:col-span-2">
+                                <label for="setting-adv-nsfw-model" class="text-tg-text text-xs block mb-1" data-i18n="maintenance.nsfw.model">HuggingFace model id</label>
+                                <input id="setting-adv-nsfw-model" type="text" autocomplete="off" spellcheck="false"
+                                    class="tg-input w-full text-sm font-mono"
+                                    placeholder="AdamCodd/vit-base-nsfw-detector">
+                                <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="maintenance.nsfw.model_help">Any HuggingFace `owner/model` id that ships an `image-classification` ONNX pipeline. The library auto-detects which precision variant is available.</p>
+                            </div>
+                            <div>
+                                <label for="setting-adv-nsfw-dtype" class="text-tg-text text-xs block mb-1" data-i18n="maintenance.nsfw.dtype">Precision</label>
+                                <select id="setting-adv-nsfw-dtype" class="tg-input w-full text-sm">
+                                    <option value="q8"   data-i18n="maintenance.nsfw.dtype.q8">int8 quantized — smallest, fastest (default)</option>
+                                    <option value="fp16" data-i18n="maintenance.nsfw.dtype.fp16">fp16 — half precision</option>
+                                    <option value="fp32" data-i18n="maintenance.nsfw.dtype.fp32">fp32 — full precision</option>
+                                    <option value="q4"   data-i18n="maintenance.nsfw.dtype.q4">int4 — tiniest, lowest accuracy</option>
+                                </select>
+                                <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="maintenance.nsfw.dtype_help">Falls back to whichever variant the model actually publishes if the chosen one is missing.</p>
+                            </div>
+                            <div>
+                                <label for="setting-adv-nsfw-threshold" class="text-tg-text text-xs block mb-1" data-i18n="maintenance.nsfw.threshold">Threshold (0.10–0.99)</label>
+                                <input id="setting-adv-nsfw-threshold" type="number" min="0.10" max="0.99" step="0.05" class="tg-input w-full text-sm" placeholder="0.60">
+                                <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="maintenance.nsfw.threshold_help">Score &gt;= this counts as 18+ (kept). Below = surfaced for review. Higher = stricter.</p>
+                            </div>
+                            <div>
+                                <label for="setting-adv-nsfw-concurrency" class="text-tg-text text-xs block mb-1" data-i18n="maintenance.nsfw.concurrency">Concurrency (1–4)</label>
+                                <input id="setting-adv-nsfw-concurrency" type="number" min="1" max="4" class="tg-input w-full text-sm" placeholder="1">
+                                <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="maintenance.nsfw.concurrency_help">Parallel inferences per scan. Higher uses more CPU/RAM; default 1 keeps the server responsive.</p>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center justify-between gap-2 flex-wrap mt-3 pt-3 border-t border-tg-border/30">
+                            <div class="text-[11px] text-tg-textSecondary" id="nsfw-model-progress" aria-live="polite"></div>
+                            <div class="flex items-center gap-1.5">
+                                <button id="nsfw-preload-btn" type="button" class="tg-btn-secondary text-xs px-3 py-1.5 inline-flex items-center gap-1.5">
+                                    <i class="ri-download-cloud-line"></i><span data-i18n="maintenance.nsfw.preload">Preload model now</span>
+                                </button>
+                                <button id="nsfw-cache-clear-btn" type="button" class="tg-btn-secondary text-xs px-3 py-1.5 inline-flex items-center gap-1.5">
+                                    <i class="ri-delete-bin-line"></i><span data-i18n="maintenance.nsfw.cache_clear">Wipe cached weights</span>
+                                </button>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Stats cards -->
+                    <section class="grid grid-cols-3 gap-2 mb-3">
+                        <div class="bg-tg-panel rounded-xl p-3 text-center">
+                            <div class="text-xs text-tg-textSecondary uppercase tracking-wide" data-i18n="maintenance.nsfw.stat_scanned">Scanned</div>
+                            <div id="nsfw-stat-scanned" class="text-xl font-semibold text-tg-text tabular-nums">—</div>
+                        </div>
+                        <div class="bg-tg-panel rounded-xl p-3 text-center">
+                            <div class="text-xs text-tg-textSecondary uppercase tracking-wide" data-i18n="maintenance.nsfw.stat_whitelisted">Whitelisted</div>
+                            <div id="nsfw-stat-whitelisted" class="text-xl font-semibold text-tg-text tabular-nums">—</div>
+                        </div>
+                        <div class="bg-tg-panel rounded-xl p-3 text-center">
+                            <div class="text-xs text-tg-textSecondary uppercase tracking-wide" data-i18n="maintenance.nsfw.stat_last">Last scan</div>
+                            <div id="nsfw-stat-last" class="text-sm font-semibold text-tg-text">—</div>
+                        </div>
+                    </section>
+
+                    <!-- Tier panel -->
+                    <section class="bg-tg-panel rounded-xl p-3 mb-3">
+                        <div class="flex items-center justify-between mb-2">
+                            <div class="text-xs uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.nsfw.tiers_heading">Tiers</div>
+                        </div>
+                        <div id="nsfw-tiers" class="grid grid-cols-2 sm:grid-cols-5 gap-2"></div>
+                    </section>
+
+                    <!-- Histogram -->
+                    <section class="bg-tg-panel rounded-xl p-3 mb-3">
+                        <div class="text-xs uppercase tracking-wide text-tg-textSecondary mb-2" data-i18n="maintenance.nsfw.histogram_heading">Score distribution</div>
+                        <svg id="nsfw-histogram" class="w-full h-20 text-tg-textSecondary" viewBox="0 0 600 80" preserveAspectRatio="none"></svg>
+                    </section>
+
+                    <!-- Scan controls -->
+                    <section class="bg-tg-panel rounded-xl p-4 mb-3">
+                        <div class="flex items-start justify-between gap-3 flex-wrap">
+                            <div class="min-w-0">
+                                <div class="text-tg-text text-sm font-medium" data-i18n="maintenance.nsfw.scan_heading">Scan</div>
+                                <div class="mt-2 flex items-center gap-4 text-xs text-tg-textSecondary flex-wrap">
+                                    <span><span data-i18n="maintenance.nsfw.threshold_label">Threshold:</span> <span id="nsfw-threshold-value" class="text-tg-text tabular-nums">—</span></span>
+                                    <span><span data-i18n="maintenance.nsfw.concurrency_label">Concurrency:</span> <span id="nsfw-concurrency-value" class="text-tg-text tabular-nums">—</span></span>
+                                </div>
+                            </div>
+                            <button id="nsfw-scan-btn" class="tg-btn text-xs px-3 py-1.5" data-mode="scan" data-i18n="maintenance.nsfw.action">Scan</button>
+                        </div>
+                        <div id="nsfw-scan-progress" class="hidden mt-3 h-1.5 bg-tg-bg/60 rounded overflow-hidden">
+                            <div id="nsfw-scan-progress-bar" class="h-full bg-tg-blue transition-all" style="width:0%"></div>
+                        </div>
+                    </section>
+
+                    <!-- Bulk actions toolbar (only when a tier is selected) -->
+                    <section id="nsfw-bulk-bar" class="hidden bg-tg-panel rounded-xl p-3 mb-3">
+                        <div class="flex items-center justify-between gap-3 flex-wrap">
+                            <div id="nsfw-bulk-label" class="text-xs text-tg-textSecondary"></div>
+                            <div class="flex items-center gap-1.5 flex-wrap">
+                                <button id="nsfw-bulk-reclassify-btn" class="tg-btn-secondary text-xs px-3 py-1.5"></button>
+                                <button id="nsfw-bulk-whitelist-btn" class="tg-btn-secondary text-xs px-3 py-1.5"></button>
+                                <button id="nsfw-bulk-delete-btn" class="px-3 py-1.5 rounded-lg bg-red-500/20 text-red-300 hover:bg-red-500/30 font-medium text-xs transition"></button>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Row list -->
+                    <section class="bg-tg-panel rounded-xl p-3">
+                        <div id="nsfw-list" class="space-y-1 max-h-[60vh] overflow-y-auto pr-1"></div>
+                        <div id="nsfw-empty" class="hidden text-center py-8 text-sm text-tg-textSecondary" data-i18n="maintenance.nsfw.empty">No candidates — the library is clean.</div>
+                        <div class="mt-3 flex items-center justify-between gap-3 flex-wrap">
+                            <div id="nsfw-page-info" class="text-xs text-tg-textSecondary"></div>
+                            <div class="flex items-center gap-1.5">
+                                <button id="nsfw-prev-btn" class="tg-btn-secondary text-xs px-3 py-1.5" data-i18n="common.prev">Prev</button>
+                                <button id="nsfw-next-btn" class="tg-btn-secondary text-xs px-3 py-1.5" data-i18n="common.next">Next</button>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+
+                <!-- Maintenance / Logs page (admin-only) -->
+                <div id="page-maintenance-logs" class="hidden max-w-5xl mx-auto px-3 sm:px-4" data-admin-only
+                     data-page-title-key="maintenance.logs.page_title"
+                     data-page-subtitle-key="maintenance.logs.subtitle">
+                    <section class="bg-tg-panel rounded-xl p-3 mb-3">
+                        <div class="flex flex-col gap-3">
+                            <!-- Source filter chips -->
+                            <div>
+                                <div class="text-xs uppercase tracking-wide text-tg-textSecondary mb-1" data-i18n="maintenance.logs.filter.source">Source</div>
+                                <div id="logs-filter-sources" class="flex flex-wrap gap-1"></div>
+                            </div>
+                            <!-- Level radios + search + actions -->
+                            <div class="flex items-center gap-3 flex-wrap">
+                                <div id="logs-filter-level" class="flex items-center gap-2">
+                                    <span class="text-xs uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.logs.filter.level">Level</span>
+                                    <label class="inline-flex items-center gap-1 text-xs"><input type="radio" name="logs-level" value="info" checked> info</label>
+                                    <label class="inline-flex items-center gap-1 text-xs"><input type="radio" name="logs-level" value="warn"> warn</label>
+                                    <label class="inline-flex items-center gap-1 text-xs"><input type="radio" name="logs-level" value="error"> error</label>
+                                </div>
+                                <div class="relative flex-1 min-w-[160px]">
+                                    <i class="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-tg-textSecondary"></i>
+                                    <input id="logs-search" type="text" autocomplete="off"
+                                        class="tg-input w-full pl-9 text-sm"
+                                        data-i18n-placeholder="maintenance.logs.search"
+                                        placeholder="Search messages…">
+                                </div>
+                                <label class="inline-flex items-center gap-1 text-xs text-tg-textSecondary">
+                                    <input id="logs-autoscroll" type="checkbox" checked>
+                                    <span data-i18n="maintenance.logs.autoscroll">Auto-scroll</span>
+                                </label>
+                                <button id="logs-pause-btn" class="tg-btn-secondary text-xs px-3 py-1.5" data-paused="0" data-i18n="maintenance.logs.pause">Pause</button>
+                                <button id="logs-clear-btn" class="tg-btn-secondary text-xs px-3 py-1.5" data-i18n="maintenance.logs.clear">Clear</button>
+                                <button id="logs-download-btn" class="tg-btn-secondary text-xs px-3 py-1.5" data-i18n="maintenance.logs.download">Download .log</button>
+                            </div>
+                        </div>
+                    </section>
+                    <section class="bg-tg-panel rounded-xl overflow-hidden">
+                        <!-- Height clamps so the log pane never overflows the
+                             viewport on landscape mobile (a 360 px-tall
+                             screen made the previous calc()+min-height
+                             pair drop the bottom rows below the nav bar). -->
+                        <pre id="logs-stream" class="bg-tg-bg/60 p-3 text-[11px] font-mono whitespace-pre overflow-auto leading-snug" style="height: clamp(240px, calc(100vh - 320px), 70vh);"></pre>
+                    </section>
+                </div>
+
+                <!-- Maintenance / Backup page (admin-only) -->
+                <div id="page-maintenance-backup" class="hidden max-w-5xl mx-auto px-3 sm:px-4" data-admin-only
+                     data-page-title-key="maintenance.backup.page_title"
+                     data-page-subtitle-key="maintenance.backup.subtitle">
+                    <header class="bg-tg-panel rounded-xl p-4 mb-3 flex items-start justify-between gap-3 flex-wrap">
+                        <div class="min-w-0">
+                            <h2 class="text-tg-text text-base font-semibold" data-i18n="maintenance.backup.page_title">Backup destinations</h2>
+                            <p class="text-xs text-tg-textSecondary mt-0.5" data-i18n="maintenance.backup.subtitle">Mirror new downloads to S3-compatible storage, an SFTP NAS, or a local mount. Optional client-side encryption + scheduled snapshots.</p>
+                        </div>
+                        <button id="backup-add-btn" class="tg-btn text-xs px-3 py-1.5">
+                            <i class="ri-add-line mr-1"></i><span data-i18n="maintenance.backup.add">Add destination</span>
+                        </button>
+                    </header>
+
+                    <div id="backup-empty" class="hidden bg-tg-panel rounded-xl p-8 text-center text-sm text-tg-textSecondary mb-3">
+                        <i class="ri-cloud-off-line text-3xl block mb-2 text-tg-textSecondary/60"></i>
+                        <div data-i18n="maintenance.backup.empty">No destinations yet — click "Add destination" to mirror your library off-host.</div>
+                    </div>
+
+                    <div id="backup-cards" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-3"></div>
+
+                    <section class="bg-tg-panel rounded-xl p-3">
+                        <h3 class="text-xs uppercase tracking-wide text-tg-textSecondary mb-2" data-i18n="maintenance.backup.recent">Recent activity</h3>
+                        <div id="backup-recent" class="space-y-1 max-h-[40vh] overflow-y-auto pr-1"></div>
+                        <div id="backup-recent-empty" class="hidden text-center py-6 text-xs text-tg-textSecondary" data-i18n="maintenance.backup.recent_empty">No backup jobs yet.</div>
+                    </section>
+                </div>
+
+                <!-- Maintenance / AI search & people (admin-only) -->
+                <div id="page-maintenance-ai" class="hidden max-w-5xl mx-auto px-3 sm:px-4" data-admin-only
+                     data-page-title-key="maintenance.ai.title"
+                     data-page-subtitle-key="maintenance.ai.subtitle">
+                    <header class="bg-tg-panel rounded-xl p-4 mb-3">
+                        <h2 class="text-tg-text text-base font-semibold" data-i18n="maintenance.ai.title">AI Search &amp; Smart Organisation</h2>
+                        <p class="text-xs text-tg-textSecondary mt-0.5" data-i18n="maintenance.ai.subtitle">Local-only image embeddings, face clustering, perceptual dedup, and auto-tagging.</p>
+                        <p class="text-[11px] text-tg-textSecondary/80 mt-2" data-i18n="maintenance.ai.privacy_note">All processing happens on this server. Nothing is uploaded to any third-party API.</p>
+                    </header>
+
+                    <!-- Hero search -->
+                    <section class="ai-hero" role="search" aria-labelledby="ai-search-heading">
+                        <h3 id="ai-search-heading" class="sr-only" data-i18n="maintenance.ai.search.heading">Search</h3>
+                        <label class="ai-hero-input-wrap">
+                            <i class="ri-search-2-line ai-hero-icon-left" aria-hidden="true"></i>
+                            <input id="ai-search-input" type="search" autocomplete="off" spellcheck="false"
+                                   class="ai-hero-input"
+                                   data-i18n-placeholder="maintenance.ai.search.placeholder_hero"
+                                   placeholder="Search your library — try &quot;beach&quot;, &quot;invoice&quot;, &quot;birthday cake&quot;…"
+                                   aria-label="Search your library"/>
+                            <button id="ai-search-clear" type="button" class="ai-hero-icon-right hidden"
+                                    data-i18n-aria-label="maintenance.ai.search.clear" aria-label="Clear search">
+                                <i class="ri-close-circle-fill" aria-hidden="true"></i>
+                            </button>
+                            <button id="ai-search-btn" type="button" class="sr-only" data-i18n="maintenance.ai.search.go">Search</button>
+                        </label>
+                        <div id="ai-search-similar-bar" class="ai-similar-bar hidden" role="status" aria-live="polite">
+                            <span class="ai-similar-text">
+                                <i class="ri-magic-line"></i>
+                                <span data-i18n="maintenance.ai.search.similar_to">Similar to</span>
+                                <span id="ai-similar-name" class="ai-similar-name"></span>
+                            </span>
+                            <button id="ai-similar-clear" type="button" class="ai-similar-clear"
+                                    data-i18n-aria-label="maintenance.ai.search.similar_clear" aria-label="Clear similar search">
+                                <i class="ri-close-line"></i>
+                                <span data-i18n="common.clear">Clear</span>
+                            </button>
+                        </div>
+
+                        <!-- Suggestion chip rows. Labels sit ABOVE each row
+                             instead of in a left-side column — looks cleaner
+                             at every breakpoint and stops the chip list from
+                             being squeezed by a 60-px label gutter. -->
+                        <div id="ai-chips-wrap" class="ai-chips-wrap">
+                            <div id="ai-chips-recent" class="ai-chip-row hidden">
+                                <span class="ai-chip-row-label" data-i18n="maintenance.ai.search.chips.recent">Recent</span>
+                                <div class="ai-chip-list" role="list"></div>
+                            </div>
+                            <div id="ai-chips-try" class="ai-chip-row">
+                                <span class="ai-chip-row-label" data-i18n="maintenance.ai.search.chips.try">Try</span>
+                                <div class="ai-chip-list" role="list"></div>
+                            </div>
+                            <div id="ai-chips-tags" class="ai-chip-row hidden">
+                                <span class="ai-chip-row-label" data-i18n="maintenance.ai.search.chips.top_tags">Top tags</span>
+                                <div class="ai-chip-list" role="list"></div>
+                            </div>
+                            <div id="ai-chips-people" class="ai-chip-row hidden">
+                                <span class="ai-chip-row-label" data-i18n="maintenance.ai.search.chips.people">People</span>
+                                <div class="ai-chip-list ai-chip-list-people" role="list"></div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Models panel + swap UI -->
+                    <section class="bg-tg-panel rounded-xl p-3 mb-3">
+                        <div class="flex items-center justify-between gap-2 mb-2">
+                            <h3 class="text-tg-text text-sm font-medium flex items-center gap-2">
+                                <i class="ri-cpu-line text-tg-textSecondary"></i>
+                                <span data-i18n="maintenance.ai.model.heading">Models</span>
+                            </h3>
+                            <button id="ai-models-refresh" type="button" class="tg-btn-secondary text-[11px] px-2 py-1"
+                                    data-i18n-title="maintenance.ai.model.refresh" title="Refresh model status">
+                                <i class="ri-refresh-line"></i>
+                            </button>
+                        </div>
+                        <div id="ai-models-list" class="ai-models-list" aria-live="polite"></div>
+                    </section>
+
+                    <!-- Settings strip (capabilities) -->
+                    <section class="bg-tg-panel rounded-xl p-3 mb-3">
+                        <div class="flex items-center justify-between gap-2 mb-2">
+                            <h3 class="text-xs uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.ai.settings_heading">Capabilities</h3>
+                            <span id="ai-vec-status" class="text-[11px] text-tg-textSecondary"></span>
+                        </div>
+                        <div id="ai-settings-grid" class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                            <!-- Capability toggles + scan buttons rendered by maintenance-ai.js -->
+                        </div>
+                    </section>
+
+                    <!-- Search results -->
+                    <section class="bg-tg-panel rounded-xl p-3 mb-3">
+                        <div class="flex items-center justify-between gap-2 mb-2">
+                            <h3 class="text-tg-text text-sm font-medium" data-i18n="maintenance.ai.search.results_heading">Results</h3>
+                            <span id="ai-search-meta" class="text-[11px] text-tg-textSecondary tabular-nums"></span>
+                        </div>
+                        <div id="ai-search-results" class="ai-results-grid" role="grid" aria-label="Search results"></div>
+                        <div id="ai-search-empty" class="hidden text-center py-8 text-xs text-tg-textSecondary" data-i18n="maintenance.ai.search.no_results">Nothing matches. Try a different phrase or run an index scan first.</div>
+                        <div id="ai-search-cta" class="hidden text-center py-10">
+                            <p class="text-tg-text text-sm font-medium" data-i18n="maintenance.ai.search.index_cta_title">Index your library to enable search</p>
+                            <p class="text-tg-textSecondary text-xs mt-1" data-i18n="maintenance.ai.search.index_cta_hint">Builds a small embedding per photo so you can search by what's in the picture.</p>
+                            <button id="ai-search-cta-btn" type="button" class="tg-btn-primary mt-3 text-xs px-3 py-1.5"
+                                    data-i18n="maintenance.ai.search.index_cta_btn">Run an index scan</button>
+                        </div>
+                    </section>
+
+                    <!-- Card 2: People -->
+                    <section class="bg-tg-panel rounded-xl p-3 mb-3">
+                        <div class="flex items-center justify-between gap-2 mb-2">
+                            <h3 class="text-tg-text text-sm font-medium" data-i18n="maintenance.ai.people.title">People</h3>
+                            <span id="ai-people-count" class="text-[11px] text-tg-textSecondary tabular-nums"></span>
+                        </div>
+                        <div id="ai-people-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2"></div>
+                        <div id="ai-people-empty" class="hidden text-center py-8 text-xs text-tg-textSecondary" data-i18n="maintenance.ai.people.empty">No people detected yet — enable face clustering in Settings → AI and run a scan.</div>
+                    </section>
+
+                    <!-- Card 3: Auto-tags -->
+                    <section class="bg-tg-panel rounded-xl p-3 mb-3">
+                        <div class="flex items-center justify-between gap-2 mb-2">
+                            <h3 class="text-tg-text text-sm font-medium" data-i18n="maintenance.ai.tags.title">Auto-tags</h3>
+                            <span id="ai-tags-count" class="text-[11px] text-tg-textSecondary tabular-nums"></span>
+                        </div>
+                        <div id="ai-tags-cloud" class="flex flex-wrap gap-1.5"></div>
+                        <div id="ai-tags-empty" class="hidden text-center py-8 text-xs text-tg-textSecondary" data-i18n="maintenance.ai.tags.empty">No tags yet — enable auto-tagging in Settings → AI.</div>
+                    </section>
+
+                    <!-- Card 4: Near-duplicates -->
+                    <section class="bg-tg-panel rounded-xl p-3 mb-3">
+                        <div class="flex items-center justify-between gap-2 mb-2">
+                            <h3 class="text-tg-text text-sm font-medium" data-i18n="maintenance.ai.phash.title">Near-duplicate photos</h3>
+                            <span id="ai-phash-count" class="text-[11px] text-tg-textSecondary tabular-nums"></span>
+                        </div>
+                        <div id="ai-phash-groups" class="space-y-3"></div>
+                        <div id="ai-phash-empty" class="hidden text-center py-8 text-xs text-tg-textSecondary" data-i18n="maintenance.ai.phash.empty">No near-duplicates found.</div>
+                    </section>
+                </div>
+
             </div>
         </main>
     </div>
@@ -3249,9 +2503,44 @@
         <span id="selection-count" class="text-tg-text">0 selected</span>
         <button id="selection-all" class="text-tg-blue hover:text-tg-text" data-i18n-title="viewer.selection.select_all_title" title="Select every visible tile (Ctrl/⌘+A)" data-i18n="viewer.selection.select_all">Select all</button>
         <button id="selection-clear" class="text-tg-textSecondary hover:text-tg-text" data-i18n="viewer.selection.clear">Clear</button>
-        <button id="selection-delete" class="px-3 py-1 rounded bg-red-500/20 text-red-400 hover:bg-red-500/30 font-medium">
+        <button id="selection-zip" class="px-3 py-1 rounded bg-tg-blue/20 text-tg-blue hover:bg-tg-blue/30">
+            <i class="ri-archive-line"></i> <span data-i18n="viewer.selection.zip">Download ZIP</span>
+        </button>
+        <button id="selection-pin" class="px-3 py-1 rounded bg-yellow-500/20 text-yellow-300 hover:bg-yellow-500/30" data-admin-only>
+            <i class="ri-pushpin-2-line"></i> <span data-i18n="favorites.pin">Pin</span>
+        </button>
+        <button id="selection-delete" class="px-3 py-1 rounded bg-red-500/20 text-red-400 hover:bg-red-500/30" data-admin-only>
             <i class="ri-delete-bin-line"></i> <span data-i18n="viewer.selection.delete">Delete</span>
         </button>
+    </div>
+
+    <!-- Drag-drop overlay for t.me URLs. Hidden by default; the SPA toggles
+         `is-active` on dragenter so the user gets a visible drop target,
+         then runs the link picker on drop. -->
+    <div id="dragdrop-overlay" class="dragdrop-overlay" aria-hidden="true">
+        <div class="dragdrop-card">
+            <i class="ri-link text-5xl text-tg-blue mb-3"></i>
+            <p class="text-tg-text font-medium" data-i18n="dragdrop.title">Drop a t.me link to start downloading</p>
+            <p class="text-tg-textSecondary text-sm mt-1" data-i18n="dragdrop.hint">URL works for messages, channels, posts, and stories.</p>
+        </div>
+    </div>
+
+    <!-- Mini video player — shrunk-down sticky preview that keeps the
+         viewer's clip playing after the modal is closed. Hidden by default;
+         viewer.js / mini-player.js raises it on scroll-out / explicit
+         shrink. Re-clicking expands back into the full viewer. -->
+    <div id="mini-player" class="mini-player hidden" aria-hidden="true">
+        <video id="mini-player-video" playsinline></video>
+        <div class="mini-player-bar">
+            <button id="mini-player-expand" class="mini-player-btn" title="Expand"
+                    data-i18n-title="viewer.pip.expand" aria-label="Expand">
+                <i class="ri-expand-diagonal-line"></i>
+            </button>
+            <button id="mini-player-close" class="mini-player-btn" title="Close"
+                    data-i18n-title="common.close" aria-label="Close">
+                <i class="ri-close-line"></i>
+            </button>
+        </div>
     </div>
 
     <!-- Status bar -->

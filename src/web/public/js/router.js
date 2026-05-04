@@ -29,6 +29,7 @@ let listening = false;
 // Engine controls) is admin-only on both the front and the back.
 const ADMIN_ROUTE_PREFIXES = [
     '/groups', '/backfill', '/queue', '/engine', '/stories', '/account/add',
+    '/maintenance',
 ];
 // Settings sub-routes guests CAN reach. Everything else under /settings
 // (system, accounts, downloads, network) bounces.

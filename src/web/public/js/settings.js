@@ -2,6 +2,8 @@ import { api } from './api.js';
 import { showToast, escapeHtml } from './utils.js';
 import * as Notifications from './notifications.js';
 import * as Fonts from './fonts.js';
+import { ws } from './ws.js';
+import { wireJobButton } from './job-buttons.js';
 
 // Tracks whether the font <select> has already had its options +
 // change-listener wired this session. Re-populating on every
@@ -310,6 +312,20 @@ export async function loadSettings() {
             httpsToggle.onclick = async (e) => {
                 e.preventDefault();
                 const next = !httpsToggle.classList.contains('active');
+                // Enabling Force HTTPS without a working TLS cert behind
+                // the reverse proxy locks the operator out — the dashboard
+                // 308-redirects every request to https:// and the browser
+                // can't reach the cert. Confirm sheet on enable, plain
+                // toggle on disable (escape hatch should be friction-free).
+                if (next) {
+                    const ok = await confirmSheet({
+                        title: i18nT('settings.security.force_https_confirm_title', 'Enable Force HTTPS?'),
+                        message: i18nT('settings.security.force_https_confirm_body', 'Every HTTP request will 308-redirect to HTTPS. Make sure your reverse proxy has a working TLS cert and TRUST_PROXY=1 is set, otherwise the dashboard becomes unreachable. Localhost is exempt so you can still recover from the host.'),
+                        confirmLabel: i18nT('settings.security.force_https_confirm_ok', 'Enable Force HTTPS'),
+                        danger: true,
+                    });
+                    if (!ok) return;
+                }
                 try {
                     await api.post('/api/config', { web: { forceHttps: next } });
                     httpsToggle.classList.toggle('active', next);
@@ -552,7 +568,10 @@ function combineDiskCap(value, unit) {
     return `${n}${u}`;
 }
 
-function loadAdvanced(config) {
+// Exported so the per-tool maintenance pages (NSFW, thumbs, AI) can
+// hydrate their settings cards on enter without going through the
+// Settings page. Idempotent — safe to call multiple times.
+export function loadAdvanced(config) {
     const adv = config?.advanced || {};
     const set = (id, val) => {
         const el = document.getElementById(id);
@@ -596,23 +615,75 @@ function loadAdvanced(config) {
     const w = { ...ADVANCED_DEFAULTS.web, ...(adv.web || {}) };
     set('setting-adv-session-days',      w.sessionTtlDays);
 
-    // NSFW review tool — opt-in toggle + threshold + concurrency. The
-    // toggle uses the existing `.tg-toggle` widget; click-to-flip is wired
-    // once below. Defaults match `core/nsfw.js` NSFW_DEFAULTS.
+    // NSFW review tool — opt-in toggle + model id + dtype + threshold +
+    // concurrency + preload-on-start. The toggles use the `.tg-toggle`
+    // widget; click-to-flip is wired idempotently below. Defaults mirror
+    // `core/nsfw.js` NSFW_DEFAULTS.
     const ns = adv.nsfw || {};
-    const nsToggle = document.getElementById('setting-adv-nsfw-enabled');
-    if (nsToggle) {
-        nsToggle.classList.toggle('active', ns.enabled === true);
-        if (!nsToggle.dataset.wired) {
-            nsToggle.dataset.wired = '1';
-            nsToggle.addEventListener('click', (e) => {
+    const wireToggle = (id, on) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.classList.toggle('active', on === true);
+        if (!el.dataset.wired) {
+            el.dataset.wired = '1';
+            el.addEventListener('click', (e) => {
                 e.preventDefault();
-                nsToggle.classList.toggle('active');
+                el.classList.toggle('active');
             });
         }
-    }
+    };
+    wireToggle('setting-adv-nsfw-enabled', ns.enabled === true);
+    wireToggle('setting-adv-nsfw-preload', ns.preload === true);
+    set('setting-adv-nsfw-model',       (typeof ns.model === 'string' && ns.model.trim()) ? ns.model.trim() : 'AdamCodd/vit-base-nsfw-detector');
+    set('setting-adv-nsfw-dtype',       ['q8', 'fp16', 'fp32', 'q4'].includes(ns.dtype) ? ns.dtype : 'q8');
     set('setting-adv-nsfw-threshold',   Number.isFinite(ns.threshold) ? ns.threshold : 0.6);
     set('setting-adv-nsfw-concurrency', Number.isFinite(ns.concurrency) ? ns.concurrency : 1);
+
+    // ffmpeg hardware acceleration — written to `advanced.thumbs.hwaccel`.
+    // Empty string = off (default); `vaapi` / `qsv` / `cuda` / etc.
+    // are passed straight to ffmpeg's `-hwaccel` flag in core/thumbs.js.
+    const tHw = adv.thumbs?.hwaccel ?? '';
+    const tHwEl = document.getElementById('setting-adv-ffmpeg-hwaccel');
+    if (tHwEl) tHwEl.value = String(tHw);
+    // Toggle for the consolidated thumb-miss warning. Default on; the
+    // server falls back to true when the key is absent so first-run
+    // installs see the helpful warning until they explicitly silence it.
+    wireToggle('setting-adv-thumbs-warn-misses', adv.thumbs?.warnMisses !== false);
+
+    // Probe button — fetch /thumbs/hwaccel-probe and render available
+    // backends as small chips. Idempotent wire-up via `dataset.wired`.
+    const probeBtn = document.getElementById('setting-adv-ffmpeg-hwaccel-probe');
+    const probeOut = document.getElementById('setting-adv-ffmpeg-hwaccel-probe-result');
+    if (probeBtn && !probeBtn.dataset.wired) {
+        probeBtn.dataset.wired = '1';
+        probeBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            probeBtn.disabled = true;
+            const orig = probeBtn.innerHTML;
+            probeBtn.innerHTML = `<i class="ri-loader-4-line animate-spin"></i><span>${escapeHtml(i18nT('common.loading', 'Loading…'))}</span>`;
+            if (probeOut) probeOut.innerHTML = '';
+            try {
+                const r = await api.get('/api/maintenance/thumbs/hwaccel-probe');
+                if (probeOut) {
+                    if (!r?.available?.length) {
+                        probeOut.innerHTML = `<span class="px-2 py-0.5 rounded-full bg-tg-bg/40 text-tg-textSecondary text-[11px]">${escapeHtml(i18nT('settings.advanced.thumbs.hwaccel_probe_none', 'No hardware backends available — CPU only'))}</span>`;
+                    } else {
+                        probeOut.innerHTML = r.available.map((b) =>
+                            `<span class="px-2 py-0.5 rounded-full bg-tg-blue/15 text-tg-blue text-[11px] inline-flex items-center gap-1">
+                                <i class="ri-check-line"></i>${escapeHtml(b)}
+                            </span>`).join('');
+                    }
+                }
+            } catch (err) {
+                if (probeOut) {
+                    probeOut.innerHTML = `<span class="text-red-300 text-[11px]">${escapeHtml(err?.message || 'Probe failed')}</span>`;
+                }
+            } finally {
+                probeBtn.disabled = false;
+                probeBtn.innerHTML = orig;
+            }
+        });
+    }
 }
 
 function gatherAdvanced() {
@@ -652,8 +723,18 @@ function gatherAdvanced() {
         },
         nsfw: {
             enabled: document.getElementById('setting-adv-nsfw-enabled')?.classList.contains('active') === true,
+            preload: document.getElementById('setting-adv-nsfw-preload')?.classList.contains('active') === true,
+            model: String(get('setting-adv-nsfw-model') || '').trim() || 'AdamCodd/vit-base-nsfw-detector',
+            dtype: String(get('setting-adv-nsfw-dtype') || 'q8'),
             threshold: parseFloat(get('setting-adv-nsfw-threshold')) || 0.6,
             concurrency: num('setting-adv-nsfw-concurrency', 1),
+        },
+        thumbs: {
+            // Empty string = CPU (off). Validated server-side against an
+            // allow-list so a hand-edited config can't pass arbitrary
+            // values through to the ffmpeg process.
+            hwaccel: String(get('setting-adv-ffmpeg-hwaccel') || ''),
+            warnMisses: document.getElementById('setting-adv-thumbs-warn-misses')?.classList.contains('active') !== false,
         },
     };
 }
@@ -679,6 +760,230 @@ async function refreshRescueStats() {
     } catch {
         line.textContent = i18nT('settings.rescue.stats_unavailable', 'Rescue stats unavailable.');
     }
+}
+
+// ---- Auto-save -----------------------------------------------------------
+//
+// Debounced auto-save for every editable Setting field — operators stop
+// having to scroll to the bottom of the page to hit "Save". The button
+// stays as a manual flush escape hatch (still works) and as the visible
+// affordance that says "yes this page persists changes".
+//
+// Lifecycle:
+//   1. Edit a field → onInput → schedule flush in AUTOSAVE_DEBOUNCE_MS.
+//   2. Field blurs early → flush immediately (operator's done with it).
+//   3. Tab visibility flips to hidden → flush immediately (best-effort
+//      "don't lose unsaved changes when the user closes the tab").
+//   4. Status indicator: idle → "Saving…" → "Saved at HH:MM:SS" → idle
+//      after 4 s. Errors stick until the next successful save.
+//
+// `_autoSaveSnapshot` records the last saved JSON of the gathered config
+// so we don't issue a no-op POST when the operator only tabbed through
+// fields without changing values.
+
+const AUTOSAVE_DEBOUNCE_MS = 800;
+let _autoSaveTimer = null;
+let _autoSaveInflight = false;
+let _autoSaveSnapshot = null;
+let _autoSaveStatusFadeTimer = null;
+let _autoSaveBound = false;
+
+// State shape on the autosave pill:
+//   idle    — invisible, no message (the manual Save button used to live here)
+//   dirty   — pencil icon, "Editing…" — fades in as soon as a field changes
+//   saving  — spinner, "Saving…"
+//   saved   — green check + "Saved at HH:MM:SS", auto-fades back to idle
+//             after 2.5s; the same event also pulses a notification bell row
+//             so the operator gets durable confirmation even after the chip
+//             fades.
+//   error   — red triangle, error msg, sticks until the next successful save.
+//
+// CSS state is driven by `data-state="…"` on the pill so animations + colors
+// live in main.css next to the rest of the chip styles.
+function _setAutosaveStatus(state, msg) {
+    const root = document.getElementById('settings-autosave-status');
+    const iconEl = document.getElementById('settings-autosave-icon');
+    const textEl = document.getElementById('settings-autosave-text');
+    if (!root || !iconEl || !textEl) return;
+    if (_autoSaveStatusFadeTimer) { clearTimeout(_autoSaveStatusFadeTimer); _autoSaveStatusFadeTimer = null; }
+    const ICON = {
+        idle:   '',
+        dirty:  '<i class="ri-edit-2-line"></i>',
+        saving: '<i class="ri-loader-4-line"></i>',
+        saved:  '<i class="ri-checkbox-circle-fill"></i>',
+        error:  '<i class="ri-error-warning-fill"></i>',
+    };
+    iconEl.innerHTML = ICON[state] || '';
+    textEl.textContent = msg || '';
+    root.dataset.state = state || 'idle';
+    if (state === 'saved') {
+        _autoSaveStatusFadeTimer = setTimeout(() => _setAutosaveStatus('idle', ''), 2500);
+    }
+}
+
+// Pipe the saved/error event into the notification bell so the operator
+// has a persistent record of every config save (the chip fades; the bell
+// keeps history). `pushLogToNotify` is the public hook the bell exposes;
+// importing it lazily keeps the settings module stand-alone in tests.
+async function _notifyAutoSave(level, msg) {
+    try {
+        const { pushLogToNotify } = await import('./header-mobile.js');
+        pushLogToNotify({ ts: Date.now(), source: 'settings', level, msg });
+    } catch { /* bell not available (e.g. tests / cold-load race) — silent */ }
+}
+
+async function _autoSaveFlush() {
+    if (_autoSaveInflight) {
+        // Re-arm — the in-flight POST will re-trigger via finally() but
+        // we may have newer edits that landed between the previous flush
+        // and now.
+        _scheduleAutoSave();
+        return;
+    }
+    if (_autoSaveTimer) { clearTimeout(_autoSaveTimer); _autoSaveTimer = null; }
+
+    let payload;
+    try { payload = _gatherSettingsPayload(); }
+    catch (e) { _setAutosaveStatus('error', i18nT('settings.autosave.error', 'Could not gather settings: ') + (e?.message || e)); return; }
+
+    const json = JSON.stringify(payload);
+    if (json === _autoSaveSnapshot) {
+        // No-op — fields visually changed (or focus events fired) but the
+        // serialized payload matches the last saved snapshot.
+        _setAutosaveStatus('idle', '');
+        return;
+    }
+
+    _autoSaveInflight = true;
+    _setAutosaveStatus('saving', i18nT('settings.autosave.saving', 'Saving…'));
+    try {
+        await api.post('/api/config', payload);
+        _autoSaveSnapshot = json;
+        const ts = new Date();
+        const hh = String(ts.getHours()).padStart(2, '0');
+        const mm = String(ts.getMinutes()).padStart(2, '0');
+        const ss = String(ts.getSeconds()).padStart(2, '0');
+        const savedMsg = i18nTf('settings.autosave.saved', { time: `${hh}:${mm}:${ss}` }, `Saved at ${hh}:${mm}:${ss}`);
+        _setAutosaveStatus('saved', savedMsg);
+        // Mirror to the notification bell as `info` — bell only surfaces
+        // warn/error in its dropdown by default, but `info` writes into
+        // the buffer so admins who turn on "show all levels" can audit
+        // every save.
+        _notifyAutoSave('info', i18nT('settings.autosave.notify.saved', 'Settings saved.'));
+    } catch (e) {
+        const failMsg = i18nTf('settings.autosave.failed', { msg: e?.message || String(e) }, `Save failed: ${e?.message || e}`);
+        _setAutosaveStatus('error', failMsg);
+        // Bell DOES surface this — `error` level pings the badge so the
+        // operator notices a failed save even after they scrolled away.
+        _notifyAutoSave('error', failMsg);
+    } finally {
+        _autoSaveInflight = false;
+    }
+}
+
+function _scheduleAutoSave() {
+    if (_autoSaveTimer) clearTimeout(_autoSaveTimer);
+    _setAutosaveStatus('dirty', i18nT('settings.autosave.dirty', 'Editing…'));
+    _autoSaveTimer = setTimeout(_autoSaveFlush, AUTOSAVE_DEBOUNCE_MS);
+}
+
+// Single source of truth for the saved JSON shape. Both the manual Save
+// button and the auto-save flush call this — keeps validation / clamping
+// logic in lock-step.
+function _gatherSettingsPayload() {
+    const get = (id) => document.getElementById(id)?.value;
+    const dmActive = document.getElementById('setting-allow-dm')?.classList.contains('active') === true;
+    const rescueDefaultOn = document.getElementById('setting-rescue-default')?.classList.contains('active') === true;
+    const rescueHours = Math.max(1, Math.min(720, parseInt(get('setting-rescue-default-hours'), 10) || 48));
+    const rescueSweep = Math.max(1, Math.min(1440, parseInt(get('setting-rescue-sweep-min'), 10) || 10));
+    return {
+        download: {
+            concurrent: parseInt(get('setting-concurrent')),
+            retries: parseInt(get('setting-retries')),
+            maxSpeed: parseInt(get('setting-max-speed')) || 0,
+        },
+        rateLimits: { requestsPerMinute: parseInt(get('setting-rpm')) },
+        pollingInterval: parseInt(get('setting-polling')),
+        diskManagement: {
+            maxTotalSize: combineDiskCap(get('setting-max-disk-value'), get('setting-max-disk-unit')),
+            maxVideoSize: get('setting-max-video') || null,
+            maxImageSize: get('setting-max-image') || null,
+            enabled: document.getElementById('setting-disk-rotate')?.classList.contains('active') === true,
+        },
+        rescue: { enabled: rescueDefaultOn, retentionHours: rescueHours, sweepIntervalMin: rescueSweep },
+        advanced: gatherAdvanced(),
+        allowDmDownloads: dmActive,
+    };
+}
+
+/**
+ * Wire auto-save listeners. Idempotent — safe to call on every settings
+ * page render; the `_autoSaveBound` flag short-circuits re-binding.
+ *
+ * Watches: `[id^="setting-"]` (every Setting input/select), `.tg-toggle`
+ * (custom-rendered toggles that don't fire native change events on
+ * .classList toggle), and explicit click events for preset buttons.
+ */
+export function setupAutoSave() {
+    if (_autoSaveBound) return;
+    _autoSaveBound = true;
+
+    // Bind to <body> instead of #page-settings so per-tool settings cards
+    // on the maintenance pages (e.g. NSFW model id, ffmpeg hwaccel) auto-
+    // save through the same pipeline. The id-prefix filter keeps it from
+    // firing on unrelated form fields.
+    const root = document.body;
+    if (!root) return;
+
+    // Capture the baseline so an "untouched page renders + scrolls" doesn't
+    // trip a save. loadSettings() will fire input events as it populates,
+    // we delay the first arm by a microtask so they don't all queue saves.
+    queueMicrotask(() => {
+        try { _autoSaveSnapshot = JSON.stringify(_gatherSettingsPayload()); } catch {}
+    });
+
+    // Inputs that opt in to autosave are flagged either by an `id` that
+    // starts with `setting-` (legacy convention) or a `data-autosave`
+    // attribute (newer modules). The closure bundles both checks.
+    const isAutosaveInput = (t) => {
+        if (!t) return false;
+        if (t.id && t.id.startsWith('setting-')) return true;
+        if (typeof t.closest === 'function' && t.closest('[data-autosave]')) return true;
+        return false;
+    };
+
+    // Native input/change events from <input> / <select> / <textarea>.
+    root.addEventListener('input', (e) => {
+        if (!isAutosaveInput(e.target)) return;
+        _scheduleAutoSave();
+    });
+    root.addEventListener('change', (e) => {
+        if (!isAutosaveInput(e.target)) return;
+        _scheduleAutoSave();
+    });
+
+    // tg-toggle is a div+class trick — listen on click bubbling. Restrict
+    // to toggles whose id matches the autosave convention so unrelated
+    // toggles (e.g. theme switch) don't queue saves.
+    root.addEventListener('click', (e) => {
+        const t = e.target.closest('.tg-toggle');
+        if (!t || !t.id || !t.id.startsWith('setting-')) return;
+        // Defer so the toggle handler that flips .active runs first.
+        setTimeout(_scheduleAutoSave, 0);
+    });
+
+    // Flush early when the user blurs a field (they're done with it).
+    root.addEventListener('focusout', (e) => {
+        if (!_autoSaveTimer) return;
+        if (!isAutosaveInput(e.target)) return;
+        _autoSaveFlush();
+    });
+
+    // Tab close / hide → best-effort flush so unsaved edits don't vanish
+    // when the operator switches tabs and doesn't come back.
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden && _autoSaveTimer) _autoSaveFlush();
+    });
 }
 
 export async function saveSettings() {
@@ -919,14 +1224,20 @@ function wireMaintenance() {
     once(document.getElementById('maint-db-check-btn'), maintDbIntegrity);
     once(document.getElementById('maint-db-vacuum-btn'), maintDbVacuum);
     once(document.getElementById('maint-verify-btn'), maintVerifyFiles);
-    once(document.getElementById('maint-dedup-btn'), maintFindDuplicates);
+    // The four standalone maintenance pages (added v2.3.48) take over from
+    // the inline sheets these buttons used to open. The sheet-based handlers
+    // (maintFindDuplicates, maintBuildThumbs, maintRebuildThumbs, maintBrowseLogs,
+    // and the NSFW review sheet in nsfw-ui.js) are kept for now as a fallback
+    // in case the SPA needs to fall back to the legacy flow.
+    const _go = (slug) => () => { try { window.navigateTo?.(slug); } catch {} };
+    once(document.getElementById('maint-dedup-btn'), _go('maintenance/duplicates'));
     once(document.getElementById('maint-shares-btn'), maintManageShares);
-    once(document.getElementById('maint-thumbs-build-btn'), maintBuildThumbs);
-    once(document.getElementById('maint-thumbs-rebuild-btn'), maintRebuildThumbs);
+    once(document.getElementById('maint-thumbs-build-btn'), _go('maintenance/thumbs'));
+    once(document.getElementById('maint-thumbs-rebuild-btn'), _go('maintenance/thumbs'));
     once(document.getElementById('maint-update-btn'), maintInstallUpdate);
-    once(document.getElementById('maint-nsfw-scan-btn'), () => _nsfwModule().then(m => m.maintNsfwScan()));
-    once(document.getElementById('maint-nsfw-review-btn'), () => _nsfwModule().then(m => m.maintNsfwReview()));
-    once(document.getElementById('maint-logs-btn'), maintBrowseLogs);
+    once(document.getElementById('maint-nsfw-scan-btn'), _go('maintenance/nsfw'));
+    once(document.getElementById('maint-nsfw-review-btn'), _go('maintenance/nsfw'));
+    once(document.getElementById('maint-logs-btn'), _go('maintenance/logs'));
     once(document.getElementById('maint-config-btn'), maintViewConfig);
     once(document.getElementById('maint-export-btn'), maintExportSession);
     once(document.getElementById('maint-signout-all-btn'), maintRevokeAllSessions);
@@ -935,6 +1246,10 @@ function wireMaintenance() {
     refreshThumbsStats();
     refreshUpdateStatus();
     _nsfwModule().then(m => m.refreshNsfwStatus()).catch(() => {});
+    // Hydrate every fire-and-forget admin button + subscribe to its
+    // `*_done` WS event so a job started on phone re-paints the
+    // desktop's button when it finishes.
+    wireMaintenanceJobToasts();
 }
 
 let _nsfwModulePromise = null;
@@ -956,7 +1271,9 @@ async function refreshThumbsStats() {
     } catch { /* ignore */ }
 }
 
-async function maintBuildThumbs() {
+// Kept as a fallback in case we need to re-wire to a Settings sheet — the
+// canonical entry-point is now the standalone Maintenance → Thumbnails page.
+async function _maintBuildThumbs() {
     const btn = document.getElementById('maint-thumbs-build-btn');
     if (btn) { btn.disabled = true; btn.textContent = i18nT('maintenance.thumbs.building', 'Building…'); }
     try {
@@ -1002,20 +1319,47 @@ async function maintInstallUpdate() {
 
 async function refreshUpdateStatus() {
     const el = document.getElementById('maint-update-status');
-    if (!el) return;
+    const btn = document.getElementById('maint-update-btn');
+    if (!el && !btn) return;
     try {
         const s = await api.get('/api/update/status');
-        if (s.available) {
-            el.textContent = '· ' + i18nT('maintenance.update.ready', 'auto-update ready');
-        } else if (!s.inDocker) {
-            el.textContent = '· ' + i18nT('maintenance.update.not_docker', 'standalone install — manual update only');
-        } else {
-            el.textContent = '· ' + i18nT('maintenance.update.no_watchtower', 'enable the auto-update profile to use this');
+        if (el) {
+            if (s.available) {
+                el.textContent = '· ' + i18nT('maintenance.update.ready', 'auto-update ready');
+            } else if (!s.inDocker) {
+                el.textContent = '· ' + i18nT('maintenance.update.not_docker', 'standalone install — manual update only');
+            } else {
+                el.textContent = '· ' + i18nT('maintenance.update.no_watchtower', 'enable the auto-update profile to use this');
+            }
+        }
+        // Cross-check the actual release feed so the button reflects
+        // whether there's anything to install. Up-to-date → disable the
+        // button + flip the label to "Up to date" so the operator doesn't
+        // wonder why it's a no-op.
+        if (btn) {
+            try {
+                const v = await api.get('/api/version/check');
+                const upToDate = !v?.latest;
+                btn.disabled = upToDate;
+                btn.classList.toggle('opacity-50', upToDate);
+                btn.classList.toggle('cursor-not-allowed', upToDate);
+                const labelEl = btn.querySelector('[data-i18n]') || btn;
+                if (upToDate) {
+                    labelEl.textContent = i18nT('maintenance.update.up_to_date_btn', 'Up to date');
+                    btn.title = i18nT('maintenance.update.up_to_date',
+                        'Already running the latest release.');
+                } else {
+                    labelEl.textContent = i18nTf('maintenance.update.action_with_version',
+                        { version: v.latest }, `Install v${v.latest}`);
+                    btn.title = '';
+                }
+            } catch { /* leave default */ }
         }
     } catch { /* leave blank */ }
 }
 
-async function maintRebuildThumbs() {
+// Kept as a fallback — see _maintBuildThumbs comment above.
+async function _maintRebuildThumbs() {
     const ok = await confirmSheet({
         title: i18nT('maintenance.thumbs.rebuild_title', 'Rebuild thumbnail cache?'),
         body: i18nT('maintenance.thumbs.rebuild_body', 'Wipes every cached thumbnail. The next gallery scroll regenerates them on demand. Useful when previews look stale or after a quality tweak.'),
@@ -1053,7 +1397,8 @@ async function maintManageShares() {
 // byte-identical copies, lets the user pick which to keep, then deletes
 // the rest. Two-step UX: scan first (no destructive op), explicit Delete
 // confirmation second.
-async function maintFindDuplicates() {
+// Kept as a fallback — see _maintBuildThumbs comment above.
+async function _maintFindDuplicates() {
     const btn = document.getElementById('maint-dedup-btn');
     if (btn) { btn.disabled = true; btn.textContent = i18nT('maintenance.dedup.scanning', 'Scanning…'); }
     showToast(i18nT('maintenance.dedup.starting', 'Scanning files — this may take a while on the first run'), 'info');
@@ -1239,18 +1584,24 @@ async function openDedupSheet(sets) {
     });
 }
 
-// Force-run the file-existence sweep (same one that runs hourly via
-// integrity.start). Drops DB rows whose file vanished on disk so the
-// gallery doesn't show ghost thumbs after a manual rm.
+// Settings → Maintenance buttons trigger fire-and-forget admin jobs.
+// Each handler does the up-front confirm dialog (where applicable) and
+// then POSTs the run endpoint; the backend returns 200 immediately and
+// the actual work runs in the background. Result toasts and re-enable
+// of the button live in `wireMaintenanceJobToasts()` (one set of WS
+// subscribers, fired by `${prefix}_done`) so a job started on a phone
+// re-paints the desktop's button when it finishes.
 async function maintVerifyFiles() {
     try {
         showToast(i18nT('maintenance.verify.running', 'Verifying files…'), 'info');
         const r = await api.post('/api/maintenance/files/verify', {});
-        showToast(i18nTf('maintenance.verify.done',
-            { scanned: r.scanned ?? 0, pruned: r.pruned ?? 0 },
-            `Verified ${r.scanned ?? 0} files — pruned ${r.pruned ?? 0} missing rows`),
-            (r.pruned > 0) ? 'warning' : 'success');
+        if (!r?.started && !r?.success) throw new Error('Failed to start');
     } catch (e) {
+        if (e?.data?.code === 'ALREADY_RUNNING') {
+            showToast(i18nT('jobs.already_running',
+                'Already running on another tab — waiting for it to finish.'), 'info');
+            return;
+        }
         showToast(i18nTf('maintenance.failed', { msg: e.message }, `Failed: ${e.message}`), 'error');
     }
 }
@@ -1259,9 +1610,13 @@ async function maintResyncDialogs() {
     try {
         showToast(i18nT('maintenance.resync.running', 'Resyncing dialogs…'), 'info');
         const r = await api.post('/api/maintenance/resync-dialogs', {});
-        showToast(i18nTf('maintenance.resync.done', { updated: r.updated, scanned: r.scanned },
-            `Resynced ${r.updated} of ${r.scanned} groups`), 'success');
+        if (!r?.started && !r?.success) throw new Error('Failed to start');
     } catch (e) {
+        if (e?.data?.code === 'ALREADY_RUNNING') {
+            showToast(i18nT('jobs.already_running',
+                'Already running on another tab — waiting for it to finish.'), 'info');
+            return;
+        }
         showToast(i18nTf('maintenance.failed', { msg: e.message }, `Failed: ${e.message}`), 'error');
     }
 }
@@ -1276,28 +1631,28 @@ async function maintRestartMonitor() {
     try {
         showToast(i18nT('maintenance.restart.running', 'Restarting monitor…'), 'info');
         const r = await api.post('/api/maintenance/restart-monitor', { confirm: true });
-        if (r.restarted) {
-            showToast(i18nT('maintenance.restart.done', 'Monitor restarted'), 'success');
-        } else {
-            showToast(r.note || i18nT('maintenance.restart.idle',
-                'Monitor was not running.'), 'info');
-        }
+        if (!r?.started && !r?.success) throw new Error('Failed to start');
     } catch (e) {
+        if (e?.data?.code === 'ALREADY_RUNNING') {
+            showToast(i18nT('jobs.already_running',
+                'Already running on another tab — waiting for it to finish.'), 'info');
+            return;
+        }
         showToast(i18nTf('maintenance.failed', { msg: e.message }, `Failed: ${e.message}`), 'error');
     }
 }
 
 async function maintDbIntegrity() {
     try {
+        showToast(i18nT('maintenance.db_check.running', 'Checking database integrity…'), 'info');
         const r = await api.post('/api/maintenance/db/integrity', {});
-        if (r.ok) {
-            showToast(i18nT('maintenance.db_check.ok', 'Database integrity: ok'), 'success');
-        } else {
-            const msg = (r.messages || []).slice(0, 3).join(' / ');
-            showToast(i18nTf('maintenance.db_check.bad', { msg },
-                `Database issues: ${msg}`), 'error');
-        }
+        if (!r?.started && !r?.success) throw new Error('Failed to start');
     } catch (e) {
+        if (e?.data?.code === 'ALREADY_RUNNING') {
+            showToast(i18nT('jobs.already_running',
+                'Already running on another tab — waiting for it to finish.'), 'info');
+            return;
+        }
         showToast(i18nTf('maintenance.failed', { msg: e.message }, `Failed: ${e.message}`), 'error');
     }
 }
@@ -1312,15 +1667,158 @@ async function maintDbVacuum() {
     try {
         showToast(i18nT('maintenance.db_vacuum.running', 'Running VACUUM…'), 'info');
         const r = await api.post('/api/maintenance/db/vacuum', { confirm: true });
-        const reclaimed = formatBytesShort(r.reclaimedBytes);
-        showToast(i18nTf('maintenance.db_vacuum.done', { bytes: reclaimed },
-            `VACUUM done — reclaimed ${reclaimed}`), 'success');
+        if (!r?.started && !r?.success) throw new Error('Failed to start');
     } catch (e) {
+        if (e?.data?.code === 'ALREADY_RUNNING') {
+            showToast(i18nT('jobs.already_running',
+                'Already running on another tab — waiting for it to finish.'), 'info');
+            return;
+        }
         showToast(i18nTf('maintenance.failed', { msg: e.message }, `Failed: ${e.message}`), 'error');
     }
 }
 
-async function maintBrowseLogs() {
+// Wire all `*_done` WS subscribers + button hydration once per session.
+// Done events fire here regardless of which client started the job, so
+// a phone-triggered VACUUM still pops a result toast on the desktop.
+let _maintWsWired = false;
+function wireMaintenanceJobToasts() {
+    if (_maintWsWired) return;
+    _maintWsWired = true;
+
+    // files/verify
+    wireJobButton({
+        btn: document.getElementById('maint-verify-btn'),
+        statusUrl: '/api/maintenance/files/verify/status',
+        eventPrefix: 'files_verify',
+        runUrl: '/api/maintenance/files/verify',
+        attachClick: false,
+    });
+    ws.on('files_verify_done', (m) => {
+        if (m?.error) {
+            const msg = i18nTf('maintenance.failed', { msg: m.error }, `Failed: ${m.error}`);
+            showToast(msg, 'error');
+            // Persist failures to the bell so the operator sees them after
+            // the toast auto-dismisses (especially relevant for jobs that
+            // started on another device).
+            import('./header-mobile.js').then((mod) => mod.pushLogToNotify({
+                level: 'error',
+                source: 'verify',
+                msg,
+                ts: Date.now(),
+            })).catch(() => {});
+            return;
+        }
+        const scanned = m?.scanned ?? 0;
+        const pruned = m?.pruned ?? 0;
+        const msg = i18nTf('maintenance.verify.done',
+            { scanned, pruned },
+            `Verified ${scanned} files — pruned ${pruned} missing rows`);
+        showToast(msg, pruned > 0 ? 'warning' : 'success');
+        import('./header-mobile.js').then((mod) => mod.pushLogToNotify({
+            level: pruned > 0 ? 'warn' : 'info',
+            source: 'verify',
+            msg,
+            ts: Date.now(),
+        })).catch(() => {});
+    });
+
+    // db/integrity
+    wireJobButton({
+        btn: document.getElementById('maint-db-check-btn'),
+        statusUrl: '/api/maintenance/db/integrity/status',
+        eventPrefix: 'db_integrity',
+        runUrl: '/api/maintenance/db/integrity',
+        attachClick: false,
+    });
+    ws.on('db_integrity_done', (m) => {
+        if (m?.error) {
+            showToast(i18nTf('maintenance.failed', { msg: m.error }, `Failed: ${m.error}`), 'error');
+            return;
+        }
+        if (m?.ok) {
+            showToast(i18nT('maintenance.db_check.ok', 'Database integrity: ok'), 'success');
+        } else {
+            const msg = (m?.messages || []).slice(0, 3).join(' / ') || 'unknown';
+            showToast(i18nTf('maintenance.db_check.bad', { msg },
+                `Database issues: ${msg}`), 'error');
+        }
+    });
+
+    // db/vacuum — confirm sheet handled by maintDbVacuum, so the
+    // wireJobButton click is suppressed (would double-POST otherwise).
+    wireJobButton({
+        btn: document.getElementById('maint-db-vacuum-btn'),
+        statusUrl: '/api/maintenance/db/vacuum/status',
+        eventPrefix: 'db_vacuum',
+        runUrl: '/api/maintenance/db/vacuum',
+        runBody: { confirm: true },
+        attachClick: false,
+    });
+    ws.on('db_vacuum_done', (m) => {
+        if (m?.error) {
+            showToast(i18nTf('maintenance.failed', { msg: m.error }, `Failed: ${m.error}`), 'error');
+            return;
+        }
+        const reclaimed = formatBytesShort(m?.reclaimedBytes || 0);
+        showToast(i18nTf('maintenance.db_vacuum.done', { bytes: reclaimed },
+            `VACUUM done — reclaimed ${reclaimed}`), 'success');
+    });
+
+    // restart-monitor
+    wireJobButton({
+        btn: document.getElementById('maint-restart-btn'),
+        statusUrl: '/api/maintenance/restart-monitor/status',
+        eventPrefix: 'restart_monitor',
+        runUrl: '/api/maintenance/restart-monitor',
+        runBody: { confirm: true },
+        attachClick: false,
+    });
+    ws.on('restart_monitor_done', (m) => {
+        if (m?.error) {
+            showToast(i18nTf('maintenance.failed', { msg: m.error }, `Failed: ${m.error}`), 'error');
+            return;
+        }
+        if (m?.restarted) {
+            showToast(i18nT('maintenance.restart.done', 'Monitor restarted'), 'success');
+        } else {
+            showToast(m?.note || i18nT('maintenance.restart.idle',
+                'Monitor was not running.'), 'info');
+        }
+    });
+
+    // resync-dialogs
+    wireJobButton({
+        btn: document.getElementById('maint-resync-btn'),
+        statusUrl: '/api/maintenance/resync-dialogs/status',
+        eventPrefix: 'resync_dialogs',
+        runUrl: '/api/maintenance/resync-dialogs',
+        attachClick: false,
+    });
+    ws.on('resync_dialogs_done', (m) => {
+        if (m?.error) {
+            showToast(i18nTf('maintenance.failed', { msg: m.error }, `Failed: ${m.error}`), 'error');
+            return;
+        }
+        showToast(i18nTf('maintenance.resync.done',
+            { updated: m?.updated || 0, scanned: m?.scanned || 0 },
+            `Resynced ${m?.updated || 0} of ${m?.scanned || 0} groups`), 'success');
+    });
+
+    // auto-update — the click handler opens a sheet, so we only wire
+    // the disable-state hydration here. The `update_done` toast happens
+    // automatically; the watchtower restart usually kills the WS first.
+    wireJobButton({
+        btn: document.getElementById('maint-update-btn'),
+        statusUrl: '/api/auto-update/status',
+        eventPrefix: 'update',
+        runUrl: '/api/update',
+        attachClick: false,
+    });
+}
+
+// Kept as a fallback — see _maintBuildThumbs comment above.
+async function _maintBrowseLogs() {
     try {
         const r = await api.get('/api/maintenance/logs');
         const files = r.files || [];
@@ -1407,44 +1905,66 @@ async function maintBrowseLogs() {
     }
 }
 
-// Pretty-print JSON as a collapsible tree with syntax-highlighted tokens.
-// No third-party dep — recursion + classes that the existing Tailwind
-// palette already covers.
-function _renderJsonTree(value, key = null) {
+// Pretty-print JSON as a Telegram-styled collapsible tree. Each row gets:
+//   - A real chevron (▸ / ▾) instead of the default <details> triangle
+//     so a search hit can highlight the row without fighting native UA chrome.
+//   - Subtle indent guides via a left border on every level.
+//   - Monospace numbers + tabular-nums so digits align in long lists.
+//   - Per-row data attrs (`data-key-path`, `data-value-text`) so the
+//     search filter can hide rows that don't match without re-rendering.
+//   - Copy button revealed on hover for individual leaf values.
+//
+// No third-party dep; everything reuses the existing Tailwind / `--tg-*`
+// palette so the tree picks up dark/light theme overrides automatically.
+function _renderJsonTree(value, key = null, path = '$') {
+    const isLeaf = (v) => v === null || typeof v !== 'object';
     const wrap = (cls, content) => `<span class="${cls}">${content}</span>`;
-    const keyPart = key !== null
-        ? `<span class="text-tg-blue">"${escapeHtml(String(key))}"</span><span class="text-tg-textSecondary">: </span>`
-        : '';
-    if (value === null) return keyPart + wrap('text-tg-textSecondary italic', 'null');
-    if (typeof value === 'boolean') return keyPart + wrap('text-tg-orange', String(value));
-    if (typeof value === 'number') return keyPart + wrap('text-tg-orange tabular-nums', String(value));
-    if (typeof value === 'string') return keyPart + wrap('text-tg-green break-all', `"${escapeHtml(value)}"`);
-    if (Array.isArray(value)) {
-        if (!value.length) return keyPart + '<span class="text-tg-textSecondary">[]</span>';
-        const id = `j${Math.random().toString(36).slice(2, 8)}`;
-        const children = value.map((v, i) =>
-            `<div class="pl-4 border-l border-tg-border/40">${_renderJsonTree(v, i)}<span class="text-tg-textSecondary">${i < value.length - 1 ? ',' : ''}</span></div>`
-        ).join('');
-        return keyPart + `
-            <details class="inline-block align-top" id="${id}" open>
-                <summary class="cursor-pointer text-tg-textSecondary list-none select-none">[<span class="text-tg-textSecondary text-[10px]">${value.length}</span>]</summary>
-                ${children}
-            </details>`;
+    const fullPath = key === null ? path : (Number.isInteger(key) ? `${path}[${key}]` : `${path}.${escapeHtml(String(key))}`);
+    const keyTok = key === null
+        ? ''
+        : `<span class="text-tg-blue/90 font-medium">"${escapeHtml(String(key))}"</span><span class="text-tg-textSecondary">: </span>`;
+
+    // Leaves render inline.
+    let valTok = '';
+    let valText = '';
+    if (value === null) { valTok = wrap('text-tg-textSecondary italic', 'null'); valText = 'null'; }
+    else if (typeof value === 'boolean') { valTok = wrap('text-purple-300', String(value)); valText = String(value); }
+    else if (typeof value === 'number') { valTok = wrap('text-tg-orange tabular-nums', String(value)); valText = String(value); }
+    else if (typeof value === 'string') {
+        const safe = escapeHtml(value);
+        valTok = wrap('text-tg-green break-all', `"${safe}"`);
+        valText = value;
     }
-    if (typeof value === 'object') {
-        const entries = Object.entries(value);
-        if (!entries.length) return keyPart + '<span class="text-tg-textSecondary">{}</span>';
-        const id = `j${Math.random().toString(36).slice(2, 8)}`;
-        const children = entries.map(([k, v], i) =>
-            `<div class="pl-4 border-l border-tg-border/40">${_renderJsonTree(v, k)}<span class="text-tg-textSecondary">${i < entries.length - 1 ? ',' : ''}</span></div>`
-        ).join('');
-        return keyPart + `
-            <details class="inline-block align-top" id="${id}" open>
-                <summary class="cursor-pointer text-tg-textSecondary list-none select-none">{<span class="text-tg-textSecondary text-[10px]">${entries.length}</span>}</summary>
-                ${children}
-            </details>`;
+    if (valTok) {
+        return `<div class="json-row group flex items-start gap-1 px-1 py-0.5 rounded hover:bg-tg-hover/40" data-key-path="${escapeHtml(fullPath)}" data-value-text="${escapeHtml(valText.slice(0, 200))}">
+            <span class="json-row-content flex-1 min-w-0 break-words">${keyTok}${valTok}</span>
+            <button type="button" class="json-copy opacity-0 group-hover:opacity-100 text-[10px] px-1 py-0.5 rounded text-tg-textSecondary hover:text-tg-blue hover:bg-tg-bg/60 transition-opacity"
+                data-copy="${escapeHtml(valText)}" title="${escapeHtml(i18nT('maintenance.config.copy_value', 'Copy value'))}">
+                <i class="ri-clipboard-line"></i>
+            </button>
+        </div>`;
     }
-    return keyPart + escapeHtml(String(value));
+
+    // Containers — collapsible with explicit chevron we control.
+    const isArr = Array.isArray(value);
+    const entries = isArr ? value.map((v, i) => [i, v]) : Object.entries(value);
+    const open = '<span class="text-tg-textSecondary">' + (isArr ? '[' : '{') + '</span>';
+    const close = '<span class="text-tg-textSecondary">' + (isArr ? ']' : '}') + '</span>';
+    if (!entries.length) {
+        return `<div class="json-row flex items-center gap-1 px-1 py-0.5" data-key-path="${escapeHtml(fullPath)}">
+            ${keyTok}${open}${close}
+        </div>`;
+    }
+    const children = entries.map(([k, v], i) =>
+        `<div class="json-child" data-child>${_renderJsonTree(v, k, fullPath)}<span class="text-tg-textSecondary/60">${i < entries.length - 1 ? ',' : ''}</span></div>`
+    ).join('');
+    return `<details class="json-node" data-key-path="${escapeHtml(fullPath)}" open>
+        <summary class="json-summary list-none cursor-pointer flex items-center gap-1 px-1 py-0.5 rounded hover:bg-tg-hover/40 select-none">
+            <i class="json-chev ri-arrow-down-s-line text-sm text-tg-textSecondary shrink-0 transition-transform"></i>
+            <span class="flex-1 min-w-0 break-words">${keyTok}${open}<span class="text-tg-textSecondary text-[10px] mx-1 tabular-nums">${entries.length}</span>${close}</span>
+        </summary>
+        <div class="json-children pl-3 ml-1.5 border-l border-tg-border/30">${children}</div>
+    </details>`;
 }
 
 async function maintViewConfig() {
@@ -1463,20 +1983,40 @@ async function maintViewConfig() {
             title: i18nT('maintenance.config.title', 'View config.json'),
             size: 'lg',
             content: `
-                <div class="flex items-center justify-between gap-2 mb-2">
-                    <div class="flex items-center gap-2">
-                        <button data-config-collapse class="tg-btn-secondary text-xs px-3 py-1">${escapeHtml(i18nT('maintenance.config.collapse_all', 'Collapse all'))}</button>
-                        <button data-config-expand class="tg-btn-secondary text-xs px-3 py-1">${escapeHtml(i18nT('maintenance.config.expand_all', 'Expand all'))}</button>
+                <div class="flex flex-wrap items-center gap-2 mb-3">
+                    <div class="relative flex-1 min-w-[200px]">
+                        <i class="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-tg-textSecondary text-sm" aria-hidden="true"></i>
+                        <input type="search" id="config-search" autocomplete="off"
+                            data-i18n-placeholder="maintenance.config.search"
+                            placeholder="${escapeHtml(i18nT('maintenance.config.search', 'Search keys or values…'))}"
+                            class="tg-input w-full pl-9 pr-3 text-xs h-8">
                     </div>
-                    <button data-config-copy class="tg-btn-secondary text-xs px-3 py-1">${escapeHtml(i18nT('maintenance.logs.copy', 'Copy'))}</button>
+                    <button data-config-collapse class="tg-btn-secondary text-xs px-3 h-8 inline-flex items-center gap-1">
+                        <i class="ri-contract-up-down-line"></i>${escapeHtml(i18nT('maintenance.config.collapse_all', 'Collapse'))}
+                    </button>
+                    <button data-config-expand class="tg-btn-secondary text-xs px-3 h-8 inline-flex items-center gap-1">
+                        <i class="ri-expand-up-down-line"></i>${escapeHtml(i18nT('maintenance.config.expand_all', 'Expand'))}
+                    </button>
+                    <button data-config-copy class="tg-btn-secondary text-xs px-3 h-8 inline-flex items-center gap-1">
+                        <i class="ri-clipboard-line"></i>${escapeHtml(i18nT('maintenance.logs.copy', 'Copy'))}
+                    </button>
+                    <button data-config-download class="tg-btn-secondary text-xs px-3 h-8 inline-flex items-center gap-1">
+                        <i class="ri-download-line"></i>${escapeHtml(i18nT('maintenance.config.download', 'Download'))}
+                    </button>
                 </div>
-                <div id="maint-config-tree" class="text-xs font-mono bg-tg-bg/60 rounded-lg p-3 overflow-auto max-h-[65vh] leading-relaxed">${tree}</div>
-                <p class="text-xs text-tg-textSecondary mt-2" data-i18n="maintenance.config.redacted_help">Sensitive fields (apiHash, password hash, proxy password) are redacted.</p>`,
+                <div id="maint-config-tree" class="text-[12px] font-mono bg-tg-bg/60 rounded-xl p-4 overflow-auto max-h-[60vh] leading-relaxed border border-tg-border/40">${tree}</div>
+                <div class="flex items-center justify-between gap-2 mt-3 text-[11px] text-tg-textSecondary">
+                    <span class="inline-flex items-center gap-1.5">
+                        <i class="ri-shield-check-line text-tg-green"></i>
+                        <span data-i18n="maintenance.config.redacted_help">Sensitive fields (apiHash, password hash, proxy password) are redacted.</span>
+                    </span>
+                    <span id="config-match-count" class="tabular-nums"></span>
+                </div>`,
         });
         setTimeout(() => {
             const root = document.getElementById('maint-config-tree');
             if (!root) return;
-            const expandAll = (open) => root.querySelectorAll('details').forEach(d => d.open = open);
+            const expandAll = (open) => root.querySelectorAll('details.json-node').forEach(d => d.open = open);
             document.querySelector('[data-config-collapse]')?.addEventListener('click', () => expandAll(false));
             document.querySelector('[data-config-expand]')?.addEventListener('click', () => expandAll(true));
             document.querySelector('[data-config-copy]')?.addEventListener('click', async () => {
@@ -1486,6 +2026,81 @@ async function maintViewConfig() {
                 } catch {
                     showToast(i18nT('maintenance.export.copy_manual', 'Press Ctrl/Cmd+C to copy'), 'info');
                 }
+            });
+            document.querySelector('[data-config-download]')?.addEventListener('click', () => {
+                const blob = new Blob([text], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `config-${new Date().toISOString().slice(0, 10)}.json`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+            });
+            // Per-leaf "copy value" buttons.
+            root.addEventListener('click', async (e) => {
+                const btn = e.target.closest('.json-copy');
+                if (!btn) return;
+                e.preventDefault();
+                e.stopPropagation();
+                try {
+                    await navigator.clipboard.writeText(btn.dataset.copy || '');
+                    showToast(i18nT('maintenance.export.copied', 'Copied'), 'success');
+                } catch {
+                    showToast(i18nT('maintenance.export.copy_manual', 'Press Ctrl/Cmd+C to copy'), 'info');
+                }
+            });
+            // Live filter — hides rows that don't match the query.
+            // Matches against either the dotted key path (`web.shareSecret`) or
+            // the stringified leaf value. Container nodes whose children all
+            // get hidden also collapse out of the way.
+            const search = document.getElementById('config-search');
+            const matchCount = document.getElementById('config-match-count');
+            let searchTimer = null;
+            const applyFilter = (q) => {
+                q = String(q || '').trim().toLowerCase();
+                let matches = 0;
+                const allRows = root.querySelectorAll('.json-row, details.json-node');
+                if (!q) {
+                    allRows.forEach(el => el.classList.remove('hidden'));
+                    if (matchCount) matchCount.textContent = '';
+                    return;
+                }
+                // Walk depth-first; a container is visible iff itself or any
+                // descendant matches the query.
+                const matchesRow = (el) => {
+                    const path = (el.dataset.keyPath || '').toLowerCase();
+                    const val = (el.dataset.valueText || '').toLowerCase();
+                    return path.includes(q) || val.includes(q);
+                };
+                const visit = (el) => {
+                    let visible = false;
+                    const children = el.querySelectorAll(':scope > .json-children > [data-child]');
+                    if (children.length) {
+                        children.forEach(child => {
+                            const innerNode = child.querySelector(':scope > details.json-node, :scope > .json-row');
+                            if (!innerNode) return;
+                            const childVisible = visit(innerNode);
+                            child.classList.toggle('hidden', !childVisible);
+                            if (childVisible) visible = true;
+                        });
+                    } else if (el.classList.contains('json-row')) {
+                        visible = matchesRow(el);
+                    }
+                    // Self can also match by its summary (e.g. searching 'web' on the {web:…} container)
+                    if (!visible && matchesRow(el)) visible = true;
+                    el.classList.toggle('hidden', !visible);
+                    if (visible && (el.classList.contains('json-row') || !el.querySelectorAll(':scope > .json-children > [data-child] > .json-row, :scope > .json-children > [data-child] > details').length)) matches += 1;
+                    if (visible && el.tagName === 'DETAILS') el.open = true;
+                    return visible;
+                };
+                root.querySelectorAll(':scope > details.json-node, :scope > .json-row').forEach(visit);
+                if (matchCount) matchCount.textContent = i18nTf('maintenance.config.matches', { n: matches }, `${matches} match${matches === 1 ? '' : 'es'}`);
+            };
+            search?.addEventListener('input', () => {
+                if (searchTimer) clearTimeout(searchTimer);
+                searchTimer = setTimeout(() => applyFilter(search.value), 120);
             });
         }, 60);
     } catch (e) {

@@ -442,9 +442,6 @@ export class RealtimeMonitor extends EventEmitter {
         try {
             if (!message) return; // Ignore updates without message
 
-            // Debug removed for production clarity
-            // console.log('DEBUG:', message.id);
-
             this.stats.messages++;
 
             // --- SPAM GUARD ACTIVE DEFENSE ---

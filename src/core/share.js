@@ -5,14 +5,27 @@
  * single media file to a non-user (e.g. a friend with the URL), without
  * exposing the dashboard password or creating a real account.
  *
- * URL shape:
- *   /share/<linkId>?exp=<epochSeconds>&sig=<base64url-43chars>
+ * URL shape (v2.4.1+):
+ *   /share/<linkId>/<filename>?s=<base64url-43chars>
  *
- * Signature input is the canonical string "<linkId>|<expEpochSeconds>"
- * — including `linkId` binds the signature to the specific share row so
- * a sig from share A can't be replayed against share B. Including `exp`
- * means flipping the expiry invalidates the sig (the friend can't extend
- * their own access).
+ *     - `linkId`    DB row id (share_links.id) — bound into the sig.
+ *     - `filename`  cosmetic, helps browsers + download managers pick a
+ *                   sensible name; the server still reads the canonical
+ *                   filename from the DB. Optional — omitting it gives
+ *                   `/share/<linkId>?s=…`.
+ *     - `s`         HMAC-SHA256 over "<linkId>|<expEpochSeconds>".
+ *                   Database is the single source of truth for the
+ *                   expiry; the URL no longer carries `?exp=` so it
+ *                   can't tell a friend exactly when their access
+ *                   ends, and so an admin can rotate `expires_at` in
+ *                   the DB without re-issuing the URL (the old sig
+ *                   stops verifying — a feature, not a bug).
+ *
+ * Backwards compatibility:
+ *   The legacy URL shape `/share/<linkId>?exp=<sec>&sig=<43chars>` is
+ *   still accepted by the server. The sig there binds the same payload
+ *   (`linkId|exp`) which still equals `linkId|row.expires_at` at issue
+ *   time, so old URLs verify cleanly against the new code path.
  *
  * The HMAC key (`config.web.shareSecret`) is generated lazily on first
  * use (32 random bytes hex) and persisted via the caller. Rotating it
@@ -124,17 +137,51 @@ export function verifyShareToken(linkId, expEpochSeconds, sig) {
     catch { return false; }
 }
 
+// Filename sanitiser for the URL path segment. Strips any character that
+// would force percent-encoding into ugliness (control chars, separators,
+// reserved chars), collapses whitespace, caps at 80 bytes UTF-8 so a
+// pathological filename doesn't push the URL over the 2 KB browser limit.
+function sanitiseUrlFilename(name) {
+    if (!name || typeof name !== 'string') return null;
+    let s = name
+        // Strip anything outside printable ASCII + safe punct (browsers/CDNs
+        // hate the rest in path segments anyway).
+        .replace(/[\x00-\x1F\x7F<>:"/\\|?*#]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    if (!s) return null;
+    // Hard cap at 80 chars — long enough to keep "Cool Channel — 2024-01-15.jpg"
+    // intact, short enough that the whole URL fits comfortably.
+    if (s.length > 80) {
+        const dot = s.lastIndexOf('.');
+        if (dot > 50 && dot >= s.length - 8) {
+            // Preserve extension on long names: "verylongname….jpg".
+            s = s.slice(0, 76 - (s.length - dot)) + '…' + s.slice(dot);
+        } else {
+            s = s.slice(0, 79) + '…';
+        }
+    }
+    return s;
+}
+
 /**
  * Build the public path component of a share URL. Caller prefixes the
  * origin (the server doesn't always know its public hostname).
  *
- * @returns {string} e.g. "/share/42?exp=1750000000&sig=abc..."
+ * @param {number|string} linkId      share_links.id
+ * @param {number} expEpochSeconds    db row's expires_at (seconds since epoch)
+ * @param {string} [fileName]         optional cosmetic filename; included as
+ *                                    a path segment so download managers
+ *                                    pick a friendly name and the URL reads
+ *                                    naturally (e.g. /share/42/cat.mp4?s=…).
+ * @returns {string} e.g. "/share/42/cat.mp4?s=abc..." (or "/share/42?s=abc..."
+ *                       when no filename is supplied).
  */
-export function buildShareUrlPath(linkId, expEpochSeconds) {
+export function buildShareUrlPath(linkId, expEpochSeconds, fileName = null) {
     const sig = signShareToken(linkId, expEpochSeconds);
-    return `/share/${encodeURIComponent(linkId)}`
-         + `?exp=${encodeURIComponent(expEpochSeconds)}`
-         + `&sig=${encodeURIComponent(sig)}`;
+    const cleanName = sanitiseUrlFilename(fileName);
+    const slug = cleanName ? `/${encodeURIComponent(cleanName)}` : '';
+    return `/share/${encodeURIComponent(linkId)}${slug}?s=${encodeURIComponent(sig)}`;
 }
 
 // ---- TTL clamp -------------------------------------------------------------
@@ -214,7 +261,8 @@ export function clampTtlSeconds(input) {
  */
 export function maskSigInLog(s) {
     if (typeof s !== 'string') return s;
-    return s.replace(/(\bsig=)([A-Za-z0-9_\-%]{1,512})/gi, (_, k, v) => {
+    // Mask both the legacy `?sig=` and the new `?s=` parameter shapes.
+    return s.replace(/(\b(?:sig|s)=)([A-Za-z0-9_\-%]{1,512})/gi, (_, k, v) => {
         const head = v.slice(0, 8);
         return `${k}${head}…`;
     });
