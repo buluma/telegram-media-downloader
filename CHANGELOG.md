@@ -2,6 +2,67 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0] — 2026-05-04
+
+### Added — Single-row Maintenance hub
+- **Sidebar collapsed from 6 maintenance entries to 1.** A new `#/maintenance` hub page renders every tool as a card grid (1 / 2 / 3 columns by viewport) with live status pills wired to the WS progress channel. Per-feature deep links (`/maintenance/duplicates`, `/maintenance/nsfw`, etc.) still resolve directly so power users keep their muscle memory.
+- New `src/web/public/js/maintenance-hub.js` (~120 LOC) — coalesced WS dispatcher + status hydration on (re-)entry.
+- Mobile + desktop both benefit; the previous 5+ rows dominated the sidebar at every viewport.
+
+### Added — Local AI search & smart organisation (opt-in)
+- **Semantic search** — CLIP image+text embeddings (`Xenova/clip-vit-base-patch32`, ~90 MB, WASM). `POST /api/ai/search { query }` returns top-K rows ranked by cosine similarity.
+- **Face clustering ("People")** — YOLOv5n-face detector + CLIP-on-crop embeddings + DBSCAN. Admin can rename clusters and browse photos per person.
+- **Auto-tag** — ImageNet classifier (`Xenova/mobilenet_v2`, ~14 MB) writes top-K labels per photo into `image_tags`. Powers the tag cloud + #tag filter on the new page.
+- **Perceptual dedup (pHash)** — DCT-based 64-bit hash, no model required. Groups near-duplicates by Hamming distance; reuses the existing dedup-delete pathway.
+- New page `#/maintenance/ai` with toggles, scan progress, search, tag cloud, people grid, and near-duplicate groups. Default-OFF; every capability is gated by `config.advanced.ai.<cap>.enabled`.
+- 12 endpoints under `/api/ai/*`, all admin-only and JobTracker-driven (returns 200 immediately, WS progress).
+- Models lazy-loaded into `data/models/` (override with `AI_MODELS_DIR`); fresh installs pull zero AI weights.
+- Optional `sqlite-vec` fast-path auto-detected at boot; in-memory cosine fallback covers libraries up to ~50k photos.
+- Documentation: `docs/AI.md` (architecture, models, troubleshooting); `docs/DEPLOY.md` env-var table updated; README "Why people use it" bullet added.
+- 17 new tests under `tests/ai/`: pHash determinism + Hamming distance, vector-store BLOB round-trip + cosine + top-K ordering, DBSCAN cluster isolation.
+
+### Added — Gallery + viewer polish
+- Right-click context menu on gallery tiles (Open / Download / Copy link / Share / Pin / Forward / Delete); `ContextMenu` key fires the same menu on the focused tile.
+- Pin / unpin per file (star icon on every tile) + a "Pinned" filter chip in the gallery type strip + opt-in "Surface pinned at the top" library setting.
+- Drag-drop a `t.me/...` URL anywhere on the dashboard → auto-queue download with a dashed-border drop overlay.
+- Bulk **Download ZIP** button on the selection bar — streams a STORE-mode archive (multi-GB safe, no archive ever lives in RAM).
+- Mini-player — sticky bottom-right preview that keeps a video clip playing after the viewer modal is closed; click to expand back. Opt-in via `viewer-shrink-on-close` localStorage flag.
+- In-app changelog viewer — overlay sheet that fetches `/CHANGELOG.md` and renders a markdown-parsed timeline, triggered by clicking the version chip in the status bar.
+- Locales: new `gallery.context.*`, `favorites.*`, `viewer.pip.*`, `viewer.selection.*`, `dragdrop.*`, `prefs.*`, `tour.*`, `changelog.viewer.*`, `groups.accent_color`/`groups.description`/`groups.rename_inline`, `storage.breakdown.*` keys in `en` + `th`.
+
+### Added — Power-user / accessibility
+- Screen Wake Lock during downloads — feature-detected via `navigator.wakeLock`; auto-acquires when a job is in flight, releases when the queue drains, re-acquires on tab visibility-change.
+- System notifications on download complete + click-to-focus dashboard. New `notifyGeneric(title, body)` helper for one-shot finished events.
+- Keyboard shortcut customisation — `localStorage['tgdl-shortcut-overrides']` lets users rebind every shortcut; new exports `loadShortcutOverrides`, `setShortcutOverride`, `effectiveShortcuts`, `resetShortcutOverrides` from `shortcuts.js`.
+- High-contrast mode — `@media (prefers-contrast: more)` block in `main.css` plus a manual `html[data-contrast="more"]` toggle.
+
+### Added — Server endpoints
+- `POST /api/downloads/:id/pin { pinned: bool }` — toggle the `pinned` column. Broadcasts `download_pinned` over WS.
+- `POST /api/downloads/bulk-zip { ids: [...] }` — streams a ZIP attachment of every requested file. Cap: ~4 GiB total + 65 535 entries (no ZIP64). Filename: `tgdl-<group>-<count>files-<ts>.zip`.
+- `GET /api/downloads/all?pinned=1&pinnedFirst=1` and `GET /api/downloads/:groupId?pinned=1&pinnedFirst=1` — opt-in pinned filter / sort.
+- `GET /CHANGELOG.md` — read-once Markdown serve for the in-app viewer (admin + guest), 1-hour `must-revalidate` cache.
+
+### Added — DB
+- `setDownloadPinned(id, pinned)` and `getDownloadById(id)` in `src/core/db.js`.
+- `getAllDownloads` / `getDownloads` accept `{ pinnedOnly, pinnedFirst }` opts; existing callers behave identically.
+
+### Performance
+- **Hash worker pool** — new `src/core/hash-worker.js`. SHA-256 streaming on a `worker_threads` pool (default `min(8, ⌊cpus/2⌋)`, `HASH_WORKER_POOL_SIZE` overrides). Wired into `core/downloader.js` and `core/dedup.js` so multi-GB hashing no longer blocks the main event loop.
+- **HTTP compression** — optional `compression` middleware enabled via `createRequire` (gracefully no-ops if the package isn't installed). Skips already-compressed media (`image/*` / `video/*` / `audio/*`). `COMPRESSION_LEVEL` env var (default 6).
+- **Static asset caching** — `/icons/*` joins `/css/*` and `/js/*` in the 1-year `immutable` Cache-Control bucket when the request carries the `?v=`. `/locales/*` gets `must-revalidate` for translation freshness.
+- **`<link rel="modulepreload">`** for the SPA's hot-path import graph (`app.js`, `api.js`, `ws.js`, `router.js`, `i18n.js`, `store.js`, `utils.js`).
+- **Streaming bulk ZIP** — pure-JS PKZIP writer (`src/core/zip-stream.js`) with backpressure-aware piping so a 5 GB selection writes through to the response sink without buffering.
+
+### Tests
+- `tests/perf-headers.test.js` (8) — Cache-Control assertions for `/css/`, `/js/`, `/icons/`, `/api/*`, `/sw.js`, `/locales/*`, `/files/*`.
+- `tests/hash-worker.test.js` (5) — known SHA-256 round-trip across the pool, in-process streamer, concurrent requests, missing-file rejection, `HASH_WORKER_DISABLE=1` fallback.
+- `tests/zip-bulk.test.js` (3) — EOCD parse, STORE-mode round-trip across multiple files, `safeArchiveName` invariants.
+- `tests/shortcut-overrides.test.js` (6) — defaults, override persistence, replacement, reset, malformed JSON tolerance, defensive type filtering.
+
+### Docs
+- `docs/DEPLOY.md` — env var rows for `HASH_WORKER_POOL_SIZE`, `HASH_WORKER_DISABLE`, `COMPRESSION_LEVEL`.
+- `README.md` — two new bullets under "Why people use it" (gallery polish + perf passes).
+
 ## [2.5.0] — 2026-05-04
 
 ### Added — Universal background-job pattern

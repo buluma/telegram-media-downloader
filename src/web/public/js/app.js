@@ -26,6 +26,11 @@ import { showBackfillPage, deepLinkFromModal as backfillDeepLink, stopBackfillPa
 import * as Fonts from './fonts.js';
 import { showQueuePage, initQueue } from './queue.js';
 import { initHeaderMobile, pushLogToNotify } from './header-mobile.js';
+import { setupGalleryContextMenu } from './gallery-context.js';
+import { setupDragDropLink } from './dragdrop-link.js';
+import { setupMiniPlayer, shrinkToMini, dismiss as dismissMiniPlayer } from './mini-player.js';
+import { wireChangelogTrigger } from './changelog-viewer.js';
+import * as WakeLock from './wake-lock.js';
 
 // ============ Render coalescing ============
 //
@@ -114,6 +119,12 @@ async function init() {
     window.closeSidebar = closeSidebar;
     window.confirmDeleteFile = confirmDeleteFile;
     window.toggleFwdEnabled = toggleFwdEnabled;
+    // Mini-player public surface — viewer.js can opt into the dock-on-
+    // close behaviour by calling `window.tgdlShrinkToMini()` from the
+    // modal close path. Kept on `window` (instead of imported) so the
+    // viewer module stays free of a back-edge cycle to app.js.
+    window.tgdlShrinkToMini = shrinkToMini;
+    window.tgdlDismissMiniPlayer = dismissMiniPlayer;
 
     // Live updates from the server (engine state, downloads, purges).
     ws.connect();
@@ -236,6 +247,12 @@ async function init() {
         const had = state.activeRings.has(id);
         if (on) state.activeRings.add(id); else state.activeRings.delete(id);
         if (had !== on) scheduleRender(renderGroupsList);
+        // Wake-lock follows the active-rings count: any active ring → keep
+        // the screen awake; queue drained → release. Feature-detected
+        // inside wake-lock.js so unsupported browsers no-op silently.
+        state.activeJobsCount = state.activeRings.size;
+        WakeLock.acquireIfActive(state.activeJobsCount);
+        WakeLock.releaseIfIdle(state.activeJobsCount);
     }
     ws.on('download_progress', (m) => { if (m.payload?.groupId) markRing(m.payload.groupId, true); });
     ws.on('download_complete', (m) => {
@@ -276,6 +293,18 @@ async function init() {
     // operator open the maintenance Logs page.
     initHeaderMobile();
 
+    // v2.6 polish — right-click context menu on gallery tiles, drag-drop
+    // t.me URL onto the dashboard, mini-player handle, in-app changelog
+    // viewer, screen wake-lock during downloads. Each module feature-
+    // detects so unsupported browsers silently no-op.
+    setupGalleryContextMenu();
+    setupDragDropLink();
+    setupMiniPlayer();
+    wireChangelogTrigger();
+    // Wake-lock visibility refresh — browser auto-releases on tab hide,
+    // re-acquire when the tab comes back if jobs are still in flight.
+    WakeLock.attachVisibilityRefresh(() => state.activeJobsCount || 0);
+
     await loadGroups();
     await loadStats();
 
@@ -295,6 +324,7 @@ async function init() {
     registerRoutes();
     setupFab();
     _setupSidebarGroupsCollapse();
+    _setupSidebarMaintenanceCollapse();
     // Wire the Queue store + WS handlers eagerly so its in-memory state
     // (and the bottom-nav badge) tracks live downloads even when the user
     // hasn't visited the page yet. Queue is admin-only — guests never see
@@ -374,7 +404,11 @@ async function init() {
 
     // Settings globals
     window.applyPreset = Settings.applyPreset;
-    document.getElementById('save-settings')?.addEventListener('click', Settings.saveSettings);
+    // Manual Save button removed in v2.6 — auto-save handles every edit
+    // 800 ms after the last change, with the inline pill + notification
+    // bell entry for confirmation. The legacy `Settings.saveSettings`
+    // export stays callable for tests + power users who reach for the
+    // console, just no longer wired to a button.
     document.getElementById('save-api-credentials')?.addEventListener('click', Settings.saveApiCredentials);
     document.getElementById('change-password-btn')?.addEventListener('click', Settings.changePassword);
     document.getElementById('logout-btn')?.addEventListener('click', Settings.signOut);
@@ -504,6 +538,7 @@ function renderPage(page, params = {}) {
     // reverts to the gallery glyph via `showAllMedia()`.
     if (page !== 'viewer') updateHeaderAvatar(null, null);
     setHeaderPageIcon(page);
+    setActiveMaintenanceTab(page);
 
     if (page === 'settings') {
         Settings.loadSettings();
@@ -551,6 +586,15 @@ function renderPage(page, params = {}) {
         document.getElementById('page-title').textContent = i18nT('queue.page.title', 'Queue');
         document.getElementById('page-subtitle').textContent = i18nT('queue.page.subtitle', 'Active + pending + recently finished downloads');
         showQueuePage(params).catch(e => console.error('queue page', e));
+    } else if (page === 'maintenance') {
+        // Hub page — single sidebar entry that lists every maintenance
+        // tool as a card. Cleans up the sidebar (used to be 5+ rows of
+        // sub-pages, now one). Power users keep the per-feature deep
+        // links: /maintenance/duplicates etc. still resolve to their
+        // dedicated pages directly.
+        document.getElementById('page-title').textContent = i18nT('maintenance.hub.title', 'Maintenance');
+        document.getElementById('page-subtitle').textContent = i18nT('maintenance.hub.subtitle', 'Catalogue, thumbnails, NSFW review, logs, backup destinations');
+        import('./maintenance-hub.js').then(m => m.init()).catch(e => console.error('maintenance-hub', e));
     } else if (page === 'maintenance-duplicates') {
         document.getElementById('page-title').textContent = i18nT('maintenance.duplicates.title', 'Find duplicate files');
         document.getElementById('page-subtitle').textContent = i18nT('maintenance.duplicates.subtitle', 'Hash every file and reclaim space from byte-identical copies');
@@ -571,6 +615,10 @@ function renderPage(page, params = {}) {
         document.getElementById('page-title').textContent = i18nT('maintenance.backup.page_title', 'Backup destinations');
         document.getElementById('page-subtitle').textContent = i18nT('maintenance.backup.subtitle', 'Mirror new downloads to S3 / SFTP / local NAS storage');
         import('./maintenance-backup.js').then(m => m.init()).catch(e => console.error('maintenance-backup', e));
+    } else if (page === 'maintenance-ai') {
+        document.getElementById('page-title').textContent = i18nT('maintenance.ai.title', 'AI Search & Smart Organisation');
+        document.getElementById('page-subtitle').textContent = i18nT('maintenance.ai.subtitle', 'Local-only image embeddings, face clustering, perceptual dedup, and auto-tagging.');
+        import('./maintenance-ai.js').then(m => m.init()).catch(e => console.error('maintenance-ai', e));
     }
 }
 
@@ -624,11 +672,13 @@ function registerRoutes() {
         document.getElementById('stories-btn')?.click();
     });
     router.route('/account/add', () => { window.location.href = '/add-account.html'; });
+    router.route('/maintenance', () => renderPage('maintenance'));
     router.route('/maintenance/duplicates', () => renderPage('maintenance-duplicates'));
     router.route('/maintenance/thumbs', () => renderPage('maintenance-thumbs'));
     router.route('/maintenance/nsfw', () => renderPage('maintenance-nsfw'));
     router.route('/maintenance/logs', () => renderPage('maintenance-logs'));
     router.route('/maintenance/backup', () => renderPage('maintenance-backup'));
+    router.route('/maintenance/ai', () => renderPage('maintenance-ai'));
 }
 
 function closeSidebar() {
@@ -821,12 +871,31 @@ const PAGE_HEADER_ICON = {
     backfill:                 'ri-history-line',
     queue:                    'ri-list-check-2',
     settings:                 'ri-settings-3-line',
+    'maintenance':            'ri-tools-line',
     'maintenance-duplicates': 'ri-file-copy-2-line',
     'maintenance-thumbs':     'ri-image-line',
     'maintenance-nsfw':       'ri-shield-check-line',
     'maintenance-logs':       'ri-terminal-box-line',
     'maintenance-backup':     'ri-cloud-line',
+    'maintenance-ai':         'ri-sparkling-2-line',
 };
+
+// Repaint the active state on the maintenance tab strip. CSS hides the
+// strip when not on a per-feature maintenance page, but we still set
+// the data-active attr to reflect the current page so the active style
+// is correct the moment the strip becomes visible.
+function setActiveMaintenanceTab(page) {
+    const root = document.getElementById('maintenance-tabs');
+    if (!root) return;
+    const tabs = root.querySelectorAll('.maintenance-tab[data-mt-page]');
+    tabs.forEach((t) => {
+        const isActive = t.dataset.mtPage === page;
+        t.dataset.active = isActive ? '1' : '0';
+        if (isActive) t.setAttribute('aria-selected', 'true');
+        else t.removeAttribute('aria-selected');
+    });
+}
+
 function setHeaderPageIcon(page) {
     const el = document.getElementById('header-avatar');
     if (!el) return;
@@ -916,7 +985,9 @@ async function loadAllFiles() {
 
     try {
         const type = state.currentFilter && state.currentFilter !== 'all' ? state.currentFilter : 'all';
-        const res = await api.get(`/api/downloads/all?page=${state.page}&limit=${FILES_PER_PAGE}&type=${encodeURIComponent(type)}`);
+        const pinQs = state.pinnedFilter ? '&pinned=1' : '';
+        const pinFirstQs = (localStorage.getItem('tgdl-pinned-first') === '1') ? '&pinnedFirst=1' : '';
+        const res = await api.get(`/api/downloads/all?page=${state.page}&limit=${FILES_PER_PAGE}&type=${encodeURIComponent(type)}${pinQs}${pinFirstQs}`);
         const newFiles = res?.files || [];
 
         let appendFromIndex = 0;
@@ -965,7 +1036,9 @@ async function loadGroupFiles(groupId) {
 
     try {
         const type = state.currentFilter && state.currentFilter !== 'all' ? state.currentFilter : 'all';
-        const res = await api.get(`/api/downloads/${encodeURIComponent(groupId)}?page=${state.page}&limit=${FILES_PER_PAGE}&type=${encodeURIComponent(type)}`);
+        const pinQs = state.pinnedFilter ? '&pinned=1' : '';
+        const pinFirstQs = (localStorage.getItem('tgdl-pinned-first') === '1') ? '&pinnedFirst=1' : '';
+        const res = await api.get(`/api/downloads/${encodeURIComponent(groupId)}?page=${state.page}&limit=${FILES_PER_PAGE}&type=${encodeURIComponent(type)}${pinQs}${pinFirstQs}`);
         const newFiles = res.files || [];
 
         let appendFromIndex = 0;
@@ -1105,12 +1178,24 @@ function renderMediaGrid(opts = {}) {
             const groupLine = file.groupName || file.groupId || '';
             const sizeLine = file.sizeFormatted || (file.size ? formatBytes(file.size) : '');
             const dateLine = file.modified ? formatRelativeTime(file.modified) : '';
+            // Pin chip — appears on hover, golden when pinned. data-tile-pin
+            // is what the gallery delegation handler keys off below.
+            const pinnedCls = file.pinned ? 'is-pinned' : '';
+            const pinTitle = file.pinned
+                ? i18nT('favorites.unpin', 'Unpin')
+                : i18nT('favorites.pin', 'Pin');
+            const pinChip = file.id != null
+                ? `<button type="button" class="pin-chip" data-tile-pin title="${escapeHtml(pinTitle)}" aria-label="${escapeHtml(pinTitle)}">
+                       <i class="ri-pushpin-2-fill"></i>
+                   </button>`
+                : '';
             return `
-            <div class="media-item relative ${selectedCls}" data-index="${originalIndex}" data-path="${escapeHtml(file.fullPath)}"${file.id != null ? ` data-id="${file.id}"` : ''}>
+            <div class="media-item relative ${selectedCls} ${pinnedCls}" data-index="${originalIndex}" data-path="${escapeHtml(file.fullPath)}"${file.id != null ? ` data-id="${file.id}"` : ''} tabindex="0">
                 <div class="tile-thumb relative w-full h-full overflow-hidden">
                     ${thumbInner}
                     ${gridDocLabel}
                 </div>
+                ${pinChip}
                 <div class="tile-text">
                     <div class="tile-name" title="${escapeHtml(file.name || '')}">${escapeHtml(file.name || '')}</div>
                     <div class="tile-sub">${escapeHtml(groupLine)}</div>
@@ -1157,7 +1242,28 @@ let _gridDelegated = false;
 function _wireMediaGridDelegation(grid) {
     if (_gridDelegated) return;
     _gridDelegated = true;
-    grid.addEventListener('click', (ev) => {
+    grid.addEventListener('click', async (ev) => {
+        // Pin chip — toggles pinned state via the API and flips the
+        // visual class in place. Stops propagation so clicking the
+        // chip doesn't also open the viewer.
+        const pinBtn = ev.target.closest('[data-tile-pin]');
+        if (pinBtn) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            const tile = pinBtn.closest('.media-item[data-index]');
+            const idx = tile ? parseInt(tile.dataset.index, 10) : -1;
+            const file = state.files[idx];
+            if (!file || file.id == null) return;
+            const next = !file.pinned;
+            try {
+                await api.post(`/api/downloads/${encodeURIComponent(file.id)}/pin`, { pinned: next });
+                file.pinned = next;
+                tile?.classList.toggle('is-pinned', next);
+            } catch (e) {
+                showToast(e?.message || 'Pin failed', 'error');
+            }
+            return;
+        }
         const el = ev.target.closest('.media-item[data-index]');
         if (!el) return;
         const idx = parseInt(el.dataset.index, 10);
@@ -1490,6 +1596,84 @@ async function setupMediaSearch() {
         }
     });
 
+    // Selection-bar: Download ZIP. Pulls every selected tile's DB id
+    // (skipping rows that don't have one — e.g. legacy entries from
+    // before id was surfaced on /api/downloads/:groupId) and POSTs the
+    // list to the streaming bulk-zip endpoint. Server replies with a
+    // ZIP attachment that the browser saves directly.
+    const selZip = document.getElementById('selection-zip');
+    selZip?.addEventListener('click', async () => {
+        if (!state.selected || !state.selected.size) return;
+        const ids = [];
+        const paths = Array.from(state.selected);
+        for (const p of paths) {
+            const f = (state.files || []).find(x => x.fullPath === p);
+            if (f && f.id != null) ids.push(f.id);
+        }
+        if (ids.length === 0) {
+            showToast(i18nT('viewer.selection.zip_no_ids',
+                'Selected files have no DB id — re-open the page to refresh and try again.'), 'error');
+            return;
+        }
+        try {
+            const r = await fetch('/api/downloads/bulk-zip', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ids }),
+            });
+            if (!r.ok) {
+                const err = await r.json().catch(() => ({}));
+                throw new Error(err.error || `HTTP ${r.status}`);
+            }
+            // Stream the body to a Blob → object URL → save-as. For really
+            // big archives the browser will write to disk as it goes.
+            const cd = r.headers.get('content-disposition') || '';
+            const m = /filename="([^"]+)"/.exec(cd);
+            const fileName = m ? m[1] : 'tgdl-bulk.zip';
+            const blob = await r.blob();
+            const u = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = u; a.download = fileName;
+            document.body.appendChild(a); a.click(); a.remove();
+            setTimeout(() => URL.revokeObjectURL(u), 60_000);
+            showToast(i18nT('viewer.selection.zip_done', 'ZIP downloaded'), 'success');
+        } catch (e) {
+            showToast(i18nT('viewer.selection.zip_failed', 'ZIP download failed') + ' — ' + (e?.message || ''), 'error');
+        }
+    });
+
+    // Selection-bar: Pin / Unpin. Toggles every selected tile's pinned
+    // flag in one go. Empty selection = no-op. Mixed-state selection
+    // (some pinned, some not) flips them ALL to pinned for clarity.
+    const selPin = document.getElementById('selection-pin');
+    selPin?.addEventListener('click', async () => {
+        if (!state.selected || !state.selected.size) return;
+        const items = [];
+        for (const p of state.selected) {
+            const f = (state.files || []).find(x => x.fullPath === p);
+            if (f && f.id != null) items.push(f);
+        }
+        if (!items.length) return;
+        const allPinned = items.every(f => f.pinned);
+        const next = !allPinned;
+        let ok = 0, failed = 0;
+        for (const f of items) {
+            try {
+                await api.post(`/api/downloads/${encodeURIComponent(f.id)}/pin`, { pinned: next });
+                f.pinned = next;
+                const tile = document.querySelector(`.media-item[data-id="${CSS.escape(String(f.id))}"]`);
+                tile?.classList.toggle('is-pinned', next);
+                ok++;
+            } catch { failed++; }
+        }
+        showToast(
+            next
+                ? i18nTf('favorites.bulk_pinned', { count: ok }, `Pinned ${ok} item(s)`)
+                : i18nTf('favorites.bulk_unpinned', { count: ok }, `Unpinned ${ok} item(s)`),
+            failed === 0 ? 'success' : 'info'
+        );
+    });
+
     // Listen for the shared dedup_delete tracker's done event so a
     // bulk-delete started from the duplicate-finder OR another tab still
     // surfaces a result toast on the gallery page.
@@ -1630,6 +1814,26 @@ function filterSidebarGroups(rawQuery) {
 function _reapplySidebarFilter() {
     const input = document.getElementById('sidebar-groups-search');
     if (input && input.value) filterSidebarGroups(input.value);
+}
+
+// Collapse / expand the sidebar's Maintenance subsection. Same pattern
+// as the Downloaded-Groups collapse below — preference persists in
+// localStorage so the operator's last state sticks across reloads.
+function _setupSidebarMaintenanceCollapse() {
+    const btn = document.getElementById('maintenance-section-toggle');
+    const body = document.getElementById('maintenance-nav-body');
+    if (!btn || !body) return;
+    const KEY = 'tgdl.sidebar.maintenance.collapsed';
+    const apply = (collapsed) => {
+        body.setAttribute('aria-hidden', collapsed ? 'true' : 'false');
+        btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    };
+    apply(localStorage.getItem(KEY) === '1');
+    btn.addEventListener('click', () => {
+        const next = body.getAttribute('aria-hidden') !== 'true';
+        try { localStorage.setItem(KEY, next ? '1' : '0'); } catch { /* private mode */ }
+        apply(next);
+    });
 }
 
 // Collapse / expand the "Downloaded Groups" body. Persists across reloads
@@ -2009,7 +2213,27 @@ function resetGalleryFilter() {
 function setupMediaTabs() {
     document.querySelectorAll('#media-tabs .tab-item').forEach(tab => {
         tab.addEventListener('click', () => {
-            document.querySelectorAll('#media-tabs .tab-item').forEach(t => t.classList.remove('active'));
+            // The pinned toggle is a chip, NOT a type tab — it stacks with
+            // the type filter instead of replacing it. Handle it separately.
+            if (tab.dataset.pinnedToggle !== undefined) {
+                const next = tab.getAttribute('aria-pressed') !== 'true';
+                tab.setAttribute('aria-pressed', next ? 'true' : 'false');
+                state.pinnedFilter = next;
+                state.page = 1;
+                state.hasMore = true;
+                state.files = [];
+                if (state.currentPage === 'viewer') {
+                    if (state.currentGroupId) loadGroupFiles(state.currentGroupId);
+                    else loadAllFiles();
+                } else {
+                    renderMediaGrid();
+                }
+                return;
+            }
+            document.querySelectorAll('#media-tabs .tab-item').forEach(t => {
+                if (t.dataset.pinnedToggle !== undefined) return; // leave the chip alone
+                t.classList.remove('active');
+            });
             tab.classList.add('active');
             state.currentFilter = tab.dataset.type || 'all';
             // Server-side filter: reset pagination + re-fetch with the new

@@ -618,6 +618,48 @@ function loadAdvanced(config) {
     }
     set('setting-adv-nsfw-threshold',   Number.isFinite(ns.threshold) ? ns.threshold : 0.6);
     set('setting-adv-nsfw-concurrency', Number.isFinite(ns.concurrency) ? ns.concurrency : 1);
+
+    // ffmpeg hardware acceleration — written to `advanced.thumbs.hwaccel`.
+    // Empty string = off (default); `vaapi` / `qsv` / `cuda` / etc.
+    // are passed straight to ffmpeg's `-hwaccel` flag in core/thumbs.js.
+    const tHw = adv.thumbs?.hwaccel ?? '';
+    const tHwEl = document.getElementById('setting-adv-ffmpeg-hwaccel');
+    if (tHwEl) tHwEl.value = String(tHw);
+
+    // Probe button — fetch /thumbs/hwaccel-probe and render available
+    // backends as small chips. Idempotent wire-up via `dataset.wired`.
+    const probeBtn = document.getElementById('setting-adv-ffmpeg-hwaccel-probe');
+    const probeOut = document.getElementById('setting-adv-ffmpeg-hwaccel-probe-result');
+    if (probeBtn && !probeBtn.dataset.wired) {
+        probeBtn.dataset.wired = '1';
+        probeBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            probeBtn.disabled = true;
+            const orig = probeBtn.innerHTML;
+            probeBtn.innerHTML = `<i class="ri-loader-4-line animate-spin"></i><span>${escapeHtml(i18nT('common.loading', 'Loading…'))}</span>`;
+            if (probeOut) probeOut.innerHTML = '';
+            try {
+                const r = await api.get('/api/maintenance/thumbs/hwaccel-probe');
+                if (probeOut) {
+                    if (!r?.available?.length) {
+                        probeOut.innerHTML = `<span class="px-2 py-0.5 rounded-full bg-tg-bg/40 text-tg-textSecondary text-[11px]">${escapeHtml(i18nT('settings.advanced.thumbs.hwaccel_probe_none', 'No hardware backends available — CPU only'))}</span>`;
+                    } else {
+                        probeOut.innerHTML = r.available.map((b) =>
+                            `<span class="px-2 py-0.5 rounded-full bg-tg-blue/15 text-tg-blue text-[11px] inline-flex items-center gap-1">
+                                <i class="ri-check-line"></i>${escapeHtml(b)}
+                            </span>`).join('');
+                    }
+                }
+            } catch (err) {
+                if (probeOut) {
+                    probeOut.innerHTML = `<span class="text-red-300 text-[11px]">${escapeHtml(err?.message || 'Probe failed')}</span>`;
+                }
+            } finally {
+                probeBtn.disabled = false;
+                probeBtn.innerHTML = orig;
+            }
+        });
+    }
 }
 
 function gatherAdvanced() {
@@ -659,6 +701,12 @@ function gatherAdvanced() {
             enabled: document.getElementById('setting-adv-nsfw-enabled')?.classList.contains('active') === true,
             threshold: parseFloat(get('setting-adv-nsfw-threshold')) || 0.6,
             concurrency: num('setting-adv-nsfw-concurrency', 1),
+        },
+        thumbs: {
+            // Empty string = CPU (off). Validated server-side against an
+            // allow-list so a hand-edited config can't pass arbitrary
+            // values through to the ffmpeg process.
+            hwaccel: String(get('setting-adv-ffmpeg-hwaccel') || ''),
         },
     };
 }
@@ -712,26 +760,48 @@ let _autoSaveSnapshot = null;
 let _autoSaveStatusFadeTimer = null;
 let _autoSaveBound = false;
 
+// State shape on the autosave pill:
+//   idle    — invisible, no message (the manual Save button used to live here)
+//   dirty   — pencil icon, "Editing…" — fades in as soon as a field changes
+//   saving  — spinner, "Saving…"
+//   saved   — green check + "Saved at HH:MM:SS", auto-fades back to idle
+//             after 2.5s; the same event also pulses a notification bell row
+//             so the operator gets durable confirmation even after the chip
+//             fades.
+//   error   — red triangle, error msg, sticks until the next successful save.
+//
+// CSS state is driven by `data-state="…"` on the pill so animations + colors
+// live in main.css next to the rest of the chip styles.
 function _setAutosaveStatus(state, msg) {
     const root = document.getElementById('settings-autosave-status');
     const iconEl = document.getElementById('settings-autosave-icon');
     const textEl = document.getElementById('settings-autosave-text');
     if (!root || !iconEl || !textEl) return;
     if (_autoSaveStatusFadeTimer) { clearTimeout(_autoSaveStatusFadeTimer); _autoSaveStatusFadeTimer = null; }
-    const map = {
-        idle:    { icon: '',                                     color: 'text-tg-textSecondary' },
-        dirty:   { icon: '<i class="ri-edit-2-line"></i>',       color: 'text-tg-textSecondary' },
-        saving:  { icon: '<i class="ri-loader-4-line animate-spin"></i>', color: 'text-tg-textSecondary' },
-        saved:   { icon: '<i class="ri-check-line"></i>',        color: 'text-tg-green' },
-        error:   { icon: '<i class="ri-error-warning-line"></i>', color: 'text-tg-red' },
+    const ICON = {
+        idle:   '',
+        dirty:  '<i class="ri-edit-2-line"></i>',
+        saving: '<i class="ri-loader-4-line"></i>',
+        saved:  '<i class="ri-checkbox-circle-fill"></i>',
+        error:  '<i class="ri-error-warning-fill"></i>',
     };
-    const m = map[state] || map.idle;
-    iconEl.innerHTML = m.icon;
+    iconEl.innerHTML = ICON[state] || '';
     textEl.textContent = msg || '';
-    root.className = root.className.replace(/text-tg-(green|red|textSecondary)/g, '').trim() + ' ' + m.color + ' text-xs mb-2 flex items-center gap-2 min-h-[20px]';
+    root.dataset.state = state || 'idle';
     if (state === 'saved') {
-        _autoSaveStatusFadeTimer = setTimeout(() => _setAutosaveStatus('idle', ''), 4000);
+        _autoSaveStatusFadeTimer = setTimeout(() => _setAutosaveStatus('idle', ''), 2500);
     }
+}
+
+// Pipe the saved/error event into the notification bell so the operator
+// has a persistent record of every config save (the chip fades; the bell
+// keeps history). `pushLogToNotify` is the public hook the bell exposes;
+// importing it lazily keeps the settings module stand-alone in tests.
+async function _notifyAutoSave(level, msg) {
+    try {
+        const { pushLogToNotify } = await import('./header-mobile.js');
+        pushLogToNotify({ ts: Date.now(), source: 'settings', level, msg });
+    } catch { /* bell not available (e.g. tests / cold-load race) — silent */ }
 }
 
 async function _autoSaveFlush() {
@@ -765,9 +835,19 @@ async function _autoSaveFlush() {
         const hh = String(ts.getHours()).padStart(2, '0');
         const mm = String(ts.getMinutes()).padStart(2, '0');
         const ss = String(ts.getSeconds()).padStart(2, '0');
-        _setAutosaveStatus('saved', i18nTf('settings.autosave.saved', { time: `${hh}:${mm}:${ss}` }, `Saved at ${hh}:${mm}:${ss}`));
+        const savedMsg = i18nTf('settings.autosave.saved', { time: `${hh}:${mm}:${ss}` }, `Saved at ${hh}:${mm}:${ss}`);
+        _setAutosaveStatus('saved', savedMsg);
+        // Mirror to the notification bell as `info` — bell only surfaces
+        // warn/error in its dropdown by default, but `info` writes into
+        // the buffer so admins who turn on "show all levels" can audit
+        // every save.
+        _notifyAutoSave('info', i18nT('settings.autosave.notify.saved', 'Settings saved.'));
     } catch (e) {
-        _setAutosaveStatus('error', i18nTf('settings.autosave.failed', { msg: e?.message || String(e) }, `Save failed: ${e?.message || e}`));
+        const failMsg = i18nTf('settings.autosave.failed', { msg: e?.message || String(e) }, `Save failed: ${e?.message || e}`);
+        _setAutosaveStatus('error', failMsg);
+        // Bell DOES surface this — `error` level pings the badge so the
+        // operator notices a failed save even after they scrolled away.
+        _notifyAutoSave('error', failMsg);
     } finally {
         _autoSaveInflight = false;
     }
@@ -1742,44 +1822,66 @@ async function _maintBrowseLogs() {
     }
 }
 
-// Pretty-print JSON as a collapsible tree with syntax-highlighted tokens.
-// No third-party dep — recursion + classes that the existing Tailwind
-// palette already covers.
-function _renderJsonTree(value, key = null) {
+// Pretty-print JSON as a Telegram-styled collapsible tree. Each row gets:
+//   - A real chevron (▸ / ▾) instead of the default <details> triangle
+//     so a search hit can highlight the row without fighting native UA chrome.
+//   - Subtle indent guides via a left border on every level.
+//   - Monospace numbers + tabular-nums so digits align in long lists.
+//   - Per-row data attrs (`data-key-path`, `data-value-text`) so the
+//     search filter can hide rows that don't match without re-rendering.
+//   - Copy button revealed on hover for individual leaf values.
+//
+// No third-party dep; everything reuses the existing Tailwind / `--tg-*`
+// palette so the tree picks up dark/light theme overrides automatically.
+function _renderJsonTree(value, key = null, path = '$') {
+    const isLeaf = (v) => v === null || typeof v !== 'object';
     const wrap = (cls, content) => `<span class="${cls}">${content}</span>`;
-    const keyPart = key !== null
-        ? `<span class="text-tg-blue">"${escapeHtml(String(key))}"</span><span class="text-tg-textSecondary">: </span>`
-        : '';
-    if (value === null) return keyPart + wrap('text-tg-textSecondary italic', 'null');
-    if (typeof value === 'boolean') return keyPart + wrap('text-tg-orange', String(value));
-    if (typeof value === 'number') return keyPart + wrap('text-tg-orange tabular-nums', String(value));
-    if (typeof value === 'string') return keyPart + wrap('text-tg-green break-all', `"${escapeHtml(value)}"`);
-    if (Array.isArray(value)) {
-        if (!value.length) return keyPart + '<span class="text-tg-textSecondary">[]</span>';
-        const id = `j${Math.random().toString(36).slice(2, 8)}`;
-        const children = value.map((v, i) =>
-            `<div class="pl-4 border-l border-tg-border/40">${_renderJsonTree(v, i)}<span class="text-tg-textSecondary">${i < value.length - 1 ? ',' : ''}</span></div>`
-        ).join('');
-        return keyPart + `
-            <details class="inline-block align-top" id="${id}" open>
-                <summary class="cursor-pointer text-tg-textSecondary list-none select-none">[<span class="text-tg-textSecondary text-[10px]">${value.length}</span>]</summary>
-                ${children}
-            </details>`;
+    const fullPath = key === null ? path : (Number.isInteger(key) ? `${path}[${key}]` : `${path}.${escapeHtml(String(key))}`);
+    const keyTok = key === null
+        ? ''
+        : `<span class="text-tg-blue/90 font-medium">"${escapeHtml(String(key))}"</span><span class="text-tg-textSecondary">: </span>`;
+
+    // Leaves render inline.
+    let valTok = '';
+    let valText = '';
+    if (value === null) { valTok = wrap('text-tg-textSecondary italic', 'null'); valText = 'null'; }
+    else if (typeof value === 'boolean') { valTok = wrap('text-purple-300', String(value)); valText = String(value); }
+    else if (typeof value === 'number') { valTok = wrap('text-tg-orange tabular-nums', String(value)); valText = String(value); }
+    else if (typeof value === 'string') {
+        const safe = escapeHtml(value);
+        valTok = wrap('text-tg-green break-all', `"${safe}"`);
+        valText = value;
     }
-    if (typeof value === 'object') {
-        const entries = Object.entries(value);
-        if (!entries.length) return keyPart + '<span class="text-tg-textSecondary">{}</span>';
-        const id = `j${Math.random().toString(36).slice(2, 8)}`;
-        const children = entries.map(([k, v], i) =>
-            `<div class="pl-4 border-l border-tg-border/40">${_renderJsonTree(v, k)}<span class="text-tg-textSecondary">${i < entries.length - 1 ? ',' : ''}</span></div>`
-        ).join('');
-        return keyPart + `
-            <details class="inline-block align-top" id="${id}" open>
-                <summary class="cursor-pointer text-tg-textSecondary list-none select-none">{<span class="text-tg-textSecondary text-[10px]">${entries.length}</span>}</summary>
-                ${children}
-            </details>`;
+    if (valTok) {
+        return `<div class="json-row group flex items-start gap-1 px-1 py-0.5 rounded hover:bg-tg-hover/40" data-key-path="${escapeHtml(fullPath)}" data-value-text="${escapeHtml(valText.slice(0, 200))}">
+            <span class="json-row-content flex-1 min-w-0 break-words">${keyTok}${valTok}</span>
+            <button type="button" class="json-copy opacity-0 group-hover:opacity-100 text-[10px] px-1 py-0.5 rounded text-tg-textSecondary hover:text-tg-blue hover:bg-tg-bg/60 transition-opacity"
+                data-copy="${escapeHtml(valText)}" title="${escapeHtml(i18nT('maintenance.config.copy_value', 'Copy value'))}">
+                <i class="ri-clipboard-line"></i>
+            </button>
+        </div>`;
     }
-    return keyPart + escapeHtml(String(value));
+
+    // Containers — collapsible with explicit chevron we control.
+    const isArr = Array.isArray(value);
+    const entries = isArr ? value.map((v, i) => [i, v]) : Object.entries(value);
+    const open = '<span class="text-tg-textSecondary">' + (isArr ? '[' : '{') + '</span>';
+    const close = '<span class="text-tg-textSecondary">' + (isArr ? ']' : '}') + '</span>';
+    if (!entries.length) {
+        return `<div class="json-row flex items-center gap-1 px-1 py-0.5" data-key-path="${escapeHtml(fullPath)}">
+            ${keyTok}${open}${close}
+        </div>`;
+    }
+    const children = entries.map(([k, v], i) =>
+        `<div class="json-child" data-child>${_renderJsonTree(v, k, fullPath)}<span class="text-tg-textSecondary/60">${i < entries.length - 1 ? ',' : ''}</span></div>`
+    ).join('');
+    return `<details class="json-node" data-key-path="${escapeHtml(fullPath)}" open>
+        <summary class="json-summary list-none cursor-pointer flex items-center gap-1 px-1 py-0.5 rounded hover:bg-tg-hover/40 select-none">
+            <i class="json-chev ri-arrow-down-s-line text-sm text-tg-textSecondary shrink-0 transition-transform"></i>
+            <span class="flex-1 min-w-0 break-words">${keyTok}${open}<span class="text-tg-textSecondary text-[10px] mx-1 tabular-nums">${entries.length}</span>${close}</span>
+        </summary>
+        <div class="json-children pl-3 ml-1.5 border-l border-tg-border/30">${children}</div>
+    </details>`;
 }
 
 async function maintViewConfig() {
@@ -1798,20 +1900,40 @@ async function maintViewConfig() {
             title: i18nT('maintenance.config.title', 'View config.json'),
             size: 'lg',
             content: `
-                <div class="flex items-center justify-between gap-2 mb-2">
-                    <div class="flex items-center gap-2">
-                        <button data-config-collapse class="tg-btn-secondary text-xs px-3 py-1">${escapeHtml(i18nT('maintenance.config.collapse_all', 'Collapse all'))}</button>
-                        <button data-config-expand class="tg-btn-secondary text-xs px-3 py-1">${escapeHtml(i18nT('maintenance.config.expand_all', 'Expand all'))}</button>
+                <div class="flex flex-wrap items-center gap-2 mb-3">
+                    <div class="relative flex-1 min-w-[200px]">
+                        <i class="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-tg-textSecondary text-sm" aria-hidden="true"></i>
+                        <input type="search" id="config-search" autocomplete="off"
+                            data-i18n-placeholder="maintenance.config.search"
+                            placeholder="${escapeHtml(i18nT('maintenance.config.search', 'Search keys or values…'))}"
+                            class="tg-input w-full pl-9 pr-3 text-xs h-8">
                     </div>
-                    <button data-config-copy class="tg-btn-secondary text-xs px-3 py-1">${escapeHtml(i18nT('maintenance.logs.copy', 'Copy'))}</button>
+                    <button data-config-collapse class="tg-btn-secondary text-xs px-3 h-8 inline-flex items-center gap-1">
+                        <i class="ri-contract-up-down-line"></i>${escapeHtml(i18nT('maintenance.config.collapse_all', 'Collapse'))}
+                    </button>
+                    <button data-config-expand class="tg-btn-secondary text-xs px-3 h-8 inline-flex items-center gap-1">
+                        <i class="ri-expand-up-down-line"></i>${escapeHtml(i18nT('maintenance.config.expand_all', 'Expand'))}
+                    </button>
+                    <button data-config-copy class="tg-btn-secondary text-xs px-3 h-8 inline-flex items-center gap-1">
+                        <i class="ri-clipboard-line"></i>${escapeHtml(i18nT('maintenance.logs.copy', 'Copy'))}
+                    </button>
+                    <button data-config-download class="tg-btn-secondary text-xs px-3 h-8 inline-flex items-center gap-1">
+                        <i class="ri-download-line"></i>${escapeHtml(i18nT('maintenance.config.download', 'Download'))}
+                    </button>
                 </div>
-                <div id="maint-config-tree" class="text-xs font-mono bg-tg-bg/60 rounded-lg p-3 overflow-auto max-h-[65vh] leading-relaxed">${tree}</div>
-                <p class="text-xs text-tg-textSecondary mt-2" data-i18n="maintenance.config.redacted_help">Sensitive fields (apiHash, password hash, proxy password) are redacted.</p>`,
+                <div id="maint-config-tree" class="text-[12px] font-mono bg-tg-bg/60 rounded-xl p-4 overflow-auto max-h-[60vh] leading-relaxed border border-tg-border/40">${tree}</div>
+                <div class="flex items-center justify-between gap-2 mt-3 text-[11px] text-tg-textSecondary">
+                    <span class="inline-flex items-center gap-1.5">
+                        <i class="ri-shield-check-line text-tg-green"></i>
+                        <span data-i18n="maintenance.config.redacted_help">Sensitive fields (apiHash, password hash, proxy password) are redacted.</span>
+                    </span>
+                    <span id="config-match-count" class="tabular-nums"></span>
+                </div>`,
         });
         setTimeout(() => {
             const root = document.getElementById('maint-config-tree');
             if (!root) return;
-            const expandAll = (open) => root.querySelectorAll('details').forEach(d => d.open = open);
+            const expandAll = (open) => root.querySelectorAll('details.json-node').forEach(d => d.open = open);
             document.querySelector('[data-config-collapse]')?.addEventListener('click', () => expandAll(false));
             document.querySelector('[data-config-expand]')?.addEventListener('click', () => expandAll(true));
             document.querySelector('[data-config-copy]')?.addEventListener('click', async () => {
@@ -1821,6 +1943,81 @@ async function maintViewConfig() {
                 } catch {
                     showToast(i18nT('maintenance.export.copy_manual', 'Press Ctrl/Cmd+C to copy'), 'info');
                 }
+            });
+            document.querySelector('[data-config-download]')?.addEventListener('click', () => {
+                const blob = new Blob([text], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `config-${new Date().toISOString().slice(0, 10)}.json`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+            });
+            // Per-leaf "copy value" buttons.
+            root.addEventListener('click', async (e) => {
+                const btn = e.target.closest('.json-copy');
+                if (!btn) return;
+                e.preventDefault();
+                e.stopPropagation();
+                try {
+                    await navigator.clipboard.writeText(btn.dataset.copy || '');
+                    showToast(i18nT('maintenance.export.copied', 'Copied'), 'success');
+                } catch {
+                    showToast(i18nT('maintenance.export.copy_manual', 'Press Ctrl/Cmd+C to copy'), 'info');
+                }
+            });
+            // Live filter — hides rows that don't match the query.
+            // Matches against either the dotted key path (`web.shareSecret`) or
+            // the stringified leaf value. Container nodes whose children all
+            // get hidden also collapse out of the way.
+            const search = document.getElementById('config-search');
+            const matchCount = document.getElementById('config-match-count');
+            let searchTimer = null;
+            const applyFilter = (q) => {
+                q = String(q || '').trim().toLowerCase();
+                let matches = 0;
+                const allRows = root.querySelectorAll('.json-row, details.json-node');
+                if (!q) {
+                    allRows.forEach(el => el.classList.remove('hidden'));
+                    if (matchCount) matchCount.textContent = '';
+                    return;
+                }
+                // Walk depth-first; a container is visible iff itself or any
+                // descendant matches the query.
+                const matchesRow = (el) => {
+                    const path = (el.dataset.keyPath || '').toLowerCase();
+                    const val = (el.dataset.valueText || '').toLowerCase();
+                    return path.includes(q) || val.includes(q);
+                };
+                const visit = (el) => {
+                    let visible = false;
+                    const children = el.querySelectorAll(':scope > .json-children > [data-child]');
+                    if (children.length) {
+                        children.forEach(child => {
+                            const innerNode = child.querySelector(':scope > details.json-node, :scope > .json-row');
+                            if (!innerNode) return;
+                            const childVisible = visit(innerNode);
+                            child.classList.toggle('hidden', !childVisible);
+                            if (childVisible) visible = true;
+                        });
+                    } else if (el.classList.contains('json-row')) {
+                        visible = matchesRow(el);
+                    }
+                    // Self can also match by its summary (e.g. searching 'web' on the {web:…} container)
+                    if (!visible && matchesRow(el)) visible = true;
+                    el.classList.toggle('hidden', !visible);
+                    if (visible && (el.classList.contains('json-row') || !el.querySelectorAll(':scope > .json-children > [data-child] > .json-row, :scope > .json-children > [data-child] > details').length)) matches += 1;
+                    if (visible && el.tagName === 'DETAILS') el.open = true;
+                    return visible;
+                };
+                root.querySelectorAll(':scope > details.json-node, :scope > .json-row').forEach(visit);
+                if (matchCount) matchCount.textContent = i18nTf('maintenance.config.matches', { n: matches }, `${matches} match${matches === 1 ? '' : 'es'}`);
+            };
+            search?.addEventListener('input', () => {
+                if (searchTimer) clearTimeout(searchTimer);
+                searchTimer = setTimeout(() => applyFilter(search.value), 120);
             });
         }, 60);
     } catch (e) {

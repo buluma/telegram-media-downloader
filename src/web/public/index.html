@@ -124,11 +124,24 @@
          ?v=… query so a release bump pierces both the browser HTTP cache and
          the service worker shell cache. The SW also picks /css/* up via the
          isStaticAsset filter in sw.js. -->
-    <link rel="stylesheet" href="/css/main.css?v=2.5.0">
+    <link rel="stylesheet" href="/css/main.css?v=2.6.0">
     <!-- v2.5.0 — bumped main.css cache-bust + sw VERSION (v240 → v250).
          Backup destinations (S3/local/SFTP), universal background-job
          pattern (13 endpoints converted via JobTracker), share-link v2
          URL format, Telegram-themed share-error page. -->
+
+    <!-- Modulepreload — kick off the SPA's hot-path import graph in
+         parallel instead of waiting for the discover-then-fetch waterfall
+         that <script type="module"> would otherwise do. Cuts time-to-
+         interactive on a fresh page-load, especially on slow links.
+         Same `?v=` cache-bust as the stylesheet so a release bumps both. -->
+    <link rel="modulepreload" href="/js/app.js?v=2.5.0">
+    <link rel="modulepreload" href="/js/api.js?v=2.5.0">
+    <link rel="modulepreload" href="/js/ws.js?v=2.5.0">
+    <link rel="modulepreload" href="/js/router.js?v=2.5.0">
+    <link rel="modulepreload" href="/js/i18n.js?v=2.5.0">
+    <link rel="modulepreload" href="/js/store.js?v=2.5.0">
+    <link rel="modulepreload" href="/js/utils.js?v=2.5.0">
 </head>
 
 <body class="h-screen overflow-hidden" data-role="">
@@ -180,35 +193,29 @@
                     <i class="ri-settings-3-line text-xl text-tg-textSecondary"></i>
                     <span class="text-tg-text" data-i18n="nav.settings">Settings</span>
                 </div>
-                <!-- Maintenance section — admin-only entry-points to the
-                     four standalone maintenance pages. Settings still holds
-                     the buttons (which now navigate here), but power users
-                     can deep-link straight from the sidebar. -->
-                <div class="px-3 pt-3 pb-1 text-[11px] uppercase tracking-wide text-tg-textSecondary" data-admin-only data-i18n="nav.maintenance.section">Maintenance</div>
-                <div class="nav-item flex items-center gap-3 p-3 cursor-pointer hover:bg-tg-hover" data-page="maintenance-duplicates" data-admin-only
-                    onclick="navigateTo('maintenance/duplicates')">
-                    <i class="ri-file-copy-2-line text-xl text-tg-textSecondary"></i>
-                    <span class="text-tg-text" data-i18n="nav.maintenance.duplicates">Duplicates</span>
+                <!-- Maintenance — single sidebar row that opens a hub
+                     page with a card grid for every tool. v2.6
+                     consolidation: the previous 5 sub-rows cluttered both
+                     mobile + desktop, so they collapse into one entry.
+                     Power users keep the deep links —
+                     /maintenance/duplicates etc. still resolve directly. -->
+                <div class="nav-item flex items-center gap-3 p-3 cursor-pointer hover:bg-tg-hover" data-page="maintenance" data-admin-only
+                    onclick="navigateTo('maintenance')">
+                    <i class="ri-tools-line text-xl text-tg-textSecondary"></i>
+                    <span class="text-tg-text" data-i18n="nav.maintenance.section">Maintenance</span>
                 </div>
-                <div class="nav-item flex items-center gap-3 p-3 cursor-pointer hover:bg-tg-hover" data-page="maintenance-thumbs" data-admin-only
-                    onclick="navigateTo('maintenance/thumbs')">
-                    <i class="ri-image-2-line text-xl text-tg-textSecondary"></i>
-                    <span class="text-tg-text" data-i18n="nav.maintenance.thumbs">Thumbnails</span>
-                </div>
-                <div class="nav-item flex items-center gap-3 p-3 cursor-pointer hover:bg-tg-hover" data-page="maintenance-nsfw" data-admin-only
-                    onclick="navigateTo('maintenance/nsfw')">
-                    <i class="ri-alarm-warning-line text-xl text-tg-textSecondary"></i>
-                    <span class="text-tg-text" data-i18n="nav.maintenance.nsfw">NSFW review</span>
-                </div>
-                <div class="nav-item flex items-center gap-3 p-3 cursor-pointer hover:bg-tg-hover" data-page="maintenance-logs" data-admin-only
-                    onclick="navigateTo('maintenance/logs')">
-                    <i class="ri-terminal-box-line text-xl text-tg-textSecondary"></i>
-                    <span class="text-tg-text" data-i18n="nav.maintenance.logs">Logs</span>
-                </div>
-                <div class="nav-item flex items-center gap-3 p-3 cursor-pointer hover:bg-tg-hover" data-page="maintenance-backup" data-admin-only
-                    onclick="navigateTo('maintenance/backup')">
-                    <i class="ri-cloud-line text-xl text-tg-textSecondary"></i>
-                    <span class="text-tg-text" data-i18n="nav.maintenance.backup">Backup</span>
+                <!-- Hidden anchors so existing inline-onclick deep-links
+                     (settings.js maint cards) keep working without code
+                     changes — they call navigateTo('maintenance/<slug>')
+                     and the router still resolves to the per-feature
+                     page. No nav row rendered. -->
+                <div class="hidden">
+                    <div data-page="maintenance-duplicates"></div>
+                    <div data-page="maintenance-thumbs"></div>
+                    <div data-page="maintenance-nsfw"></div>
+                    <div data-page="maintenance-logs"></div>
+                    <div data-page="maintenance-backup"></div>
+                    <div data-page="maintenance-ai"></div>
                 </div>
             </nav>
 
@@ -647,10 +654,50 @@
                 <div class="tab-item" data-type="videos" data-i18n="viewer.tab.videos">Videos</div>
                 <div class="tab-item" data-type="documents" data-i18n="viewer.tab.documents">Files</div>
                 <div class="tab-item" data-type="audio" data-i18n="viewer.tab.audio">Audio</div>
+                <!-- Pinned: independent toggle (sits next to the type tabs but
+                     reads as a chip, since it stacks with the type filter
+                     instead of replacing it). -->
+                <div class="tab-item tab-item--toggle" data-pinned-toggle
+                     data-i18n-title="favorites.filter_title" title="Show only pinned"
+                     role="button" aria-pressed="false">
+                    <i class="ri-pushpin-2-line mr-1" aria-hidden="true"></i><span data-i18n="favorites.filter">Pinned</span>
+                </div>
             </div>
 
             <!-- Content Area -->
             <div id="content-area" class="flex-1 overflow-y-auto overscroll-contain p-2 sm:p-4 bg-tg-lightBg">
+
+                <!-- Maintenance tab strip — admin-only, only rendered when
+                     the user is on a per-feature maintenance page (NOT on
+                     the hub itself). Lets the operator hop between tools
+                     without a sidebar trip. Active tab highlighted by
+                     app.js's renderPage(); a back arrow on the left
+                     returns to the hub. Mobile: horizontal scroll. -->
+                <nav id="maintenance-tabs" class="maintenance-tabs hidden mb-3 max-w-5xl mx-auto" data-admin-only role="tablist" aria-label="Maintenance tools">
+                    <a class="maintenance-tab-back" href="#/maintenance" data-i18n-aria-label="maintenance.tabs.back" aria-label="Back to hub">
+                        <i class="ri-arrow-left-s-line"></i>
+                    </a>
+                    <div class="maintenance-tabs-scroll">
+                        <a class="maintenance-tab" data-mt-page="maintenance-duplicates" href="#/maintenance/duplicates" role="tab">
+                            <i class="ri-file-copy-2-line"></i><span data-i18n="nav.maintenance.duplicates">Duplicates</span>
+                        </a>
+                        <a class="maintenance-tab" data-mt-page="maintenance-thumbs" href="#/maintenance/thumbs" role="tab">
+                            <i class="ri-image-2-line"></i><span data-i18n="nav.maintenance.thumbs">Thumbnails</span>
+                        </a>
+                        <a class="maintenance-tab" data-mt-page="maintenance-nsfw" href="#/maintenance/nsfw" role="tab">
+                            <i class="ri-alarm-warning-line"></i><span data-i18n="nav.maintenance.nsfw">NSFW</span>
+                        </a>
+                        <a class="maintenance-tab" data-mt-page="maintenance-ai" href="#/maintenance/ai" role="tab">
+                            <i class="ri-sparkling-2-line"></i><span data-i18n="nav.maintenance.ai">AI search</span>
+                        </a>
+                        <a class="maintenance-tab" data-mt-page="maintenance-backup" href="#/maintenance/backup" role="tab">
+                            <i class="ri-cloud-line"></i><span data-i18n="nav.maintenance.backup">Backup</span>
+                        </a>
+                        <a class="maintenance-tab" data-mt-page="maintenance-logs" href="#/maintenance/logs" role="tab">
+                            <i class="ri-terminal-box-line"></i><span data-i18n="nav.maintenance.logs">Logs</span>
+                        </a>
+                    </div>
+                </nav>
 
                 <!-- Viewer Page -->
                 <div id="page-viewer">
@@ -941,6 +988,48 @@
                         <p class="text-xs text-tg-textSecondary mb-4" data-i18n="settings.advanced.subtitle">Hot-path tunables. Defaults match the original hardcoded values — only change these if you know what you are doing.</p>
 
                         <div class="space-y-4">
+                            <!-- ffmpeg hardware acceleration — opt-in,
+                                 makes video thumbnails 5-10× faster on
+                                 hosts with an iGPU (Intel) / NVDEC (NVIDIA)
+                                 / VideoToolbox (macOS). Default `off` keeps
+                                 the pure-CPU path that works everywhere. -->
+                            <div>
+                                <h4 class="text-tg-text text-sm font-medium mb-2 flex items-center gap-2">
+                                    <i class="ri-cpu-line text-tg-textSecondary"></i>
+                                    <span data-i18n="settings.advanced.thumbs.hwaccel">Video thumb hardware acceleration</span>
+                                </h4>
+                                <!-- Two-column layout pairs the dropdown with a
+                                     "Detect available" button + result strip;
+                                     before this fix the right half was a
+                                     visible empty column on desktop. -->
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                    <div>
+                                        <label for="setting-adv-ffmpeg-hwaccel" class="text-tg-text text-xs block mb-1" data-i18n="settings.advanced.thumbs.hwaccel_label">Decoder backend</label>
+                                        <select id="setting-adv-ffmpeg-hwaccel" class="tg-input w-full text-sm">
+                                            <option value=""             data-i18n="settings.advanced.thumbs.hwaccel.off">Off (CPU only)</option>
+                                            <option value="vaapi"        data-i18n="settings.advanced.thumbs.hwaccel.vaapi">VAAPI — Intel iGPU / AMD on Linux</option>
+                                            <option value="qsv"          data-i18n="settings.advanced.thumbs.hwaccel.qsv">QSV — Intel Quick Sync</option>
+                                            <option value="cuda"         data-i18n="settings.advanced.thumbs.hwaccel.cuda">CUDA / NVDEC — NVIDIA</option>
+                                            <option value="videotoolbox" data-i18n="settings.advanced.thumbs.hwaccel.videotoolbox">VideoToolbox — macOS</option>
+                                            <option value="d3d11va"      data-i18n="settings.advanced.thumbs.hwaccel.d3d11va">D3D11VA — Windows</option>
+                                        </select>
+                                        <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.advanced.thumbs.hwaccel_help">Off is the safe default. Pick the matching backend if the host has the matching driver + Docker has device passthrough (`/dev/dri` for VAAPI/QSV). Falls back to CPU silently if the chosen backend isn't available.</p>
+                                    </div>
+                                    <div class="flex flex-col gap-2">
+                                        <label class="text-tg-text text-xs block" data-i18n="settings.advanced.thumbs.hwaccel_probe_label">Available on this host</label>
+                                        <button id="setting-adv-ffmpeg-hwaccel-probe" type="button"
+                                            class="tg-btn-secondary text-xs px-3 py-1.5 w-full sm:w-auto inline-flex items-center justify-center gap-1.5">
+                                            <i class="ri-radar-line"></i>
+                                            <span data-i18n="settings.advanced.thumbs.hwaccel_probe">Detect available</span>
+                                        </button>
+                                        <div id="setting-adv-ffmpeg-hwaccel-probe-result"
+                                             class="text-[11px] text-tg-textSecondary leading-relaxed min-h-[32px] flex flex-wrap gap-1 items-start"
+                                             role="status" aria-live="polite"></div>
+                                        <p class="text-[10px] text-tg-textSecondary leading-relaxed" data-i18n="settings.advanced.thumbs.hwaccel_probe_help">Asks the bundled ffmpeg which acceleration backends it can talk to. The list reflects what's compiled into the ffmpeg binary AND reachable on this host (driver loaded, /dev/dri accessible, etc.).</p>
+                                    </div>
+                                </div>
+                            </div>
+
                             <!-- Downloader -->
                             <div>
                                 <h4 class="text-tg-text text-sm font-medium mb-2" data-i18n="settings.advanced.downloader">Downloader</h4>
@@ -1619,19 +1708,20 @@
                     </div>
                     </section>
 
-                    <!-- Auto-save status. Visually a small inline indicator sitting
-                         above the Save button. ARIA polite live region so screen
-                         readers hear "Saved at 12:34:56" without losing focus.
-                         The Save button stays as a manual fallback when the
-                         operator wants to flush before the debounce timer fires. -->
-                    <div id="settings-autosave-status" class="text-xs text-tg-textSecondary mb-2 flex items-center gap-2 min-h-[20px]"
+                    <!-- Auto-save status pill. Sits where the manual Save
+                         button used to live, but only when there's something
+                         to communicate (idle = invisible). The check-mark
+                         pulse + chip-fade animations replace the explicit
+                         "Save" affordance, and a parallel notification bell
+                         entry lets the operator confirm the save landed
+                         even if they were scrolling away.
+                         ARIA polite live region so screen readers hear
+                         "Saved at 12:34:56" without losing focus. -->
+                    <div id="settings-autosave-status" class="settings-autosave-pill" data-state="idle"
                          role="status" aria-live="polite" aria-atomic="true" data-admin-only>
-                        <span id="settings-autosave-icon" class="inline-flex w-3.5 h-3.5 items-center justify-center"></span>
+                        <span id="settings-autosave-icon" class="settings-autosave-icon" aria-hidden="true"></span>
                         <span id="settings-autosave-text"></span>
                     </div>
-                    <button id="save-settings" class="tg-btn w-full" data-admin-only>
-                        <i class="ri-save-line mr-2"></i><span data-i18n="settings.save">Save Settings</span>
-                    </button>
 
                     <!-- Danger Zone -->
                     <div class="mt-6 bg-red-500/5 border border-red-500/20 rounded-xl p-4" data-admin-only>
@@ -1864,6 +1954,28 @@
                             <span id="queue-throttle-value" class="text-xs text-tg-text tabular-nums w-20 text-right" data-i18n="queue.throttle.unlimited">Unlimited</span>
                         </div>
                     </section>
+                </div>
+
+                <!-- Maintenance hub page (admin-only) — single landing
+                     surface that lists every tool as a card. Lives at
+                     `/maintenance`. Replaces the previous "5 sidebar
+                     entries" approach so the sidebar stays clean on
+                     both mobile + desktop. -->
+                <div id="page-maintenance" class="hidden max-w-5xl mx-auto px-3 sm:px-4" data-admin-only
+                     data-page-title-key="maintenance.hub.title"
+                     data-page-subtitle-key="maintenance.hub.subtitle">
+                    <section class="bg-tg-panel rounded-xl p-4 mb-4">
+                        <div class="flex items-start justify-between gap-3 flex-wrap">
+                            <div class="min-w-0">
+                                <h2 class="text-tg-text text-base font-semibold flex items-center gap-2">
+                                    <i class="ri-tools-line text-tg-blue"></i>
+                                    <span data-i18n="maintenance.hub.title">Maintenance</span>
+                                </h2>
+                                <p class="text-xs text-tg-textSecondary mt-0.5" data-i18n="maintenance.hub.subtitle">Catalogue, thumbnails, NSFW review, logs, backup destinations — and AI search when enabled.</p>
+                            </div>
+                        </div>
+                    </section>
+                    <div id="hub-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>
                 </div>
 
                 <!-- Maintenance / Duplicates page (admin-only) -->
@@ -2111,6 +2223,73 @@
                     </section>
                 </div>
 
+                <!-- Maintenance / AI search & people (admin-only) -->
+                <div id="page-maintenance-ai" class="hidden max-w-5xl mx-auto px-3 sm:px-4" data-admin-only
+                     data-page-title-key="maintenance.ai.title"
+                     data-page-subtitle-key="maintenance.ai.subtitle"
+                     style="--ai-accent: #6E41E2;">
+                    <header class="bg-tg-panel rounded-xl p-4 mb-3">
+                        <h2 class="text-tg-text text-base font-semibold" data-i18n="maintenance.ai.title">AI Search &amp; Smart Organisation</h2>
+                        <p class="text-xs text-tg-textSecondary mt-0.5" data-i18n="maintenance.ai.subtitle">Local-only image embeddings, face clustering, perceptual dedup, and auto-tagging.</p>
+                        <p class="text-[11px] text-tg-textSecondary/80 mt-2" data-i18n="maintenance.ai.privacy_note">All processing happens on this server. Nothing is uploaded to any third-party API.</p>
+                    </header>
+
+                    <!-- Settings strip -->
+                    <section class="bg-tg-panel rounded-xl p-3 mb-3">
+                        <div class="flex items-center justify-between gap-2 mb-2">
+                            <h3 class="text-xs uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.ai.settings_heading">Settings</h3>
+                            <span id="ai-vec-status" class="text-[11px] text-tg-textSecondary"></span>
+                        </div>
+                        <div id="ai-settings-grid" class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                            <!-- Capability toggles + scan buttons rendered by maintenance-ai.js -->
+                        </div>
+                    </section>
+
+                    <!-- Card 1: Search -->
+                    <section class="bg-tg-panel rounded-xl p-3 mb-3">
+                        <h3 class="text-tg-text text-sm font-medium mb-2" data-i18n="maintenance.ai.search.heading">Search</h3>
+                        <div class="flex gap-2 items-center">
+                            <input id="ai-search-input" type="text" class="flex-1 bg-tg-bg/40 border border-tg-border rounded-lg px-3 py-2 text-sm text-tg-text"
+                                   data-i18n-placeholder="maintenance.ai.search.placeholder"
+                                   placeholder='Search your library — try "beach photos", "red car", "birthday cake"…'/>
+                            <button id="ai-search-btn" class="tg-btn-secondary text-xs px-3 py-2" data-i18n="maintenance.ai.search.go">Search</button>
+                        </div>
+                        <div id="ai-search-meta" class="text-[11px] text-tg-textSecondary mt-2"></div>
+                        <div id="ai-search-results" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 mt-3"></div>
+                        <div id="ai-search-empty" class="hidden text-center py-8 text-xs text-tg-textSecondary" data-i18n="maintenance.ai.search.no_results">Nothing matches. Try a different phrase or run an index scan first.</div>
+                    </section>
+
+                    <!-- Card 2: People -->
+                    <section class="bg-tg-panel rounded-xl p-3 mb-3">
+                        <div class="flex items-center justify-between gap-2 mb-2">
+                            <h3 class="text-tg-text text-sm font-medium" data-i18n="maintenance.ai.people.title">People</h3>
+                            <span id="ai-people-count" class="text-[11px] text-tg-textSecondary tabular-nums"></span>
+                        </div>
+                        <div id="ai-people-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2"></div>
+                        <div id="ai-people-empty" class="hidden text-center py-8 text-xs text-tg-textSecondary" data-i18n="maintenance.ai.people.empty">No people detected yet — enable face clustering in Settings → AI and run a scan.</div>
+                    </section>
+
+                    <!-- Card 3: Auto-tags -->
+                    <section class="bg-tg-panel rounded-xl p-3 mb-3">
+                        <div class="flex items-center justify-between gap-2 mb-2">
+                            <h3 class="text-tg-text text-sm font-medium" data-i18n="maintenance.ai.tags.title">Auto-tags</h3>
+                            <span id="ai-tags-count" class="text-[11px] text-tg-textSecondary tabular-nums"></span>
+                        </div>
+                        <div id="ai-tags-cloud" class="flex flex-wrap gap-1.5"></div>
+                        <div id="ai-tags-empty" class="hidden text-center py-8 text-xs text-tg-textSecondary" data-i18n="maintenance.ai.tags.empty">No tags yet — enable auto-tagging in Settings → AI.</div>
+                    </section>
+
+                    <!-- Card 4: Near-duplicates -->
+                    <section class="bg-tg-panel rounded-xl p-3 mb-3">
+                        <div class="flex items-center justify-between gap-2 mb-2">
+                            <h3 class="text-tg-text text-sm font-medium" data-i18n="maintenance.ai.phash.title">Near-duplicate photos</h3>
+                            <span id="ai-phash-count" class="text-[11px] text-tg-textSecondary tabular-nums"></span>
+                        </div>
+                        <div id="ai-phash-groups" class="space-y-3"></div>
+                        <div id="ai-phash-empty" class="hidden text-center py-8 text-xs text-tg-textSecondary" data-i18n="maintenance.ai.phash.empty">No near-duplicates found.</div>
+                    </section>
+                </div>
+
             </div>
         </main>
     </div>
@@ -2120,9 +2299,44 @@
         <span id="selection-count" class="text-tg-text">0 selected</span>
         <button id="selection-all" class="text-tg-blue hover:text-tg-text" data-i18n-title="viewer.selection.select_all_title" title="Select every visible tile (Ctrl/⌘+A)" data-i18n="viewer.selection.select_all">Select all</button>
         <button id="selection-clear" class="text-tg-textSecondary hover:text-tg-text" data-i18n="viewer.selection.clear">Clear</button>
-        <button id="selection-delete" class="px-3 py-1 rounded bg-red-500/20 text-red-400 hover:bg-red-500/30">
+        <button id="selection-zip" class="px-3 py-1 rounded bg-tg-blue/20 text-tg-blue hover:bg-tg-blue/30">
+            <i class="ri-archive-line"></i> <span data-i18n="viewer.selection.zip">Download ZIP</span>
+        </button>
+        <button id="selection-pin" class="px-3 py-1 rounded bg-yellow-500/20 text-yellow-300 hover:bg-yellow-500/30" data-admin-only>
+            <i class="ri-pushpin-2-line"></i> <span data-i18n="favorites.pin">Pin</span>
+        </button>
+        <button id="selection-delete" class="px-3 py-1 rounded bg-red-500/20 text-red-400 hover:bg-red-500/30" data-admin-only>
             <i class="ri-delete-bin-line"></i> <span data-i18n="viewer.selection.delete">Delete</span>
         </button>
+    </div>
+
+    <!-- Drag-drop overlay for t.me URLs. Hidden by default; the SPA toggles
+         `is-active` on dragenter so the user gets a visible drop target,
+         then runs the link picker on drop. -->
+    <div id="dragdrop-overlay" class="dragdrop-overlay" aria-hidden="true">
+        <div class="dragdrop-card">
+            <i class="ri-link text-5xl text-tg-blue mb-3"></i>
+            <p class="text-tg-text font-medium" data-i18n="dragdrop.title">Drop a t.me link to start downloading</p>
+            <p class="text-tg-textSecondary text-sm mt-1" data-i18n="dragdrop.hint">URL works for messages, channels, posts, and stories.</p>
+        </div>
+    </div>
+
+    <!-- Mini video player — shrunk-down sticky preview that keeps the
+         viewer's clip playing after the modal is closed. Hidden by default;
+         viewer.js / mini-player.js raises it on scroll-out / explicit
+         shrink. Re-clicking expands back into the full viewer. -->
+    <div id="mini-player" class="mini-player hidden" aria-hidden="true">
+        <video id="mini-player-video" playsinline></video>
+        <div class="mini-player-bar">
+            <button id="mini-player-expand" class="mini-player-btn" title="Expand"
+                    data-i18n-title="viewer.pip.expand" aria-label="Expand">
+                <i class="ri-expand-diagonal-line"></i>
+            </button>
+            <button id="mini-player-close" class="mini-player-btn" title="Close"
+                    data-i18n-title="common.close" aria-label="Close">
+                <i class="ri-close-line"></i>
+            </button>
+        </div>
     </div>
 
     <!-- Status bar -->
