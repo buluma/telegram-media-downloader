@@ -378,15 +378,20 @@ export const AI_MODEL_DEFAULTS = Object.freeze({
     },
     faces: {
         kind: 'object-detection',
-        modelId: 'Xenova/yolov5n-face',  // tiny — ~5 MB
-        // Face embedding model — used if face_recognition is enabled. Omitted
-        // by default; the v2.6 "people" feature relies on bbox-only clustering
-        // when the embedding model is unavailable, which is far less accurate
-        // but at least functional.
+        // `Xenova/yolov5n-face` + `Xenova/yolov8n-face` are gated/restricted
+        // (return 401 even with a valid HF token). Default to the public
+        // YOLOS-tiny — it's a general detector, the "person" class still
+        // gives the people-clustering pipeline usable bboxes. Operators
+        // who want a dedicated face model can swap to a self-hosted one.
+        modelId: 'Xenova/yolos-tiny',  // ~31 MB
     },
     tags: {
         kind: 'image-classification',
-        modelId: 'Xenova/mobilenet_v2',
+        // `Xenova/mobilenet_v2` is restricted (401). `Xenova/vit-base-
+        // patch16-224` is public, similar size after quantization, same
+        // 1000-class ImageNet head — drop-in replacement for the tag
+        // cloud feature.
+        modelId: 'Xenova/vit-base-patch16-224',
         topK: 5,
     },
 });
