@@ -1,10 +1,17 @@
 # Backup destinations
 
 Mirror your downloaded library to off-host storage so a wiped disk, a
-deleted Docker volume, or a lost USB drive doesn't take the archive with
-it. The dashboard supports three first-class providers (S3-compatible,
-local / NAS mount, SFTP) and three more on the roadmap (FTP, Google
-Drive, Dropbox).
+deleted Docker volume, or a lost USB drive doesn't take the archive
+with it. Six providers are supported out of the box:
+
+- **S3-compatible** — AWS S3, Cloudflare R2, Backblaze B2, MinIO,
+  Wasabi, DigitalOcean Spaces.
+- **Local filesystem / NAS mount** — any writable absolute path.
+- **SFTP** — SSH-based, password or private-key auth.
+- **FTP / FTPS** — plain, explicit (AUTH TLS), or implicit FTPS.
+- **Google Drive** — OAuth refresh-token auth, scoped to a backup
+  folder.
+- **Dropbox** — OAuth refresh-token auth, app-folder scoped by default.
 
 ## Modes
 
@@ -109,24 +116,134 @@ either password OR a PEM private key — provide one, not both.
 The remote root must be an absolute path (`/home/user/tgdl-backup`) and
 will be auto-created.
 
-### FTP, Google Drive, Dropbox — TODO
+### FTP / FTPS
 
-These show up as disabled options in the wizard with a "coming soon"
-hint. Tracking:
+Wraps the optional `basic-ftp` package — install with:
 
-- **FTP / FTPS** — `basic-ftp` driver, mirror of the SFTP provider
-  shape.
-- **Google Drive** — service-account or OAuth refresh token. Drive's
-  per-account daily egress quota (750 GB) is the reason this provider
-  needs careful queue back-off design — that's why it's not shipped
-  with the first release.
-- **Dropbox** — OAuth refresh token (Dropbox dropped non-expiring
-  access tokens in 2021). Will use chunked-upload sessions for files
-  > 150 MB.
+```bash
+npm install basic-ftp
+```
 
-If you need cloud-storage mirroring before these ship, point the S3
-driver at Cloudflare R2 — it's the cheapest cloud target and behaves
-identically to AWS S3 from this dashboard's point of view.
+Wizard fields:
+
+| Field        | Purpose                                                           |
+|--------------|-------------------------------------------------------------------|
+| Host         | `ftp.example.com`                                                 |
+| Port         | 21 (plain / explicit FTPS) / 990 (implicit FTPS) — auto if blank  |
+| Username     | empty for anonymous FTP                                           |
+| Password     | empty for anonymous FTP                                           |
+| TLS mode     | Plain · Explicit FTPS (AUTH TLS) · Implicit FTPS                  |
+| Remote root  | absolute path on the server, e.g. `/tgdl-backup` (auto-created)   |
+
+Caveats vs. the SFTP provider:
+
+- **No etag.** FTP has no equivalent to S3's content-hash header, so
+  size-based dedup is the only check the manager runs against
+  re-uploads.
+- **MDTM is best-effort.** The provider falls back to `mtime: 0` when
+  the server doesn't expose `MDTM` for a file.
+- **Plain FTP transmits credentials in cleartext.** Use Explicit
+  FTPS unless you're talking to a host on the same machine.
+- **Self-signed FTPS certs.** Set `NODE_TLS_REJECT_UNAUTHORIZED=0` at
+  the process level if your FTPS host has a self-signed cert (it's a
+  blunt instrument — pin a CA where you can).
+
+Cancellation aborts the underlying control connection. Long uploads
+stop within a couple of seconds of clicking Pause / Cancel / Remove.
+
+### Google Drive
+
+Wraps the optional `googleapis` package — install with:
+
+```bash
+npm install googleapis
+```
+
+Auth model: clientId + clientSecret + refreshToken. The dashboard
+does **not** host an embedded OAuth callback listener; you generate
+the refresh token externally and paste it into the wizard.
+
+#### Setup walkthrough
+
+1. **New project.** Open the [Google Cloud Console](https://console.cloud.google.com/),
+   click the project picker → "New project". Any name works.
+2. **Enable the Drive API.** APIs & Services → Library → search
+   "Google Drive API" → click Enable.
+3. **Create an OAuth client.** APIs & Services → Credentials → Create
+   credentials → OAuth client ID. If prompted to configure the consent
+   screen, pick "External", supply an app name + your email, and add
+   the scope `https://www.googleapis.com/auth/drive.file` (you can
+   leave the app in "Testing" mode — no public verification needed).
+   Then create an OAuth client ID with application type **Desktop
+   app**. Save the resulting client ID + client secret.
+4. **Generate a refresh token.** Either run `node scripts/setup-gdrive.js`
+   on the server (CLI helper that prints the refresh token), or use
+   the [Google OAuth Playground](https://developers.google.com/oauthplayground/):
+   click the gear icon → "Use your own OAuth credentials" → paste
+   client ID + secret. In the left panel, scroll to "Drive API v3"
+   and tick `https://www.googleapis.com/auth/drive.file`. Click
+   Authorize APIs → sign in → Allow → "Exchange authorization code
+   for tokens" → copy the `refresh_token` shown.
+
+Paste clientId + clientSecret + refreshToken into the wizard. The
+provider auto-creates a folder named `tgdl-backup` at My Drive root
+on first use; supply a folderId in the wizard if you'd like uploads
+to land elsewhere (find it in the Drive URL, after `folders/`).
+
+Caveats:
+
+- **750 GB/day egress quota** per account. If a sync stalls with
+  `quotaExceeded`, the queue worker retries with backoff.
+- **Drive folders are graph-shaped, not paths.** The provider keeps
+  an in-memory `path → folderId` cache and only walks the chain
+  once per upload. The cache resets on each `init()`.
+- **Files are stamped** with `appProperties: { 'tgdl-backup': '1' }`
+  so a future audit can list-and-prune only what we wrote.
+
+### Dropbox
+
+Wraps the optional `dropbox` package — install with:
+
+```bash
+npm install dropbox
+```
+
+Auth model: appKey + appSecret + refreshToken. Dropbox dropped
+non-expiring access tokens in 2021 — the refresh-token flow is the
+only durable option.
+
+#### Setup walkthrough
+
+1. **Create a scoped app.** Open the [Dropbox developer console](https://www.dropbox.com/developers/apps),
+   click "Create app" → "Scoped access" → "App folder" (recommended;
+   isolates uploads to a per-app sandbox at `Apps/<your-app-name>/`)
+   or "Full Dropbox" if you want to mirror anywhere in the account →
+   name your app.
+2. **Pick permissions.** Go to the Permissions tab, enable
+   `files.content.write`, `files.content.read`, `account_info.read`,
+   then click Submit.
+3. **Get a refresh token.** Settings tab — copy App key + App secret.
+   Either run `node scripts/setup-dropbox.js` on the server (CLI
+   helper that prints the refresh token), or follow Dropbox's
+   [authorisation docs](https://www.dropbox.com/developers/documentation/http/documentation#authorization)
+   manually — the key step is appending `&token_access_type=offline`
+   to the authorisation URL so the response includes a
+   `refresh_token`.
+
+Paste appKey + appSecret + refreshToken + remote root (default
+`/tgdl-backup`) into the wizard.
+
+Caveats:
+
+- **150 MB single-shot limit.** Files ≤ 150 MB use `filesUpload`,
+  bigger files use the chunked session API (`filesUploadSessionStart`
+  → `filesUploadSessionAppendV2` → `filesUploadSessionFinish`). Chunk
+  size defaults to 8 MB; override with `BACKUP_DROPBOX_CHUNK_BYTES`
+  in the environment.
+- **App-folder scope**. If you picked "App folder" in step 1, the
+  remote root is relative to `Apps/<your-app-name>/` from the
+  account's perspective — the wizard's `/tgdl-backup` becomes
+  `Apps/<your-app-name>/tgdl-backup` in the Dropbox UI.
 
 ## Encryption
 

@@ -291,6 +291,60 @@ async function _loadProviders() {
     return _providersCache;
 }
 
+// Per-provider OAuth / setup walkthroughs rendered as a collapsed
+// `<details>` below the field grid. Keeps non-technical operators from
+// having to leave the dashboard to figure out how to grab a refresh
+// token. Mirrors the docs/BACKUP.md walkthroughs verbatim.
+function _renderProviderHelp(providerName) {
+    if (providerName === 'gdrive') {
+        const title = escapeHtml(i18nT('maintenance.backup.help.gdrive.title', 'How do I get clientId / clientSecret / refreshToken?'));
+        const consoleUrl = 'https://console.cloud.google.com/';
+        const playgroundUrl = 'https://developers.google.com/oauthplayground/';
+        const consoleLabel = escapeHtml(i18nT('maintenance.backup.help.gdrive.console', 'Open Google Cloud Console'));
+        const playgroundLabel = escapeHtml(i18nT('maintenance.backup.help.gdrive.playground', 'Open OAuth Playground'));
+        return `
+            <details class="mt-3 rounded-md border border-tg-border/40 bg-tg-bg/30 overflow-hidden">
+                <summary class="px-3 py-2 cursor-pointer text-[12px] text-tg-textSecondary hover:text-tg-text">
+                    <i class="ri-question-line mr-1"></i>${title}
+                </summary>
+                <div class="px-3 pb-3 pt-1 text-[11px] text-tg-textSecondary leading-relaxed space-y-2">
+                    <ol class="list-decimal pl-4 space-y-1.5">
+                        <li>${escapeHtml(i18nT('maintenance.backup.help.gdrive.step1', 'Open Google Cloud Console → "New project" (any name).'))}</li>
+                        <li>${escapeHtml(i18nT('maintenance.backup.help.gdrive.step2', 'APIs & Services → Library → search "Google Drive API" → click Enable.'))}</li>
+                        <li>${escapeHtml(i18nT('maintenance.backup.help.gdrive.step3', 'APIs & Services → Credentials → Create Credentials → OAuth client ID → application type "Desktop app". Save the client ID + client secret into the fields above.'))}</li>
+                        <li>${escapeHtml(i18nT('maintenance.backup.help.gdrive.step4', 'Open the OAuth Playground → gear icon → "Use your own OAuth credentials" → paste client ID + secret. Pick scope https://www.googleapis.com/auth/drive.file → Authorize → Exchange authorization code for tokens → copy the refresh_token into the field above.'))}</li>
+                    </ol>
+                    <div class="flex flex-wrap gap-2 pt-1">
+                        <a href="${consoleUrl}" target="_blank" rel="noopener" class="tg-btn-secondary text-[11px] px-2 py-1"><i class="ri-external-link-line mr-1"></i>${consoleLabel}</a>
+                        <a href="${playgroundUrl}" target="_blank" rel="noopener" class="tg-btn-secondary text-[11px] px-2 py-1"><i class="ri-external-link-line mr-1"></i>${playgroundLabel}</a>
+                    </div>
+                </div>
+            </details>`;
+    }
+    if (providerName === 'dropbox') {
+        const title = escapeHtml(i18nT('maintenance.backup.help.dropbox.title', 'How do I get appKey / appSecret / refreshToken?'));
+        const consoleUrl = 'https://www.dropbox.com/developers/apps';
+        const consoleLabel = escapeHtml(i18nT('maintenance.backup.help.dropbox.console', 'Open Dropbox developer console'));
+        return `
+            <details class="mt-3 rounded-md border border-tg-border/40 bg-tg-bg/30 overflow-hidden">
+                <summary class="px-3 py-2 cursor-pointer text-[12px] text-tg-textSecondary hover:text-tg-text">
+                    <i class="ri-question-line mr-1"></i>${title}
+                </summary>
+                <div class="px-3 pb-3 pt-1 text-[11px] text-tg-textSecondary leading-relaxed space-y-2">
+                    <ol class="list-decimal pl-4 space-y-1.5">
+                        <li>${escapeHtml(i18nT('maintenance.backup.help.dropbox.step1', 'Open the Dropbox developer console → Create app → "Scoped access" → "App folder" (recommended) or "Full Dropbox" → name your app.'))}</li>
+                        <li>${escapeHtml(i18nT('maintenance.backup.help.dropbox.step2', 'Permissions tab → enable files.content.write, files.content.read, account_info.read → click Submit.'))}</li>
+                        <li>${escapeHtml(i18nT('maintenance.backup.help.dropbox.step3', 'Settings tab → copy App key + App secret into the fields above. Generate a refresh token via the OAuth flow documented at dropbox.com/developers/documentation/http/documentation#authorization, or run scripts/setup-dropbox.js for a guided CLI walkthrough.'))}</li>
+                    </ol>
+                    <div class="flex flex-wrap gap-2 pt-1">
+                        <a href="${consoleUrl}" target="_blank" rel="noopener" class="tg-btn-secondary text-[11px] px-2 py-1"><i class="ri-external-link-line mr-1"></i>${consoleLabel}</a>
+                    </div>
+                </div>
+            </details>`;
+    }
+    return '';
+}
+
 function _renderField(field, currentValue) {
     const val = currentValue == null ? '' : String(currentValue);
     const id = `bk-field-${field.name}`;
@@ -327,6 +381,7 @@ async function _openWizard(existing) {
         const schema = provider?.configSchema || [];
         const config = {};   // edit mode never echoes secrets back — operator re-enters
         const fieldsHtml = schema.map((f) => _renderField(f, config[f.name])).join('');
+        const helpHtml = _renderProviderHelp(provider?.name);
         return `
             <div class="space-y-4">
                 <div>
@@ -347,6 +402,7 @@ async function _openWizard(existing) {
                     <h4 class="text-xs uppercase tracking-wide text-tg-textSecondary mb-2" data-i18n="maintenance.backup.section.connection">Connection</h4>
                     <div id="bk-fields">${fieldsHtml}</div>
                     ${isEdit ? `<div class="text-[11px] text-yellow-300 -mt-1 mb-2"><i class="ri-information-line"></i> ${escapeHtml(i18nT('maintenance.backup.edit_secret_hint', 'Saved secrets are not shown — leave blank to keep, fill in to replace.'))}</div>` : ''}
+                    ${helpHtml}
                 </div>
 
                 <div class="border-t border-tg-border pt-3">
@@ -403,15 +459,23 @@ async function _openWizard(existing) {
     setTimeout(() => {
         const root = document.querySelector('.sheet-root:last-of-type');
         if (!root) return;
-        // Provider switcher rebuilds the form.
-        root.querySelector('#bk-provider')?.addEventListener('change', (e) => {
-            chosenProvider = e.target.value;
+        // Provider switcher rebuilds the form. Bug fix v2.6: the original
+        // version attached the change listener once, OUTSIDE _wireWizard.
+        // The first switch re-rendered the body and the new <select>
+        // landed without the listener — subsequent provider changes
+        // silently no-op'd. Use event delegation on the sheet root so the
+        // listener survives every re-render of body.innerHTML.
+        const onProviderChange = (e) => {
+            const sel = e.target;
+            if (!sel || sel.id !== 'bk-provider') return;
+            chosenProvider = sel.value;
             const body = root.querySelector('.sheet-body');
             if (body) {
                 body.innerHTML = renderBody();
                 _wireWizard(root, sheet, providers, existing);
             }
-        });
+        };
+        root.addEventListener('change', onProviderChange);
         _wireWizard(root, sheet, providers, existing);
     }, 60);
 }

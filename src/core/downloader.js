@@ -10,9 +10,10 @@ import { fileURLToPath } from 'url';
 import { Api } from 'telegram';
 import { DebugLogger } from './logger.js';
 import { getDb, insertDownload, isDownloaded as dbIsDownloaded } from './db.js';
-import { sha256OfFile } from './checksum.js';
+import { sha256OfFile, sha256OfFileViaPool } from './checksum.js';
 import { pregenerateThumb } from './thumbs.js';
 import { pregenerateNsfw } from './nsfw.js';
+import { pregenerateAi } from './ai/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, '../../data');
@@ -838,7 +839,14 @@ export class DownloadManager extends EventEmitter {
         let storedSize = size;
         let bytesAddedToDisk = size;
         try {
-            fileHash = await sha256OfFile(filePath);
+            // Hash on a worker thread so the main event loop stays free
+            // during multi-GB post-write hashing. Falls back automatically
+            // to the in-process streamer if the pool is disabled.
+            try {
+                fileHash = await sha256OfFileViaPool(filePath);
+            } catch {
+                fileHash = await sha256OfFile(filePath);
+            }
             // Match on hash AND size — size match guards against the
             // (vanishingly improbable) SHA-256 collision and rejects rows
             // with a NULL/zero size from older downloader versions.
@@ -910,6 +918,7 @@ export class DownloadManager extends EventEmitter {
                 // NSFW is opt-in via config.advanced.nsfw.enabled.
                 try { pregenerateThumb(newId); } catch {}
                 try { pregenerateNsfw(newId); } catch {}
+                try { pregenerateAi(newId); } catch {}
             }
         } catch(e) {
             console.error('DB Insert Error', e);

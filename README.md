@@ -73,7 +73,10 @@ A self-hosted application that watches your Telegram chats and downloads new med
 - **Backup off-host** — multi-provider mirror to S3-compatible storage (AWS / R2 / B2 / MinIO / Wasabi), an SFTP NAS, or a local mount. Continuous mirror as new files arrive, scheduled tar.gz snapshots, optional client-side AES-256-GCM encryption, persistent retry queue.
 - **Find duplicates** — SHA-256 dedup at download time + on-demand library scan.
 - **Sort 18+ vs not-18+** — opt-in in-process classifier (`@huggingface/transformers`, WASM, runs everywhere) flags photos that don't match the rest of the library so they can be reviewed and purged.
+- **Local AI search & smart organisation** — opt-in CLIP semantic search ("show me beach photos"), face clustering (the **People** view), perceptual near-duplicate dedup, and ImageNet auto-tagging. Everything runs locally via WASM; no cloud APIs, no uploads. See [docs/AI.md](docs/AI.md).
 - **One-click update** — opt-in watchtower sidecar lets the dashboard pull-and-recreate the container itself; data volume + DB are preserved (DB is snapshotted to `data/backups/` first).
+- **Right-click context menu, drag-drop URL, pinned items, picture-in-picture, mini-player, bulk-zip download, system notifications, wake lock, sunset/sunrise theme, customisable keyboard shortcuts** — gallery is a real desktop-class library, not a list of links.
+- **Hash worker pool, HTTP compression, immutable static caching, modulepreload** — fast on a Pi 4 / NAS too. Multi-GB SHA-256 hashing runs on a `worker_threads` pool, `compression` middleware halves text-payload bytes on the wire, static assets serve with 1-year `immutable` Cache-Control behind a `?v=` cache-bust.
 - **Run on a NAS / VPS / Raspberry Pi** — Docker image is multi-arch, runs as non-root.
 
 ## Complete feature list

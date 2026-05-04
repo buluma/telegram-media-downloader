@@ -14,6 +14,7 @@ import fs from 'fs/promises';
 import fsSync, { existsSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
 import { TelegramClient } from 'telegram';
 import { StringSession } from 'telegram/sessions/index.js';
 import crypto from 'crypto';
@@ -21,7 +22,11 @@ import crypto from 'crypto';
 import { getOrGenerateSecret } from '../core/secret.js';
 import { getDb, getDownloads, getAllDownloads, getStats as getDbStats, deleteGroupDownloads, deleteAllDownloads, backfillGroupNames, searchDownloads, deleteDownloadsBy,
     createShareLink, getShareLinkForServe, bumpShareLinkAccess, revokeShareLink, listShareLinks,
-    getNsfwTierCounts, getNsfwHistogram, getNsfwListByTier, reclassifyNsfw, unwhitelistNsfw, NSFW_TIERS } from '../core/db.js';
+    getNsfwTierCounts, getNsfwHistogram, getNsfwListByTier, reclassifyNsfw, unwhitelistNsfw, NSFW_TIERS,
+    setDownloadPinned, getDownloadById,
+    getAiCounts, listPeople, listPhotosForPerson, renamePerson, deletePerson,
+    listAllTags, listPhotosForTag } from '../core/db.js';
+import * as ai from '../core/ai/index.js';
 import { sanitizeName } from '../core/downloader.js';
 import { SecureSession } from '../core/security.js';
 import { AccountManager } from '../core/accounts.js';
@@ -268,6 +273,38 @@ app.use(async (req, res, next) => {
     return res.redirect(308, `https://${host}${req.originalUrl}`);
 });
 
+// Optional gzip/deflate/br compression for text responses (HTML / JS / CSS /
+// JSON / SVG). The middleware ships as a separate npm package so we
+// `createRequire` it here and silently skip when the host hasn't installed
+// it (e.g. an old `node_modules/`). When present, configure to skip
+// already-compressed media (image/* / video/* / audio/*) and tunable level
+// via `COMPRESSION_LEVEL` (1-9, default 6 — the same default the package
+// uses, exposed for operators on slow CPUs who want a lower setting).
+try {
+    const _localRequire = createRequire(import.meta.url);
+    const compression = _localRequire('compression');
+    const lvlEnv = parseInt(process.env.COMPRESSION_LEVEL, 10);
+    const level = Number.isFinite(lvlEnv) && lvlEnv >= 0 && lvlEnv <= 9 ? lvlEnv : 6;
+    app.use(compression({
+        level,
+        // Skip already-compressed payloads — gzipping a JPEG or MP4 burns
+        // CPU for a fraction of a percent of size win and breaks
+        // range-request semantics that the video player depends on.
+        filter: (req, res) => {
+            if (req.headers['x-no-compression']) return false;
+            const ct = String(res.getHeader('Content-Type') || '');
+            if (/^(image|video|audio)\//i.test(ct)) return false;
+            return compression.filter(req, res);
+        },
+    }));
+    if (process.env.TGDL_DEBUG === '1') {
+        console.log(`[startup] compression middleware enabled (level=${level})`);
+    }
+} catch {
+    // Module not installed — fine, dashboard runs uncompressed (Cloudflare /
+    // a reverse proxy in front will usually handle it instead).
+}
+
 // Security headers. CSP is on but allows the SPA's two CDN dependencies
 // (Tailwind + Remixicon) and the inline event-handlers we still use in
 // index.html. Tightening "self"-only is a follow-up once the inline handlers
@@ -350,7 +387,7 @@ app.use((req, res, next) => {
         // (Future PWA agent may also set this; if so, theirs runs first via
         // a more specific route — leave their version alone.)
         res.setHeader('Cache-Control', 'no-cache, max-age=0');
-    } else if (p.startsWith('/js/') || p.startsWith('/css/') || p.startsWith('/locales/')) {
+    } else if (p.startsWith('/js/') || p.startsWith('/css/') || p.startsWith('/icons/')) {
         // Asset cache-busting middleware (further down) appends a
         // ?v=<APP_VERSION> query string to every internal `<script>`,
         // `<link>`, and `import` so the URL changes on every release.
@@ -364,6 +401,12 @@ app.use((req, res, next) => {
         } else {
             res.setHeader('Cache-Control', 'public, max-age=3600');
         }
+    } else if (p.startsWith('/locales/')) {
+        // Translations evolve more often than JS / CSS — keep the cap
+        // short (1 h) AND must-revalidate so a hash mismatch on the
+        // strings doesn't ship a week of stale labels. The cache-bust
+        // ?v= still works for instant invalidation when the SPA loads.
+        res.setHeader('Cache-Control', 'public, max-age=3600, must-revalidate');
     }
     next();
 });
@@ -1423,6 +1466,26 @@ app.use((req, res, next) => {
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/photos', express.static(PHOTOS_DIR));
+
+// Serve CHANGELOG.md from the project root for the in-app changelog
+// viewer (changelog-viewer.js). Read on every request so a `git pull`
+// without a process restart picks up the new content. Cap at a sane
+// size so we never accidentally try to stream a 50 MB file. 1 hour
+// browser cache is fine — the SPA invalidates it via the `?v=` token.
+app.get('/CHANGELOG.md', async (req, res) => {
+    try {
+        const p = path.resolve(__dirname, '../../CHANGELOG.md');
+        const st = await fs.stat(p).catch(() => null);
+        if (!st || !st.isFile()) return res.status(404).type('text/plain').send('CHANGELOG not found');
+        if (st.size > 2 * 1024 * 1024) return res.status(413).type('text/plain').send('CHANGELOG too large');
+        const body = await fs.readFile(p, 'utf8');
+        res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+        res.setHeader('Cache-Control', 'public, max-age=3600, must-revalidate');
+        res.send(body);
+    } catch (e) {
+        res.status(500).type('text/plain').send(e.message);
+    }
+});
 
 // ============ API ENDPOINTS ============
 
@@ -2860,7 +2923,12 @@ app.get('/api/downloads/all', async (req, res) => {
         const limit = Math.max(1, Math.min(500, parseInt(req.query.limit, 10) || 50));
         const type  = req.query.type || 'all';
         const offset = (page - 1) * limit;
-        const result = getAllDownloads(limit, offset, type);
+        // Pinned filter chip (`?pinned=1`) and "surface pinned at top"
+        // setting (`?pinnedFirst=1`) — both opt-in, both default off so
+        // existing callers behave identically.
+        const pinnedOnly  = req.query.pinned === '1' || req.query.pinned === 'true';
+        const pinnedFirst = req.query.pinnedFirst === '1' || req.query.pinnedFirst === 'true';
+        const result = getAllDownloads(limit, offset, type, { pinnedOnly, pinnedFirst });
 
         // Same row → tile shape as `/api/downloads/:groupId` so the SPA
         // renderer is unchanged. Per-row group_name + group_id are
@@ -2897,6 +2965,7 @@ app.get('/api/downloads/all', async (req, res) => {
                 groupName: configGroups.get(String(row.group_id))?.name || row.group_name || null,
                 pendingUntil: row.pending_until || null,
                 rescuedAt: row.rescued_at || null,
+                pinned: !!row.pinned,
             };
         });
 
@@ -2927,7 +2996,9 @@ app.get('/api/downloads/:groupId', async (req, res, next) => {
         const dbRow = getDb().prepare('SELECT group_name FROM downloads WHERE group_id = ? AND group_name IS NOT NULL LIMIT 1').get(String(groupId));
         const groupFolder = sanitizeName(configGroup?.name || dbRow?.group_name || 'unknown');
 
-        const result = getDownloads(groupId, limit, offset, type);
+        const pinnedOnly  = req.query.pinned === '1' || req.query.pinned === 'true';
+        const pinnedFirst = req.query.pinnedFirst === '1' || req.query.pinnedFirst === 'true';
+        const result = getDownloads(groupId, limit, offset, type, { pinnedOnly, pinnedFirst });
 
         // DB `file_path` stores the path RELATIVE to data/downloads (set
         // by downloader.js via path.relative(DOWNLOADS_DIR, …)). USE that
@@ -2952,6 +3023,7 @@ app.get('/api/downloads/:groupId', async (req, res, next) => {
                 : `${groupFolder}/${typeFolder}/${row.file_name}`;
             
             return {
+                id: row.id,
                 name: row.file_name,
                 path: row.file_path,
                 fullPath,
@@ -2963,6 +3035,7 @@ app.get('/api/downloads/:groupId', async (req, res, next) => {
                 // Rescue Mode surface — null when not in rescue mode.
                 pendingUntil: row.pending_until || null,
                 rescuedAt: row.rescued_at || null,
+                pinned: !!row.pinned,
             };
         });
 
@@ -3131,6 +3204,142 @@ app.post('/api/downloads/bulk-delete', async (req, res) => {
         return res.status(409).json({ error: 'A bulk delete is already running', code: 'ALREADY_RUNNING' });
     }
     res.json({ success: true, started: true, queued: idList.length + pathList.length });
+});
+
+// Toggle the `pinned` flag on a single download row. Pinned rows survive
+// auto-rotation and (optionally) sort to the top of the gallery. Body is
+// `{ pinned: true | false }` — explicit boolean so a missing key is a 400
+// rather than a silent no-op.
+app.post('/api/downloads/:id/pin', async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'Invalid id' });
+    const { pinned } = req.body || {};
+    if (typeof pinned !== 'boolean') {
+        return res.status(400).json({ error: 'Body must include `pinned` (boolean)' });
+    }
+    const row = getDownloadById(id);
+    if (!row) return res.status(404).json({ error: 'Not found' });
+    const ok = setDownloadPinned(id, pinned);
+    if (!ok) return res.status(500).json({ error: 'Update failed' });
+    broadcast({ type: 'download_pinned', id, pinned });
+    res.json({ success: true, id, pinned });
+});
+
+// Streaming bulk download as a ZIP. Body: `{ ids: [1,2,3] }`. Server walks
+// each id, resolves its on-disk file via the same safe-resolver every other
+// route uses, and pipes a STORE-mode (no compression) ZIP to the response.
+// Filename: `tgdl-<groupNameOr"library">-<count>files-<timestamp>.zip`.
+//
+// Cross-platform: pure JS, no native deps, no archiver package. Streams
+// each file from disk so a 5 GB selection doesn't OOM the server.
+app.post('/api/downloads/bulk-zip', async (req, res) => {
+    try {
+        const { ids } = req.body || {};
+        const idList = Array.isArray(ids) ? ids.map(Number).filter(Number.isFinite) : [];
+        if (idList.length === 0) return res.status(400).json({ error: 'ids required' });
+
+        // Lazy-load to keep the cold start cheap when the bulk-zip endpoint
+        // is never called.
+        const { ZipStream, ZIP_MAX_BYTES, ZIP_MAX_ENTRIES, safeArchiveName }
+            = await import('../core/zip-stream.js');
+
+        if (idList.length > ZIP_MAX_ENTRIES) {
+            return res.status(413).json({ error: `Too many files in one ZIP (cap ${ZIP_MAX_ENTRIES}). Split into smaller batches.` });
+        }
+
+        // Resolve everything up-front so we can size-check + stream sensibly.
+        const db = getDb();
+        const placeholders = idList.map(() => '?').join(',');
+        const rows = db.prepare(`SELECT id, group_id, group_name, file_name, file_size, file_type, file_path FROM downloads WHERE id IN (${placeholders})`)
+            .all(...idList);
+
+        if (rows.length === 0) return res.status(404).json({ error: 'No matching files' });
+
+        let configGroups = new Map();
+        try {
+            const cfg = JSON.parse(await fs.readFile(CONFIG_PATH, 'utf8'));
+            for (const g of (cfg.groups || [])) configGroups.set(String(g.id), g);
+        } catch { /* fall back to row.group_name */ }
+
+        // Build resolved entries. Each entry knows its abs path, the
+        // archive-relative name we want to store it under, and the size.
+        const entries = [];
+        let totalBytes = 0;
+        const seenNames = new Set();
+        for (const row of rows) {
+            const folder = sanitizeName(configGroups.get(String(row.group_id))?.name
+                || row.group_name
+                || String(row.group_id || 'group'));
+            const typeFolder = row.file_type === 'photo' ? 'images'
+                : row.file_type === 'video' ? 'videos'
+                : row.file_type === 'audio' ? 'audio'
+                : row.file_type === 'sticker' ? 'stickers' : 'documents';
+            const stored = (row.file_path || '').replace(/\\/g, '/');
+            const candidate = stored && stored.includes('/')
+                ? stored
+                : `${folder}/${typeFolder}/${row.file_name}`;
+            const sr = await safeResolveDownload(candidate);
+            if (!sr.ok) continue;
+
+            const baseName = safeArchiveName(row.file_name || `file-${row.id}`);
+            // Name collisions get a numeric suffix so two photos with the
+            // same Telegram filename land as `foo.jpg` and `foo (1).jpg`.
+            let archiveName = `${folder}/${baseName}`;
+            let n = 1;
+            while (seenNames.has(archiveName)) {
+                const ext = path.extname(baseName);
+                const stem = baseName.slice(0, baseName.length - ext.length);
+                archiveName = `${folder}/${stem} (${n})${ext}`;
+                n++;
+            }
+            seenNames.add(archiveName);
+            entries.push({ absPath: sr.real, archiveName, size: row.file_size || 0 });
+            totalBytes += row.file_size || 0;
+        }
+
+        if (entries.length === 0) {
+            return res.status(404).json({ error: 'No accessible files in selection' });
+        }
+        if (totalBytes > ZIP_MAX_BYTES) {
+            return res.status(413).json({
+                error: `Selection exceeds 4 GiB ZIP cap (${formatBytes(totalBytes)}). Split into smaller batches.`,
+            });
+        }
+
+        // Pretty filename for the download. Use the first entry's group
+        // folder when every file is from the same group, otherwise fall
+        // back to "library".
+        const firstGroup = entries[0].archiveName.split('/')[0];
+        const allSameGroup = entries.every(e => e.archiveName.startsWith(firstGroup + '/'));
+        const labelGroup = allSameGroup ? firstGroup : 'library';
+        const ts = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 16);
+        const archiveBase = `tgdl-${safeArchiveName(labelGroup)}-${entries.length}files-${ts}.zip`;
+
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader('Content-Disposition', `attachment; filename="${archiveBase}"`);
+        // Streaming archive — no Content-Length, must disable any
+        // intermediate buffering. Cache-Control no-store so a CDN doesn't
+        // try to cache a multi-GB blob keyed on the POST body.
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Transfer-Encoding', 'chunked');
+
+        const zip = new ZipStream();
+        zip.pipe(res);
+        try {
+            for (const e of entries) {
+                if (res.destroyed || res.writableEnded) break;
+                await zip.addFile(e.absPath, e.archiveName);
+            }
+            await zip.finalize();
+        } catch (err) {
+            if (!res.headersSent) res.status(500).json({ error: err.message });
+            else res.destroy(err);
+        }
+    } catch (err) {
+        console.error('POST /api/downloads/bulk-zip:', err);
+        if (!res.headersSent) res.status(500).json({ error: err.message });
+        else res.destroy(err);
+    }
 });
 
 // 6. Delete File (Physical + DB)
@@ -3875,6 +4084,42 @@ app.get('/api/maintenance/thumbs/build/status', async (req, res) => {
     res.json({ ..._thumbBuildState, running: _thumbBuildRunning });
 });
 
+// Probe which ffmpeg hardware-acceleration backends actually work on
+// this host. Runs `ffmpeg -hide_banner -hwaccels` and returns the parsed
+// list. Used by Settings → Advanced → Video thumb hardware acceleration
+// → "Detect available" so the admin doesn't have to SSH in to find out
+// whether VAAPI/QSV/CUDA/etc. are available on the host's ffmpeg build.
+app.get('/api/maintenance/thumbs/hwaccel-probe', async (req, res) => {
+    try {
+        const { spawn } = await import('child_process');
+        const thumbs = await import('../core/thumbs.js');
+        const bin = thumbs.resolveFfmpegBin?.() || 'ffmpeg';
+        const out = await new Promise((resolve, reject) => {
+            const p = spawn(bin, ['-hide_banner', '-hwaccels'], { windowsHide: true });
+            const chunks = [];
+            p.stdout.on('data', (c) => chunks.push(c));
+            p.stderr.on('data', () => {});
+            p.on('error', reject);
+            p.on('close', () => resolve(Buffer.concat(chunks).toString('utf8')));
+        }).catch(() => '');
+        // Output shape (ffmpeg ≥4.x):
+        //   Hardware acceleration methods:\nvaapi\nqsv\ncuda\nvideotoolbox\n
+        const KNOWN = new Set(['vaapi', 'qsv', 'cuda', 'videotoolbox', 'd3d11va', 'dxva2', 'opencl', 'vulkan', 'drm']);
+        const available = out.split(/\r?\n/)
+            .map((s) => s.trim().toLowerCase())
+            .filter((s) => KNOWN.has(s));
+        res.json({
+            available,
+            ffmpegPath: bin,
+            // The dropdown only exposes options we have UI rows for; the
+            // others come back so docs / debugging surface them.
+            recommended: available.find((b) => ['vaapi', 'qsv', 'cuda', 'videotoolbox', 'd3d11va'].includes(b)) || null,
+        });
+    } catch (e) {
+        res.status(500).json({ error: e?.message || String(e), available: [] });
+    }
+});
+
 // Maintenance — cache footprint (count + bytes) and capability check
 // (whether ffmpeg is present). Drives the "Thumbnail cache" admin panel
 // + grays out the video / audio-cover capabilities when ffmpeg is
@@ -4454,6 +4699,271 @@ app.post('/api/backup/jobs/:id/retry', async (req, res) => {
     }
 });
 
+// ====== AI subsystem (v2.6.0) =============================================
+//
+// Local-only image embeddings, face clustering, perceptual dedup, and auto-
+// tagging. Default-OFF; every capability is opt-in via `config.advanced.ai`.
+// All long-running scans go through the JobTracker pattern so they return
+// 200 immediately and stream progress over WebSocket.
+//
+// Models live in `data/models/` (override via AI_MODELS_DIR env var) and
+// downloads only happen when the operator enables a capability. The
+// classifier path inherits the WASM execution provider trick from NSFW so
+// it works identically on Windows / macOS / glibc / musl / Docker / ARM.
+//
+// Admin-only by virtue of the chokepoint (none of these paths live on the
+// guest allowlist).
+
+function _aiCfg() {
+    try {
+        const live = loadConfig();
+        const cfg = live.advanced?.ai || {};
+        return {
+            enabled: cfg.enabled === true,
+            embeddings: {
+                enabled: cfg.embeddings?.enabled === true,
+                model: cfg.embeddings?.model || ai.AI_DEFAULTS.embeddings.model,
+            },
+            faces: {
+                enabled: cfg.faces?.enabled === true,
+                model: cfg.faces?.model || ai.AI_DEFAULTS.faces.model,
+                epsilon: Number.isFinite(cfg.faces?.epsilon) ? cfg.faces.epsilon : ai.AI_DEFAULTS.faces.epsilon,
+                minPoints: Number.isFinite(cfg.faces?.minPoints) ? cfg.faces.minPoints : ai.AI_DEFAULTS.faces.minPoints,
+            },
+            tags: {
+                enabled: cfg.tags?.enabled === true,
+                model: cfg.tags?.model || ai.AI_DEFAULTS.tags.model,
+                topK: Number.isFinite(cfg.tags?.topK) ? cfg.tags.topK : ai.AI_DEFAULTS.tags.topK,
+            },
+            phash: { enabled: cfg.phash?.enabled === true },
+            indexConcurrency: Number.isFinite(cfg.indexConcurrency) ? cfg.indexConcurrency : ai.AI_DEFAULTS.indexConcurrency,
+            batchSize: Number.isFinite(cfg.batchSize) ? cfg.batchSize : ai.AI_DEFAULTS.batchSize,
+            fileTypes: (Array.isArray(cfg.fileTypes) && cfg.fileTypes.length) ? cfg.fileTypes : ai.AI_DEFAULTS.fileTypes,
+        };
+    } catch {
+        return { ...ai.AI_DEFAULTS };
+    }
+}
+
+// Probe sqlite-vec lazily on the first AI status hit. Result is cached so
+// we don't re-probe on every poll.
+let _aiVecProbed = false;
+async function _maybeProbeVec() {
+    if (_aiVecProbed) return;
+    _aiVecProbed = true;
+    try { await ai.loadVecExtension(getDb, log); } catch {}
+}
+
+app.get('/api/ai/status', async (_req, res) => {
+    try {
+        await _maybeProbeVec();
+        const cfg = _aiCfg();
+        const counts = getAiCounts({ fileTypes: cfg.fileTypes });
+        res.json({
+            success: true,
+            enabled: cfg.enabled,
+            capabilities: {
+                embeddings: cfg.embeddings.enabled,
+                faces:      cfg.faces.enabled,
+                tags:       cfg.tags.enabled,
+                phash:      cfg.phash.enabled,
+            },
+            models: {
+                embeddings: cfg.embeddings.model,
+                faces:      cfg.faces.model,
+                tags:       cfg.tags.model,
+            },
+            counts,
+            loadedPipelines: ai.loadedPipelines(),
+        });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/ai/index/scan', async (_req, res) => {
+    const cfg = _aiCfg();
+    if (!cfg.enabled) {
+        return res.status(503).json({ error: 'AI subsystem disabled. Enable in Settings → Advanced.', code: 'AI_DISABLED' });
+    }
+    const tracker = _jobTrackers.aiIndex;
+    const r = tracker.tryStart(async ({ onProgress, signal }) => {
+        return ai.runIndexScan(cfg, { onProgress, signal, onLog: log });
+    });
+    if (!r.started) return res.status(409).json({ error: 'AI index scan already running', code: 'ALREADY_RUNNING' });
+    res.json({ success: true, started: true });
+});
+
+app.get('/api/ai/index/scan/status', async (_req, res) => {
+    res.json(_jobTrackers.aiIndex.getStatus());
+});
+
+app.post('/api/ai/index/cancel', async (_req, res) => {
+    const ok = _jobTrackers.aiIndex.cancel();
+    res.json({ success: true, cancelled: ok });
+});
+
+app.post('/api/ai/search', async (req, res) => {
+    try {
+        const { query, limit, fileTypes } = req.body || {};
+        if (typeof query !== 'string' || !query.trim()) {
+            return res.status(400).json({ error: 'query required' });
+        }
+        const cfg = _aiCfg();
+        if (!cfg.enabled || !cfg.embeddings.enabled) {
+            return res.status(503).json({ error: 'AI embeddings are disabled', code: 'EMBEDDINGS_DISABLED' });
+        }
+        const r = await ai.searchByText(query.trim(), cfg, {
+            limit: Number(limit) || 20,
+            fileTypes: Array.isArray(fileTypes) && fileTypes.length ? fileTypes : null,
+            onLog: log,
+        });
+        res.json({ success: true, ...r });
+    } catch (e) {
+        log({ source: 'ai', level: 'error', msg: `search failed: ${e?.message || e}` });
+        res.status(500).json({ error: e.message, code: e.code || 'UNKNOWN' });
+    }
+});
+
+app.post('/api/ai/people/scan', async (_req, res) => {
+    const cfg = _aiCfg();
+    if (!cfg.enabled || !cfg.faces.enabled) {
+        return res.status(503).json({ error: 'Face clustering is disabled', code: 'FACES_DISABLED' });
+    }
+    const tracker = _jobTrackers.aiPeople;
+    const r = tracker.tryStart(async ({ onProgress, signal }) => {
+        return ai.runFaceClustering(cfg, { onProgress, signal, onLog: log });
+    });
+    if (!r.started) return res.status(409).json({ error: 'Face clustering already running', code: 'ALREADY_RUNNING' });
+    res.json({ success: true, started: true });
+});
+
+app.get('/api/ai/people/scan/status', async (_req, res) => {
+    res.json(_jobTrackers.aiPeople.getStatus());
+});
+
+app.get('/api/ai/people', async (req, res) => {
+    try {
+        const limit = Number(req.query.limit) || 200;
+        const offset = Number(req.query.offset) || 0;
+        res.json({ success: true, ...listPeople({ limit, offset }) });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.put('/api/ai/people/:id', async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'bad id' });
+    try {
+        const label = req.body?.label;
+        const updated = renamePerson(id, label == null ? null : String(label).slice(0, 80));
+        log({ source: 'ai', level: 'info', msg: `person #${id} renamed to "${label}"` });
+        res.json({ success: true, updated });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.delete('/api/ai/people/:id', async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'bad id' });
+    try {
+        const deleted = deletePerson(id);
+        log({ source: 'ai', level: 'info', msg: `person #${id} deleted (faces unclustered)` });
+        res.json({ success: true, deleted });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.get('/api/ai/people/:id/photos', async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'bad id' });
+    try {
+        const limit = Number(req.query.limit) || 50;
+        const offset = Number(req.query.offset) || 0;
+        res.json({ success: true, ...listPhotosForPerson(id, { limit, offset }) });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/ai/perceptual-dedup/scan', async (_req, res) => {
+    const cfg = _aiCfg();
+    if (!cfg.enabled || !cfg.phash.enabled) {
+        return res.status(503).json({ error: 'Perceptual dedup is disabled', code: 'PHASH_DISABLED' });
+    }
+    const tracker = _jobTrackers.aiPhash;
+    const r = tracker.tryStart(async ({ onProgress, signal }) => {
+        return ai.runPhashScan({ onProgress, signal, onLog: log, fileTypes: cfg.fileTypes });
+    });
+    if (!r.started) return res.status(409).json({ error: 'phash scan already running', code: 'ALREADY_RUNNING' });
+    res.json({ success: true, started: true });
+});
+
+app.get('/api/ai/perceptual-dedup/scan/status', async (_req, res) => {
+    res.json(_jobTrackers.aiPhash.getStatus());
+});
+
+app.get('/api/ai/perceptual-dedup/groups', async (req, res) => {
+    try {
+        const threshold = Math.max(0, Math.min(20, Number(req.query.threshold) || 6));
+        const cfg = _aiCfg();
+        const r = ai.findPhashGroups({ threshold, fileTypes: cfg.fileTypes });
+        res.json({ success: true, ...r });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/ai/tags/scan', async (_req, res) => {
+    const cfg = _aiCfg();
+    if (!cfg.enabled || !cfg.tags.enabled) {
+        return res.status(503).json({ error: 'Auto-tagging is disabled', code: 'TAGS_DISABLED' });
+    }
+    const tracker = _jobTrackers.aiTags;
+    // Reuse the full index scan with only tags enabled — keeps the backfill
+    // logic centralised. Other capabilities are tri-state (cap.* missing
+    // = skip) so this only computes tags for the rows it visits.
+    const onlyTags = {
+        ...cfg,
+        embeddings: { ...cfg.embeddings, enabled: false },
+        faces:      { ...cfg.faces, enabled: false },
+        phash:      { enabled: false },
+    };
+    const r = tracker.tryStart(async ({ onProgress, signal }) => {
+        return ai.runIndexScan(onlyTags, { onProgress, signal, onLog: log });
+    });
+    if (!r.started) return res.status(409).json({ error: 'tags scan already running', code: 'ALREADY_RUNNING' });
+    res.json({ success: true, started: true });
+});
+
+app.get('/api/ai/tags/scan/status', async (_req, res) => {
+    res.json(_jobTrackers.aiTags.getStatus());
+});
+
+app.get('/api/ai/tags', async (req, res) => {
+    try {
+        const minCount = Math.max(1, Number(req.query.min_count) || 1);
+        res.json({ success: true, tags: listAllTags({ minCount }) });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.get('/api/ai/tags/:tag/photos', async (req, res) => {
+    try {
+        const tag = String(req.params.tag || '').trim();
+        if (!tag) return res.status(400).json({ error: 'tag required' });
+        const limit = Number(req.query.limit) || 50;
+        const offset = Number(req.query.offset) || 0;
+        res.json({ success: true, ...listPhotosForTag(tag, { limit, offset }) });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // ====== Share-link admin API ===============================================
 //
 // Admin-only by virtue of the chokepoint (the path isn't on either
@@ -4839,7 +5349,19 @@ app.post('/api/config', async (req, res) => {
                     ...(cur.nsfw || {}),
                     ...(inc.nsfw || {}),
                 },
+                thumbs: {
+                    ...(cur.thumbs || {}),
+                    ...(inc.thumbs || {}),
+                },
             };
+            // ffmpeg hwaccel — allow-list validation. An attacker who
+            // got past the admin gate could otherwise pass arbitrary
+            // text into the ffmpeg `-hwaccel <…>` arg. Allow-list keeps
+            // the universe of accepted values explicit; anything off-list
+            // falls back to '' (CPU). Documented in docs/DEPLOY.md.
+            const HWACCEL_ALLOW = new Set(['', 'vaapi', 'qsv', 'cuda', 'videotoolbox', 'd3d11va', 'dxva2']);
+            const hwIn = String(merged.thumbs?.hwaccel || '').toLowerCase().trim();
+            merged.thumbs.hwaccel = HWACCEL_ALLOW.has(hwIn) ? hwIn : '';
             // Clamp every numeric so a typo can't ban the user from logging
             // in (sessionTtlDays=0) or hose the downloader (minConcurrency=0).
             const d = merged.downloader;
@@ -5593,6 +6115,11 @@ const _jobTrackers = {
     groupsRefreshInfo:  createJobTracker({ kind: 'groupsRefreshInfo',  broadcast, log, eventPrefix: 'groups_refresh_info' }),
     groupsRefreshPhotos:createJobTracker({ kind: 'groupsRefreshPhotos',broadcast, log, eventPrefix: 'groups_refresh_photos' }),
     purgeAll:           createJobTracker({ kind: 'purgeAll',           broadcast, log, eventPrefix: 'purge_all' }),
+    // AI subsystem (v2.6.0) — one tracker per long-running scan kind.
+    aiIndex:            createJobTracker({ kind: 'aiIndex',            broadcast, log, eventPrefix: 'ai_index' }),
+    aiPeople:           createJobTracker({ kind: 'aiPeople',           broadcast, log, eventPrefix: 'ai_people' }),
+    aiPhash:            createJobTracker({ kind: 'aiPhash',            broadcast, log, eventPrefix: 'ai_phash' }),
+    aiTags:             createJobTracker({ kind: 'aiTags',             broadcast, log, eventPrefix: 'ai_tags' }),
 };
 // One tracker per group id for `/api/groups/:id/purge`. Lazily created
 // because we don't know the group ids in advance, and a group that's

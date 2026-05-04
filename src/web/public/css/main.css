@@ -247,6 +247,113 @@ textarea::placeholder { color: var(--tg-textSecondary, #8B9BAA); opacity: 0.75; 
 }
 .nav-item.active i, .nav-item.active span { color: var(--tg-blue, #2AABEE); }
 
+/* Compact nav rows for the Maintenance subsection. Tighter padding +
+   smaller icon/font so a 5-row cluster (and growing — AI page lands in
+   v2.6) doesn't dominate the sidebar like the top-level nav-items do. */
+.nav-item-compact { font-size: 13px; }
+.nav-item-compact i { font-size: 16px; }
+.nav-item-compact.active::before { top: 4px; bottom: 4px; }
+
+/* Collapsed maintenance section — chevron rotates 180° + body height
+   animates to 0. Mirrors the existing #downloaded-groups-toggle pattern
+   so users get muscle-memory consistency between the two collapsibles. */
+#maintenance-section-toggle[aria-expanded="false"] #maintenance-section-chevron { transform: rotate(180deg); }
+#maintenance-nav-body[aria-hidden="true"] { display: none; }
+
+/* Auto-save pill (Settings page). Replaces the old manual Save button —
+   stays invisible at idle, fades in with the right colour + animation
+   per state. The check-mark on `saved` does a brief scale-bounce so the
+   confirmation reads as success rather than as background chrome. The
+   pill is also mirrored into the notification bell on each save so the
+   operator has a durable record. */
+.settings-autosave-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    margin-bottom: 8px;
+    border-radius: 999px;
+    font-size: 12px;
+    line-height: 1.4;
+    border: 1px solid transparent;
+    color: var(--tg-textSecondary, #8B9BAA);
+    background: transparent;
+    transition: opacity 200ms ease, background-color 180ms ease, border-color 180ms ease, color 180ms ease;
+    will-change: opacity;
+}
+.settings-autosave-pill .settings-autosave-icon {
+    display: inline-flex;
+    width: 14px; height: 14px;
+    align-items: center; justify-content: center;
+    font-size: 14px;
+    line-height: 1;
+}
+.settings-autosave-pill[data-state="idle"] {
+    opacity: 0;
+    pointer-events: none;
+    height: 0;
+    padding-block: 0;
+    margin-bottom: 0;
+}
+.settings-autosave-pill[data-state="dirty"] {
+    opacity: 1;
+    color: var(--tg-textSecondary, #8B9BAA);
+    background: rgba(139, 155, 170, 0.10);
+    border-color: rgba(139, 155, 170, 0.20);
+}
+.settings-autosave-pill[data-state="saving"] {
+    opacity: 1;
+    color: var(--tg-blue, #2AABEE);
+    background: rgba(42, 171, 238, 0.10);
+    border-color: rgba(42, 171, 238, 0.25);
+}
+.settings-autosave-pill[data-state="saving"] .settings-autosave-icon {
+    animation: tgdl-spin 900ms linear infinite;
+}
+.settings-autosave-pill[data-state="saved"] {
+    opacity: 1;
+    color: var(--tg-green, #4FAE4E);
+    background: rgba(79, 174, 78, 0.12);
+    border-color: rgba(79, 174, 78, 0.30);
+}
+.settings-autosave-pill[data-state="saved"] .settings-autosave-icon {
+    animation: tgdl-pop 320ms cubic-bezier(0.34, 1.56, 0.64, 1) 1;
+}
+.settings-autosave-pill[data-state="error"] {
+    opacity: 1;
+    color: var(--tg-red, #E53935);
+    background: rgba(229, 57, 53, 0.10);
+    border-color: rgba(229, 57, 53, 0.30);
+}
+@keyframes tgdl-spin { to { transform: rotate(360deg); } }
+@keyframes tgdl-pop {
+    0%   { transform: scale(0.4); opacity: 0; }
+    60%  { transform: scale(1.18); opacity: 1; }
+    100% { transform: scale(1); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .settings-autosave-pill { transition: none; }
+    .settings-autosave-pill .settings-autosave-icon,
+    .settings-autosave-pill[data-state="saving"] .settings-autosave-icon,
+    .settings-autosave-pill[data-state="saved"]  .settings-autosave-icon { animation: none; }
+}
+
+/* JSON tree viewer used by the "View config.json" sheet. The default
+   <details> triangle is replaced with a real chevron we can animate;
+   `details:not([open])` rotates it back to closed-state. The summary
+   row gets a subtle hover tint so the click target is obvious without
+   adding an outright button look. */
+.json-summary { padding-block: 2px; }
+.json-summary::-webkit-details-marker { display: none; }
+.json-summary::marker { content: ''; }
+details.json-node:not([open]) > .json-summary .json-chev { transform: rotate(-90deg); }
+details.json-node > .json-children { transition: opacity 120ms ease; }
+.json-row { font-feature-settings: 'tnum'; }
+.json-row .json-copy { transition: opacity 100ms ease; }
+@media (prefers-reduced-motion: reduce) {
+    .json-chev, details.json-node > .json-children, .json-row .json-copy { transition: none; }
+}
+
 /* Disabled buttons — visually distinct from enabled (saturate-out
    + opacity), with `cursor: not-allowed`. Applies to both .tg-btn
    and .tg-btn-secondary. */
@@ -1485,10 +1592,101 @@ body[data-page="groups"]   { --page-accent: var(--tg-green, #4FAE4E); }
 body[data-page="backfill"] { --page-accent: var(--tg-orange, #FF9800); }
 body[data-page="queue"]    { --page-accent: #29B6F6; }
 body[data-page="settings"] { --page-accent: var(--tg-blue, #2AABEE); }
+/* Maintenance tab strip — visible only when the operator is on a
+   per-feature maintenance page (not on the hub itself). The hub is
+   the card-grid landing surface; the tabs are the in-tool switcher.
+   Auto-shown via the body[data-page] selector below; app.js's
+   renderPage() also re-paints the active class on every navigation. */
+.maintenance-tabs {
+    display: flex;
+    align-items: stretch;
+    gap: 6px;
+    background: var(--tg-panel, #242F3D);
+    border: 1px solid var(--tg-border, #303D4F);
+    border-radius: 12px;
+    padding: 4px;
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+.maintenance-tab-back {
+    flex-shrink: 0;
+    width: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    color: var(--tg-textSecondary, #8B9BAA);
+    font-size: 18px;
+    text-decoration: none;
+    transition: background 120ms ease, color 120ms ease;
+}
+.maintenance-tab-back:hover {
+    background: var(--tg-hover, #2B5278);
+    color: var(--tg-blue, #2AABEE);
+}
+.maintenance-tabs-scroll {
+    display: flex;
+    gap: 4px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    flex: 1;
+    border-left: 1px solid var(--tg-border, #303D4F);
+    padding-left: 6px;
+}
+.maintenance-tabs-scroll::-webkit-scrollbar { display: none; }
+.maintenance-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 8px;
+    color: var(--tg-textSecondary, #8B9BAA);
+    font-size: 13px;
+    font-weight: 500;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: background 120ms ease, color 120ms ease;
+    flex-shrink: 0;
+}
+.maintenance-tab i { font-size: 15px; }
+.maintenance-tab:hover {
+    background: var(--tg-hover, #2B5278);
+    color: var(--tg-text, #F5F5F5);
+}
+.maintenance-tab[data-active="1"] {
+    background: var(--tg-blue, #2AABEE);
+    color: #FFFFFF;
+}
+.maintenance-tab[data-active="1"]:hover {
+    background: var(--tg-darkBlue, #229ED9);
+    color: #FFFFFF;
+}
+/* Show only when on a per-feature maintenance page. The hub itself
+   (`maintenance`) keeps the card-grid as the discovery surface, so we
+   skip the tab strip there. */
+body[data-page="maintenance-duplicates"] #maintenance-tabs,
+body[data-page="maintenance-thumbs"]     #maintenance-tabs,
+body[data-page="maintenance-nsfw"]       #maintenance-tabs,
+body[data-page="maintenance-ai"]         #maintenance-tabs,
+body[data-page="maintenance-backup"]     #maintenance-tabs,
+body[data-page="maintenance-logs"]       #maintenance-tabs {
+    display: flex;
+}
+@media (max-width: 480px) {
+    .maintenance-tab { padding: 6px 10px; font-size: 12px; }
+    .maintenance-tab span { display: none; }
+    .maintenance-tab i { font-size: 18px; }
+}
+
+body[data-page="maintenance"]            { --page-accent: var(--tg-blue, #2AABEE); }
 body[data-page="maintenance-duplicates"] { --page-accent: var(--tg-orange, #FF9800); }
 body[data-page="maintenance-thumbs"]     { --page-accent: var(--tg-blue, #2AABEE); }
 body[data-page="maintenance-nsfw"]       { --page-accent: #E53935; }
 body[data-page="maintenance-logs"]       { --page-accent: #6E41E2; }
+body[data-page="maintenance-backup"]     { --page-accent: var(--tg-green, #4FAE4E); }
+body[data-page="maintenance-ai"]         { --page-accent: #6E41E2; }
 #content-header {
     box-shadow: inset 0 -2px 0 var(--page-accent);
     transition: box-shadow 0.2s ease;
@@ -1559,3 +1757,177 @@ body[data-page="maintenance-logs"]       { --page-accent: #6E41E2; }
     .settings-chip,
     .settings-chip i { transition: none; }
 }
+
+/* ===================================================================
+   v2.6.0 — Gallery + viewer polish (right-click menu, drag-drop,
+   pin / favourite, mini-player, ZIP, dragdrop overlay).
+   =================================================================== */
+
+/* Pin chip in the gallery tile header. Shown only when `is-pinned` is
+   set on the tile, hidden otherwise. Sits inside the existing
+   `.media-item` so it scrolls with the gallery. */
+.media-item .pin-chip {
+    position: absolute;
+    top: 6px; left: 6px;
+    width: 26px; height: 26px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 999px;
+    background: rgba(0,0,0,0.55);
+    color: #FFD54F;
+    font-size: 14px;
+    pointer-events: auto;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.12s ease;
+    z-index: 4;
+}
+.media-item:hover .pin-chip,
+.media-item.is-pinned .pin-chip { opacity: 1; }
+.media-item .pin-chip:hover { background: rgba(0,0,0,0.75); }
+.media-item.is-pinned .pin-chip { color: #FFD54F; }
+.media-item:not(.is-pinned) .pin-chip { color: rgba(255,255,255,0.65); }
+.media-item:not(.is-pinned) .pin-chip i::before { content: "\ed94"; /* ri-pushpin-line outline */ }
+
+/* Pinned filter chip (toggle). Sits inside #media-tabs. */
+#media-tabs .tab-item--toggle {
+    margin-left: auto;
+    border-radius: 999px;
+    padding: 4px 12px;
+    border: 1px solid var(--tg-border, #0D1117);
+    color: var(--tg-textSecondary, #8B9BAA);
+    background: transparent;
+    cursor: pointer;
+    user-select: none;
+}
+#media-tabs .tab-item--toggle[aria-pressed="true"] {
+    background: rgba(255,213,79,0.16);
+    color: #FFD54F;
+    border-color: rgba(255,213,79,0.35);
+}
+
+/* Right-click context menu — Telegram-style floating panel. Position is
+   set inline via JS at the cursor; CSS handles look + transitions. */
+.tg-context-menu {
+    position: fixed;
+    z-index: 9999;
+    min-width: 200px;
+    background: var(--tg-panel, #242F3D);
+    border: 1px solid var(--tg-border, #0D1117);
+    border-radius: 10px;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+    padding: 6px;
+    font-size: 13px;
+    color: var(--tg-text, #F5F5F5);
+    opacity: 0;
+    transform: scale(0.96);
+    transform-origin: top left;
+    transition: opacity 0.08s ease, transform 0.08s ease;
+}
+.tg-context-menu.is-open {
+    opacity: 1;
+    transform: scale(1);
+}
+.tg-context-menu .ctx-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    line-height: 1.2;
+}
+.tg-context-menu .ctx-item:hover,
+.tg-context-menu .ctx-item:focus-visible {
+    background: rgba(255,255,255,0.06);
+    outline: none;
+}
+.tg-context-menu .ctx-item i { width: 18px; text-align: center; opacity: 0.85; }
+.tg-context-menu .ctx-item.ctx-danger { color: #F47174; }
+.tg-context-menu .ctx-item.ctx-danger:hover { background: rgba(229,57,53,0.18); }
+.tg-context-menu .ctx-divider { height: 1px; background: var(--tg-border, #0D1117); margin: 4px 2px; }
+
+/* Drag-drop overlay for t.me URL paste. Hidden by default; the SPA flips
+   .is-active when a drag enters the page. */
+.dragdrop-overlay {
+    position: fixed; inset: 0;
+    z-index: 60;
+    display: none;
+    align-items: center; justify-content: center;
+    background: rgba(13,17,23,0.78);
+    backdrop-filter: blur(3px);
+    pointer-events: none;
+}
+.dragdrop-overlay.is-active {
+    display: flex;
+    pointer-events: auto;
+}
+.dragdrop-overlay .dragdrop-card {
+    border: 2px dashed var(--tg-blue, #2AABEE);
+    border-radius: 16px;
+    padding: 32px 48px;
+    text-align: center;
+    background: var(--tg-panel, #242F3D);
+    max-width: 480px;
+}
+
+/* Mini-player — sticky bottom-right preview that keeps a viewer clip
+   playing after the modal closes. Click → re-expand into the viewer. */
+.mini-player {
+    position: fixed;
+    bottom: 16px; right: 16px;
+    z-index: 55;
+    width: 280px;
+    max-width: 40vw;
+    aspect-ratio: 16 / 9;
+    background: #000;
+    border-radius: 8px;
+    box-shadow: 0 12px 32px rgba(0,0,0,0.55);
+    overflow: hidden;
+}
+.mini-player.hidden { display: none; }
+.mini-player video { width: 100%; height: 100%; object-fit: contain; cursor: pointer; }
+.mini-player-bar {
+    position: absolute;
+    top: 4px; right: 4px;
+    display: flex; gap: 4px;
+    opacity: 0; transition: opacity 0.15s ease;
+}
+.mini-player:hover .mini-player-bar,
+.mini-player:focus-within .mini-player-bar { opacity: 1; }
+.mini-player-btn {
+    width: 28px; height: 28px;
+    border-radius: 6px;
+    background: rgba(0,0,0,0.6);
+    color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    border: 0;
+}
+.mini-player-btn:hover { background: rgba(0,0,0,0.85); }
+@media (max-width: 520px) {
+    .mini-player { width: 200px; bottom: 80px; right: 8px; }
+}
+
+/* High-contrast mode — operating system or manual toggle. Bumps text
+   to pure black/white and thickens key borders so the dashboard meets
+   WCAG AAA on outdoor laptops / e-ink-mode browsers. */
+@media (prefers-contrast: more) {
+    :root {
+        --tg-text: #FFFFFF;
+        --tg-border: #FFFFFF;
+        --tg-textSecondary: #DDDDDD;
+    }
+    .theme-light :root,
+    html.theme-light {
+        --tg-text: #000000;
+        --tg-border: #000000;
+        --tg-textSecondary: #222222;
+    }
+    .media-item { outline: 1px solid var(--tg-border); }
+    .tab-item.active { box-shadow: 0 -2px 0 0 currentColor inset; }
+}
+html[data-contrast="more"] {
+    --tg-text: #FFFFFF;
+    --tg-border: #FFFFFF;
+    --tg-textSecondary: #DDDDDD;
+}
+html[data-contrast="more"] .media-item { outline: 1px solid var(--tg-border); }
+

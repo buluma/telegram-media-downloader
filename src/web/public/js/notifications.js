@@ -38,11 +38,35 @@ export function notifyDownloadComplete(payload) {
     }
     lastBatch = { ts: now, count: 1 };
     const fileName = payload?.filePath ? payload.filePath.split(/[\\/]/).pop() : i18nT('notify.download_complete_file', 'a file');
-    new Notification(i18nT('notify.download_complete', 'Download complete'), {
+    const n = new Notification(i18nT('notify.download_complete', 'Download complete'), {
         body: fileName,
         icon: '/favicon.ico',
         tag: 'tgdl-download',
     });
+    // Click → focus the dashboard tab and route to the library (same UX
+    // every native client does for completed downloads). The receiving
+    // page's hash router handles the navigation; we keep the wire format
+    // simple here so notifications.js doesn't grow a viewer dep.
+    n.onclick = () => {
+        try {
+            window.focus();
+            if (typeof window.navigateTo === 'function') window.navigateTo('viewer');
+        } catch { /* best-effort */ }
+        n.close();
+    };
+}
+
+/**
+ * Generic notification — fires regardless of the per-file coalesce window
+ * since the caller (NSFW scan finished, integrity check, etc.) is its
+ * own one-shot event. No-op if notifications aren't enabled.
+ */
+export function notifyGeneric(title, body) {
+    if (!isEnabled()) return;
+    try {
+        const n = new Notification(title, { body: body || '', icon: '/favicon.ico', tag: 'tgdl-generic' });
+        n.onclick = () => { try { window.focus(); } catch {} n.close(); };
+    } catch { /* permission revoked since enable */ }
 }
 
 export function flushPending() {

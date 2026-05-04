@@ -46,8 +46,15 @@ Reports Node + ABI, config load, SQLite open, `data/` writability, port availabi
 | `WATCHTOWER_HTTP_API_TOKEN`     | unset               | Bearer token shared between the dashboard and the optional watchtower sidecar. Setting this + booting with the `auto-update` compose profile lights up the **Install update** button. |
 | `WATCHTOWER_URL`                | `http://watchtower:8080` | Internal address of the watchtower sidecar. |
 | `BACKUP_WORKERS_PER_DEST`       | `3`                 | Per-destination concurrent uploads for the backup subsystem. Keep modest — backups share the host's outbound bandwidth with everything else (including the realtime monitor). |
+| `AI_MODELS_DIR`                 | `<repo>/data/models`| Override the on-disk cache directory for AI model weights. Accepts an absolute path or a path relative to the repo root. Default lives inside `data/` so it survives a `docker compose down` and can be pre-seeded by copying the directory between hosts. |
+| `AI_INDEX_CONCURRENCY`          | `1`                 | (Reserved) Per-process worker count for the AI scan loop. Higher values risk OOM on small hosts because each WASM heap occupies ~150 MB. Currently honoured via `config.advanced.ai.indexConcurrency`. |
+| `HASH_WORKER_POOL_SIZE`         | `min(8, ⌊cpus/2⌋)`  | Worker-thread pool used for SHA-256 streaming over multi-GB files (post-write hash + dedup catch-up). Keeps the main event loop free for HTTP / WebSocket traffic. Set higher on a beefy host with many parallel downloads, lower on a Pi 4 / NAS. |
+| `HASH_WORKER_DISABLE`           | unset               | Set to `1` to skip the worker pool entirely and hash on the main thread — useful for sandboxed runtimes that block `worker_threads`. |
+| `COMPRESSION_LEVEL`             | `6`                 | gzip / brotli compression level (1-9) used by the optional `compression` middleware on text payloads. Lower the level on slow CPUs (Pi Zero, embedded NAS) so requests don't queue up behind compression; raise it on hosts with spare CPU + slow uplink. Set the env to `0` to disable explicitly even when the package is installed. |
 
 ## One-click in-dashboard auto-update (opt-in)
+
+> **Maintenance status, late 2026.** Upstream `containrrr/watchtower` is in low-maintenance mode (the project banner reads "no longer actively maintained"). The integration here keeps working — the HTTP API and the docker socket contract have not changed in years — but if you want a more actively maintained sidecar the recommended drop-in is **[`whats-up-docker`](https://github.com/fmartinou/whats-up-docker)** (configures the same docker-compose label scoping; the dashboard's "Install update" button is feature-flagged via `WATCHTOWER_*` env vars but the protocol is just HTTP-trigger-then-docker-compose-up, so a thin shim works against any successor). The simplest path that doesn't depend on either sidecar is the manual upgrade documented below.
 
 The bundled `docker-compose.yml` ships a `watchtower` service under the `auto-update` profile. The dashboard never touches `/var/run/docker.sock` itself — it sends an authenticated HTTP request to the sidecar, which has a read-only socket mount and is scoped to the labeled container.
 
@@ -64,6 +71,37 @@ docker compose --profile auto-update up -d
 Once enabled, **Settings → Maintenance → Install update** pulls the latest image and recreates the container. The `data/` volume + `config.json` + sessions survive the swap; the SQLite database is snapshotted to `data/backups/` first.
 
 Without the token (or without the profile), the **Install update** button stays disabled and the dashboard falls back to linking the GitHub release page.
+
+### Manual upgrade (always works, zero sidecar)
+
+If you'd rather skip the watchtower / whats-up-docker wiring entirely:
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+That's it — `pull_policy: always` in `docker-compose.yml` plus the published `:latest` tag mean a fresh image lands on every restart. Run from a cron / systemd timer / Synology Task Scheduler if you want it nightly.
+
+## Hardware-accelerated video thumbnails (optional, advanced)
+
+If the host has an **Intel iGPU** (Iris Xe / UHD / Arc) and you generate a lot of video thumbnails, `ffmpeg` can decode + scale via VAAPI on the GPU instead of the CPU — typically 5-10× faster on H.264/H.265 input.
+
+Two pieces are required:
+
+1. **Container access to the render device.** Add to `docker-compose.yml`:
+   ```yaml
+   devices:
+     - /dev/dri:/dev/dri
+   group_add:
+     - "video"
+     - "render"   # `getent group render | cut -d: -f3` on the host if numeric
+   ```
+
+2. **Intel media driver inside the image.** The default `node:20.20.2-bookworm-slim` Dockerfile doesn't ship it; either add `RUN apt-get install -y intel-media-va-driver-non-free` to a fork of the Dockerfile, or pass through the host's driver via `/usr/lib/x86_64-linux-gnu/dri:/usr/lib/x86_64-linux-gnu/dri:ro` if your host already has it.
+
+There is **no code change** required — `core/thumbs.js` already shells out to `ffmpeg`. To opt the thumb generator into hardware decode, set `FFMPEG_HWACCEL=vaapi` in the container env and the bundled args become `-hwaccel vaapi -hwaccel_output_format vaapi`. Keep it unset (default) on hosts without an iGPU and the CPU path runs unchanged.
+
+NVIDIA / AMD GPUs follow the same pattern with `FFMPEG_HWACCEL=cuda` or `=opencl` respectively, but require their own driver containers — out of scope for this doc.
 
 ## Reverse proxy
 
