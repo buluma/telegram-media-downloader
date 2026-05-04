@@ -124,7 +124,7 @@
          ?v=… query so a release bump pierces both the browser HTTP cache and
          the service worker shell cache. The SW also picks /css/* up via the
          isStaticAsset filter in sw.js. -->
-    <link rel="stylesheet" href="/css/main.css?v=2.6.0">
+    <link rel="stylesheet" href="/css/main.css">
     <!-- v2.5.0 — bumped main.css cache-bust + sw VERSION (v240 → v250).
          Backup destinations (S3/local/SFTP), universal background-job
          pattern (13 endpoints converted via JobTracker), share-link v2
@@ -2404,6 +2404,21 @@
                             </button>
                         </div>
                         <div id="ai-models-list" class="ai-models-list" aria-live="polite"></div>
+                    </section>
+
+                    <!-- HuggingFace access token. Optional — only set this
+                         when the realtime log shows 401 / "Unauthorized
+                         access to file" while loading a model. The token
+                         is sent as `Authorization: Bearer …` on every
+                         transformers.js fetch, which both bypasses
+                         anonymous rate limits and unlocks gated repos. -->
+                    <section class="bg-tg-panel rounded-xl p-3 mb-3">
+                        <h3 class="text-xs uppercase tracking-wide text-tg-textSecondary mb-2" data-i18n="maintenance.ai.hf_token.heading">HuggingFace access</h3>
+                        <label for="setting-adv-ai-hf-token" class="text-tg-text text-xs block mb-1" data-i18n="maintenance.ai.hf_token.label">Access token</label>
+                        <input id="setting-adv-ai-hf-token" type="password" autocomplete="off" spellcheck="false"
+                               class="tg-input w-full text-sm font-mono"
+                               placeholder="hf_xxx (optional)">
+                        <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="maintenance.ai.hf_token.help">Optional. Pulls gated repos + dodges anonymous HF rate limits. Create one at huggingface.co/settings/tokens (read-only is enough). The token is stored in `data/config.json` and never leaves this server except to call HF.</p>
                     </section>
 
                     <!-- Settings strip (capabilities) -->

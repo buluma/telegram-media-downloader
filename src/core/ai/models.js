@@ -104,7 +104,7 @@ async function _importTransformers() {
  * Configure the Transformers.js env once per import. Idempotent — reads /
  * sets fields that are safe to overwrite repeatedly.
  */
-function _configureEnv(env, cacheDirAbs) {
+async function _configureEnv(env, cacheDirAbs) {
     try { env.cacheDir = cacheDirAbs; } catch { /* noop */ }
     // Force WASM execution on Node — see nsfw.js for the full rationale
     // (musl/glibc + onnxruntime-node prebuilt mess).
@@ -113,16 +113,28 @@ function _configureEnv(env, cacheDirAbs) {
             env.backends.onnx.wasm.numThreads = 1;
         }
     } catch { /* noop */ }
-    // Optional HuggingFace token. Lets the loader pull gated repos +
-    // dodge anonymous rate limits that show up as 401 in the realtime
-    // log ("Unauthorized access to file …/config.json"). Operators set
-    // `HF_TOKEN` (or `HUGGINGFACE_TOKEN` / `HUGGINGFACEHUB_API_TOKEN`)
-    // in their env; we wire it into transformers.js's auth header.
+    // Optional HuggingFace token. Two precedence layers: (1) env var,
+    // (2) `config.advanced.ai.hfToken` set via the dashboard. Either lets
+    // the loader pull gated repos + dodge anonymous rate limits that show
+    // up as 401 in the realtime log.
     try {
-        const token = process.env.HF_TOKEN
+        let token = process.env.HF_TOKEN
             || process.env.HUGGINGFACE_TOKEN
             || process.env.HUGGINGFACEHUB_API_TOKEN
             || null;
+        // Pull from live config when env didn't set one. Dynamic require
+        // keeps models.js usable in CLI / tests where config doesn't
+        // exist yet.
+        if (!token) {
+            try {
+                const { loadConfig } = await import('../../config/manager.js');
+                const cfg = loadConfig();
+                const cfgToken = cfg?.advanced?.ai?.hfToken;
+                if (typeof cfgToken === 'string' && cfgToken.trim()) {
+                    token = cfgToken.trim();
+                }
+            } catch { /* noop — config not ready */ }
+        }
         if (token && env) {
             // transformers.js v3 honours `env.useCustomCache`/`env.token`
             // shapes inconsistently across patch versions — set every
@@ -175,7 +187,7 @@ export async function getPipeline({ kind, modelId, cacheDir, onProgress, onLog }
 
         const mod = await _importTransformers();
         const { pipeline, env } = mod;
-        _configureEnv(env, cacheDirAbs);
+        await _configureEnv(env, cacheDirAbs);
 
         const handle = await pipeline(kind, modelId, {
             progress_callback: (p) => {
