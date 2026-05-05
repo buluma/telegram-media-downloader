@@ -59,6 +59,7 @@ import {
     revokeAllSessions, revokeAllGuestSessions, startSessionGc,
 } from '../core/web-auth.js';
 import { suppressNoise, wrapConsoleMethod, NATIVE_LOAD_FAIL } from '../core/logger.js';
+import { BACKFILL_MAX_LIMIT, DIALOG_CACHE_TTL_MS, HISTORY_JOB_TTL_MS, BACKPRESSURE_CAP_DEFAULT, BACKPRESSURE_MAX_WAIT_MS_DEFAULT } from '../core/constants.js';
 import { createJobTracker } from '../core/job-tracker.js';
 
 // Demote gramJS reconnect chatter from stderr/stdout to data/logs/network.log.
@@ -1672,7 +1673,7 @@ runtime.on('catch_up_needed', ({ groupId, gap }) => {
     // to "unlimited" when autoFirstLimit is 0 (operator opt-in for
     // long catch-ups).
     const ceiling = Number(histCfg.autoFirstLimit ?? 100);
-    const limit = ceiling > 0 ? Math.min(ceiling * 10, 50000) : null;
+    const limit = ceiling > 0 ? Math.min(ceiling * 10, BACKFILL_MAX_LIMIT) : null;
     _spawnInternalBackfill({
         groupId, limit, mode: 'catch-up', reason: 'auto-catch-up',
     }).then(jobId => {
@@ -1876,7 +1877,7 @@ app.post('/api/history', async (req, res) => {
         const limRaw = parseInt(limit, 10);
         const lim = (limRaw === 0)
             ? null
-            : Math.max(1, Math.min(50000, Number.isFinite(limRaw) ? limRaw : 100));
+            : Math.max(1, Math.min(BACKFILL_MAX_LIMIT, Number.isFinite(limRaw) ? limRaw : 100));
 
         const am = await getAccountManager();
         if (am.count === 0) return res.status(409).json({ error: 'No Telegram accounts loaded' });
@@ -1956,7 +1957,7 @@ app.post('/api/history', async (req, res) => {
                 }
                 // Drop the in-memory entry after a grace window so the UI has
                 // time to grab it via /api/history/jobs.
-                setTimeout(() => _historyJobs.delete(jobId), 5 * 60 * 1000);
+                setTimeout(() => _historyJobs.delete(jobId), HISTORY_JOB_TTL_MS);
             })
             .catch((err) => {
                 job.state = 'error';
@@ -2659,7 +2660,7 @@ app.get('/api/dialogs', async (req, res) => {
         const now = Date.now();
         if (!wantFresh
             && _dialogsResponseCache.body
-            && Math.max(0, now - _dialogsResponseCache.at) < 5 * 60 * 1000) {
+            && Math.max(0, now - _dialogsResponseCache.at) < DIALOG_CACHE_TTL_MS) {
             return res.json(_dialogsResponseCache.body);
         }
 
@@ -2797,7 +2798,7 @@ let _dialogsNameCache = { at: 0, byId: new Map() };
 let _dialogsTypeCache = new Map();
 async function getDialogsNameCache() {
     const now = Date.now();
-    if (Math.max(0, now - _dialogsNameCache.at) < 5 * 60 * 1000 && _dialogsNameCache.byId.size > 0) {
+    if (Math.max(0, now - _dialogsNameCache.at) < DIALOG_CACHE_TTL_MS && _dialogsNameCache.byId.size > 0) {
         return _dialogsNameCache.byId;
     }
     const byId = new Map();
@@ -5734,8 +5735,8 @@ app.post('/api/config', async (req, res) => {
             d.spilloverThreshold  = clampInt(d.spilloverThreshold, 100, 100000, 2000);
 
             const h = merged.history;
-            h.backpressureCap         = clampInt(h.backpressureCap,         10, 100000, 500);
-            h.backpressureMaxWaitMs   = clampInt(h.backpressureMaxWaitMs, 5000, 3600000, 900000);
+            h.backpressureCap         = clampInt(h.backpressureCap,         10, 100000, BACKPRESSURE_CAP_DEFAULT);
+            h.backpressureMaxWaitMs   = clampInt(h.backpressureMaxWaitMs, 5000, 3600000, BACKPRESSURE_MAX_WAIT_MS_DEFAULT);
             h.shortBreakEveryN        = clampInt(h.shortBreakEveryN,         0, 100000, 100);
             h.longBreakEveryN         = clampInt(h.longBreakEveryN,          0, 1000000, 1000);
             // Recent-backfills retention. Anything older than this gets
@@ -6048,7 +6049,7 @@ async function _spawnInternalBackfill({ groupId, limit, mode = 'pull-older', rea
     const history = new HistoryDownloader(am.getDefaultClient(), downloader, config, am);
 
     const jobId = crypto.randomBytes(6).toString('hex');
-    const lim = (limit === null || limit === 0) ? null : Math.max(1, Math.min(50000, Number(limit) || 100));
+    const lim = (limit === null || limit === 0) ? null : Math.max(1, Math.min(BACKFILL_MAX_LIMIT, Number(limit) || 100));
     const job = {
         id: jobId, state: 'running', processed: 0, downloaded: 0, error: null,
         group: group.name, groupId: groupKey, limit: lim,
@@ -6074,7 +6075,7 @@ async function _spawnInternalBackfill({ groupId, limit, mode = 'pull-older', rea
             if (standalone) downloader.stop().catch(() => {});
             saveHistoryJobsToDisk().catch(() => {});
             if (_activeBackfillsByGroup.get(groupKey) === jobId) _activeBackfillsByGroup.delete(groupKey);
-            setTimeout(() => _historyJobs.delete(jobId), 5 * 60 * 1000);
+            setTimeout(() => _historyJobs.delete(jobId), HISTORY_JOB_TTL_MS);
         })
         .catch((err) => {
             job.state = 'error';
