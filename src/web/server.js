@@ -61,6 +61,7 @@ import {
 import { suppressNoise, wrapConsoleMethod, NATIVE_LOAD_FAIL } from '../core/logger.js';
 import { BACKFILL_MAX_LIMIT, DIALOG_CACHE_TTL_MS, HISTORY_JOB_TTL_MS, BACKPRESSURE_CAP_DEFAULT, BACKPRESSURE_MAX_WAIT_MS_DEFAULT } from '../core/constants.js';
 import { createJobTracker } from '../core/job-tracker.js';
+import { createShareRouter } from './routes/share.js';
 
 // Demote gramJS reconnect chatter from stderr/stdout to data/logs/network.log.
 // gramJS opens a fresh DC connection per file download (different DCs host
@@ -5297,115 +5298,7 @@ app.post('/api/ai/search/similar', async (req, res) => {
 });
 
 // ====== Share-link admin API ===============================================
-//
-// Admin-only by virtue of the chokepoint (the path isn't on either
-// guest allowlist). Each call returns the canonical URL the SPA shows in
-// the Share sheet — built from the request's own host+protocol so it
-// works behind reverse proxies (helmet trust-proxy is set elsewhere).
-function _shareUrlFor(req, linkId, expSec) {
-    const proto = req.protocol;
-    const host = req.get('host');
-    return `${proto}://${host}${buildShareUrlPath(linkId, expSec)}`;
-}
-
-function _shareLinkPayload(req, row) {
-    const expSec = Math.floor((row.expires_at ?? row.expiresAt ?? 0));
-    const linkId = row.id;
-    return {
-        id: linkId,
-        downloadId: row.download_id ?? row.downloadId,
-        createdAt: row.created_at ?? row.createdAt,
-        expiresAt: expSec,
-        revokedAt: row.revoked_at ?? null,
-        label: row.label ?? null,
-        accessCount: row.access_count ?? 0,
-        lastAccessedAt: row.last_accessed_at ?? null,
-        fileName: row.file_name,
-        fileType: row.file_type,
-        fileSize: row.file_size,
-        groupId: row.group_id,
-        groupName: row.group_name,
-        url: _shareUrlFor(req, linkId, expSec),
-    };
-}
-
-// Mint a new share link for a single download row. Body:
-//   { downloadId, ttlSeconds?, label? }
-// ttlSeconds is clamped to [60, 90 days]; default 7 days.
-app.post('/api/share/links', async (req, res) => {
-    try {
-        const { downloadId, ttlSeconds, label } = req.body || {};
-        const did = parseInt(downloadId, 10);
-        if (!Number.isInteger(did) || did <= 0) {
-            return res.status(400).json({ error: 'downloadId required' });
-        }
-        // Confirm the download row exists — otherwise the link would
-        // perpetually 404, and we'd be storing useless rows.
-        const exists = getDb().prepare('SELECT id FROM downloads WHERE id = ?').get(did);
-        if (!exists) return res.status(404).json({ error: 'Download not found' });
-
-        // Pass through whatever the caller sent (including null/undefined).
-        // clampTtlSeconds resolves "missing" → the *current* configured
-        // default — pulling it back out via getShareLimits() here would
-        // race with config_updated. The clamp handles 0 (never expires)
-        // and negative / NaN inputs internally.
-        const ttl = clampTtlSeconds(ttlSeconds);
-        // ttl === 0 = "never expires" sentinel — store expires_at = 0
-        // (the verifier skips the time gate; revocation still works).
-        const expSec = ttl === 0 ? 0 : Math.floor(Date.now() / 1000) + ttl;
-        // Defensive label hygiene — keep labels short and free of control
-        // chars so they render safely in the admin UI without escaping.
-        const cleanLabel = typeof label === 'string'
-            ? label.replace(/[\r\n\t]/g, ' ').trim().slice(0, 80) || null
-            : null;
-
-        const { id } = createShareLink({ downloadId: did, expiresAt: expSec, label: cleanLabel });
-
-        // Re-load with the joined download metadata so the response is the
-        // same shape as the list endpoint (UI doesn't have to re-fetch).
-        const list = listShareLinks({ downloadId: did, limit: 1000 });
-        const row = list.find(r => r.id === id);
-        res.json({ success: true, link: row ? _shareLinkPayload(req, row) : null });
-    } catch (e) {
-        console.error('share/links create:', e);
-        res.status(500).json({ error: e.message });
-    }
-});
-
-// List share-links — `?downloadId=…` filters to one file (Share sheet);
-// no filter returns ALL links across the library (Maintenance sheet).
-app.get('/api/share/links', async (req, res) => {
-    try {
-        const downloadId = req.query.downloadId
-            ? parseInt(req.query.downloadId, 10)
-            : null;
-        const includeRevoked = req.query.includeRevoked !== '0';
-        const rows = listShareLinks({ downloadId, includeRevoked });
-        res.json({
-            success: true,
-            links: rows.map(r => _shareLinkPayload(req, r)),
-        });
-    } catch (e) {
-        console.error('share/links list:', e);
-        res.status(500).json({ error: e.message });
-    }
-});
-
-// Revoke a single share-link by id. Idempotent — revoking an already-
-// revoked link returns success: true with revoked: false.
-app.delete('/api/share/links/:id', async (req, res) => {
-    try {
-        const id = parseInt(req.params.id, 10);
-        if (!Number.isInteger(id) || id <= 0) {
-            return res.status(400).json({ error: 'Invalid id' });
-        }
-        const did = revokeShareLink(id);
-        res.json({ success: true, revoked: did });
-    } catch (e) {
-        console.error('share/links revoke:', e);
-        res.status(500).json({ error: e.message });
-    }
-});
+app.use(createShareRouter({ log }));
 
 // List logfiles under data/logs/ with size + mtime — used by the SPA to
 // populate the "Download log" picker.
