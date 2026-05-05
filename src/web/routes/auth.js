@@ -8,7 +8,7 @@ import {
 } from '../../core/web-auth.js';
 import { metrics } from '../../core/metrics.js';
 
-const SESSION_COOKIE_OPTS = {
+export const SESSION_COOKIE_OPTS = {
     httpOnly: true,
     sameSite: 'strict',
     secure: process.env.NODE_ENV === 'production',
