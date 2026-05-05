@@ -37,6 +37,15 @@ export class DebugLogger {
     }
 }
 
+// ---- native module load failure classifier --------------------------------
+//
+// Optional deps (primarily onnxruntime-node via @huggingface/transformers)
+// ship glibc-only prebuilds. On musl images (Alpine) or after a failed
+// install the module throws at require-time. Both index.js and server.js
+// catch these as unhandledRejection / uncaughtException — shared here to
+// avoid diverging patterns.
+export const NATIVE_LOAD_FAIL = /(ld-linux|ld-musl|libonnxruntime|GLIBC_|NODE_MODULE_VERSION|cannot open shared object|Error loading shared library)/i;
+
 // ---- noise classifier -----------------------------------------------------
 //
 // gramJS is chatty during reconnects: it logs "Not connected", "TIMEOUT",

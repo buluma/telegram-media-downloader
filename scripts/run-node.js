@@ -8,8 +8,8 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const localstorageFile = path.join(repoRoot, 'data', 'localstorage.json');
 const major = Number(String(process.versions.node || '').split('.')[0]);
 
-if (major !== 25) {
-    console.error(`Unsupported Node.js ${process.versions.node} at ${process.execPath}. Use Node 25 exactly (see .nvmrc).`);
+if (major < 22) {
+    console.error(`Unsupported Node.js ${process.versions.node} at ${process.execPath}. Node 22 or later required (see .nvmrc).`);
     process.exit(1);
 }
 
