@@ -2,6 +2,23 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.8] — 2026-05-05
+
+### Fixed
+- **Gallery tile thumbnails were stuck at `opacity: 0`** so every photo and video tile rendered as a black box even though the WebP thumb file was generated, the HTTP response was 200, and the `<img>` element loaded successfully. CSS keeps `.media-item img` invisible until a `.loaded` class is added — that class used to be wired up by the lazy-load IntersectionObserver, but the tile template had moved to native `loading="lazy"` and no longer carried `data-src`, so the observer never fired. The tile now adds `.loaded` from inline `onload` / `onerror` handlers, which works for both successful loads and 404 fallbacks. (PR #19)
+
+### Changed
+- **Node baseline raised to 22 LTS** (was `>=20.0.0`). Node 20 reaches EOL April 2026; 22 has been LTS since October 2024. The Docker runtime image moves to `node:24.15.0-bookworm-slim` (current Active LTS, supported through April 2027). `src/index.js`'s doctor check is updated to match. (PR #20)
+- **CI matrix** now tests against Node `22` and `24` instead of `20` and `22`. (PR #20)
+- **Production deps bumped** by dependabot's grouped PR: `@aws-sdk/client-s3` 3.1041.0 → 3.1042.0, `@aws-sdk/lib-storage` 3.1041.0 → 3.1042.0, `better-sqlite3` 12.6.2 → 12.9.0, `ws` 8.19.0 → 8.20.0. (PR #21)
+- **GitHub Actions bumped** by dependabot's grouped PR: `actions/checkout` v4 → v6, `actions/setup-node` v4 → v6, `github/codeql-action` v3 → v4, `docker/setup-buildx-action` v3 → v4, `docker/build-push-action` v6 → v7, `docker/login-action` v3 → v4, `docker/metadata-action` v5 → v6 (8 actions total). `release-drafter/release-drafter` is intentionally pinned at v6 — v7 currently fails on `pull_request` triggers with `Validation Failed: target_commitish` because it tries to update the in-progress draft against `refs/pull/<n>/merge`, which the GitHub Releases API rejects. Revisit once upstream cuts a v7 patch. (PR #16)
+
+### CI
+- **Docker smoke test fixed** — was flaking on every PR with `FAIL: no node process running as node user`. The healthcheck-then-`ps` approach grepped column 2 (`COMMAND`, where `comm` is truncated) with a fragile `awk` pattern that silently failed even when `ps -ef` could see the node process. Switched to grepping column 1 (`UNAME`) of `ps -ef` directly, wrapped in a 10× / 1 s retry loop purely for boot timing. The retry never had to fire on the verifying run; the column choice was the actual bug. (PR #20)
+
+### Internal
+- SW bumped `v267` → `v268`.
+
 ## [2.6.7] — 2026-05-05
 
 ### Fixed
