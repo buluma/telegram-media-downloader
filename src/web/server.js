@@ -2038,6 +2038,22 @@ app.post('/api/history/:jobId/cancel', (req, res) => {
     }
 });
 
+app.post('/api/history/cancel-active', (req, res) => {
+    try {
+        let cancelled = 0;
+        for (const job of _historyJobs.values()) {
+            if (job.state !== 'running') continue;
+            job.cancelled = true;
+            if (typeof job._runner?.cancel === 'function') job._runner.cancel();
+            broadcast({ type: 'history_cancelling', jobId: job.id, group: job.group });
+            cancelled++;
+        }
+        res.json({ success: true, cancelled });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 app.get('/api/history/:jobId', (req, res) => {
     const job = _historyJobs.get(req.params.jobId);
     if (!job) return res.status(404).json({ error: 'Job not found' });
@@ -5091,7 +5107,16 @@ app.get('/api/ai/perceptual-dedup/groups', async (req, res) => {
         const threshold = Math.max(0, Math.min(20, Number(req.query.threshold) || 6));
         const cfg = _aiCfg();
         const r = ai.findPhashGroups({ threshold, fileTypes: cfg.fileTypes });
-        res.json({ success: true, ...r });
+        // phash stays BigInt inside the grouping logic (Hamming distance).
+        // Strip it before JSON serialisation — clients only need file metadata.
+        const safe = {
+            ...r,
+            groups: r.groups.map(g => ({
+                ...g,
+                rows: g.rows.map(({ phash: _p, ...rest }) => rest),
+            })),
+        };
+        res.json({ success: true, ...safe });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }

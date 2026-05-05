@@ -1776,10 +1776,15 @@
                 <div id="page-backfill" class="hidden max-w-5xl mx-auto px-3 sm:px-4">
                     <!-- Card A — Active jobs -->
                     <section class="bg-tg-panel rounded-xl p-4 mb-4">
-                        <h3 class="text-tg-text font-medium mb-3 flex items-center gap-2">
-                            <i class="ri-play-circle-line text-tg-blue"></i>
-                            <span data-i18n="backfill.active.title">Active backfills</span>
-                        </h3>
+                        <div class="flex items-center justify-between mb-3 gap-2">
+                            <h3 class="text-tg-text font-medium flex items-center gap-2 min-w-0">
+                                <i class="ri-play-circle-line text-tg-blue"></i>
+                                <span class="truncate" data-i18n="backfill.active.title">Active backfills</span>
+                            </h3>
+                            <button type="button" id="backfill-active-cancel-all" class="hidden text-xs px-2.5 py-1 rounded-md border border-tg-border text-tg-textSecondary hover:text-red-400 hover:border-red-400/60 transition-colors flex-shrink-0">
+                                <i class="ri-stop-circle-line mr-1"></i><span data-i18n="backfill.active.cancel_all">Cancel all active</span>
+                            </button>
+                        </div>
                         <div id="backfill-active-list" class="space-y-2"></div>
                         <div id="backfill-active-empty" class="hidden text-center py-6">
                             <i class="ri-history-line text-3xl text-tg-textSecondary mb-2"></i>

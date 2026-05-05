@@ -59,6 +59,8 @@ export function initBackfillPage() {
     // there's at least one row to clear (renderRecent toggles visibility).
     const clearBtn = document.getElementById('backfill-recent-clear');
     if (clearBtn) clearBtn.addEventListener('click', clearAllRecent);
+    const cancelActiveBtn = document.getElementById('backfill-active-cancel-all');
+    if (cancelActiveBtn) cancelActiveBtn.addEventListener('click', cancelAllActive);
 
     // WS event handlers — keep the page reactive even when the user
     // isn't currently looking at it (so re-opening shows a fresh state).
@@ -230,6 +232,7 @@ let _activeListWired = false;
 function renderActive() {
     const list = document.getElementById('backfill-active-list');
     const empty = document.getElementById('backfill-active-empty');
+    const cancelAllBtn = document.getElementById('backfill-active-cancel-all');
     if (!list) return;
 
     const jobs = Array.from(activeJobs.values()).sort(
@@ -239,9 +242,11 @@ function renderActive() {
     if (jobs.length === 0) {
         list.innerHTML = '';
         empty?.classList.remove('hidden');
+        cancelAllBtn?.classList.add('hidden');
         return;
     }
     empty?.classList.add('hidden');
+    cancelAllBtn?.classList.remove('hidden');
 
     // Wire delegation once — survives subsequent renders.
     if (!_activeListWired) {
@@ -395,6 +400,26 @@ async function cancelJob(jobId) {
         await api.post(`/api/history/${encodeURIComponent(jobId)}/cancel`, {});
     } catch (e) {
         showToast(i18nTf('backfill.row.cancel_failed', { msg: e.message }, `Cancel failed: ${e.message}`), 'error');
+    }
+}
+
+async function cancelAllActive() {
+    if (activeJobs.size === 0) return;
+    if (!(await confirmSheet({
+        title: i18nT('backfill.active.cancel_all_title', 'Cancel all active backfills?'),
+        message: i18nT('backfill.active.cancel_all_confirm', 'Cancel every currently running backfill?'),
+        confirmLabel: i18nT('backfill.active.cancel_all', 'Cancel all active'),
+        cancelLabel: i18nT('common.close', 'Close'),
+        danger: true,
+    }))) return;
+    try {
+        const r = await api.post('/api/history/cancel-active', {});
+        showToast(
+            i18nTf('backfill.active.cancel_all_ok', { n: r?.cancelled ?? 0 }, 'Cancellation requested for {n} active backfill(s).'),
+            'info'
+        );
+    } catch (e) {
+        showToast(i18nTf('backfill.active.cancel_all_failed', { msg: e.message }, `Cancel-all failed: ${e.message}`), 'error');
     }
 }
 
