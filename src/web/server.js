@@ -65,6 +65,7 @@ import { createShareRouter } from './routes/share.js';
 import { createVersionRouter, _readCurrentVersion } from './routes/version.js';
 import { createAuthRouter } from './routes/auth.js';
 import { createAccountsRouter } from './routes/accounts.js';
+import { createMonitorRouter } from './routes/monitor.js';
 
 // Demote gramJS reconnect chatter from stderr/stdout to data/logs/network.log.
 // gramJS opens a fresh DC connection per file download (different DCs host
@@ -1028,6 +1029,16 @@ app.get('/CHANGELOG.md', async (req, res) => {
 
 // ============ API ENDPOINTS ============
 
+function tgAuthErrorBody(e) {
+    if (e?.code === 'NO_API_CREDS') {
+        return {
+            status: 503,
+            body: { error: 'Telegram API credentials not configured. Add telegram.apiId and telegram.apiHash in Settings first.', code: 'NO_API_CREDS' },
+        };
+    }
+    return { status: 400, body: { error: e?.message || 'Bad request' } };
+}
+
 // ====== Accounts routes — mounted via createAccountsRouter =================
 app.use(createAccountsRouter({ dataDir: DATA_DIR, configPath: CONFIG_PATH, getAccountManager }));
 
@@ -1090,9 +1101,8 @@ async function _buildMonitorStatusSnapshot() {
     return status;
 }
 
-app.get('/api/monitor/status', async (req, res) => {
-    res.json(await _buildMonitorStatusSnapshot());
-});
+// ====== Monitor routes — mounted via createMonitorRouter ===================
+app.use(createMonitorRouter({ getMonitorStatus: _buildMonitorStatusSnapshot, getAccountManager, runtime, loadConfig }));
 
 // Push the monitor-status snapshot every 3 s so the SPA's status-bar
 // queue / active counters update live without polling. Skip the
@@ -1138,31 +1148,6 @@ async function _pushStats() {
 }
 const _statsPushTimer = setInterval(_pushStats, 30000);
 _statsPushTimer.unref?.();
-
-app.post('/api/monitor/start', async (req, res) => {
-    try {
-        const am = await getAccountManager();
-        if (am.count === 0) {
-            return res.status(409).json({
-                error: 'No Telegram accounts loaded. Add one in Settings → Accounts first.',
-            });
-        }
-        await runtime.start({ config: loadConfig(), accountManager: am });
-        res.json({ success: true, status: runtime.status() });
-    } catch (e) {
-        const { status, body } = tgAuthErrorBody(e);
-        res.status(status === 400 ? 500 : status).json(body.error ? body : { error: e.message });
-    }
-});
-
-app.post('/api/monitor/stop', async (req, res) => {
-    try {
-        await runtime.stop();
-        res.json({ success: true, status: runtime.status() });
-    } catch (e) {
-        res.status(500).json({ error: e.message });
-    }
-});
 
 // ====== History batch download =============================================
 //
