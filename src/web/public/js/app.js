@@ -603,6 +603,10 @@ function renderPage(page, params = {}) {
         document.getElementById('page-title').textContent = i18nT('maintenance.thumbs.page_title', 'Build thumbnails');
         document.getElementById('page-subtitle').textContent = i18nT('maintenance.thumbs.subtitle', 'Generate WebP previews for older files');
         import('./maintenance-thumbs.js').then(m => m.init()).catch(e => console.error('maintenance-thumbs', e));
+    } else if (page === 'maintenance-video') {
+        document.getElementById('page-title').textContent = i18nT('maintenance.video.page_title', 'Optimise videos for streaming');
+        document.getElementById('page-subtitle').textContent = i18nT('maintenance.video.subtitle', 'Rewrite MP4s with `+faststart` so the HTML5 player can seek + play audio without buffering the whole file.');
+        import('./maintenance-video.js').then(m => m.init()).catch(e => console.error('maintenance-video', e));
     } else if (page === 'maintenance-nsfw') {
         document.getElementById('page-title').textContent = i18nT('maintenance.nsfw.page_title', 'NSFW review');
         document.getElementById('page-subtitle').textContent = i18nT('maintenance.nsfw.subtitle', "Five-tier classifier review — keep what's confidently 18+, delete what's confidently not, eyeball the borderline cases.");
@@ -675,6 +679,7 @@ function registerRoutes() {
     router.route('/maintenance', () => renderPage('maintenance'));
     router.route('/maintenance/duplicates', () => renderPage('maintenance-duplicates'));
     router.route('/maintenance/thumbs', () => renderPage('maintenance-thumbs'));
+    router.route('/maintenance/video', () => renderPage('maintenance-video'));
     router.route('/maintenance/nsfw', () => renderPage('maintenance-nsfw'));
     router.route('/maintenance/logs', () => renderPage('maintenance-logs'));
     router.route('/maintenance/backup', () => renderPage('maintenance-backup'));
@@ -874,6 +879,7 @@ const PAGE_HEADER_ICON = {
     'maintenance':            'ri-tools-line',
     'maintenance-duplicates': 'ri-file-copy-2-line',
     'maintenance-thumbs':     'ri-image-line',
+    'maintenance-video':      'ri-film-line',
     'maintenance-nsfw':       'ri-shield-check-line',
     'maintenance-logs':       'ri-terminal-box-line',
     'maintenance-backup':     'ri-cloud-line',

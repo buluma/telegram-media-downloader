@@ -44,6 +44,17 @@ const TOOLS = [
         wsEvents: ['thumbs_progress', 'thumbs_done'],
     },
     {
+        slug: 'video',
+        i18nTitle: 'maintenance.hub.video.title',
+        defaultTitle: 'Optimise videos for streaming',
+        i18nBody:  'maintenance.hub.video.body',
+        defaultBody: 'Rewrite MP4s with `+faststart` so the player can seek + play audio without buffering the whole file.',
+        icon: 'ri-film-line',
+        accent: 'blue',
+        statusUrl: '/api/maintenance/faststart/status',
+        wsEvents: ['faststart_progress', 'faststart_done'],
+    },
+    {
         slug: 'nsfw',
         i18nTitle: 'maintenance.hub.nsfw.title',
         defaultTitle: 'NSFW review',

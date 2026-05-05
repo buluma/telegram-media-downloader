@@ -4186,6 +4186,89 @@ app.get('/api/maintenance/thumbs/stats', async (req, res) => {
     }
 });
 
+// ====== Video faststart optimiser (v2.6.10) ==============================
+//
+// MP4s with their `moov` atom at the end of the file confuse the
+// browser's HTML5 player — seek breaks, audio appears missing, the
+// "loaded" range stalls until the entire `mdat` has streamed in.
+// `_generateVideoThumb` was patched in v2.6.9 to handle the case where
+// such files exist; this adds the fix at the source: rewrite each
+// file with `+faststart` so the player gets `moov` immediately.
+//
+// Three endpoints, mirroring the thumbs build/rebuild pattern:
+//   POST /api/maintenance/faststart/scan   — fire-and-forget sweep
+//   GET  /api/maintenance/faststart/status — recover live state
+//   GET  /api/maintenance/faststart/stats  — counts for the dashboard
+//
+// Auto-fixed inline by the downloader (see faststartInBackground in
+// downloader.js); the sweep is for the existing library.
+let _faststartRunning = false;
+let _faststartState = {
+    running: false,
+    stage: 'idle',
+    processed: 0, total: 0,
+    optimized: 0, already: 0, skipped: 0, errored: 0, scanned: 0,
+    startedAt: 0, finishedAt: 0, error: null,
+};
+app.post('/api/maintenance/faststart/scan', async (req, res) => {
+    if (_faststartRunning) {
+        return res.status(409).json({ error: 'A faststart sweep is already running', code: 'ALREADY_RUNNING' });
+    }
+    _faststartRunning = true;
+    _faststartState = {
+        running: true, stage: 'starting',
+        processed: 0, total: 0,
+        optimized: 0, already: 0, skipped: 0, errored: 0, scanned: 0,
+        startedAt: Date.now(), finishedAt: 0, error: null,
+    };
+    res.json({ success: true, started: true });
+    log({ source: 'faststart', level: 'info', msg: 'faststart sweep starting' });
+    (async () => {
+        try {
+            const { optimizeAll } = await import('../core/faststart.js');
+            const r = await optimizeAll({
+                onProgress: (p) => {
+                    Object.assign(_faststartState, p, { running: true });
+                    try { broadcast({ type: 'faststart_progress', ...p }); } catch {}
+                },
+            });
+            _faststartState = {
+                ..._faststartState, ...r,
+                running: false, stage: 'done',
+                finishedAt: Date.now(),
+            };
+            try { broadcast({ type: 'faststart_done', ...r }); } catch {}
+            log({ source: 'faststart', level: 'info',
+                msg: `faststart sweep done — scanned=${r?.scanned ?? 0} optimized=${r?.optimized ?? 0} already=${r?.already ?? 0} skipped=${r?.skipped ?? 0} errored=${r?.errored ?? 0}` });
+        } catch (e) {
+            _faststartState = {
+                ..._faststartState,
+                running: false, stage: 'error',
+                error: e?.message || String(e),
+                finishedAt: Date.now(),
+            };
+            try { broadcast({ type: 'faststart_done', error: e?.message || String(e) }); } catch {}
+            log({ source: 'faststart', level: 'error', msg: `faststart sweep failed: ${e?.message || e}` });
+        } finally {
+            _faststartRunning = false;
+        }
+    })();
+});
+
+app.get('/api/maintenance/faststart/status', async (req, res) => {
+    res.json({ ..._faststartState, running: _faststartRunning });
+});
+
+app.get('/api/maintenance/faststart/stats', async (req, res) => {
+    try {
+        const { getStats } = await import('../core/faststart.js');
+        const r = await getStats();
+        res.json({ success: true, ffmpegAvailable: hasFfmpeg(), ...r });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // ====== NSFW review tool (Phase 1: photos only) ===========================
 //
 // Curated 18+ libraries get noise from auto-download — non-18+ photos

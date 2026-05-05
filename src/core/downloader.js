@@ -12,6 +12,7 @@ import { DebugLogger } from './logger.js';
 import { getDb, insertDownload, isDownloaded as dbIsDownloaded } from './db.js';
 import { sha256OfFile, sha256OfFileViaPool } from './checksum.js';
 import { pregenerateThumb } from './thumbs.js';
+import { optimizeDownloadInBackground as faststartInBackground } from './faststart.js';
 import { pregenerateNsfw } from './nsfw.js';
 import { pregenerateAi } from './ai/index.js';
 
@@ -919,6 +920,17 @@ export class DownloadManager extends EventEmitter {
                 try { pregenerateThumb(newId); } catch {}
                 try { pregenerateNsfw(newId); } catch {}
                 try { pregenerateAi(newId); } catch {}
+                // Faststart-optimise newly-downloaded MP4s so the
+                // gallery's HTML5 player can seek + start audio
+                // without waiting for the entire mdat to stream
+                // through. No-op for non-video / non-MP4 / already-
+                // optimised rows. Background, fire-and-forget; runs
+                // after the thumb so the first paint of the gallery
+                // sees the cached preview before the (slightly larger)
+                // file replaces the original on disk.
+                if (type === 'video') {
+                    try { faststartInBackground(newId); } catch {}
+                }
             }
         } catch(e) {
             console.error('DB Insert Error', e);
