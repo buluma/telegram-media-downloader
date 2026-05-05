@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.9] — 2026-05-06
+
+### Fixed
+- **Video thumbnails were missing on Debian-based Docker hosts** (every `/api/thumbs/<id>` for a video row returned `404 "No thumb"` while images worked fine, and `Maintenance → Build all` reported `built=0` with `errored=0` because failures were silently coerced to "skipped"). Root cause: `_generateVideoThumb` writes a `<sha>.webp.tmp` file for atomic-rename-on-success, but the system `/usr/bin/ffmpeg` from `apt-get install ffmpeg` (Debian 12 / bookworm) refuses to infer the output muxer from a `.tmp` extension and exits non-zero with `Unable to find a suitable output format`. The bundled `@ffmpeg-installer/ffmpeg` build used on macOS / Windows happens to fall back to the codec hint, which is why localhost worked while production did not. Fix: pass `-f webp` explicitly in the single-pass libwebp branch so the muxer is named regardless of the destination filename. The JPEG → sharp fallback path was not affected (its tmp file already ends in `.jpg`).
+
+### Internal
+- SW bumped `v268` → `v269`.
+
 ## [2.6.8] — 2026-05-05
 
 ### Fixed
