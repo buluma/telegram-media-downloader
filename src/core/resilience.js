@@ -74,6 +74,7 @@ export class Resilience {
         if (isAuth) {
             console.log(colorize('❌ Session Invalid. Login required.', 'red'));
             process.exit(1);
+            return; // unreachable in production; guards test environments where exit is mocked
         }
 
         // Default: Throw to caller if not handled
