@@ -398,8 +398,14 @@ function _wireWs() {
         ws.on(`${cap.wsPrefix}_done`, () => _onDone(cap.key));
     }
     // Live model download progress — re-renders the model panel cheaply.
+    // Debounced: during an active scan the server emits this event per-photo;
+    // firing a fresh HTTP request each time floods the queue while WASM is
+    // CPU-bound and causes ERR_INSUFFICIENT_RESOURCES in the browser.
+    let _aiModelProgressDebounce = null;
     ws.on('ai_model_progress', () => {
-        if ($('ai-models-list')) _refreshModels();
+        if (!$('ai-models-list')) return;
+        clearTimeout(_aiModelProgressDebounce);
+        _aiModelProgressDebounce = setTimeout(_refreshModels, 3000);
     });
 }
 

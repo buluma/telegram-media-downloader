@@ -262,7 +262,7 @@ The dashboard does almost everything. The CLI subcommands stay around for headle
                       "backpressureCap": 500, "backpressureMaxWaitMs": 900000 },
         "share":    { "ttlMinSec": 60, "ttlMaxSec": 7776000, "ttlDefaultSec": 604800,
                       "rateLimitWindowMs": 60000, "rateLimitMax": 60 },
-        "nsfw":     { "enabled": false, "model": "Falconsai/nsfw_image_detection",
+        "nsfw":     { "enabled": false, "model": "AdamCodd/vit-base-nsfw-detector",
                       "threshold": 0.6, "concurrency": 1, "fileTypes": ["photo"] },
         "downloader": { "minConcurrency": 3, "maxConcurrency": 20, "scalerIntervalSec": 5 },
         "integrity":  { "intervalMin": 60, "batchSize": 64 },
@@ -337,7 +337,7 @@ Opt-in. Set `WATCHTOWER_HTTP_API_TOKEN` in `.env` and start with `docker compose
 Two layers: at download time, every freshly-written file is SHA-256'd and compared to existing rows — a match swaps the new copy for a pointer to the existing on-disk file (zero duplicate bytes). On demand, Maintenance → Find duplicate files runs the same hash across the whole library, groups byte-identical sets, and lets you keep the oldest / newest / cherry-picked copy.
 
 **What does the NSFW review tool actually do?**
-A local image classifier (Falconsai/nsfw_image_detection by default) runs in the Node process via `@huggingface/transformers` (WASM, no Python sidecar, works on every platform including Alpine). It scores every photo and surfaces the LOW-score rows for admin review — useful for purging non-18+ content that drifted into a curated 18+ archive. Per-row "Mark as 18+" whitelist persists across re-scans. Off by default.
+A local image classifier (`AdamCodd/vit-base-nsfw-detector` by default) runs in the Node process via `@huggingface/transformers` (WASM, no Python sidecar, works on every platform including Alpine). It scores every photo and surfaces the LOW-score rows for admin review — useful for purging non-18+ content that drifted into a curated 18+ archive. Per-row "Mark as 18+" whitelist persists across re-scans. Off by default.
 
 **Does sorting use GPU? Will it run on a Raspberry Pi?**
 CPU only — no GPU dependency. Roughly 300-500 ms per thumbnail-sized image on commodity hardware; concurrency is capped (default 1) so the scan stays in the background and doesn't starve downloads.

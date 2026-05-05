@@ -146,7 +146,7 @@ src/core/
 ├── checksum.js       # Canonical SHA-256 helper (used by downloader + dedup)
 ├── dedup.js          # On-demand library-wide duplicate scan
 ├── thumbs.js         # WebP thumbnail generator (sharp + ffmpeg fallback)
-├── nsfw.js           # NSFW classifier (WASM, Falconsai/nsfw_image_detection)
+├── nsfw.js           # NSFW classifier (WASM, AdamCodd/vit-base-nsfw-detector)
 ├── share.js          # HMAC-SHA256 share-link sign/verify + secret bootstrap
 ├── updater.js        # Watchtower client + pre-update DB snapshot
 ├── web-auth.js       # scrypt password hashing + role-aware sessions

@@ -73,6 +73,25 @@ export const NSFW_MODEL_SUGGESTIONS = Object.freeze([
 ]);
 
 const VALID_DTYPES = new Set(['q8', 'fp16', 'fp32', 'q4']);
+const LEGACY_MODEL_REMAP = new Map([
+    // Legacy/default from older releases and docs. This repository does not
+    // publish ONNX artifacts, so transformers.js cannot run it directly.
+    ['falconsai/nsfw_image_detection', NSFW_DEFAULTS.model],
+]);
+
+function _resolveModelId(rawModelId, onLog) {
+    const _log = (level, msg) => { try { if (typeof onLog === 'function') onLog({ source: 'nsfw', level, msg }); } catch {} };
+    const requested = (typeof rawModelId === 'string' && rawModelId.trim())
+        ? rawModelId.trim()
+        : NSFW_DEFAULTS.model;
+    const key = requested.toLowerCase();
+    const remapped = LEGACY_MODEL_REMAP.get(key);
+    if (remapped && remapped !== requested) {
+        _log('warn', `model "${requested}" does not ship ONNX assets; remapping to "${remapped}"`);
+        return remapped;
+    }
+    return requested;
+}
 
 // Lazy classifier singleton. The transformers module is heavy
 // (~10 MB of JS + WASM glue) so we only require() it when the operator
@@ -88,7 +107,7 @@ function _resolveCacheDirAbs(cacheDirCfg) {
 
 async function _loadClassifier(cfg, onProgress, onLog) {
     const _log = (level, msg) => { try { if (typeof onLog === 'function') onLog({ source: 'nsfw', level, msg }); } catch {} };
-    const modelId = cfg.model || NSFW_DEFAULTS.model;
+    const modelId = _resolveModelId(cfg.model, onLog);
     const dtypeWanted = VALID_DTYPES.has(String(cfg.dtype || '').toLowerCase())
         ? String(cfg.dtype).toLowerCase()
         : NSFW_DEFAULTS.dtype;
@@ -266,7 +285,7 @@ export function getScanState(cfg) {
     return {
         ..._scanState,
         ...stats,
-        model: cfg.model || NSFW_DEFAULTS.model,
+        model: _resolveModelId(cfg.model),
         threshold: cfg.threshold ?? NSFW_DEFAULTS.threshold,
     };
 }
@@ -568,7 +587,7 @@ export function classifierReady() {
  */
 export async function preloadClassifier(cfg, onProgress, onLog) {
     const _log = (level, msg) => { try { if (typeof onLog === 'function') onLog({ source: 'nsfw', level, msg }); } catch {} };
-    const modelId = cfg.model || NSFW_DEFAULTS.model;
+    const modelId = _resolveModelId(cfg.model, onLog);
     const dtype = VALID_DTYPES.has(String(cfg.dtype || '').toLowerCase())
         ? String(cfg.dtype).toLowerCase()
         : NSFW_DEFAULTS.dtype;

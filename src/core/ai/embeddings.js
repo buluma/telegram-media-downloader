@@ -17,11 +17,10 @@
  */
 
 import { existsSync } from 'fs';
-import { getPipeline, AI_MODEL_DEFAULTS } from './models.js';
+import { getPipeline, getClipTextEncoder, AI_MODEL_DEFAULTS } from './models.js';
 import { l2Normalize } from './vector-store.js';
 
 let _imagePipelinePromise = null;
-let _textPipelinePromise = null;
 
 function _imageModelId(cfg) { return cfg?.model || AI_MODEL_DEFAULTS.embeddings.modelId; }
 function _textModelId(cfg)  { return cfg?.textModel || _imageModelId(cfg); }
@@ -35,17 +34,6 @@ async function _getImagePipeline(cfg, onProgress, onLog) {
         onProgress, onLog,
     }).catch((e) => { _imagePipelinePromise = null; throw e; });
     return _imagePipelinePromise;
-}
-
-async function _getTextPipeline(cfg, onProgress, onLog) {
-    if (_textPipelinePromise) return _textPipelinePromise;
-    _textPipelinePromise = getPipeline({
-        kind: AI_MODEL_DEFAULTS.embeddings.textKind,
-        modelId: _textModelId(cfg),
-        cacheDir: cfg?.cacheDir,
-        onProgress, onLog,
-    }).catch((e) => { _textPipelinePromise = null; throw e; });
-    return _textPipelinePromise;
 }
 
 /**
@@ -69,13 +57,21 @@ export async function embedImage(absPath, cfg, onProgress, onLog) {
 
 /**
  * Encode a text query to a 512-dim L2-normalised Float32Array.
+ *
+ * Uses CLIPTextModelWithProjection directly rather than the `pipeline()` API.
+ * The `feature-extraction` pipeline kind for CLIP expects image pixel_values,
+ * not text tokens — direct model invocation is the only correct path.
  */
 export async function embedText(query, cfg, onProgress, onLog) {
     if (!query || typeof query !== 'string') return null;
-    const pipeline = await _getTextPipeline(cfg, onProgress, onLog);
+    const encode = await getClipTextEncoder({
+        modelId: _textModelId(cfg),
+        cacheDir: cfg?.cacheDir,
+        onProgress, onLog,
+    });
     let out;
     try {
-        out = await pipeline(query, { pooling: 'mean', normalize: false });
+        out = await encode(query);
     } catch {
         return null;
     }
@@ -115,5 +111,4 @@ function _arrayLikeToFloat32(x) {
  */
 export function _resetForTests() {
     _imagePipelinePromise = null;
-    _textPipelinePromise = null;
 }

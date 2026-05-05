@@ -346,6 +346,63 @@ export async function deleteModelCache(modelId, cacheDirCfg) {
     }
 }
 
+// Separate cache for the CLIP text encoder (tokenizer + CLIPTextModelWithProjection).
+// The standard `pipeline('feature-extraction', clipModel)` expects image pixel_values,
+// not text — text encoding requires loading the text tower directly.
+const _textEncoderPromises = new Map();
+
+/**
+ * Load the CLIP text encoder for a given model id and return a callable
+ * `(text: string) => Promise<Tensor>` that produces a `text_embeds` Tensor.
+ *
+ * Cached per modelId — same guarantee as `getPipeline`.
+ */
+export async function getClipTextEncoder({ modelId, cacheDir, onProgress, onLog } = {}) {
+    if (!modelId) throw new Error('getClipTextEncoder: modelId is required');
+    const _log = (level, msg) => {
+        try { if (typeof onLog === 'function') onLog({ source: 'ai', level, msg }); }
+        catch { /* swallow */ }
+    };
+
+    const key = `clip-text::${modelId}`;
+    let promise = _textEncoderPromises.get(key);
+    if (promise) return promise;
+
+    promise = (async () => {
+        const cacheDirAbs = resolveCacheDir(cacheDir);
+        await _ensureCacheDir(cacheDirAbs);
+        _log('info', `loading CLIP text encoder — model=${modelId} cacheDir=${cacheDirAbs}`);
+
+        const mod = await _importTransformers();
+        const { AutoTokenizer, CLIPTextModelWithProjection, env } = mod;
+        await _configureEnv(env, cacheDirAbs);
+
+        const progressCb = (p) => {
+            try { if (typeof onProgress === 'function') onProgress(p); }
+            catch { /* swallow */ }
+            try { if (_progressHook) _progressHook({ kind: 'clip-text-encoder', modelId, progress: p }); }
+            catch { /* swallow */ }
+        };
+
+        const [tokenizer, model] = await Promise.all([
+            AutoTokenizer.from_pretrained(modelId, { progress_callback: progressCb }),
+            CLIPTextModelWithProjection.from_pretrained(modelId, { progress_callback: progressCb }),
+        ]);
+
+        return async function encodeText(text) {
+            const inputs = tokenizer([text], { padding: true, truncation: true });
+            const { text_embeds } = await model(inputs);
+            return text_embeds;
+        };
+    })().catch((e) => {
+        _textEncoderPromises.delete(key);
+        throw e;
+    });
+
+    _textEncoderPromises.set(key, promise);
+    return promise;
+}
+
 /**
  * Best-effort dispose of every cached pipeline. Wired into the graceful-
  * shutdown path so the process can release WASM heap before exit.
@@ -373,7 +430,6 @@ export const AI_MODEL_DEFAULTS = Object.freeze({
     embeddings: {
         kind: 'image-feature-extraction',
         modelId: 'Xenova/clip-vit-base-patch32',
-        textKind: 'feature-extraction',  // text encoder uses the text head
         dim: 512,
     },
     faces: {
