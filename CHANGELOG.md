@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.10] — 2026-05-06
+
+### Added
+- **Maintenance → Optimise videos for streaming** (`#/maintenance/video`). MP4 / M4V / MOV / 3GP files whose `moov` index atom lives at the end of the file (the encoder default for many sources, including the clips this app downloads from Telegram) break the HTML5 `<video>` element in subtle ways: the player has to fetch every byte of `mdat` before it can paint a frame, decode audio, or honour a seek — so the gallery viewer looked like the video had no audio and the seek bar was dead. The new sweep walks every catalogued video, peeks the first 64 bytes to find the second atom, and rewrites any file whose `moov` is not at the head with `ffmpeg -movflags +faststart -c copy -map 0`. Stream-copy means no re-encode and no quality loss; the operation is I/O bound and finishes in seconds per file. Atomic publish via `<file>.faststart.tmp` + rename, sanity-checked tmp size (within 5–110 % of source) so a half-written file never overwrites the original. Concurrency capped at 2 by default (env `FASTSTART_CONCURRENCY`); WS progress + done events drive a determinate progress bar; `/api/maintenance/faststart/status` recovers in-flight state on tab reopen. The dashboard surfaces total / optimised / pending / skipped counts. Scan is admin-only and gated by `_faststartRunning` single-flight.
+- **Auto-faststart on every new download.** The downloader fires `optimizeDownloadInBackground(id)` after the post-insert thumb pre-generation, so MP4s land in faststart-optimised form for the gallery's first view. No-op for non-video / non-MP4 / already-optimised rows. Same fire-and-forget shape as the thumb pre-gen — failures are warned once to console and silently retried by the maintenance sweep next time.
+
+### Migration
+Existing libraries: open `Maintenance → Optimise videos for streaming` once, click `Optimise all`, wait. The sweep runs in the background; you can leave the page or close the tab. New downloads after the upgrade are fixed inline.
+
+### Internal
+- SW bumped `v269` → `v270`.
+
 ## [2.6.9] — 2026-05-06
 
 ### Fixed

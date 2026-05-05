@@ -212,6 +212,7 @@
                 <div class="hidden">
                     <div data-page="maintenance-duplicates"></div>
                     <div data-page="maintenance-thumbs"></div>
+                    <div data-page="maintenance-video"></div>
                     <div data-page="maintenance-nsfw"></div>
                     <div data-page="maintenance-logs"></div>
                     <div data-page="maintenance-backup"></div>
@@ -687,6 +688,9 @@
                         </a>
                         <a class="maintenance-tab" data-mt-page="maintenance-thumbs" href="#/maintenance/thumbs" role="tab">
                             <i class="ri-image-2-line"></i><span data-i18n="nav.maintenance.thumbs">Thumbnails</span>
+                        </a>
+                        <a class="maintenance-tab" data-mt-page="maintenance-video" href="#/maintenance/video" role="tab">
+                            <i class="ri-film-line"></i><span data-i18n="nav.maintenance.video">Videos</span>
                         </a>
                         <a class="maintenance-tab" data-mt-page="maintenance-nsfw" href="#/maintenance/nsfw" role="tab">
                             <i class="ri-alarm-warning-line"></i><span data-i18n="nav.maintenance.nsfw">NSFW</span>
@@ -2086,6 +2090,54 @@
                             </div>
                             <div id="setting-adv-thumbs-warn-misses" class="tg-toggle shrink-0 mt-0.5"></div>
                         </div>
+                    </section>
+                </div>
+
+                <!-- Maintenance / Video faststart optimiser (admin-only) -->
+                <div id="page-maintenance-video" class="hidden max-w-5xl mx-auto px-3 sm:px-4" data-admin-only
+                     data-page-title-key="maintenance.video.page_title"
+                     data-page-subtitle-key="maintenance.video.subtitle">
+                    <section class="bg-tg-panel rounded-xl p-4 mb-3">
+                        <div class="flex items-start justify-between gap-3 flex-wrap">
+                            <div class="min-w-0">
+                                <h2 class="text-tg-text text-base font-semibold" data-i18n="maintenance.video.page_title">Optimise videos for streaming</h2>
+                                <p class="text-xs text-tg-textSecondary mt-0.5" data-i18n="maintenance.video.subtitle">MP4 files whose `moov` index is at the end of the file break HTML5 seek and look like they have no audio. This sweep rewrites them in-place with `+faststart` so the player gets the index up front. Stream-copy, no re-encode.</p>
+                                <div id="video-no-ffmpeg" class="hidden mt-2 inline-flex items-center gap-2 px-2 py-1 rounded-md bg-yellow-500/15 text-yellow-300 text-xs">
+                                    <i class="ri-error-warning-line"></i>
+                                    <span data-i18n="maintenance.video.no_ffmpeg_chip">Faststart unavailable — ffmpeg missing on PATH</span>
+                                </div>
+                            </div>
+                            <div class="flex items-center gap-2 shrink-0">
+                                <button id="video-scan-btn" class="tg-btn text-xs px-3 py-1.5" data-i18n="maintenance.video.scan_all">Optimise all</button>
+                            </div>
+                        </div>
+                        <div id="video-progress" class="hidden mt-3">
+                            <div class="text-xs text-tg-textSecondary mb-1" id="video-progress-status"></div>
+                            <div class="h-1.5 bg-tg-bg/60 rounded overflow-hidden">
+                                <div id="video-progress-bar" class="h-full bg-tg-blue transition-all" style="width:0%"></div>
+                            </div>
+                        </div>
+                    </section>
+                    <section class="bg-tg-panel rounded-xl p-4">
+                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-1">
+                            <div class="bg-tg-bg/40 rounded-lg p-3 text-center">
+                                <div class="text-xs text-tg-textSecondary uppercase tracking-wide" data-i18n="maintenance.video.total">Total</div>
+                                <div id="video-stat-total" class="text-2xl font-semibold text-tg-text tabular-nums">—</div>
+                            </div>
+                            <div class="bg-tg-bg/40 rounded-lg p-3 text-center">
+                                <div class="text-xs text-tg-textSecondary uppercase tracking-wide" data-i18n="maintenance.video.optimized">Optimised</div>
+                                <div id="video-stat-optimized" class="text-2xl font-semibold text-tg-green tabular-nums">—</div>
+                            </div>
+                            <div class="bg-tg-bg/40 rounded-lg p-3 text-center">
+                                <div class="text-xs text-tg-textSecondary uppercase tracking-wide" data-i18n="maintenance.video.pending">Pending</div>
+                                <div id="video-stat-pending" class="text-2xl font-semibold text-tg-orange tabular-nums">—</div>
+                            </div>
+                            <div class="bg-tg-bg/40 rounded-lg p-3 text-center">
+                                <div class="text-xs text-tg-textSecondary uppercase tracking-wide" data-i18n="maintenance.video.skipped">Skipped</div>
+                                <div id="video-stat-skipped" class="text-2xl font-semibold text-tg-textSecondary tabular-nums">—</div>
+                            </div>
+                        </div>
+                        <p class="text-[11px] text-tg-textSecondary mt-2 leading-relaxed" data-i18n="maintenance.video.stats_help">Pending = MP4s whose moov atom is at the end of the file. Skipped = files in containers that don't use moov (WebM, MKV) or that aren't on disk. New downloads are auto-optimised after they land.</p>
                     </section>
                 </div>
 
