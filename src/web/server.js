@@ -1054,12 +1054,11 @@ runtime.on('event', (e) => broadcast({ type: 'monitor_event', ...e }));
 // the container was down closes itself with no user action required.
 runtime.on('catch_up_needed', ({ groupId, gap }) => {
     const histCfg = loadConfig().advanced?.history || {};
-    // Bound the catch-up size — a group that fell weeks behind could
-    // need ~10000s of messages, so cap at a sane ceiling. Falls back
-    // to "unlimited" when autoFirstLimit is 0 (operator opt-in for
-    // long catch-ups).
+    // Cap catch-up at autoFirstLimit (same bound as first-add backfill).
+    // Falls back to "unlimited" when autoFirstLimit is 0 (operator opt-in
+    // for long catch-ups).
     const ceiling = Number(histCfg.autoFirstLimit ?? 100);
-    const limit = ceiling > 0 ? Math.min(ceiling * 10, BACKFILL_MAX_LIMIT) : null;
+    const limit = ceiling > 0 ? Math.min(ceiling, BACKFILL_MAX_LIMIT) : null;
     _spawnInternalBackfill({
         groupId, limit, mode: 'catch-up', reason: 'auto-catch-up',
     }).then(jobId => {
