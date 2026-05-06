@@ -3,7 +3,7 @@ import fs from 'fs/promises';
 import fsSync, { existsSync } from 'fs';
 import path from 'path';
 import { getDb, deleteGroupDownloads, deleteAllDownloads,
-    getNsfwTierCounts, getNsfwHistogram, getNsfwListByTier,
+    getNsfwTierCounts, getNsfwHistogram, getNsfwListByTier, getNsfwIdsByTier,
     reclassifyNsfw, unwhitelistNsfw, NSFW_TIERS } from '../../core/db.js';
 import { sanitizeName } from '../../core/downloader.js';
 import * as integrity from '../../core/integrity.js';
@@ -142,29 +142,14 @@ export function createMaintenanceRouter({
         const fileTypes = Array.isArray(body?.fileTypes) && body.fileTypes.length
             ? body.fileTypes
             : cfg.fileTypes;
-        // Walk the entire matching set page-by-page so very large tiers (15 000
-        // rows in `def_not`) don't exceed any single-query limit.
-        const all = [];
-        let page = 1;
-        while (true) {
-            const r = getNsfwListByTier({
-                tier: body?.tier || null,
-                fileTypes,
-                groupId: body?.groupId || null,
-                includeWhitelisted: body?.includeWhitelisted === true,
-                page,
-                limit: 200,
-            });
-            for (const row of r.rows) {
-                const sc = Number(row.nsfw_score);
-                if (Number.isFinite(body?.scoreMax) && sc >= body.scoreMax) continue;
-                if (Number.isFinite(body?.scoreMin) && sc < body.scoreMin) continue;
-                all.push(row.id);
-            }
-            if (page >= r.totalPages) break;
-            page += 1;
-        }
-        return all;
+        return getNsfwIdsByTier({
+            tier: body?.tier || null,
+            fileTypes,
+            groupId: body?.groupId || null,
+            includeWhitelisted: body?.includeWhitelisted === true,
+            scoreMin: Number.isFinite(body?.scoreMin) ? Number(body.scoreMin) : null,
+            scoreMax: Number.isFinite(body?.scoreMax) ? Number(body.scoreMax) : null,
+        });
     }
 
     // Module-level state scoped to the factory closure.
