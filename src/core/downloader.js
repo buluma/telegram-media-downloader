@@ -465,6 +465,8 @@ export class DownloadManager extends EventEmitter {
             eta: null,
             status: this._paused.has(job.key) ? 'paused' : status,
             addedAt: job.addedAt || null,
+            accountId: job.accountId || null,
+            accountName: job.accountName || null,
         });
         const active = [];
         for (const [, st] of this.active) {
@@ -487,6 +489,8 @@ export class DownloadManager extends EventEmitter {
                 eta,
                 status: this._paused.has(st.key) ? 'paused' : 'active',
                 addedAt: st.addedAt || st.startedAt || null,
+                accountId: st.accountId || null,
+                accountName: st.accountName || null,
             });
         }
         const queued = [];
@@ -662,7 +666,15 @@ export class DownloadManager extends EventEmitter {
             try {
                 let prevBytes = 0n;
                 let prevTs = Date.now();
-                await this.client.downloadMedia(job.message, {
+                // Use the client that captured this job (poll/handler/resolver)
+                // when present — falling back to the default client only for
+                // legacy callers that haven't been updated to pass one.
+                // Without this, every download went through the default
+                // account, so a group that only the second/third account
+                // could read silently failed (or pulled from the wrong
+                // session) under multi-account setups.
+                const dlClient = job.client || this.client;
+                await dlClient.downloadMedia(job.message, {
                     outputFile: partPath,
                     progressCallback: (downloaded, total) => {
                         // Mid-flight cancel hook — Queue page → cancelJob()
@@ -700,6 +712,8 @@ export class DownloadManager extends EventEmitter {
                             total: Number(totalN),
                             progress: pct,
                             bps,
+                            accountId: job.accountId || null,
+                            accountName: job.accountName || null,
                         });
                     },
                 });
@@ -800,7 +814,10 @@ export class DownloadManager extends EventEmitter {
             if (error.message?.includes('FILE_REFERENCE_EXPIRED') || error.errorMessage === 'FILE_REFERENCE_EXPIRED') {
                 if (attempt < maxRetries) {
                     try {
-                        const messages = await this.client.getMessages(job.message.peerId, { ids: [job.message.id] });
+                        const refreshClient = job.client || this.client;
+                        const messages = await refreshClient.getMessages(job.message.peerId, {
+                            ids: [job.message.id],
+                        });
                         if (messages && messages.length > 0) {
                             job.message = messages[0];
                             return this.download(job, attempt + 1);

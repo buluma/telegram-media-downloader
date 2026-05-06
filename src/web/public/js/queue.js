@@ -385,6 +385,8 @@ function patchProgress(payload) {
         eta,
         status: 'active',
         addedAt: prev?.addedAt || Date.now(),
+        accountId: payload.accountId ?? prev?.accountId ?? null,
+        accountName: payload.accountName ?? prev?.accountName ?? null,
     };
     upsert(next);
 }
@@ -474,6 +476,8 @@ function handleWs(msg) {
             eta: null,
             status: 'active',
             addedAt: p.addedAt || prev?.addedAt || Date.now(),
+            accountId: p.accountId ?? prev?.accountId ?? null,
+            accountName: p.accountName ?? prev?.accountName ?? null,
         });
         // New job added → may not be in the rendered window yet → structural.
         scheduleStructuralRender();
@@ -486,6 +490,7 @@ function handleWs(msg) {
     }
     if (msg.type === 'download_complete' && msg.payload?.key) {
         const p = msg.payload;
+        const prev = store.get(p.key);
         upsert({
             key: p.key,
             groupId: String(p.groupId || ''),
@@ -507,12 +512,15 @@ function handleWs(msg) {
             addedAt: p.addedAt || Date.now(),
             finishedAt: Date.now(),
             filePath: p.filePath || null,
+            accountId: p.accountId ?? prev?.accountId ?? null,
+            accountName: p.accountName ?? prev?.accountName ?? null,
         });
         scheduleRender();
         return;
     }
     if (msg.type === 'download_error' && msg.payload?.job?.key) {
         const j = msg.payload.job;
+        const prev = store.get(j.key);
         upsert({
             key: j.key,
             groupId: String(j.groupId || ''),
@@ -530,6 +538,8 @@ function handleWs(msg) {
             error: msg.payload.error || 'Download failed',
             addedAt: j.addedAt || Date.now(),
             finishedAt: Date.now(),
+            accountId: j.accountId ?? prev?.accountId ?? null,
+            accountName: j.accountName ?? prev?.accountName ?? null,
         });
         scheduleRender();
         return;
@@ -912,6 +922,13 @@ function renderRow(j) {
         ? `<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-tg-orange/15 text-tg-orange ml-1.5 inline-flex items-center gap-0.5" title="${escapeHtml(i18nT('queue.duplicate.tooltip', 'Same file already exists on disk — no new bytes written, this row points at the existing copy.'))}"><i class="ri-file-copy-2-line"></i><span data-i18n="queue.duplicate">Duplicate</span></span>`
         : '';
 
+    // Account chip — surfaces which Telegram session pulled this job's
+    // bytes. Suppressed for jobs queued before multi-account routing
+    // landed (no accountName) so legacy rows don't render an empty pill.
+    const accountChip = j.accountName
+        ? `<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-tg-blue/10 text-tg-blue ml-1.5 inline-flex items-center gap-0.5" title="${escapeHtml(i18nTf('queue.account.tooltip', { name: j.accountName }, `Pulled via account: ${j.accountName}`))}"><i class="ri-user-3-line"></i><span>${escapeHtml(j.accountName)}</span></span>`
+        : '';
+
     // Click-to-view: a finished row whose filePath we know becomes a link
     // to the in-app media viewer. Nothing else changes (drag-select etc.
     // still fires through the same handler).
@@ -986,7 +1003,7 @@ function renderRow(j) {
             ${selectCell}
             ${thumb}
             <div class="min-w-0">
-                <div class="text-sm text-tg-text truncate" title="${escapeHtml(name)}">${escapeHtml(name)}</div>
+                <div class="text-sm text-tg-text truncate" title="${escapeHtml(name)}">${escapeHtml(name)}${accountChip}</div>
                 <div class="text-[11px] text-tg-textSecondary truncate">${escapeHtml(groupName)}${j.error ? ' · ' + escapeHtml(j.error) : ''}</div>
             </div>
             <div class="text-xs text-tg-textSecondary text-right tabular-nums">${escapeHtml(sizeStr)}</div>

@@ -1297,17 +1297,36 @@ app.post('/api/download/url', async (req, res) => {
                 if (!mediaType) { results.push({ url: raw, ok: false, error: 'Message has no downloadable media' }); continue; }
 
                 const groupId = String(resolved.entity.id);
-                const groupName = resolved.entity.title || resolved.entity.username || resolved.entity.firstName || groupId;
-                // Switch the downloader's reference client for this enqueue if
-                // the runtime's client differs from the resolver's. The
-                // downloader's .client is used to actually fetch bytes.
-                downloader.client = workingClient;
-                const ok = await downloader.enqueue({
-                    message: resolved.message,
-                    groupId,
-                    groupName,
-                    mediaType,
-                }, 1); // realtime priority
+                const groupName =
+                    resolved.entity.title ||
+                    resolved.entity.username ||
+                    resolved.entity.firstName ||
+                    groupId;
+                // Pin the resolver's client to this job. We used to mutate
+                // `downloader.client` here, but that race-condition'd any
+                // concurrent download — every in-flight job suddenly tried
+                // to fetch bytes through the URL-resolver's session. Per-
+                // job `client` lets each download stick to the session that
+                // can actually read the message.
+                const accountId = am.getIdForClient(workingClient);
+                const meta = accountId ? am.metadata?.get?.(accountId) : null;
+                const accountName =
+                    meta?.name ||
+                    meta?.username ||
+                    meta?.phone ||
+                    (accountId ? `#${accountId}` : null);
+                const ok = await downloader.enqueue(
+                    {
+                        message: resolved.message,
+                        groupId,
+                        groupName,
+                        mediaType,
+                        client: workingClient,
+                        accountId: accountId || null,
+                        accountName: accountName || null,
+                    },
+                    1,
+                ); // realtime priority
                 results.push({ url: raw, ok, group: groupName, messageId: parsed.messageId, mediaType });
             } catch (e) {
                 results.push({ url: raw, ok: false, error: e instanceof UrlParseError ? e.message : (e?.message || 'Failed') });
