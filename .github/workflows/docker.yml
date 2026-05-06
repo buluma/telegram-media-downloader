@@ -115,7 +115,7 @@ jobs:
               if [ "$FOUND_NODE" != "1" ]; then
                 echo "FAIL: no node process running as node user after 10s of probing"
                 echo "--- final ps -ef ---"
-                docker exec smoke ps -ef || true
+                echo "$PS_OUT"
                 docker logs smoke
                 docker stop smoke >/dev/null
                 exit 1

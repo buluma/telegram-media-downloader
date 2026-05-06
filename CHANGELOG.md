@@ -2,14 +2,58 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.3.49] — 2026-05-04
+## [2.6.12] — 2026-05-06
+
+### Fixed
+- **Maintenance tab strip was hidden on the Video page** added in v2.6.10. The CSS `display: flex` rule that toggles the `#maintenance-tabs` strip on per-feature pages enumerates each page slug explicitly (`body[data-page="maintenance-thumbs"] #maintenance-tabs, …`); `maintenance-video` was missing from that list, so navigating into `/#/maintenance/video` hid the strip + back link entirely. Adds the missing selector. (PR #25)
+
+### Internal
+- SW bumped `v271` → `v272`.
+
+## [2.6.11] — 2026-05-06
+
+### Fixed
+- **Mobile gallery video viewer flashing "Error 4: playback failed"** on roughly a quarter of opens, with the Retry button always succeeding. Cause: mobile Safari (and occasionally Chrome on Android) fires a spurious `MEDIA_ERR_SRC_NOT_SUPPORTED` event right after the first `src=` assignment when an in-flight HTTP fetch from a previous unload is still aborting. The user-visible Retry was doing the same thing the new auto-retry does — re-assign the same URL and call `load()` — so the file itself was never broken. Fix: `_showError()` silently retries once when the error code is 4 on a first attempt (bounded via `_errorRetries`, reset every `.load()`), and `unload()` now nulls out `video.onerror` *before* `removeAttribute('src') + load()` so the abort no longer fires a stray event into a stale handler. Genuine unsupported-codec failures still surface the overlay after the single retry. (PR #23)
+
+### Internal
+- SW bumped `v270` → `v271`.
+
+## [2.6.10] — 2026-05-06
 
 ### Added
-- **Comment media tracking** — channels with a linked discussion group can now have comment media downloaded alongside post media. Enable per group via `"trackComments": true` in config or the new toggle in the group settings modal (Topics tab → "Track comment media").
-- Real-time monitor discovers the linked discussion group at startup via `GetFullChannel` and routes comment messages through the parent group's existing media filters, download path, and dedup logic.
-- Polling loop extended to also poll linked discussion groups when `trackComments` is enabled.
-- Backfill (`HistoryDownloader`) runs a second pass on the linked discussion group after the main channel pass, respecting the same `limit` and emitting a `💬 Backfilling comment media…` log line in the progress panel.
-- **"Track comment media" toggle** added to the Topics tab of the group settings modal; saved and persisted via `PUT /api/groups/:id`.
+- **Maintenance → Optimise videos for streaming** (`#/maintenance/video`). MP4 / M4V / MOV / 3GP files whose `moov` index atom lives at the end of the file (the encoder default for many sources, including the clips this app downloads from Telegram) break the HTML5 `<video>` element in subtle ways: the player has to fetch every byte of `mdat` before it can paint a frame, decode audio, or honour a seek — so the gallery viewer looked like the video had no audio and the seek bar was dead. The new sweep walks every catalogued video, peeks the first 64 bytes to find the second atom, and rewrites any file whose `moov` is not at the head with `ffmpeg -movflags +faststart -c copy -map 0`. Stream-copy means no re-encode and no quality loss; the operation is I/O bound and finishes in seconds per file. Atomic publish via `<file>.faststart.tmp` + rename, sanity-checked tmp size (within 5–110 % of source) so a half-written file never overwrites the original. Concurrency capped at 2 by default (env `FASTSTART_CONCURRENCY`); WS progress + done events drive a determinate progress bar; `/api/maintenance/faststart/status` recovers in-flight state on tab reopen. The dashboard surfaces total / optimised / pending / skipped counts. Scan is admin-only and gated by `_faststartRunning` single-flight.
+- **Auto-faststart on every new download.** The downloader fires `optimizeDownloadInBackground(id)` after the post-insert thumb pre-generation, so MP4s land in faststart-optimised form for the gallery's first view. No-op for non-video / non-MP4 / already-optimised rows. Same fire-and-forget shape as the thumb pre-gen — failures are warned once to console and silently retried by the maintenance sweep next time.
+
+### Migration
+Existing libraries: open `Maintenance → Optimise videos for streaming` once, click `Optimise all`, wait. The sweep runs in the background; you can leave the page or close the tab. New downloads after the upgrade are fixed inline.
+
+### Internal
+- SW bumped `v269` → `v270`.
+
+## [2.6.9] — 2026-05-06
+
+### Fixed
+- **Video thumbnails were missing on Debian-based Docker hosts** (every `/api/thumbs/<id>` for a video row returned `404 "No thumb"` while images worked fine, and `Maintenance → Build all` reported `built=0` with `errored=0` because failures were silently coerced to "skipped"). Root cause: `_generateVideoThumb` writes a `<sha>.webp.tmp` file for atomic-rename-on-success, but the system `/usr/bin/ffmpeg` from `apt-get install ffmpeg` (Debian 12 / bookworm) refuses to infer the output muxer from a `.tmp` extension and exits non-zero with `Unable to find a suitable output format`. The bundled `@ffmpeg-installer/ffmpeg` build used on macOS / Windows happens to fall back to the codec hint, which is why localhost worked while production did not. Fix: pass `-f webp` explicitly in the single-pass libwebp branch so the muxer is named regardless of the destination filename. The JPEG → sharp fallback path was not affected (its tmp file already ends in `.jpg`).
+
+### Internal
+- SW bumped `v268` → `v269`.
+
+## [2.6.8] — 2026-05-05
+
+### Fixed
+- **Gallery tile thumbnails were stuck at `opacity: 0`** so every photo and video tile rendered as a black box even though the WebP thumb file was generated, the HTTP response was 200, and the `<img>` element loaded successfully. CSS keeps `.media-item img` invisible until a `.loaded` class is added — that class used to be wired up by the lazy-load IntersectionObserver, but the tile template had moved to native `loading="lazy"` and no longer carried `data-src`, so the observer never fired. The tile now adds `.loaded` from inline `onload` / `onerror` handlers, which works for both successful loads and 404 fallbacks. (PR #19)
+
+### Changed
+- **Node baseline raised to 22 LTS** (was `>=20.0.0`). Node 20 reaches EOL April 2026; 22 has been LTS since October 2024. The Docker runtime image moves to `node:24.15.0-bookworm-slim` (current Active LTS, supported through April 2027). `src/index.js`'s doctor check is updated to match. (PR #20)
+- **CI matrix** now tests against Node `22` and `24` instead of `20` and `22`. (PR #20)
+- **Production deps bumped** by dependabot's grouped PR: `@aws-sdk/client-s3` 3.1041.0 → 3.1042.0, `@aws-sdk/lib-storage` 3.1041.0 → 3.1042.0, `better-sqlite3` 12.6.2 → 12.9.0, `ws` 8.19.0 → 8.20.0. (PR #21)
+- **GitHub Actions bumped** by dependabot's grouped PR: `actions/checkout` v4 → v6, `actions/setup-node` v4 → v6, `github/codeql-action` v3 → v4, `docker/setup-buildx-action` v3 → v4, `docker/build-push-action` v6 → v7, `docker/login-action` v3 → v4, `docker/metadata-action` v5 → v6 (8 actions total). `release-drafter/release-drafter` is intentionally pinned at v6 — v7 currently fails on `pull_request` triggers with `Validation Failed: target_commitish` because it tries to update the in-progress draft against `refs/pull/<n>/merge`, which the GitHub Releases API rejects. Revisit once upstream cuts a v7 patch. (PR #16)
+
+### CI
+- **Docker smoke test fixed** — was flaking on every PR with `FAIL: no node process running as node user`. The healthcheck-then-`ps` approach grepped column 2 (`COMMAND`, where `comm` is truncated) with a fragile `awk` pattern that silently failed even when `ps -ef` could see the node process. Switched to grepping column 1 (`UNAME`) of `ps -ef` directly, wrapped in a 10× / 1 s retry loop purely for boot timing. The retry never had to fire on the verifying run; the column choice was the actual bug. (PR #20)
+
+### Internal
+- SW bumped `v267` → `v268`.
 
 ## [2.6.7] — 2026-05-05
 

@@ -1,6 +1,6 @@
 {
   "name": "telegram-media-downloader",
-  "version": "2.3.49",
+  "version": "2.6.12",
   "description": "Self-hosted Telegram media downloader — CLI + Web dashboard. MIT, no quotas.",
   "type": "module",
   "main": "src/index.js",
@@ -22,28 +22,28 @@
     "SECURITY.md"
   ],
   "scripts": {
-    "start": "node scripts/run-node.js src/index.js",
-    "menu": "node scripts/run-node.js src/index.js menu",
-    "monitor": "node scripts/run-node.js src/index.js monitor",
-    "history": "node scripts/run-node.js src/index.js history",
-    "doctor": "node scripts/run-node.js src/index.js doctor",
-    "auth": "node scripts/run-node.js src/index.js auth",
-    "prod": "node scripts/run-node.js runner.js",
-    "dev": "node scripts/run-node.js --watch src/web/server.js",
-    "migrate": "node scripts/run-node.js scripts/migrate_json_to_sqlite.js",
+    "start": "node src/index.js",
+    "menu": "node src/index.js menu",
+    "monitor": "node src/index.js monitor",
+    "history": "node src/index.js history",
+    "auth": "node src/index.js auth",
+    "doctor": "node src/index.js doctor",
+    "prod": "node runner.js",
+    "dev": "node --watch src/web/server.js",
+    "migrate": "node scripts/migrate_json_to_sqlite.js",
     "lint": "eslint .",
     "format": "prettier --write \"src/**/*.{js,html,css}\" \"*.{md,json}\"",
-    "test": "node scripts/run-node.js ./node_modules/vitest/vitest.mjs run",
-    "test:watch": "node scripts/run-node.js ./node_modules/vitest/vitest.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "prepare": "husky || true"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/buluma/telegram-media-downloader.git"
+    "url": "https://github.com/botnick/telegram-media-downloader.git"
   },
-  "homepage": "https://github.com/buluma/telegram-media-downloader#readme",
+  "homepage": "https://github.com/botnick/telegram-media-downloader#readme",
   "bugs": {
-    "url": "https://github.com/buluma/telegram-media-downloader/issues"
+    "url": "https://github.com/botnick/telegram-media-downloader/issues"
   },
   "keywords": [
     "telegram",
@@ -58,7 +58,7 @@
     "automation",
     "telegram-api"
   ],
-  "author": "buluma",
+  "author": "botnick",
   "license": "MIT",
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1042.0",
