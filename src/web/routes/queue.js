@@ -248,5 +248,83 @@ export function createQueueRouter({ dataDir, downloadsDir, runtime, broadcast })
         res.json({ success: true });
     });
 
+    router.post('/api/queue/retry-all', (req, res) => {
+        const dl = requireDownloader(res);
+        if (!dl) return;
+        let retried = 0;
+        const skippedKeys = [];
+        for (const [key, meta] of _failedJobMeta) {
+            if (!meta) {
+                skippedKeys.push(key);
+                continue;
+            }
+            try {
+                dl.retryJob(meta);
+                retried++;
+            } catch (e) {
+                skippedKeys.push(key);
+            }
+        }
+        broadcast({ type: 'queue_changed', payload: { op: 'retry-all', retried } });
+        res.json({ success: true, retried, skipped: skippedKeys.length });
+    });
+
+    // Multi-row batch action. Single endpoint instead of per-action routes so
+    // the client can fire one request per user gesture regardless of action.
+    // Continues past per-row failures so a single missing key doesn't abort
+    // the whole batch.
+    router.post('/api/queue/batch', async (req, res) => {
+        const dl = requireDownloader(res);
+        if (!dl) return;
+        const { keys, action } = req.body || {};
+        if (!Array.isArray(keys) || keys.length === 0) {
+            return res.status(400).json({ error: 'keys must be a non-empty array' });
+        }
+        const ALLOWED = new Set(['pause', 'resume', 'cancel', 'retry', 'dismiss']);
+        if (!ALLOWED.has(action)) {
+            return res.status(400).json({ error: `action must be one of: ${Array.from(ALLOWED).join(', ')}` });
+        }
+        let ok = 0;
+        const failed = [];
+        for (const rawKey of keys) {
+            const key = String(rawKey || '');
+            if (!key) {
+                failed.push({ key: rawKey, reason: 'empty key' });
+                continue;
+            }
+            try {
+                if (action === 'pause') {
+                    if (dl.pauseJob(key)) ok++;
+                    else failed.push({ key, reason: 'not pausable' });
+                } else if (action === 'resume') {
+                    if (dl.resumeJob(key)) ok++;
+                    else failed.push({ key, reason: 'not paused' });
+                } else if (action === 'cancel') {
+                    dl.cancelJob(key);
+                    _failedJobMeta.delete(key);
+                    ok++;
+                } else if (action === 'retry') {
+                    const meta = _failedJobMeta.get(key);
+                    if (!meta) {
+                        failed.push({ key, reason: 'meta evicted' });
+                        continue;
+                    }
+                    dl.retryJob(meta);
+                    ok++;
+                } else if (action === 'dismiss') {
+                    _failedJobMeta.delete(key);
+                    ok++;
+                }
+            } catch (e) {
+                failed.push({ key, reason: e?.message || 'unknown' });
+            }
+        }
+        broadcast({
+            type: 'queue_changed',
+            payload: { op: 'batch', action, ok, failed: failed.length },
+        });
+        res.json({ success: true, ok, failed });
+    });
+
     return router;
 }

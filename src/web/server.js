@@ -108,10 +108,15 @@ process.on('uncaughtException', (err) => {
         return;
     }
     // Non-native uncaught exceptions are real bugs — surface them and
-    // crash so the watchdog can restart cleanly. Mirroring the Node
-    // default: print stack + exit non-zero.
+    // crash so the watchdog can restart cleanly. Stop accepting new
+    // connections and give in-flight requests up to 5 s to flush
+    // before exiting; without the drain, every unhandled bug produces
+    // a 502 burst for every concurrent client during the restart.
     console.error('Uncaught exception:', err);
-    process.exit(1);
+    try {
+        server.close();
+    } catch {}
+    setTimeout(() => process.exit(1), 5000).unref();
 });
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -126,6 +131,14 @@ const SESSIONS_DIR = path.join(DATA_DIR, 'sessions');
 
 const app = express();
 const server = createServer(app);
+// Cloudflare's idle/origin window is ~100 s; nginx default proxy_read_timeout
+// is 60 s. Setting our own timeouts slightly above keepAliveTimeout avoids
+// the Node-default mismatch (5 s) where a long-poll request still inside
+// the proxy's window gets reset by the origin and the proxy reports 502.
+// headersTimeout must be ≥ keepAliveTimeout per Node docs.
+server.keepAliveTimeout = 65_000;
+server.headersTimeout = 70_000;
+server.requestTimeout = 120_000;
 // noServer: we authenticate the upgrade ourselves before handing the socket
 // off to the WebSocketServer. Without this, ws auto-binds to `server` and
 // accepts every connection including unauthenticated ones.
@@ -1821,6 +1834,20 @@ function _groupPurgeTracker(groupId) {
 wss.on('connection', (ws) => {
     clients.add(ws);
     ws.on('close', () => clients.delete(ws));
+});
+
+// Last-resort handler — converts any throw or rejected promise that
+// escaped a route into a JSON 500 instead of leaving the response open
+// until the reverse proxy times out (manifests as 502 to the client).
+// Must be registered after all routes/middleware and before listen().
+app.use((err, req, res, _next) => {
+    if (res.headersSent) return;
+    log({
+        source: 'http',
+        level: 'error',
+        msg: `${req.method} ${req.url} → ${err?.stack || err?.message || err}`,
+    });
+    res.status(500).json({ error: err?.message || 'Internal Server Error' });
 });
 
 const PORT = process.env.PORT || 3000;
