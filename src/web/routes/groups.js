@@ -156,16 +156,27 @@ export function createGroupsRouter({
                 return res.json(respCache.body);
             }
 
-            // Prefer the AccountManager-managed default client; fall back to the
-            // legacy single-session client for installs that haven't migrated.
-            let client = null;
+            // Collect every connected client + its account metadata. Using only
+            // the default client made groups visible to a second/third account
+            // silently disappear from the picker.
+            const clientPairs = [];
             try {
                 const am = await getAccountManager();
-                client = am.getDefaultClient();
+                for (const [accountId, c] of am.clients) {
+                    if (!c?.connected) continue;
+                    const meta = am.metadata.get(accountId) || { id: accountId };
+                    clientPairs.push({ id: accountId, meta, client: c });
+                }
             } catch { /* no creds yet */ }
             const legacyClient = getTelegramClient();
-            if ((!client || !client.connected) && legacyClient?.connected) client = legacyClient;
-            if (!client || !client.connected) {
+            if (legacyClient?.connected && !clientPairs.some(p => p.client === legacyClient)) {
+                clientPairs.push({
+                    id: 'legacy',
+                    meta: { id: 'legacy', name: 'Default', phone: '', username: '' },
+                    client: legacyClient,
+                });
+            }
+            if (clientPairs.length === 0) {
                 // Distinguish "no Telegram account configured yet" (operator
                 // hasn't run through Add Account) from "client is briefly
                 // disconnected" — the SPA renders a friendly empty-state with
@@ -183,34 +194,60 @@ export function createGroupsRouter({
             const configGroups = config.groups || [];
             const allowDM = config.allowDmDownloads === true;
 
-            // Pull both active and archived in parallel so a sometimes-archived
-            // backup channel doesn't disappear from the picker.
-            const [active, archived] = await Promise.all([
-                client.getDialogs({ limit: 500 }).catch(() => []),
-                client.getDialogs({ limit: 200, archived: true }).catch(() => []),
-            ]);
+            // Fan out across every account — active + archived per client in
+            // parallel. One bad client (e.g. mid-reconnect) doesn't kill the
+            // sweep; we just lose its chats from this response.
+            const perClient = await Promise.all(clientPairs.map(async (p) => {
+                const [a, ar] = await Promise.all([
+                    p.client.getDialogs({ limit: 500 }).catch(() => []),
+                    p.client.getDialogs({ limit: 200, archived: true }).catch(() => []),
+                ]);
+                return { accountId: p.id, accountMeta: p.meta, active: a, archived: ar };
+            }));
+
+            // Build maps keyed by dialog id:
+            //   firstDialog[id] -> { d, archived } picked on first sighting (active wins over archived)
+            //   accountIds[id]  -> Set of every accountId that sees this chat
+            const firstDialog = new Map();
+            const accountIds = new Map();
 
             // Side-effect: warm the name cache used by /api/groups + /api/downloads.
             // Free since we already have the dialog objects in hand.
             const nameById = new Map(getDialogsNamesState().byId);
-            for (const d of [...active, ...archived]) {
-                const id = String(d.id);
-                const nm = d.title
-                    || d.name
-                    || ((d.entity?.firstName || '') + (d.entity?.lastName ? ' ' + d.entity.lastName : '')).trim()
-                    || d.entity?.username
-                    || null;
-                if (nm && !nameLooksUnresolved(nm, id)) nameById.set(id, nm);
+            for (const p of perClient) {
+                for (const isArchived of [false, true]) {
+                    const list = isArchived ? p.archived : p.active;
+                    for (const d of list) {
+                        const id = String(d.id);
+
+                        if (!accountIds.has(id)) accountIds.set(id, new Set());
+                        accountIds.get(id).add(p.accountId);
+
+                        if (!firstDialog.has(id)) firstDialog.set(id, { d, archived: isArchived });
+
+                        const nm = d.title
+                            || d.name
+                            || ((d.entity?.firstName || '') + (d.entity?.lastName ? ' ' + d.entity.lastName : '')).trim()
+                            || d.entity?.username
+                            || null;
+                        if (nm && !nameLooksUnresolved(nm, id)) nameById.set(id, nm);
+                    }
+                }
             }
             setDialogsNamesState({ at: now, byId: nameById });
-            const seen = new Set();
             const merged = [];
-            for (const d of [...active, ...archived]) {
-                const id = String(d.id);
-                if (seen.has(id)) continue;
-                seen.add(id);
-                merged.push({ d, archived: archived.includes(d) });
+            for (const [, entry] of firstDialog) {
+                merged.push(entry);
             }
+
+            // Account directory for the response — lets the SPA render account
+            // chips by id without a second round-trip to /api/accounts.
+            const accounts = clientPairs.map(p => ({
+                id: p.id,
+                name: p.meta?.name || p.meta?.username || p.id,
+                phone: p.meta?.phone || '',
+                username: p.meta?.username || '',
+            }));
 
             const results = merged
                 .filter(({ d }) => {
@@ -238,10 +275,11 @@ export function createGroupsRouter({
                         filters: configGroup?.filters || { photos: true, videos: true, files: true, links: true, voice: false, gifs: false, stickers: false },
                         autoForward: configGroup?.autoForward || { enabled: false, destination: null, deleteAfterForward: false },
                         photoUrl: `/api/groups/${id}/photo`,
+                        accountIds: Array.from(accountIds.get(id) || []).sort(),
                     };
                 });
 
-            const body = { success: true, dialogs: results, allowDM };
+            const body = { success: true, dialogs: results, allowDM, accounts };
             setDialogsRespCache({ at: now, body });
             res.json(body);
         } catch (error) {
