@@ -1778,20 +1778,6 @@ function _groupPurgeTracker(groupId) {
     return _groupPurgeTrackers.get(k);
 }
 
-// Snapshot for GET /api/maintenance/logs/recent — newest first, capped.
-app.get('/api/maintenance/logs/recent', async (req, res) => {
-    const limit = Math.max(1, Math.min(LOG_BUFFER_SIZE, Number(req.query.limit) || 200));
-    const sources = (req.query.source ? String(req.query.source).split(',') : null);
-    const minLevel = req.query.level || null; // 'info'|'warn'|'error'
-    const levelOrder = { info: 0, warn: 1, error: 2 };
-    const minLvl = minLevel ? (levelOrder[minLevel] ?? 0) : 0;
-    const filtered = _logBuffer.filter((e) => {
-        if (sources && !sources.includes(e.source)) return false;
-        if ((levelOrder[e.level] ?? 0) < minLvl) return false;
-        return true;
-    });
-    res.json({ logs: filtered.slice(-limit) });
-});
 
 wss.on('connection', (ws) => {
     clients.add(ws);
