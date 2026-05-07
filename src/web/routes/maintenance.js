@@ -1121,7 +1121,10 @@ export function createMaintenanceRouter({
     router.get('/api/maintenance/nsfw/v2/histogram', async (req, res) => {
         try {
             const cfg = _nsfwCfg();
-            const bins = Number(req.query.bins) || 20;
+            const rawBins = Number(req.query.bins);
+            const bins = Number.isFinite(rawBins)
+                ? Math.max(4, Math.min(50, Math.trunc(rawBins)))
+                : 20;
             res.json(getNsfwHistogram(cfg.fileTypes, bins));
         } catch (e) {
             res.status(500).json({ error: e.message });
