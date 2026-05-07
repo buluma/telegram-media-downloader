@@ -1191,6 +1191,12 @@ const SSRF_BLOCKLIST = [
     /^::1$/, /^fe80:/i, /^fc00:/i, /^fd[0-9a-f]{2}:/i,
 ];
 
+// Restrict proxy probe targets to known-safe public endpoints.
+// Keep values lowercase.
+const PROXY_TEST_HOST_ALLOWLIST = new Set([
+    'example.com',
+]);
+
 function isPrivateHost(host) {
     if (!host) return true;
     const lower = host.toLowerCase();
@@ -1204,7 +1210,11 @@ app.post('/api/proxy/test', async (req, res) => {
     if (typeof host !== 'string' || host.length > 253) {
         return res.status(400).json({ error: 'invalid host' });
     }
-    if (isPrivateHost(host)) {
+    const normalizedHost = host.trim().toLowerCase();
+    if (!normalizedHost || !PROXY_TEST_HOST_ALLOWLIST.has(normalizedHost)) {
+        return res.status(400).json({ error: 'host is not allowed' });
+    }
+    if (isPrivateHost(normalizedHost)) {
         return res.status(400).json({
             error: 'Private / loopback / link-local addresses are not allowed for proxy probes.',
         });
@@ -1226,7 +1236,7 @@ app.post('/api/proxy/test', async (req, res) => {
     sock.once('connect', () => finish(true));
     sock.once('error', (e) => finish(false, e.message));
     sock.once('timeout', () => finish(false, 'timeout'));
-    sock.connect(p, host);
+    sock.connect(p, normalizedHost);
 });
 
 // ====== Download-by-Link ===================================================
