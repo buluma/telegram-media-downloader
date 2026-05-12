@@ -22,7 +22,6 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import {
-    clearAllPeople,
     clearImageTagsForDownload,
     deleteFacesForDownload,
     getDb,
@@ -563,10 +562,9 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
 
             // Snapshot every labelled centroid BEFORE wiping people. The
             // match runs against the snapshot (in-memory) because by the
-            // time we hit the DB, clearAllPeople has already nuked
-            // everything. Renames now survive re-runs as long as the new
-            // cluster's centroid is within `matchEps` of the old labelled
-            // cluster's centroid.
+            // time the write transaction runs, people has already been cleared.
+            // Renames survive re-runs as long as the new cluster's centroid
+            // is within `matchEps` of the old labelled cluster's centroid.
             //
             // Precedence for the match radius:
             //   1. `cfg.faces.labelMatchEps`            (new nested path)
@@ -621,24 +619,32 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                 return best;
             };
 
-            clearAllPeople();
-            let i = 0;
+            // Pre-compute carry-over labels before the transaction so the
+            // read-only snapshot pass doesn't run inside the write lock.
+            const clusterPlan = clusters.map((c) => ({
+                ...c,
+                carryOver: findCarryOverLabel(c.centroid),
+            }));
+
+            // Atomic: clear + re-assign in one transaction so a mid-loop
+            // crash cannot leave orphaned people rows with no face assignments.
             let preservedCount = 0;
-            for (const c of clusters) {
-                const carryOver = findCarryOverLabel(c.centroid);
-                const personId = insertPerson({
-                    label: carryOver,
-                    centroidBlob: _f32ToBlob(c.centroid),
-                    faceCount: c.faceCount,
-                });
-                if (carryOver) preservedCount += 1;
-                for (const memberIdx of c.memberIdxs) {
-                    const faceId = faces[memberIdx].id;
-                    setFacePerson(faceId, personId);
+            const clusterTx = db.transaction(() => {
+                db.prepare('UPDATE faces SET person_id = NULL').run();
+                db.prepare('DELETE FROM people').run();
+                for (const c of clusterPlan) {
+                    const personId = insertPerson({
+                        label: c.carryOver,
+                        centroidBlob: _f32ToBlob(c.centroid),
+                        faceCount: c.faceCount,
+                    });
+                    if (c.carryOver) preservedCount += 1;
+                    for (const memberIdx of c.memberIdxs) {
+                        setFacePerson(faces[memberIdx].id, personId);
+                    }
                 }
-                i += 1;
-                if (i % 100 === 0) await new Promise((r) => setImmediate(r));
-            }
+            });
+            clusterTx();
             log(
                 'info',
                 `faces scan: clustered ${faces.length} faces into ${clusters.length} groups (${preservedCount}/${labelSnapshot.length} labels preserved across re-cluster, eps=${matchEps.toFixed(3)})`,
