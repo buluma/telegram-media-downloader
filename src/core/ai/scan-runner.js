@@ -35,9 +35,9 @@ import {
     setImageTags,
 } from '../db.js';
 import { addImageObjects, getUnscannedOcrBatch, getUnscannedObjectBatch } from '../db/faces.js';
-import { clusterFaces, computeFaceQualityScore, detectFaces } from './faces.js';
+import { clusterFaces, computeFaceQualityScore, detectFaces, FACE_DEFAULTS } from './faces.js';
 import { resolveFacesValue } from './faces-config.js';
-import { getSidecarUrl } from './faces-client.js';
+import { detectFacesBatch, getSidecarUrl } from './faces-client.js';
 import { hasFfmpeg, resolveFfmpegBin } from '../thumbs.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -385,54 +385,42 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
             while (!signal.aborted) {
                 const batch = getUnindexedAiBatch({ fileTypes, limit: batchSize });
                 if (!batch.length) break;
-                for (const row of batch) {
+                // Partition batch: videos use per-frame single detect, images
+                // use one HTTP round-trip via /detect/batch.
+                const items = batch.map((row) => ({ row, abs: _resolveAbs(row.file_path) }));
+                const nullItems = items.filter((i) => !i.abs);
+                const videoItems = items.filter(
+                    (i) => i.abs && String(i.row.file_type || '').toLowerCase() === 'video',
+                );
+                const imageItems = items.filter(
+                    (i) => i.abs && String(i.row.file_type || '').toLowerCase() !== 'video',
+                );
+
+                for (const { row } of nullItems) {
+                    _statNull++;
+                    setAiIndexedAt(row.id);
+                    state.scanned += 1;
+                    bump();
+                }
+
+                if (signal.aborted) continue;
+
+                // Videos: per-frame extraction + single-image detect.
+                for (const { row, abs } of videoItems) {
                     if (signal.aborted) break;
-                    const abs = _resolveAbs(row.file_path);
                     let detectedTotal = 0;
-                    if (abs) {
+                    if (canSampleVideos) {
+                        const framePaths = await _extractVideoFrames(abs, {
+                            intervalSec: videoFrameIntervalSec,
+                            maxFrames: videoMaxFrames,
+                        });
+                        deleteFacesForDownload(row.id);
                         try {
-                            if (String(row.file_type || '').toLowerCase() === 'video') {
-                                if (canSampleVideos) {
-                                    const framePaths = await _extractVideoFrames(abs, {
-                                        intervalSec: videoFrameIntervalSec,
-                                        maxFrames: videoMaxFrames,
-                                    });
-                                    deleteFacesForDownload(row.id);
-                                    try {
-                                        for (const frameAbs of framePaths) {
-                                            if (signal.aborted) break;
-                                            const faces = await detectFaces(
-                                                frameAbs,
-                                                cfg,
-                                                logEntry,
-                                            );
-                                            if (Array.isArray(faces) && faces.length) {
-                                                for (const f of faces) {
-                                                    insertFace({
-                                                        downloadId: row.id,
-                                                        x: f.x,
-                                                        y: f.y,
-                                                        w: f.w,
-                                                        h: f.h,
-                                                        embeddingBlob: _f32ToBlob(f.embedding),
-                                                        qualityScore: computeFaceQualityScore(
-                                                            f,
-                                                            cfg,
-                                                        ),
-                                                    });
-                                                    detectedTotal += 1;
-                                                }
-                                            }
-                                        }
-                                    } finally {
-                                        await _cleanupTmpFrames(framePaths);
-                                    }
-                                }
-                            } else {
-                                const detected = await detectFaces(abs, cfg, logEntry);
-                                if (Array.isArray(detected) && detected.length) {
-                                    deleteFacesForDownload(row.id);
-                                    for (const f of detected) {
+                            for (const frameAbs of framePaths) {
+                                if (signal.aborted) break;
+                                const faces = await detectFaces(frameAbs, cfg, logEntry);
+                                if (Array.isArray(faces) && faces.length) {
+                                    for (const f of faces) {
                                         insertFace({
                                             downloadId: row.id,
                                             x: f.x,
@@ -446,8 +434,8 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                                     }
                                 }
                             }
-                        } catch (e) {
-                            log('warn', `detectFaces threw on id=${row.id}: ${e?.message || e}`);
+                        } finally {
+                            await _cleanupTmpFrames(framePaths);
                         }
                     }
                     if (detectedTotal > 0) {
@@ -457,6 +445,63 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                     state.scanned += 1;
                     bump();
                     await new Promise((r) => setImmediate(r));
+                }
+
+                if (signal.aborted) continue;
+
+                // Images: one HTTP round-trip for the whole sub-batch via /detect/batch.
+                let batchResults = [];
+                if (imageItems.length) {
+                    try {
+                        batchResults = await detectFacesBatch(
+                            imageItems.map((i) => i.abs),
+                            cfg,
+                            log,
+                        );
+                    } catch (e) {
+                        log('warn', `detectFacesBatch threw: ${e?.message || e}`);
+                        batchResults = imageItems.map(() => null);
+                    }
+                }
+
+                for (let bi = 0; bi < imageItems.length; bi++) {
+                    const { row } = imageItems[bi];
+                    const detected = batchResults[bi] ?? null;
+                    if (detected === null) {
+                        _statNull++;
+                    } else if (detected.length === 0) {
+                        _statEmpty++;
+                    } else {
+                        _statFaces += detected.length;
+                        _statPhotos++;
+                    }
+                    if (Array.isArray(detected) && detected.length) {
+                        deleteFacesForDownload(row.id);
+                        for (const f of detected) {
+                            if (!f.embedding || !f.embedding.length) continue;
+                            insertFace({
+                                downloadId: row.id,
+                                x: f.x,
+                                y: f.y,
+                                w: f.w,
+                                h: f.h,
+                                embeddingBlob: _f32ToBlob(f.embedding),
+                                qualityScore: computeFaceQualityScore(f, cfg),
+                            });
+                        }
+                    }
+                    setAiIndexedAt(row.id);
+                    state.scanned += 1;
+                    bump();
+                }
+                if (state.scanned >= _nextStatLog) {
+                    log(
+                        'info',
+                        `faces scan progress: ${state.scanned}/${phaseATotal} — ` +
+                            `${_statPhotos} with faces (${_statFaces} total), ` +
+                            `${_statEmpty} no-face, ${_statNull} errors`,
+                    );
+                    _nextStatLog = state.scanned + 200;
                 }
             }
 
