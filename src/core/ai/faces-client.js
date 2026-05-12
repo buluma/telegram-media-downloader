@@ -29,7 +29,9 @@ import { resolveFacesValue } from './faces-config.js';
 // hasn't set any of the matching `TGDL_FACES_*` env vars. `applyFacesCfg`
 // pushes operator values on top, so this is the bare-install behaviour.
 const HEALTH_CACHE_TTL_MS_DEFAULT = 5000;
-const REQUEST_TIMEOUT_MS_DEFAULT = 15000;
+// CPU-only buffalo_l inference can take 5-30 s per image on slow hardware;
+// 60 s gives headroom without hanging the scan loop forever on a dead sidecar.
+const REQUEST_TIMEOUT_MS_DEFAULT = 60000;
 const MAX_RETRIES_DEFAULT = 3;
 const RETRY_BACKOFF_MS_DEFAULT = [300, 600, 1200];
 
@@ -419,6 +421,8 @@ async function _postWithRetry(url, body, onLog) {
     const maxRetries = Math.max(1, _maxRetries);
     let lastErr = null;
     for (let attempt = 0; attempt < maxRetries; attempt++) {
+        let bail = false;
+        let bailReason = '';
         try {
             const res = await _fetchWithTimeout(url, {
                 method: 'POST',
@@ -434,17 +438,26 @@ async function _postWithRetry(url, body, onLog) {
             }
         } catch (e) {
             lastErr = e;
+            if (attempt < maxRetries - 1 && e?.name === 'AbortError') {
+                // Client-side timeout: sidecar is alive but slow — don't retry
+                // (piling up requests against a slow CPU just makes it worse).
+                bail = true;
+                bailReason = `— timed out after ${_requestTimeoutMs}ms, skipping image`;
+            }
         }
+        const hasMore = attempt < maxRetries - 1 && !bail;
         const backoff =
             _retryBackoffMs[attempt] ?? _retryBackoffMs[_retryBackoffMs.length - 1] ?? 300;
+        const suffix = bail ? bailReason : hasMore ? `— retrying in ${backoff} ms` : '— giving up';
         _log(
             onLog,
             'warn',
             `sidecar POST ${url} attempt ${attempt + 1}/${maxRetries} failed: ${
                 lastErr?.message || lastErr
-            } — retrying in ${backoff} ms`,
+            } ${suffix}`,
         );
-        await _sleep(backoff);
+        if (bail) break;
+        if (hasMore) await _sleep(backoff);
     }
     throw lastErr || new Error('sidecar POST: retries exhausted');
 }
