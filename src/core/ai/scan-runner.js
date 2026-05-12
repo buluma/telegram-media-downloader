@@ -779,19 +779,31 @@ export function startOcrScan(cfg, onProgress, onDone, onLog) {
     );
 }
 
+async function _readAsBase64(absPath) {
+    const buf = await fs.readFile(absPath);
+    return buf.toString('base64');
+}
+
 /**
  * Call the Python sidecar's ``POST /ocr`` for one image.
+ * Tries path mode first; falls back to base64 if sidecar's allow-list rejects.
  * Returns ``{text, language, confidence}`` or null on failure.
  */
 async function _extractTextOne(sidecarUrl, absPath, log) {
     const url = `${sidecarUrl.replace(/\/+$/, '')}/ocr`;
-    try {
-        const res = await fetch(url, {
+    const doFetch = async (body) =>
+        fetch(url, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ path: absPath }),
-            signal: AbortSignal.timeout(30000), // 30 s per file
+            body: JSON.stringify(body),
+            signal: AbortSignal.timeout(30000),
         });
+    try {
+        let res = await doFetch({ path: absPath });
+        if (res.status === 403) {
+            const b64 = await _readAsBase64(absPath);
+            res = await doFetch({ image_b64: b64 });
+        }
         if (!res.ok) {
             log('warn', `ocr endpoint returned ${res.status} for ${absPath}`);
             return null;
@@ -882,17 +894,24 @@ export function startObjectDetectionScan(cfg, onProgress, onDone, onLog) {
 
 /**
  * Call the Python sidecar's ``POST /detect-objects`` for one image.
+ * Tries path mode first; falls back to base64 if sidecar's allow-list rejects.
  * Returns array of {object, confidence, x, y, w, h} or empty array on failure.
  */
 async function _detectObjectsOne(sidecarUrl, absPath, confidence, log) {
     const url = `${sidecarUrl.replace(/\/+$/, '')}/detect-objects`;
-    try {
-        const res = await fetch(url, {
+    const doFetch = async (body) =>
+        fetch(url, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ path: absPath, confidence }),
-            signal: AbortSignal.timeout(60000), // 60 s per file (inference can be slow)
+            body: JSON.stringify(body),
+            signal: AbortSignal.timeout(60000),
         });
+    try {
+        let res = await doFetch({ path: absPath, confidence });
+        if (res.status === 403) {
+            const b64 = await _readAsBase64(absPath);
+            res = await doFetch({ image_b64: b64, confidence });
+        }
         if (!res.ok) {
             log('warn', `detect-objects endpoint returned ${res.status} for ${absPath}`);
             return [];
