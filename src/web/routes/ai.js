@@ -143,6 +143,10 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                     facesDetectorModel: String(
                         facesBlock.detectorModel || cfg.facesDetectorModel || 'buffalo_l',
                     ),
+                    imageOcr: cfg.imageOcr === true,
+                    objectDetection:
+                        cfg.objectDetection === true ||
+                        (typeof cfg.objectDetection === 'object' && cfg.objectDetection !== null),
                     faces: {
                         providers: String(facesBlock.providers || 'auto').toLowerCase(),
                         detectorModel: String(
