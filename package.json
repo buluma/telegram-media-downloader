@@ -44,11 +44,11 @@
     },
     "repository": {
         "type": "git",
-        "url": "https://github.com/botnick/telegram-media-downloader.git"
+        "url": "https://github.com/buluma/telegram-media-downloader.git"
     },
-    "homepage": "https://github.com/botnick/telegram-media-downloader#readme",
+    "homepage": "https://github.com/buluma/telegram-media-downloader#readme",
     "bugs": {
-        "url": "https://github.com/botnick/telegram-media-downloader/issues"
+        "url": "https://github.com/buluma/telegram-media-downloader/issues"
     },
     "keywords": [
         "telegram",
@@ -63,7 +63,7 @@
         "automation",
         "telegram-api"
     ],
-    "author": "botnick",
+    "author": "buluma",
     "license": "MIT",
     "dependencies": {
         "@aws-sdk/client-s3": "^3.1042.0",

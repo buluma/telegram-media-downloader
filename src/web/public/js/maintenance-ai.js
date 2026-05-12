@@ -469,6 +469,150 @@ async function _applyTagMerge(tag1, tag2) {
     }
 }
 
+// ---- Smart albums -------------------------------------------------------
+
+async function _renderSmartAlbums() {
+    const list = $('#ai-smart-albums-list');
+    if (!list) return;
+    try {
+        const r = await api.get('/api/ai/smart-albums');
+        const albums = Array.isArray(r?.albums) ? r.albums : [];
+        if (!albums.length) {
+            list.innerHTML =
+                '<p class="text-[11px] text-tg-textSecondary text-center py-3">No smart albums yet. Add one above.</p>';
+            $('#ai-smart-album-items')?.classList.add('hidden');
+            return;
+        }
+        list.innerHTML = albums
+            .map((a) => {
+                const rule = a?.rule || {};
+                const subtitle =
+                    rule.type === 'tags_contains'
+                        ? `tag:${rule.tag} (min ${Math.round((Number(rule.minScore) || 0) * 100)}%)`
+                        : rule.type || 'unknown';
+                return `<div class="bg-tg-panelOverlay rounded p-2.5">
+                    <div class="flex items-center justify-between gap-2">
+                        <div class="min-w-0">
+                            <div class="text-xs text-tg-text font-medium truncate">${escapeHtml(a.name || `Album #${a.id}`)}</div>
+                            <div class="text-[10px] text-tg-textSecondary truncate">${escapeHtml(subtitle)} · ${Number(a.item_count) || 0} items</div>
+                        </div>
+                        <div class="flex items-center gap-1 shrink-0">
+                            <button class="tg-btn-secondary text-[10px] px-2 py-1" data-sa-open="${a.id}" data-sa-name="${escapeHtml(a.name || `Album #${a.id}`)}">Open</button>
+                            <button class="tg-btn-secondary text-[10px] px-2 py-1" data-sa-rebuild="${a.id}">Rebuild</button>
+                            <button class="tg-btn-secondary text-[10px] px-2 py-1 text-red-300" data-sa-delete="${a.id}">Delete</button>
+                        </div>
+                    </div>
+                </div>`;
+            })
+            .join('');
+        list.querySelectorAll('[data-sa-open]').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                _loadSmartAlbumItems(
+                    btn.getAttribute('data-sa-open'),
+                    btn.getAttribute('data-sa-name'),
+                );
+            });
+        });
+        list.querySelectorAll('[data-sa-rebuild]').forEach((btn) => {
+            btn.addEventListener('click', () =>
+                _rebuildSmartAlbum(btn.getAttribute('data-sa-rebuild')),
+            );
+        });
+        list.querySelectorAll('[data-sa-delete]').forEach((btn) => {
+            btn.addEventListener('click', () =>
+                _deleteSmartAlbum(btn.getAttribute('data-sa-delete')),
+            );
+        });
+    } catch (e) {
+        list.innerHTML = `<p class="text-[11px] text-red-300 text-center py-3">Failed: ${escapeHtml(e?.message || 'unknown')}</p>`;
+    }
+}
+
+async function _loadSmartAlbumItems(id, name) {
+    const section = $('#ai-smart-album-items');
+    const nameEl = $('#ai-smart-album-items-name');
+    const grid = $('#ai-smart-album-items-grid');
+    if (!section || !grid) return;
+    section.classList.remove('hidden');
+    if (nameEl) nameEl.textContent = String(name || `#${id}`);
+    grid.innerHTML =
+        '<p class="text-[11px] text-tg-textSecondary col-span-full text-center py-3">Loading…</p>';
+    try {
+        const r = await api.get(`/api/ai/smart-albums/${encodeURIComponent(id)}/items?limit=120`);
+        const files = Array.isArray(r?.files) ? r.files : [];
+        if (!files.length) {
+            grid.innerHTML =
+                '<p class="text-[11px] text-tg-textSecondary col-span-full text-center py-3">No items matched.</p>';
+            return;
+        }
+        grid.innerHTML = files
+            .map((f) => {
+                const thumb = `/api/thumbs/${encodeURIComponent(f.id)}?w=320`;
+                return `<a href="#/files/${f.id}" class="block group relative">
+                    <img loading="lazy" class="aspect-square w-full object-cover rounded-md bg-tg-bg/40" src="${escapeHtml(thumb)}" alt="${escapeHtml(f.file_name || String(f.id))}">
+                </a>`;
+            })
+            .join('');
+    } catch (e) {
+        grid.innerHTML = `<p class="text-[11px] text-red-300 col-span-full text-center py-3">Failed: ${escapeHtml(e?.message || 'unknown')}</p>`;
+    }
+}
+
+async function _createSmartAlbum() {
+    const name = await promptSheet({
+        title: 'New smart album',
+        message: 'Album name',
+        confirmLabel: 'Next',
+    });
+    if (name == null) return;
+    const tag = await promptSheet({
+        title: 'Tag rule',
+        message: 'Tag to match (exact)',
+        confirmLabel: 'Create',
+    });
+    if (tag == null) return;
+    try {
+        const r = await api.post('/api/ai/smart-albums', {
+            name: String(name).trim(),
+            rule: { type: 'tags_contains', tag: String(tag).trim(), minScore: 0 },
+        });
+        if (!r.success) throw new Error(r.error || 'create failed');
+        showToast('Smart album created', 'success');
+        await _renderSmartAlbums();
+    } catch (e) {
+        showToast(`Create failed: ${e?.data?.error || e?.message || 'unknown'}`, 'error');
+    }
+}
+
+async function _rebuildSmartAlbum(id) {
+    try {
+        const r = await api.post(`/api/ai/smart-albums/${encodeURIComponent(id)}/rebuild`, {});
+        if (!r.success) throw new Error(r.error || 'rebuild failed');
+        showToast(`Rebuilt: ${r?.rebuilt?.matched || 0} matches`, 'success');
+        await _renderSmartAlbums();
+    } catch (e) {
+        showToast(`Rebuild failed: ${e?.data?.error || e?.message || 'unknown'}`, 'error');
+    }
+}
+
+async function _deleteSmartAlbum(id) {
+    const ok = await confirmSheet({
+        title: 'Delete smart album?',
+        message: 'This removes the album and its materialized items.',
+        confirmText: 'Delete',
+        destructive: true,
+    });
+    if (!ok) return;
+    try {
+        const r = await api.delete(`/api/ai/smart-albums/${encodeURIComponent(id)}`);
+        if (!r.success) throw new Error(r.error || 'delete failed');
+        showToast('Deleted', 'success');
+        await _renderSmartAlbums();
+    } catch (e) {
+        showToast(`Delete failed: ${e?.data?.error || e?.message || 'unknown'}`, 'error');
+    }
+}
+
 function _getVisibleTags() {
     const q = _tagFilterQuery.trim().toLowerCase();
     let tags = _tagListCache.slice();
@@ -511,6 +655,7 @@ export async function init() {
     _loadPeople().catch(() => {});
     _renderTagBrowser().catch(() => {});
     _renderTagSuggestions().catch(() => {});
+    _renderSmartAlbums().catch(() => {});
 }
 
 // Public refresher — exported so the SPA shell can poke us after a
@@ -523,6 +668,7 @@ export async function refreshStatus() {
         _renderStatus(r);
         _renderTagBrowser().catch(() => {});
         _renderTagSuggestions().catch(() => {});
+        _renderSmartAlbums().catch(() => {});
     } catch (e) {
         console.warn('ai/status:', e);
     }
@@ -540,6 +686,7 @@ function _bindOnce() {
     $('#ai-scan-btn')?.addEventListener('click', () => _startScan('faces'));
     $('#ai-cancel-btn')?.addEventListener('click', () => _cancelScan('faces'));
     $('#ai-reindex-btn')?.addEventListener('click', _reindexFromScratch);
+    $('#ai-backfill-quality-btn')?.addEventListener('click', _backfillFaceQuality);
     // Re-cluster button — runs Phase B only (DBSCAN over existing
     // embeddings, no re-detect). Fast (seconds, not minutes) — useful
     // for tweaking ε / minPoints + seeing the new cluster count
@@ -660,6 +807,80 @@ function _bindOnce() {
     $('#ai-tags-scan-btn')?.addEventListener('click', () => _startScan('tags'));
     $('#ai-tags-cancel-btn')?.addEventListener('click', () => _cancelScan('tags'));
 
+    // OCR — toggle + scan/cancel buttons.
+    $('#ai-ocr-toggle')?.addEventListener('click', async () => {
+        const el = $('#ai-ocr-toggle');
+        const was = el.getAttribute('aria-checked') === 'true';
+        const next = !was;
+        try {
+            el.style.pointerEvents = 'none';
+            await api.post('/api/config', {
+                advanced: { ai: { imageOcr: next } },
+            });
+            el.setAttribute('aria-checked', String(next));
+            el.classList.toggle('bg-tg-blue', next);
+            el.classList.toggle('bg-tg-bg/40', !next);
+        } catch (e) {
+            showToast(
+                `${i18nT('common.save_failed', 'Save failed')}: ${e?.data?.error || e?.message}`,
+                'error',
+            );
+        } finally {
+            el.style.pointerEvents = '';
+        }
+    });
+    $('#ai-ocr-toggle')?.addEventListener('keydown', (e) => {
+        if (e.code === 'Space' || e.code === 'Enter') {
+            e.preventDefault();
+            $('#ai-ocr-toggle')?.click();
+        }
+    });
+    $('#ai-ocr-scan-btn')?.addEventListener('click', () => _startScan('ocr'));
+    $('#ai-ocr-cancel-btn')?.addEventListener('click', () => _cancelScan('ocr'));
+
+    // Object detection — toggle + confidence slider + scan/cancel buttons.
+    $('#ai-objects-toggle')?.addEventListener('click', async () => {
+        const el = $('#ai-objects-toggle');
+        const was = el.getAttribute('aria-checked') === 'true';
+        const next = !was;
+        try {
+            el.style.pointerEvents = 'none';
+            await api.post('/api/config', {
+                advanced: { ai: { objectDetection: next } },
+            });
+            el.setAttribute('aria-checked', String(next));
+            el.classList.toggle('bg-tg-blue', next);
+            el.classList.toggle('bg-tg-bg/40', !next);
+        } catch (e) {
+            showToast(
+                `${i18nT('common.save_failed', 'Save failed')}: ${e?.data?.error || e?.message}`,
+                'error',
+            );
+        } finally {
+            el.style.pointerEvents = '';
+        }
+    });
+    $('#ai-objects-toggle')?.addEventListener('keydown', (e) => {
+        if (e.code === 'Space' || e.code === 'Enter') {
+            e.preventDefault();
+            $('#ai-objects-toggle')?.click();
+        }
+    });
+    $('#ai-objects-confidence')?.addEventListener('input', async (e) => {
+        const val = parseFloat(e.target.value) || 0.5;
+        const display = $('#ai-objects-confidence-value');
+        if (display) display.textContent = val.toFixed(1);
+        try {
+            await api.post('/api/config', {
+                advanced: { ai: { objectDetection: { minConfidence: val } } },
+            });
+        } catch (e) {
+            console.warn('Failed to save confidence threshold:', e);
+        }
+    });
+    $('#ai-objects-scan-btn')?.addEventListener('click', () => _startScan('objects'));
+    $('#ai-objects-cancel-btn')?.addEventListener('click', () => _cancelScan('objects'));
+
     // Doctor refresh
     $('#ai-doctor-refresh-btn')?.addEventListener('click', (e) => {
         e.preventDefault();
@@ -690,6 +911,8 @@ function _bindOnce() {
     });
     $('#ai-tag-load-more')?.addEventListener('click', _loadMoreTagPhotos);
     $('#ai-tag-suggestions-refresh')?.addEventListener('click', () => _renderTagSuggestions());
+    $('#ai-smart-albums-refresh')?.addEventListener('click', () => _renderSmartAlbums());
+    $('#ai-smart-albums-add')?.addEventListener('click', () => _createSmartAlbum());
     _initDetailsCollapsedState({
         detailsId: 'ai-pane-faces',
         storageKey: LS_FACES_COLLAPSED,
@@ -707,14 +930,16 @@ function _bindOnce() {
     $('#ai-person-split-btn')?.addEventListener('click', _splitSelectedPerson);
     $('#ai-person-delete-btn')?.addEventListener('click', _deleteSelectedPerson);
 
-    // WebSocket — only the people / scan events survive in the faces-only
-    // build. ai_index_* / ai_tags_* were removed with the Search + Tags
-    // pipelines. ai_faces_status surfaces sidecar lifecycle changes so the
-    // header badge updates without a polling loop.
+    // WebSocket — scan events for all capabilities.
+    // ai_faces_status surfaces sidecar lifecycle changes so the header badge updates without a polling loop.
     ws.on('ai_people_progress', (m) => _onScanProgress('faces', m));
     ws.on('ai_people_done', (m) => _onScanDone('faces', m));
     ws.on('ai_tags_progress', (m) => _onScanProgress('tags', m));
     ws.on('ai_tags_done', (m) => _onScanDone('tags', m));
+    ws.on('ai_ocr_progress', (m) => _onScanProgress('ocr', m));
+    ws.on('ai_ocr_done', (m) => _onScanDone('ocr', m));
+    ws.on('ai_objects_progress', (m) => _onScanProgress('objects', m));
+    ws.on('ai_objects_done', (m) => _onScanDone('objects', m));
     ws.on('ai_faces_status', () => refreshStatus());
 
     // Auto-installer feedback. Streams stdout from `python -m
@@ -1076,6 +1301,34 @@ function _renderStatus(status) {
         const cur = Array.isArray(cfg.tagLabels) ? cfg.tagLabels.join(', ') : '';
         if (tagsLabelsEl.value !== cur) tagsLabelsEl.value = cur;
     }
+
+    // OCR card — toggle, scan state.
+    const ocrToggle = $('#ai-ocr-toggle');
+    if (ocrToggle) {
+        const on = cfg.imageOcr === true;
+        ocrToggle.classList.toggle('bg-tg-blue', on);
+        ocrToggle.classList.toggle('bg-tg-bg/40', !on);
+        ocrToggle.setAttribute('aria-checked', String(on));
+    }
+    const ocrRunning = !!scans?.ocr?.running;
+    const ocrScanBtn = $('#ai-ocr-scan-btn');
+    const ocrCancelBtn = $('#ai-ocr-cancel-btn');
+    if (ocrScanBtn) ocrScanBtn.disabled = ocrRunning;
+    if (ocrCancelBtn) ocrCancelBtn.disabled = !ocrRunning;
+
+    // Object detection card — toggle, scan state.
+    const objectsToggle = $('#ai-objects-toggle');
+    if (objectsToggle) {
+        const on = cfg.objectDetection === true;
+        objectsToggle.classList.toggle('bg-tg-blue', on);
+        objectsToggle.classList.toggle('bg-tg-bg/40', !on);
+        objectsToggle.setAttribute('aria-checked', String(on));
+    }
+    const objectsRunning = !!scans?.objects?.running;
+    const objectsScanBtn = $('#ai-objects-scan-btn');
+    const objectsCancelBtn = $('#ai-objects-cancel-btn');
+    if (objectsScanBtn) objectsScanBtn.disabled = objectsRunning;
+    if (objectsCancelBtn) objectsCancelBtn.disabled = !objectsRunning;
 }
 
 function _renderSidecarBadge(status) {
@@ -1784,6 +2037,30 @@ async function _reindexFromScratch() {
     }
 }
 
+async function _backfillFaceQuality() {
+    const ok = await confirmSheet({
+        title: 'Backfill face quality?',
+        body: 'This computes quality scores for existing face detections that are missing one. No detections are deleted and no full re-scan is run.',
+        confirmLabel: 'Backfill',
+        cancelLabel: i18nT('common.cancel', 'Cancel'),
+        danger: false,
+    });
+    if (!ok) return;
+    try {
+        const r = await api.post('/api/ai/faces/backfill-quality', {});
+        if (!r.success) throw new Error(r.error || 'backfill failed');
+        showToast(`Backfill complete: ${r.updated || 0} updated`, 'success');
+        await refreshStatus();
+        if (_selectedPerson) await _showPersonPhotos();
+    } catch (e) {
+        const msg = e?.data?.error || e?.message || 'unknown';
+        showToast(`Backfill failed: ${msg}`, 'error');
+    } finally {
+        const menu = document.getElementById('ai-more-menu');
+        if (menu instanceof HTMLDetailsElement) menu.open = false;
+    }
+}
+
 // ---- Scan controls --------------------------------------------------------
 
 async function _startScan(feature) {
@@ -1808,7 +2085,14 @@ async function _startScan(feature) {
         }
     }
     try {
-        const r = await api.post('/api/ai/scan/start', { feature });
+        const payload = { feature };
+        if (feature === 'objects') {
+            const confidenceSlider = $('#ai-objects-confidence');
+            if (confidenceSlider) {
+                payload.minConfidence = parseFloat(confidenceSlider.value) || 0.5;
+            }
+        }
+        const r = await api.post('/api/ai/scan/start', payload);
         if (r.error) {
             showToast(r.error, 'error');
             return;
@@ -1844,6 +2128,16 @@ function _onScanProgress(feature, msg) {
         const cancelBtn = $('#ai-tags-cancel-btn');
         if (scanBtn) scanBtn.disabled = running;
         if (cancelBtn) cancelBtn.disabled = !running;
+    } else if (feature === 'ocr') {
+        const scanBtn = $('#ai-ocr-scan-btn');
+        const cancelBtn = $('#ai-ocr-cancel-btn');
+        if (scanBtn) scanBtn.disabled = running;
+        if (cancelBtn) cancelBtn.disabled = !running;
+    } else if (feature === 'objects') {
+        const scanBtn = $('#ai-objects-scan-btn');
+        const cancelBtn = $('#ai-objects-cancel-btn');
+        if (scanBtn) scanBtn.disabled = running;
+        if (cancelBtn) cancelBtn.disabled = !running;
     }
 
     // Shared progress bar — shows whichever scan is currently running.
@@ -1862,11 +2156,17 @@ function _onScanProgress(feature, msg) {
             : '';
     }
     if (progressStatus && running) {
-        const label =
-            feature === 'faces'
-                ? i18nT('maintenance.ai.scanning', 'Scanning…')
-                : i18nT('maintenance.ai.scanning_tags', 'Tagging photos…');
-        progressStatus.textContent = label;
+        let label;
+        if (feature === 'faces') {
+            label = i18nT('maintenance.ai.scanning', 'Scanning…');
+        } else if (feature === 'tags') {
+            label = i18nT('maintenance.ai.scanning_tags', 'Tagging photos…');
+        } else if (feature === 'ocr') {
+            label = i18nT('maintenance.ai.scanning_ocr', 'Extracting text…');
+        } else if (feature === 'objects') {
+            label = i18nT('maintenance.ai.scanning_objects', 'Detecting objects…');
+        }
+        if (label) progressStatus.textContent = label;
     }
 }
 
@@ -1994,10 +2294,17 @@ function _photoTile(row) {
     const id = row.download_id || row.id;
     const faceId = row.face_id || '';
     const name = escapeHtml(row.file_name || `#${id}`);
+    const q = Number(row.face_quality);
+    const qualityScore = Number.isFinite(q) ? Math.round(Math.max(0, Math.min(1, q)) * 100) : null;
     return `
         <a href="#/files/${id}" class="block group relative" data-face-id="${escapeHtml(String(faceId))}">
             <img src="/api/thumbs/${id}?w=320" alt="${name}" loading="lazy"
                 class="aspect-square w-full object-cover rounded-lg bg-tg-bg/40">
+            ${
+                qualityScore == null
+                    ? ''
+                    : `<span class="absolute top-1 right-1 text-[10px] px-1.5 py-0.5 rounded bg-black/65 text-white tabular-nums">Q${qualityScore}</span>`
+            }
         </a>
     `;
 }

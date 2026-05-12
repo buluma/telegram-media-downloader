@@ -488,6 +488,36 @@ export function setAiIndexedAt(downloadId, now = Date.now()) {
         .run(Math.floor(now), Number(downloadId)).changes;
 }
 
+export function getUnscannedOcrBatch({ fileTypes = ['photo'], limit = 50 } = {}) {
+    const types = Array.isArray(fileTypes) && fileTypes.length ? fileTypes : ['photo'];
+    const placeholders = types.map(() => '?').join(',');
+    return getDb()
+        .prepare(`
+        SELECT id, group_id, group_name, file_name, file_path, file_type, file_size, created_at
+          FROM downloads
+         WHERE file_type IN (${placeholders})
+           AND id NOT IN (SELECT DISTINCT download_id FROM image_text)
+         ORDER BY created_at ASC, id ASC
+         LIMIT ?
+    `)
+        .all(...types, Math.max(1, Math.min(500, Number(limit) || 50)));
+}
+
+export function getUnscannedObjectBatch({ fileTypes = ['photo'], limit = 50 } = {}) {
+    const types = Array.isArray(fileTypes) && fileTypes.length ? fileTypes : ['photo'];
+    const placeholders = types.map(() => '?').join(',');
+    return getDb()
+        .prepare(`
+        SELECT id, group_id, group_name, file_name, file_path, file_type, file_size, created_at
+          FROM downloads
+         WHERE file_type IN (${placeholders})
+           AND id NOT IN (SELECT DISTINCT download_id FROM image_objects)
+         ORDER BY created_at ASC, id ASC
+         LIMIT ?
+    `)
+        .all(...types, Math.max(1, Math.min(500, Number(limit) || 50)));
+}
+
 /**
  * Counters for the Maintenance → AI page header. One COUNT per capability
  * + a totalEligible/indexed roll-up so the UI can paint progress bars
@@ -589,10 +619,12 @@ export function resetAllAiData() {
         const tags = db.prepare('DELETE FROM image_tags').run().changes;
         const faces = db.prepare('DELETE FROM faces').run().changes;
         const people = db.prepare('DELETE FROM people').run().changes;
+        const text = db.prepare('DELETE FROM image_text').run().changes;
+        const objects = db.prepare('DELETE FROM image_objects').run().changes;
         const requeued = db
             .prepare('UPDATE downloads SET ai_indexed_at = NULL WHERE ai_indexed_at IS NOT NULL')
             .run().changes;
-        return { embeddings, tags, faces, people, requeued };
+        return { embeddings, tags, faces, people, text, objects, requeued };
     });
     return tx();
 }
@@ -626,11 +658,20 @@ export function clearStaleEmbeddings(currentModelId) {
 
 // ---- Faces & people -------------------------------------------------------
 
-export function insertFace({ downloadId, x, y, w, h, embeddingBlob, personId = null }) {
+export function insertFace({
+    downloadId,
+    x,
+    y,
+    w,
+    h,
+    embeddingBlob,
+    personId = null,
+    qualityScore = null,
+}) {
     return getDb()
         .prepare(`
-        INSERT INTO faces (download_id, x, y, w, h, embedding, person_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO faces (download_id, x, y, w, h, embedding, person_id, quality_score)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `)
         .run(
             Number(downloadId),
@@ -640,6 +681,7 @@ export function insertFace({ downloadId, x, y, w, h, embeddingBlob, personId = n
             Number(h),
             embeddingBlob,
             personId == null ? null : Number(personId),
+            qualityScore == null ? null : Number(qualityScore),
         );
 }
 
@@ -692,6 +734,53 @@ export function setFaceQualityScore(faceId, qualityScore) {
     return getDb()
         .prepare('UPDATE faces SET quality_score = ? WHERE id = ?')
         .run(Number(qualityScore), Number(faceId)).changes;
+}
+
+/**
+ * Backfill missing `faces.quality_score` rows using bbox-only heuristics.
+ *
+ * We don't have detector confidence persisted for legacy rows, so the
+ * confidence term falls back to 0.3 and we derive the rest from bbox size
+ * and aspect-ratio sanity.
+ */
+export function backfillMissingFaceQualityScores({
+    chunkSize = 1000,
+    minFaceSizePx = 48,
+    confidenceFallback = 0.3,
+} = {}) {
+    const db = getDb();
+    const lim = Math.max(1, Math.min(10000, Number(chunkSize) || 1000));
+    const minBox = Math.max(1, Number(minFaceSizePx) || 48);
+    const conf = Math.max(0, Math.min(1, Number(confidenceFallback) || 0.3));
+    const pick = db.prepare(
+        `SELECT id, w, h FROM faces WHERE quality_score IS NULL ORDER BY id ASC LIMIT ?`,
+    );
+    const upd = db.prepare(`UPDATE faces SET quality_score = ? WHERE id = ?`);
+    let scanned = 0;
+    let updated = 0;
+    while (true) {
+        const rows = pick.all(lim);
+        if (!rows.length) break;
+        const tx = db.transaction((batch) => {
+            let n = 0;
+            for (const r of batch) {
+                const w = Math.max(0, Number(r.w) || 0);
+                const h = Math.max(0, Number(r.h) || 0);
+                const sizeNorm = Math.max(0, Math.min(1, Math.min(w, h) / (minBox * 2.5)));
+                const ratio = w > 0 && h > 0 ? w / h : 1;
+                const aspectNorm = Math.max(
+                    0,
+                    Math.min(1, 1 - Math.min(1, Math.abs(Math.log(ratio)))),
+                );
+                const q = conf * 0.5 + sizeNorm * 0.35 + aspectNorm * 0.15;
+                n += upd.run(q, Number(r.id)).changes;
+            }
+            return n;
+        });
+        scanned += rows.length;
+        updated += tx(rows);
+    }
+    return { scanned, updated };
 }
 
 /**
@@ -923,11 +1012,12 @@ export function listPhotosForPerson(personId, { limit = 50, offset = 0 } = {}) {
     const off = Math.max(0, Number(offset) || 0);
     const rows = getDb()
         .prepare(`
-        SELECT DISTINCT d.*
+        SELECT d.*, MAX(f.quality_score) AS face_quality
           FROM faces f
           JOIN downloads d ON d.id = f.download_id
          WHERE f.person_id = ?
-         ORDER BY d.created_at DESC, d.id DESC
+         GROUP BY d.id
+         ORDER BY face_quality DESC, d.created_at DESC, d.id DESC
          LIMIT ? OFFSET ?
     `)
         .all(Number(personId), lim, off);
@@ -1064,4 +1154,296 @@ export function getTagCooccurrenceSuggestions({
 
     // Sort by cooccurrence rate DESC
     return suggestions.sort((a, b) => b.cooccurrence_rate - a.cooccurrence_rate);
+}
+
+// ---- Image Text (OCR) --------------------------------------------------
+
+export function setImageText(downloadId, text, language = null, confidence = null) {
+    if (!downloadId || !text) return 0;
+    return getDb()
+        .prepare(`
+        INSERT INTO image_text (download_id, text, language, confidence, scanned_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(download_id) DO UPDATE SET text = excluded.text, language = excluded.language, confidence = excluded.confidence, scanned_at = excluded.scanned_at
+    `)
+        .run(
+            Number(downloadId),
+            String(text).slice(0, 50000),
+            language,
+            confidence,
+            Math.floor(Date.now() / 1000),
+        ).changes;
+}
+
+export function getImageText(downloadId) {
+    return getDb()
+        .prepare(
+            `SELECT text, language, confidence, scanned_at FROM image_text WHERE download_id = ?`,
+        )
+        .get(Number(downloadId));
+}
+
+export function clearImageText(downloadId) {
+    return getDb().prepare('DELETE FROM image_text WHERE download_id = ?').run(Number(downloadId))
+        .changes;
+}
+
+export function getImagesWithText({ minLength = 10, limit = 50, offset = 0 } = {}) {
+    const lim = Math.max(1, Math.min(500, Number(limit) || 50));
+    const off = Math.max(0, Number(offset) || 0);
+    const minLen = Math.max(1, Number(minLength) || 10);
+
+    const rows = getDb()
+        .prepare(`
+        SELECT d.*, t.text, t.language, t.confidence
+          FROM image_text t
+          JOIN downloads d ON d.id = t.download_id
+         WHERE LENGTH(t.text) >= ?
+         ORDER BY t.scanned_at DESC
+         LIMIT ? OFFSET ?
+    `)
+        .all(minLen, lim, off);
+
+    const total = getDb()
+        .prepare('SELECT COUNT(*) AS n FROM image_text WHERE LENGTH(text) >= ?')
+        .get(minLen).n;
+
+    return { files: rows, total };
+}
+
+// ---- Image Objects (Detection) -----------------------------------------
+
+export function addImageObjects(downloadId, objects) {
+    if (!Array.isArray(objects) || !objects.length) return 0;
+    const db = getDb();
+    const ins = db.prepare(`
+        INSERT INTO image_objects (download_id, object, confidence, x, y, w, h, detected_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const tx = db.transaction(() => {
+        let n = 0;
+        for (const obj of objects) {
+            if (!obj || !obj.object) continue;
+            ins.run(
+                Number(downloadId),
+                String(obj.object).slice(0, 80),
+                Number(obj.confidence) || 0,
+                obj.x ?? null,
+                obj.y ?? null,
+                obj.w ?? null,
+                obj.h ?? null,
+                Math.floor(Date.now() / 1000),
+            );
+            n += 1;
+        }
+        return n;
+    });
+    return tx();
+}
+
+export function getImageObjects(downloadId) {
+    return getDb()
+        .prepare(`
+        SELECT object, confidence, x, y, w, h
+          FROM image_objects
+         WHERE download_id = ?
+         ORDER BY confidence DESC
+    `)
+        .all(Number(downloadId));
+}
+
+export function clearImageObjects(downloadId) {
+    return getDb()
+        .prepare('DELETE FROM image_objects WHERE download_id = ?')
+        .run(Number(downloadId)).changes;
+}
+
+export function listDetectedObjects({ minConfidence = 0.5, limit = 50, offset = 0 } = {}) {
+    const lim = Math.max(1, Math.min(500, Number(limit) || 50));
+    const off = Math.max(0, Number(offset) || 0);
+    const minConf = Math.max(0, Math.min(1, Number(minConfidence) || 0.5));
+
+    return getDb()
+        .prepare(`
+        SELECT object, COUNT(DISTINCT download_id) AS count, AVG(confidence) AS avg_confidence
+          FROM image_objects
+         WHERE confidence >= ?
+         GROUP BY object
+         ORDER BY count DESC
+         LIMIT ?  OFFSET ?
+    `)
+        .all(minConf, lim, off);
+}
+
+export function getImagesWithObject(object, { limit = 50, offset = 0 } = {}) {
+    const lim = Math.max(1, Math.min(500, Number(limit) || 50));
+    const off = Math.max(0, Number(offset) || 0);
+
+    const rows = getDb()
+        .prepare(`
+        SELECT d.*, o.confidence
+          FROM image_objects o
+          JOIN downloads d ON d.id = o.download_id
+         WHERE o.object = ?
+         ORDER BY o.confidence DESC, d.created_at DESC
+         LIMIT ? OFFSET ?
+    `)
+        .all(String(object), lim, off);
+
+    const total = getDb()
+        .prepare('SELECT COUNT(DISTINCT download_id) AS n FROM image_objects WHERE object = ?')
+        .get(String(object)).n;
+
+    return { files: rows, total };
+}
+
+// ---- Smart Albums --------------------------------------------------------
+
+function _normalizeSmartAlbumRule(rule) {
+    const type = String(rule?.type || '').trim();
+    if (type !== 'tags_contains') {
+        throw new Error('unsupported rule type; expected tags_contains');
+    }
+    const tag = String(rule?.tag || '')
+        .trim()
+        .slice(0, 80);
+    if (!tag) throw new Error('tag is required');
+    const minScore = Math.max(0, Math.min(1, Number(rule?.minScore) || 0));
+    return { type, tag, minScore };
+}
+
+export function listSmartAlbums() {
+    const db = getDb();
+    return db
+        .prepare(`
+        SELECT a.id, a.name, a.rule_json, a.enabled, a.sort_key, a.created_at, a.updated_at,
+               COUNT(i.download_id) AS item_count,
+               MAX(i.matched_at) AS last_matched_at
+          FROM smart_albums a
+          LEFT JOIN smart_album_items i ON i.album_id = a.id
+         GROUP BY a.id
+         ORDER BY a.updated_at DESC, a.id DESC
+    `)
+        .all()
+        .map((r) => ({
+            ...r,
+            enabled: Number(r.enabled) === 1,
+            rule: (() => {
+                try {
+                    return JSON.parse(r.rule_json || '{}');
+                } catch {
+                    return {};
+                }
+            })(),
+        }));
+}
+
+export function upsertSmartAlbum({
+    id = null,
+    name,
+    rule,
+    enabled = true,
+    sortKey = 'created_at_desc',
+}) {
+    const db = getDb();
+    const safeName = String(name || '')
+        .trim()
+        .slice(0, 120);
+    if (!safeName) throw new Error('name is required');
+    const normalizedRule = _normalizeSmartAlbumRule(rule);
+    const now = Date.now();
+    if (id == null) {
+        const r = db
+            .prepare(
+                `INSERT INTO smart_albums (name, rule_json, enabled, sort_key, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?)`,
+            )
+            .run(
+                safeName,
+                JSON.stringify(normalizedRule),
+                enabled ? 1 : 0,
+                String(sortKey || 'created_at_desc'),
+                now,
+                now,
+            );
+        return Number(r.lastInsertRowid);
+    }
+    const albumId = Number(id);
+    if (!Number.isFinite(albumId) || albumId <= 0) throw new Error('invalid album id');
+    const changed = db
+        .prepare(
+            `UPDATE smart_albums
+                SET name = ?, rule_json = ?, enabled = ?, sort_key = ?, updated_at = ?
+              WHERE id = ?`,
+        )
+        .run(
+            safeName,
+            JSON.stringify(normalizedRule),
+            enabled ? 1 : 0,
+            String(sortKey || 'created_at_desc'),
+            now,
+            albumId,
+        ).changes;
+    if (!changed) throw new Error('album not found');
+    return albumId;
+}
+
+export function deleteSmartAlbum(id) {
+    return getDb().prepare(`DELETE FROM smart_albums WHERE id = ?`).run(Number(id)).changes;
+}
+
+export function rebuildSmartAlbum(id) {
+    const db = getDb();
+    const albumId = Number(id);
+    if (!Number.isFinite(albumId) || albumId <= 0) throw new Error('invalid album id');
+    const row = db
+        .prepare(`SELECT id, rule_json, enabled FROM smart_albums WHERE id = ?`)
+        .get(albumId);
+    if (!row) throw new Error('album not found');
+    const rule = _normalizeSmartAlbumRule(JSON.parse(row.rule_json || '{}'));
+    const tx = db.transaction(() => {
+        db.prepare(`DELETE FROM smart_album_items WHERE album_id = ?`).run(albumId);
+        if (Number(row.enabled) !== 1) return { matched: 0 };
+        const ins = db.prepare(
+            `INSERT INTO smart_album_items (album_id, download_id, matched_at) VALUES (?, ?, ?)`,
+        );
+        const matchedAt = Date.now();
+        const hits = db
+            .prepare(
+                `SELECT DISTINCT t.download_id
+                   FROM image_tags t
+                   JOIN downloads d ON d.id = t.download_id
+                  WHERE t.tag = ? AND t.score >= ?`,
+            )
+            .all(rule.tag, rule.minScore);
+        let matched = 0;
+        for (const h of hits) {
+            matched += ins.run(albumId, Number(h.download_id), matchedAt).changes;
+        }
+        db.prepare(`UPDATE smart_albums SET updated_at = ? WHERE id = ?`).run(Date.now(), albumId);
+        return { matched };
+    });
+    return tx();
+}
+
+export function listSmartAlbumItems(id, { limit = 50, offset = 0 } = {}) {
+    const db = getDb();
+    const albumId = Number(id);
+    if (!Number.isFinite(albumId) || albumId <= 0) throw new Error('invalid album id');
+    const lim = Math.max(1, Math.min(500, Number(limit) || 50));
+    const off = Math.max(0, Number(offset) || 0);
+    const rows = db
+        .prepare(
+            `SELECT d.*, i.matched_at
+               FROM smart_album_items i
+               JOIN downloads d ON d.id = i.download_id
+              WHERE i.album_id = ?
+              ORDER BY d.created_at DESC, d.id DESC
+              LIMIT ? OFFSET ?`,
+        )
+        .all(albumId, lim, off);
+    const total = db
+        .prepare(`SELECT COUNT(*) AS n FROM smart_album_items WHERE album_id = ?`)
+        .get(albumId).n;
+    return { files: rows, total };
 }

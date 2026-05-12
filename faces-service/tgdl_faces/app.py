@@ -38,6 +38,16 @@ from .clip import (
     is_ready as clip_is_ready,
     last_error as clip_last_error,
 )
+from .ocr import (
+    extract_text as ocr_extract_text,
+    is_ready as ocr_is_ready,
+    last_error as ocr_last_error,
+)
+from .detection import (
+    detect_objects as detection_detect_objects,
+    is_ready as detection_is_ready,
+    last_error as detection_last_error,
+)
 from .insight import (
     DET_SIZE,
     EMBEDDING_DIM,
@@ -675,3 +685,162 @@ def tag_image(body: Annotated[TagRequest, ...]) -> JSONResponse:
             vocabulary=list(used_vocabulary),
         ).model_dump(),
     )
+
+
+# ---- OCR (Text Detection) -------------------------------------------------
+
+
+class OCRRequest(BaseModel):
+    """Body for ``/ocr`` endpoint."""
+
+    path: str | None = Field(default=None, description="Absolute path to an image on disk.")
+    image_b64: str | None = Field(
+        default=None,
+        description="Base64-encoded image bytes.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_source(self) -> OCRRequest:
+        """Exactly one of path / image_b64 must be set."""
+        if (self.path is None) == (self.image_b64 is None):
+            raise ValueError("exactly one of path or image_b64 must be set")
+        return self
+
+
+class OCRResult(BaseModel):
+    text: str
+    language: str | None = None
+    confidence: float | None = None
+
+
+class OCRResponse(BaseModel):
+    result: OCRResult
+
+
+@app.post("/ocr")
+def ocr_image(body: Annotated[OCRRequest, ...]) -> JSONResponse:
+    """Extract text from image using OCR (pytesseract wrapper around Tesseract).
+
+    Returns ``{result: {text, language, confidence}}``.
+
+    Error codes: ``path_not_allowed`` (403), ``file_not_found`` (404),
+    ``image_decode_failed`` (415), ``ocr_not_ready`` (503), ``ocr_failed`` (500).
+    """
+    if not ocr_is_ready():
+        return _error(
+            f"tesseract not available: {ocr_last_error()}",
+            code="ocr_not_ready",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+
+    try:
+        if body.path:
+            img = load_image_from_path(body.path, _allow_roots())
+        else:
+            assert body.image_b64 is not None
+            img = load_image_from_b64(body.image_b64)
+    except PathNotAllowedError as exc:
+        return _error(str(exc), code="path_not_allowed",
+                      status_code=status.HTTP_403_FORBIDDEN)
+    except FileNotFoundError as exc:
+        return _error(str(exc), code="file_not_found",
+                      status_code=status.HTTP_404_NOT_FOUND)
+    except ImageDecodeError as exc:
+        return _error(str(exc), code="image_decode_failed",
+                      status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
+
+    try:
+        result = ocr_extract_text(img, lang="eng")
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content=OCRResponse(
+                result=OCRResult(**result)
+            ).model_dump(),
+        )
+    except Exception as exc:
+        _LOG.exception("ocr_image failed")
+        return _error(
+            f"ocr failed: {type(exc).__name__}: {exc}",
+            code="ocr_failed",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+
+# ---- Object Detection (YOLO) -----------------------------------------------
+
+
+class DetectObjectsRequest(BaseModel):
+    """Body for ``/detect-objects`` endpoint."""
+
+    path: str | None = Field(default=None, description="Absolute path to an image on disk.")
+    image_b64: str | None = Field(default=None, description="Base64-encoded image bytes.")
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0, description="Confidence threshold.")
+
+    @model_validator(mode="after")
+    def _validate_source(self) -> DetectObjectsRequest:
+        """Exactly one of path / image_b64 must be set."""
+        if (self.path is None) == (self.image_b64 is None):
+            raise ValueError("exactly one of path or image_b64 must be set")
+        return self
+
+
+class DetectedObject(BaseModel):
+    object: str
+    confidence: float
+    x: float | None = None
+    y: float | None = None
+    w: float | None = None
+    h: float | None = None
+
+
+class DetectObjectsResponse(BaseModel):
+    objects: list[DetectedObject]
+
+
+@app.post("/detect-objects")
+def detect_objects(body: Annotated[DetectObjectsRequest, ...]) -> JSONResponse:
+    """Detect objects in image using YOLOv8-nano (ONNX).
+
+    Returns ``{objects: [{object, confidence, x, y, w, h}]}``.
+
+    Error codes: ``path_not_allowed`` (403), ``file_not_found`` (404),
+    ``image_decode_failed`` (415), ``detection_not_ready`` (503), ``detection_failed`` (500).
+    """
+    if not detection_is_ready():
+        return _error(
+            f"object detection not available: {detection_last_error()}",
+            code="detection_not_ready",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+
+    try:
+        if body.path:
+            img = load_image_from_path(body.path, _allow_roots())
+        else:
+            assert body.image_b64 is not None
+            img = load_image_from_b64(body.image_b64)
+    except PathNotAllowedError as exc:
+        return _error(str(exc), code="path_not_allowed",
+                      status_code=status.HTTP_403_FORBIDDEN)
+    except FileNotFoundError as exc:
+        return _error(str(exc), code="file_not_found",
+                      status_code=status.HTTP_404_NOT_FOUND)
+    except ImageDecodeError as exc:
+        return _error(str(exc), code="image_decode_failed",
+                      status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
+
+    try:
+        objects = detection_detect_objects(img, confidence=body.confidence)
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content=DetectObjectsResponse(
+                objects=[DetectedObject(**obj) for obj in objects]
+            ).model_dump(),
+        )
+    except Exception as exc:
+        _LOG.exception("detect_objects failed")
+        return _error(
+            f"detection failed: {type(exc).__name__}: {exc}",
+            code="detection_failed",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )

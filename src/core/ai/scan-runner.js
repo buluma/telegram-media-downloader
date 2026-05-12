@@ -34,7 +34,8 @@ import {
     setFacePerson,
     setImageTags,
 } from '../db.js';
-import { clusterFaces, detectFaces } from './faces.js';
+import { addImageObjects, getUnscannedOcrBatch, getUnscannedObjectBatch } from '../db/faces.js';
+import { clusterFaces, computeFaceQualityScore, detectFaces } from './faces.js';
 import { resolveFacesValue } from './faces-config.js';
 import { getSidecarUrl } from './faces-client.js';
 import { hasFfmpeg, resolveFfmpegBin } from '../thumbs.js';
@@ -245,6 +246,18 @@ async function _runScan(feature, cfg, worker, onProgress, onDone, onLog) {
             if (typeof onLog === 'function') onLog({ source: `ai-scan-${feature}`, level, msg });
         } catch {}
     };
+    // Adapter for helpers that emit structured log envelopes
+    // ({source, level, msg}) instead of (level, msg).
+    const logEntry = (entry) => {
+        if (entry && typeof entry === 'object') {
+            const lvl = typeof entry.level === 'string' ? entry.level : 'info';
+            const src = entry.source ? `${entry.source}: ` : '';
+            const m = entry.msg ?? entry.message ?? JSON.stringify(entry);
+            log(lvl, `${src}${String(m)}`);
+            return;
+        }
+        log('info', String(entry ?? ''));
+    };
     if (_scans[feature]?.running) {
         log('warn', `start${feature} called while already running — ignoring`);
         return { alreadyRunning: true };
@@ -274,7 +287,7 @@ async function _runScan(feature, cfg, worker, onProgress, onDone, onLog) {
 
     (async () => {
         try {
-            await worker(state, ctrl.signal, bump, log, cfg);
+            await worker(state, ctrl.signal, bump, log, cfg, logEntry);
         } catch (e) {
             state.error = e?.message || String(e);
             log('error', `${feature} scan crashed: ${state.error}`);
@@ -300,7 +313,7 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
     return _runScan(
         'faces',
         cfg,
-        async (state, signal, bump, log, cfg) => {
+        async (state, signal, bump, log, cfg, logEntry) => {
             // Resolve `fileTypes` with the same precedence as the cluster
             // knobs: new path > legacy flat alias > env override > default.
             const facesCfgIn = cfg?.faces || {};
@@ -388,7 +401,11 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                                     try {
                                         for (const frameAbs of framePaths) {
                                             if (signal.aborted) break;
-                                            const faces = await detectFaces(frameAbs, cfg, log);
+                                            const faces = await detectFaces(
+                                                frameAbs,
+                                                cfg,
+                                                logEntry,
+                                            );
                                             if (Array.isArray(faces) && faces.length) {
                                                 for (const f of faces) {
                                                     insertFace({
@@ -398,6 +415,10 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                                                         w: f.w,
                                                         h: f.h,
                                                         embeddingBlob: _f32ToBlob(f.embedding),
+                                                        qualityScore: computeFaceQualityScore(
+                                                            f,
+                                                            cfg,
+                                                        ),
                                                     });
                                                     detectedTotal += 1;
                                                 }
@@ -408,7 +429,7 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                                     }
                                 }
                             } else {
-                                const detected = await detectFaces(abs, cfg, log);
+                                const detected = await detectFaces(abs, cfg, logEntry);
                                 if (Array.isArray(detected) && detected.length) {
                                     deleteFacesForDownload(row.id);
                                     for (const f of detected) {
@@ -419,6 +440,7 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                                             w: f.w,
                                             h: f.h,
                                             embeddingBlob: _f32ToBlob(f.embedding),
+                                            qualityScore: computeFaceQualityScore(f, cfg),
                                         });
                                         detectedTotal += 1;
                                     }
@@ -685,6 +707,200 @@ async function _tagOne(sidecarUrl, absPath, tagLabels, log) {
         return Array.isArray(data?.tags) ? data.tags : [];
     } catch (e) {
         log('warn', `tag request failed for ${absPath}: ${e?.message || e}`);
+        return [];
+    }
+}
+
+/**
+ * Start OCR text extraction scan. Processes unscanned images and stores
+ * extracted text in the `image_text` table.
+ */
+export function startOcrScan(cfg, onProgress, onDone, onLog) {
+    return _runScan(
+        'ocr',
+        cfg,
+        async (state, signal, bump, log) => {
+            const sidecarUrl = getSidecarUrl();
+            if (!sidecarUrl) {
+                throw new Error(
+                    'Python sidecar is not available — cannot extract text. ' +
+                        'Check the AI maintenance page for sidecar status.',
+                );
+            }
+
+            const batchSize = Math.max(1, Math.min(50, Number(cfg.batchSize) || 16));
+
+            while (!signal.aborted) {
+                const batch = getUnscannedOcrBatch({ limit: batchSize });
+                if (!batch.length) {
+                    log('info', 'ocr scan: no more unscanned images');
+                    break;
+                }
+                state.total = Math.max(state.total, state.scanned + batch.length * 2);
+                bump();
+
+                for (const row of batch) {
+                    if (signal.aborted) break;
+
+                    const absPath = _resolveAbs(row.file_path);
+                    if (!absPath) {
+                        log('warn', `ocr: file not found: ${row.file_path}`);
+                        state.scanned += 1;
+                        bump();
+                        continue;
+                    }
+
+                    if (row.file_type !== 'photo') {
+                        log('debug', `ocr: skipping non-photo: ${row.file_name}`);
+                        state.scanned += 1;
+                        bump();
+                        continue;
+                    }
+
+                    try {
+                        const result = await _extractTextOne(sidecarUrl, absPath, log);
+                        if (result && result.text) {
+                            const { setImageText } = await import('../db/faces.js');
+                            setImageText(row.id, result.text, result.language, result.confidence);
+                        }
+                    } catch (e) {
+                        log('warn', `ocr failed for id=${row.id}: ${e?.message || e}`);
+                    }
+                    state.scanned += 1;
+                    bump();
+                    await new Promise((r) => setImmediate(r));
+                }
+            }
+            log('info', `ocr scan: finished — ${state.scanned} files scanned`);
+        },
+        onProgress,
+        onDone,
+        onLog,
+    );
+}
+
+/**
+ * Call the Python sidecar's ``POST /ocr`` for one image.
+ * Returns ``{text, language, confidence}`` or null on failure.
+ */
+async function _extractTextOne(sidecarUrl, absPath, log) {
+    const url = `${sidecarUrl.replace(/\/+$/, '')}/ocr`;
+    try {
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ path: absPath }),
+            signal: AbortSignal.timeout(30000), // 30 s per file
+        });
+        if (!res.ok) {
+            log('warn', `ocr endpoint returned ${res.status} for ${absPath}`);
+            return null;
+        }
+        const data = await res.json();
+        return data?.result || null;
+    } catch (e) {
+        log('warn', `ocr request failed for ${absPath}: ${e?.message || e}`);
+        return null;
+    }
+}
+
+/**
+ * Start object detection scan. Processes unscanned images and stores
+ * detected objects in the `image_objects` table.
+ */
+export function startObjectDetectionScan(cfg, onProgress, onDone, onLog) {
+    return _runScan(
+        'objects',
+        cfg,
+        async (state, signal, bump, log) => {
+            const sidecarUrl = getSidecarUrl();
+            if (!sidecarUrl) {
+                throw new Error(
+                    'Python sidecar is not available — cannot detect objects. ' +
+                        'Check the AI maintenance page for sidecar status.',
+                );
+            }
+
+            const batchSize = Math.max(1, Math.min(50, Number(cfg.batchSize) || 16));
+            const minConfidence = Math.max(0, Math.min(1, Number(cfg.minConfidence) || 0.5));
+
+            while (!signal.aborted) {
+                const batch = getUnscannedObjectBatch({ limit: batchSize });
+                if (!batch.length) {
+                    log('info', 'objects scan: no more unscanned images');
+                    break;
+                }
+                state.total = Math.max(state.total, state.scanned + batch.length * 2);
+                bump();
+
+                for (const row of batch) {
+                    if (signal.aborted) break;
+
+                    const absPath = _resolveAbs(row.file_path);
+                    if (!absPath) {
+                        log('warn', `objects: file not found: ${row.file_path}`);
+                        state.scanned += 1;
+                        bump();
+                        continue;
+                    }
+
+                    if (row.file_type !== 'photo') {
+                        log('debug', `objects: skipping non-photo: ${row.file_name}`);
+                        state.scanned += 1;
+                        bump();
+                        continue;
+                    }
+
+                    try {
+                        const objects = await _detectObjectsOne(
+                            sidecarUrl,
+                            absPath,
+                            minConfidence,
+                            log,
+                        );
+                        if (Array.isArray(objects) && objects.length > 0) {
+                            addImageObjects(row.id, objects);
+                        }
+                    } catch (e) {
+                        log(
+                            'warn',
+                            `objects detection failed for id=${row.id}: ${e?.message || e}`,
+                        );
+                    }
+                    state.scanned += 1;
+                    bump();
+                    await new Promise((r) => setImmediate(r));
+                }
+            }
+            log('info', `objects scan: finished — ${state.scanned} files scanned`);
+        },
+        onProgress,
+        onDone,
+        onLog,
+    );
+}
+
+/**
+ * Call the Python sidecar's ``POST /detect-objects`` for one image.
+ * Returns array of {object, confidence, x, y, w, h} or empty array on failure.
+ */
+async function _detectObjectsOne(sidecarUrl, absPath, confidence, log) {
+    const url = `${sidecarUrl.replace(/\/+$/, '')}/detect-objects`;
+    try {
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ path: absPath, confidence }),
+            signal: AbortSignal.timeout(60000), // 60 s per file (inference can be slow)
+        });
+        if (!res.ok) {
+            log('warn', `detect-objects endpoint returned ${res.status} for ${absPath}`);
+            return [];
+        }
+        const data = await res.json();
+        return Array.isArray(data?.objects) ? data.objects : [];
+    } catch (e) {
+        log('warn', `detect-objects request failed for ${absPath}: ${e?.message || e}`);
         return [];
     }
 }

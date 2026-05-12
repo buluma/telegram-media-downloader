@@ -8,14 +8,24 @@ import {
     getScanState as aiGetScanState,
     _bgQueueDepths as aiBgQueueDepths,
 } from '../../core/ai/index.js';
-import { startTagsScan as aiStartTagsScan } from '../../core/ai/scan-runner.js';
 import {
+    startTagsScan as aiStartTagsScan,
+    startOcrScan as aiStartOcrScan,
+    startObjectDetectionScan as aiStartObjectDetectionScan,
+} from '../../core/ai/scan-runner.js';
+import {
+    backfillMissingFaceQualityScores,
+    deleteSmartAlbum,
     getAiCounts,
     listPeople,
     listPhotosForPerson,
+    listSmartAlbumItems,
+    listSmartAlbums,
     renamePerson,
+    rebuildSmartAlbum,
     deletePerson,
     resetAllAiData,
+    upsertSmartAlbum,
     getUnindexedAiBatch,
 } from '../../core/db/faces.js';
 import { pregenerateAi as aiPregenerateAi } from '../../core/ai/index.js';
@@ -27,12 +37,16 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
     function _aiTrackerFor(feature) {
         if (feature === 'faces') return jobTrackers.aiPeople;
         if (feature === 'tags') return jobTrackers.aiTags;
+        if (feature === 'ocr') return jobTrackers.aiOcr;
+        if (feature === 'objects') return jobTrackers.aiObjects;
         return null;
     }
 
     function _aiStarterFor(feature) {
         if (feature === 'faces') return aiStartFacesScan;
         if (feature === 'tags') return aiStartTagsScan;
+        if (feature === 'ocr') return aiStartOcrScan;
+        if (feature === 'objects') return aiStartObjectDetectionScan;
         return null;
     }
 
@@ -143,6 +157,8 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                 scans: {
                     faces: aiGetScanState('faces'),
                     tags: aiGetScanState('tags'),
+                    ocr: aiGetScanState('ocr'),
+                    objects: aiGetScanState('objects'),
                 },
                 models: {
                     faces: await (async () => {
@@ -229,6 +245,8 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                 trackers: {
                     aiPeople: jobTrackers.aiPeople.getStatus(),
                     aiTags: jobTrackers.aiTags.getStatus(),
+                    aiOcr: jobTrackers.aiOcr.getStatus(),
+                    aiObjects: jobTrackers.aiObjects.getStatus(),
                 },
             });
         } catch (e) {
@@ -277,13 +295,108 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         }
     });
 
+    router.get('/ai/text/:downloadId', async (req, res) => {
+        try {
+            const { getImageText } = await import('../../core/db/faces.js');
+            const result = getImageText(Number(req.params.downloadId));
+            res.json({ success: true, result });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    router.get('/ai/objects/:downloadId', async (req, res) => {
+        try {
+            const { getImageObjects } = await import('../../core/db/faces.js');
+            const objects = getImageObjects(Number(req.params.downloadId));
+            res.json({ success: true, objects });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    router.get('/ai/objects/list', async (req, res) => {
+        try {
+            const minConf = Math.max(0, Math.min(1, Number(req.query.minConfidence) || 0.5));
+            const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 50));
+            const offset = Math.max(0, Number(req.query.offset) || 0);
+            const { listDetectedObjects } = await import('../../core/db/faces.js');
+            const objects = listDetectedObjects({
+                minConfidence: minConf,
+                limit,
+                offset,
+            });
+            res.json({ success: true, objects });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    // ---- Smart albums (v1: tags_contains rule) ------------------------------
+    router.get('/ai/smart-albums', async (_req, res) => {
+        try {
+            const albums = listSmartAlbums();
+            res.json({ success: true, albums });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    router.post('/ai/smart-albums', async (req, res) => {
+        try {
+            const id = req.body?.id == null ? null : Number(req.body.id);
+            const name = String(req.body?.name || '');
+            const rule = req.body?.rule || {};
+            const enabled = req.body?.enabled !== false;
+            const sortKey = String(req.body?.sortKey || 'created_at_desc');
+            const albumId = upsertSmartAlbum({ id, name, rule, enabled, sortKey });
+            const rebuilt = rebuildSmartAlbum(albumId);
+            res.json({ success: true, id: albumId, rebuilt });
+        } catch (e) {
+            res.status(400).json({ error: e.message });
+        }
+    });
+
+    router.delete('/ai/smart-albums/:id', async (req, res) => {
+        try {
+            const id = Number(req.params.id);
+            const deleted = deleteSmartAlbum(id);
+            if (!deleted) return res.status(404).json({ error: 'album not found' });
+            res.json({ success: true, deleted });
+        } catch (e) {
+            res.status(400).json({ error: e.message });
+        }
+    });
+
+    router.post('/ai/smart-albums/:id/rebuild', async (req, res) => {
+        try {
+            const id = Number(req.params.id);
+            const rebuilt = rebuildSmartAlbum(id);
+            res.json({ success: true, id, rebuilt });
+        } catch (e) {
+            res.status(400).json({ error: e.message });
+        }
+    });
+
+    router.get('/ai/smart-albums/:id/items', async (req, res) => {
+        try {
+            const id = Number(req.params.id);
+            const limit = Math.max(1, Math.min(200, Number(req.query?.limit) || 50));
+            const offset = Math.max(0, Number(req.query?.offset) || 0);
+            const result = listSmartAlbumItems(id, { limit, offset });
+            res.json({ success: true, id, ...result });
+        } catch (e) {
+            res.status(400).json({ error: e.message });
+        }
+    });
+
     // ---- Scan controls -------------------------------------------------------
     //
     // Faces is the only feature left; the legacy `feature: 'embed' | 'tags'`
     // branches have been removed. The handler still accepts a `feature`
     // field so older clients fail with a clear `unknown feature` error
     // rather than a silent no-op.
-    const AI_SCAN_FEATURES = new Set(['faces', 'tags']);
+    const AI_SCAN_FEATURES = new Set(['faces', 'tags', 'ocr', 'objects']);
 
     // JobTracker integration for AI scans:
     //   The scan-runner module already owns the per-feature state machine
@@ -311,6 +424,11 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                 return res
                     .status(409)
                     .json({ error: 'Scan already running', code: 'ALREADY_RUNNING' });
+            }
+            // Allow request-level parameter overrides (e.g., minConfidence from slider)
+            if (feature === 'objects' && typeof req.body?.minConfidence === 'number') {
+                if (!cfg.objectDetection) cfg.objectDetection = {};
+                cfg.objectDetection.minConfidence = req.body.minConfidence;
             }
             const tracker = _aiTrackerFor(feature);
             const starter = _aiStarterFor(feature);
@@ -530,6 +648,36 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             res.json({ success: true });
         } catch (e) {
             res.status(500).json({ error: e?.message || String(e) });
+        }
+    });
+
+    // Backfill missing `faces.quality_score` for legacy rows without
+    // re-running full detection. Uses bbox-only heuristics (size/aspect +
+    // confidence fallback) and writes only rows where score is currently NULL.
+    router.post('/ai/faces/backfill-quality', async (req, res) => {
+        try {
+            const chunkSize = Math.max(100, Math.min(5000, Number(req.body?.chunkSize) || 1000));
+            const minFaceSizePx = Math.max(
+                16,
+                Math.min(1024, Number(req.body?.minFaceSizePx) || 48),
+            );
+            const confidenceFallback = Math.max(
+                0,
+                Math.min(1, Number(req.body?.confidenceFallback) || 0.3),
+            );
+            const result = backfillMissingFaceQualityScores({
+                chunkSize,
+                minFaceSizePx,
+                confidenceFallback,
+            });
+            log({
+                source: 'ai',
+                level: 'info',
+                msg: `faces quality backfill complete: scanned=${result.scanned} updated=${result.updated}`,
+            });
+            res.json({ success: true, ...result });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
         }
     });
 
@@ -777,7 +925,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         try {
             // Cancel any in-flight scan before nuking the artefacts.
             let cancelled = 0;
-            for (const f of ['embed', 'tags', 'faces']) {
+            for (const f of ['embed', 'tags', 'faces', 'ocr', 'objects']) {
                 if (aiCancelScan(f)) cancelled += 1;
             }
             // Settle one tick so the scan loops see the abort signal.
@@ -786,7 +934,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             log({
                 source: 'ai',
                 level: 'info',
-                msg: `re-index — wiped embeddings=${r.embeddings} tags=${r.tags} faces=${r.faces} people=${r.people}; re-queued=${r.requeued}; cancelled-scans=${cancelled}`,
+                msg: `re-index — wiped embeddings=${r.embeddings} tags=${r.tags} faces=${r.faces} people=${r.people} text=${r.text} objects=${r.objects}; re-queued=${r.requeued}; cancelled-scans=${cancelled}`,
             });
             try {
                 broadcast({ type: 'ai_reindex', ...r });
