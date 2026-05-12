@@ -392,6 +392,7 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
             let _statEmpty = 0;
             let _statFaces = 0;
             let _statPhotos = 0;
+            let _nextStatLog = 0;
             while (!signal.aborted) {
                 const batch = getUnindexedAiBatch({ fileTypes, limit: batchSize });
                 if (!batch.length) break;
