@@ -488,6 +488,36 @@ export function setAiIndexedAt(downloadId, now = Date.now()) {
         .run(Math.floor(now), Number(downloadId)).changes;
 }
 
+export function getUnscannedOcrBatch({ fileTypes = ['photo'], limit = 50 } = {}) {
+    const types = Array.isArray(fileTypes) && fileTypes.length ? fileTypes : ['photo'];
+    const placeholders = types.map(() => '?').join(',');
+    return getDb()
+        .prepare(`
+        SELECT id, group_id, group_name, file_name, file_path, file_type, file_size, created_at
+          FROM downloads
+         WHERE file_type IN (${placeholders})
+           AND id NOT IN (SELECT DISTINCT download_id FROM image_text)
+         ORDER BY created_at ASC, id ASC
+         LIMIT ?
+    `)
+        .all(...types, Math.max(1, Math.min(500, Number(limit) || 50)));
+}
+
+export function getUnscannedObjectBatch({ fileTypes = ['photo'], limit = 50 } = {}) {
+    const types = Array.isArray(fileTypes) && fileTypes.length ? fileTypes : ['photo'];
+    const placeholders = types.map(() => '?').join(',');
+    return getDb()
+        .prepare(`
+        SELECT id, group_id, group_name, file_name, file_path, file_type, file_size, created_at
+          FROM downloads
+         WHERE file_type IN (${placeholders})
+           AND id NOT IN (SELECT DISTINCT download_id FROM image_objects)
+         ORDER BY created_at ASC, id ASC
+         LIMIT ?
+    `)
+        .all(...types, Math.max(1, Math.min(500, Number(limit) || 50)));
+}
+
 /**
  * Counters for the Maintenance → AI page header. One COUNT per capability
  * + a totalEligible/indexed roll-up so the UI can paint progress bars

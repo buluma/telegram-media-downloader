@@ -34,7 +34,7 @@ import {
     setFacePerson,
     setImageTags,
 } from '../db.js';
-import { addImageObjects } from '../db/faces.js';
+import { addImageObjects, getUnscannedOcrBatch, getUnscannedObjectBatch } from '../db/faces.js';
 import { clusterFaces, computeFaceQualityScore, detectFaces } from './faces.js';
 import { resolveFacesValue } from './faces-config.js';
 import { getSidecarUrl } from './faces-client.js';
@@ -731,7 +731,7 @@ export function startOcrScan(cfg, onProgress, onDone, onLog) {
             const batchSize = Math.max(1, Math.min(50, Number(cfg.batchSize) || 16));
 
             while (!signal.aborted) {
-                const batch = getUnindexedAiBatch({ limit: batchSize });
+                const batch = getUnscannedOcrBatch({ limit: batchSize });
                 if (!batch.length) {
                     log('info', 'ocr scan: no more unscanned images');
                     break;
@@ -745,7 +745,6 @@ export function startOcrScan(cfg, onProgress, onDone, onLog) {
                     const absPath = _resolveAbs(row.file_path);
                     if (!absPath) {
                         log('warn', `ocr: file not found: ${row.file_path}`);
-                        setAiIndexedAt(row.id);
                         state.scanned += 1;
                         bump();
                         continue;
@@ -753,7 +752,6 @@ export function startOcrScan(cfg, onProgress, onDone, onLog) {
 
                     if (row.file_type !== 'photo') {
                         log('debug', `ocr: skipping non-photo: ${row.file_name}`);
-                        setAiIndexedAt(row.id);
                         state.scanned += 1;
                         bump();
                         continue;
@@ -768,7 +766,6 @@ export function startOcrScan(cfg, onProgress, onDone, onLog) {
                     } catch (e) {
                         log('warn', `ocr failed for id=${row.id}: ${e?.message || e}`);
                     }
-                    setAiIndexedAt(row.id);
                     state.scanned += 1;
                     bump();
                     await new Promise((r) => setImmediate(r));
@@ -828,7 +825,7 @@ export function startObjectDetectionScan(cfg, onProgress, onDone, onLog) {
             const minConfidence = Math.max(0, Math.min(1, Number(cfg.minConfidence) || 0.5));
 
             while (!signal.aborted) {
-                const batch = getUnindexedAiBatch({ limit: batchSize });
+                const batch = getUnscannedObjectBatch({ limit: batchSize });
                 if (!batch.length) {
                     log('info', 'objects scan: no more unscanned images');
                     break;
@@ -842,7 +839,6 @@ export function startObjectDetectionScan(cfg, onProgress, onDone, onLog) {
                     const absPath = _resolveAbs(row.file_path);
                     if (!absPath) {
                         log('warn', `objects: file not found: ${row.file_path}`);
-                        setAiIndexedAt(row.id);
                         state.scanned += 1;
                         bump();
                         continue;
@@ -850,7 +846,6 @@ export function startObjectDetectionScan(cfg, onProgress, onDone, onLog) {
 
                     if (row.file_type !== 'photo') {
                         log('debug', `objects: skipping non-photo: ${row.file_name}`);
-                        setAiIndexedAt(row.id);
                         state.scanned += 1;
                         bump();
                         continue;
@@ -872,7 +867,6 @@ export function startObjectDetectionScan(cfg, onProgress, onDone, onLog) {
                             `objects detection failed for id=${row.id}: ${e?.message || e}`,
                         );
                     }
-                    setAiIndexedAt(row.id);
                     state.scanned += 1;
                     bump();
                     await new Promise((r) => setImmediate(r));

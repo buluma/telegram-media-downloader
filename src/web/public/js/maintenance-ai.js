@@ -866,10 +866,17 @@ function _bindOnce() {
             $('#ai-objects-toggle')?.click();
         }
     });
-    $('#ai-objects-confidence')?.addEventListener('input', (e) => {
+    $('#ai-objects-confidence')?.addEventListener('input', async (e) => {
         const val = parseFloat(e.target.value) || 0.5;
         const display = $('#ai-objects-confidence-value');
         if (display) display.textContent = val.toFixed(1);
+        try {
+            await api.post('/api/config', {
+                advanced: { ai: { objectDetection: { minConfidence: val } } },
+            });
+        } catch (e) {
+            console.warn('Failed to save confidence threshold:', e);
+        }
     });
     $('#ai-objects-scan-btn')?.addEventListener('click', () => _startScan('objects'));
     $('#ai-objects-cancel-btn')?.addEventListener('click', () => _cancelScan('objects'));
@@ -2078,7 +2085,14 @@ async function _startScan(feature) {
         }
     }
     try {
-        const r = await api.post('/api/ai/scan/start', { feature });
+        const payload = { feature };
+        if (feature === 'objects') {
+            const confidenceSlider = $('#ai-objects-confidence');
+            if (confidenceSlider) {
+                payload.minConfidence = parseFloat(confidenceSlider.value) || 0.5;
+            }
+        }
+        const r = await api.post('/api/ai/scan/start', payload);
         if (r.error) {
             showToast(r.error, 'error');
             return;

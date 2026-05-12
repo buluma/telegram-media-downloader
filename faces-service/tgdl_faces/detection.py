@@ -120,17 +120,15 @@ def detect_objects(img: Image.Image, confidence: float = 0.5) -> list[dict]:
         # Parse predictions
         objects = []
         for i in range(predictions.shape[1]):
-            # Extract bounding box + objectness
+            # Extract bounding box
             x_center, y_center, box_w, box_h = predictions[:4, i]
-            obj_score = predictions[4, i]
 
-            # Get class scores
-            class_scores = predictions[5:, i]
+            # Get class scores (channels 4-83 for 80 COCO classes)
+            class_scores = predictions[4:, i]
             class_id = np.argmax(class_scores)
             class_score = class_scores[class_id]
 
-            final_score = obj_score * class_score
-            if final_score < confidence:
+            if class_score < confidence:
                 continue
 
             # Convert coords back to original image space
@@ -148,7 +146,7 @@ def detect_objects(img: Image.Image, confidence: float = 0.5) -> list[dict]:
             if obj_w > 0 and obj_h > 0:
                 objects.append({
                     "object": _LABELS[class_id] if class_id < len(_LABELS) else f"class_{class_id}",
-                    "confidence": float(final_score),
+                    "confidence": float(class_score),
                     "x": float(x),
                     "y": float(y),
                     "w": float(obj_w),
