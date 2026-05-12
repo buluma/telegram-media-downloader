@@ -755,6 +755,19 @@ function initSchema() {
         );
     }
 
+    // NSFW hash blocklist — stores SHA-256 fingerprints of files deleted via
+    // NSFW review so re-downloads can be auto-deleted without rescanning.
+    try {
+        db.exec(`
+            CREATE TABLE IF NOT EXISTS nsfw_hash_blocklist (
+                file_hash  TEXT    PRIMARY KEY,
+                file_name  TEXT,
+                deleted_at INTEGER NOT NULL,
+                source     TEXT    DEFAULT 'manual'
+            )
+        `);
+    } catch {}
+
     // FK enforcement is per-connection in SQLite — flip it on once we know
     // the table exists. Without this, ON DELETE CASCADE silently no-ops.
     try {
