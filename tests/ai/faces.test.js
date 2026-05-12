@@ -160,15 +160,15 @@ describe('qualityFilter', () => {
         const out = faces.qualityFilter([good(), good()]);
         expect(out).toHaveLength(2);
     });
-    it('drops below-threshold detection score (default 0.5)', () => {
-        // Default `FACE_DEFAULTS.minDetectionScore` is 0.5. A face with
-        // score 0.4 must be dropped; 0.85 must be kept.
-        const out = faces.qualityFilter([good({ score: 0.4 }), good()]);
+    it('drops below-threshold detection score (default 0.3)', () => {
+        // Default `FACE_DEFAULTS.minDetectionScore` is 0.3. A face with
+        // score 0.2 must be dropped; 0.85 must be kept.
+        const out = faces.qualityFilter([good({ score: 0.2 }), good()]);
         expect(out).toHaveLength(1);
         expect(out[0].score).toBe(0.85);
     });
-    it('drops too-small boxes (< 80 px min edge by default)', () => {
-        const out = faces.qualityFilter([good({ w: 50, h: 50 }), good()]);
+    it('drops too-small boxes (< 48 px min edge by default)', () => {
+        const out = faces.qualityFilter([good({ w: 30, h: 30 }), good()]);
         expect(out).toHaveLength(1);
     });
     it('drops elongated boxes (aspect outside [0.5, 2.0])', () => {
