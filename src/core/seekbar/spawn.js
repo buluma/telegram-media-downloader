@@ -33,6 +33,7 @@ import { fileURLToPath } from 'url';
 
 import { _hashFile, _parseChecksumFile, _verifyChecksum } from '../ai/faces-download.js';
 import { loadConfig } from '../../config/manager.js';
+import { resolveFfmpegBin, resolveFfprobeBin } from '../thumbs.js';
 import { health, setSidecarUrl } from './client.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -46,7 +47,7 @@ const DATA_DIR = process.env.TGDL_DATA_DIR
  * on next boot — the matching GitHub Release `seekbar-v<VER>` must exist
  * with `tgdl-seekbar-<platform>-<arch>.tar.gz` assets attached.
  */
-export const SIDECAR_VERSION = '0.1.0';
+export const SIDECAR_VERSION = '0.2.0';
 const GH_RELEASE_BASE = `https://github.com/botnick/telegram-media-downloader/releases/download/seekbar-v${SIDECAR_VERSION}`;
 const DOWNLOAD_CONNECT_TIMEOUT_MS = 30_000;
 const DOWNLOAD_REDIRECT_LIMIT = 5;
@@ -86,10 +87,14 @@ function _setState(partial) {
 
 function _platformSlug() {
     const platformMap = { win32: 'win', linux: 'linux', darwin: 'mac' };
-    const archMap = { x64: 'x64', arm64: 'arm64' };
     const platform = platformMap[process.platform];
-    const arch = archMap[process.arch];
-    if (!platform || !arch) return null;
+    if (!platform) return null;
+    // ia32 (32-bit x86) is only built for Linux (Synology DSM and legacy NAS).
+    let arch;
+    if (process.arch === 'x64') arch = 'x64';
+    else if (process.arch === 'arm64') arch = 'arm64';
+    else if (process.arch === 'ia32' && process.platform === 'linux') arch = 'x86';
+    else return null;
     return `tgdl-seekbar-${platform}-${arch}`;
 }
 
@@ -293,11 +298,18 @@ function _cfg() {
     }
 }
 
-async function _probeHealth(url, attempts = 40, intervalMs = 250) {
+async function _probeHealth(url, token, attempts = 240, intervalMs = 250) {
+    const headers = token ? { 'X-API-Token': token } : {};
     for (let i = 0; i < attempts; i++) {
         try {
-            const r = await health();
-            if (r?.ok) return true;
+            const ctrl = new AbortController();
+            const t = setTimeout(() => ctrl.abort(), 3_000);
+            try {
+                const r = await fetch(`${url}/health`, { signal: ctrl.signal, headers });
+                if (r.ok) return true;
+            } finally {
+                clearTimeout(t);
+            }
         } catch {
             /* not up yet */
         }
@@ -306,14 +318,43 @@ async function _probeHealth(url, attempts = 40, intervalMs = 250) {
     return false;
 }
 
+function _extraBinDirs() {
+    // Collect directories containing bundled ffmpeg / ffprobe binaries so
+    // the Go sidecar can find them even when the operator has no system
+    // ffmpeg. De-duplicates in case both resolve to the same directory.
+    const dirs = new Set();
+    try {
+        const b = resolveFfmpegBin();
+        if (b && b !== 'ffmpeg') dirs.add(path.dirname(b));
+    } catch {}
+    try {
+        const b = resolveFfprobeBin();
+        if (b && b !== 'ffprobe' && b !== 'ffprobe.exe') dirs.add(path.dirname(b));
+    } catch {}
+    return [...dirs];
+}
+
 function _envFromConfig(cfg, port, token) {
+    const extraDirs = _extraBinDirs();
+    const envPath = extraDirs.length
+        ? `${extraDirs.join(path.delimiter)}${path.delimiter}${process.env.PATH || ''}`
+        : process.env.PATH || '';
+    // Resolve explicit binary paths so the Go sidecar gets the exact binary
+    // rather than relying on PATH ordering. Honour any operator-set
+    // SEEKBAR_FFMPEG / SEEKBAR_FFPROBE first, then fall back to the Node
+    // resolver (FFMPEG_PATH → system → bundled @ffmpeg-installer).
+    const ffmpegBin = process.env.SEEKBAR_FFMPEG || resolveFfmpegBin();
+    const ffprobeBin = process.env.SEEKBAR_FFPROBE || resolveFfprobeBin();
     return {
         ...process.env,
+        PATH: envPath,
         SEEKBAR_HTTP_LISTEN: `127.0.0.1:${port}`,
         SEEKBAR_API_TOKEN: token,
         SEEKBAR_OUTPUT_DIR: path.join(PROJECT_ROOT, 'data', 'seekbar'),
         SEEKBAR_TEMP_DIR: path.join(PROJECT_ROOT, 'data', 'seekbar', 'tmp'),
-        SEEKBAR_HWACCEL: String(cfg.hwaccel || 'auto'),
+        SEEKBAR_FFMPEG: ffmpegBin,
+        SEEKBAR_FFPROBE: ffprobeBin,
+        SEEKBAR_HWACCEL: cfg.hwaccel ?? 'none',
         SEEKBAR_CONCURRENCY: String(cfg.concurrency || 2),
         SEEKBAR_INTERVAL_SEC: String(cfg.intervalSec || 5),
         SEEKBAR_WIDTH: String(cfg.tileWidth || 160),
@@ -364,19 +405,31 @@ async function _spawnLocal(cfg) {
     const url = `http://127.0.0.1:${port}`;
     setSidecarUrl(url, token);
 
-    _child = spawn(bin, [], {
+    const thisChild = spawn(bin, [], {
         env,
         stdio: ['ignore', 'pipe', 'pipe'],
         cwd: PROJECT_ROOT,
         windowsHide: true,
     });
-    _child.stdout.on('data', (c) => {
-        process.stderr.write(`[seekbar-sidecar] ${c.toString()}`);
-    });
-    _child.stderr.on('data', (c) => {
-        process.stderr.write(`[seekbar-sidecar] ${c.toString()}`);
-    });
-    _child.on('exit', (code, sig) => {
+    _child = thisChild;
+    const _pipeLog = (level, chunk) => {
+        const text = chunk.toString().trimEnd();
+        process.stderr.write(`[seekbar-sidecar] ${text}\n`);
+        if (!_broadcast) return;
+        for (const line of text.split('\n')) {
+            const l = line.trim();
+            if (l)
+                try {
+                    _broadcast({ type: 'log', source: 'seekbar-sidecar', level, msg: l });
+                } catch {}
+        }
+    };
+    thisChild.stdout.on('data', (c) => _pipeLog('info', c));
+    thisChild.stderr.on('data', (c) => _pipeLog('warn', c));
+    thisChild.on('exit', (code, sig) => {
+        // Guard: if _child already points to a newer child (from refreshSidecar),
+        // this is a stale exit from the previously-killed process — ignore it.
+        if (_child !== thisChild) return;
         _child = null;
         _setState({
             ok: false,
@@ -388,12 +441,15 @@ async function _spawnLocal(cfg) {
 
     _setState({ ok: false, url, mode: 'starting', error: null, pid: _child.pid });
 
-    const healthy = await _probeHealth(url);
+    const healthy = await _probeHealth(url, token);
+    // Guard: a concurrent refreshSidecar() may have replaced _child already.
+    if (_child !== thisChild) return false;
     if (!healthy) {
         try {
-            _child?.kill('SIGTERM');
+            thisChild.kill('SIGTERM');
         } catch {}
-        _setState({ ok: false, url, mode: 'unhealthy', error: 'health probe failed' });
+        _child = null;
+        _setState({ ok: false, url, mode: 'unhealthy', error: 'health probe failed', pid: null });
         return false;
     }
     _setState({ ok: true, url, mode: 'running', error: null });
