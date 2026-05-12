@@ -2242,7 +2242,9 @@ function _renderPeopleGrid() {
 
 function _personTile(p) {
     const name = p.label || `${i18nT('maintenance.ai.person_default', 'Person')} #${p.id}`;
-    const cover = p.cover_download_id ? `/api/thumbs/${p.cover_download_id}?w=320` : '';
+    const faceCover = p.id > 0 ? `/api/ai/person/${p.id}/face?w=160` : '';
+    const fallbackCover = p.cover_download_id ? `/api/thumbs/${p.cover_download_id}?w=320` : '';
+    const cover = faceCover || fallbackCover;
     const faceCount = Number(p.face_count) || 0;
     const lastSeen = p.last_seen_at ? new Date(p.last_seen_at).toLocaleDateString() : '';
     const safeName = escapeHtml(name);
@@ -2251,7 +2253,11 @@ function _personTile(p) {
         title="${safeName}">
         ${
             cover
-                ? `<img src="${cover}" alt="${safeName}" loading="lazy" class="aspect-square w-full object-cover">`
+                ? `<img src="${cover}" alt="${safeName}" loading="lazy" class="aspect-square w-full object-cover" ${
+                      faceCover && fallbackCover
+                          ? `onerror="this.onerror=null;this.src='${fallbackCover}'"`
+                          : ''
+                  }>`
                 : '<div class="aspect-square w-full bg-tg-bg/40 flex items-center justify-center"><i class="ri-user-line text-3xl text-tg-textSecondary/50"></i></div>'
         }
         <div class="absolute bottom-0 left-0 right-0 p-1 bg-gradient-to-t from-black/80 to-transparent text-left">
@@ -2294,11 +2300,14 @@ function _photoTile(row) {
     const id = row.download_id || row.id;
     const faceId = row.face_id || '';
     const name = escapeHtml(row.file_name || `#${id}`);
+    const faceCrop = faceId ? `/api/ai/faces/${faceId}/crop?w=160` : '';
+    const thumbFallback = `/api/thumbs/${id}?w=320`;
     const q = Number(row.face_quality);
     const qualityScore = Number.isFinite(q) ? Math.round(Math.max(0, Math.min(1, q)) * 100) : null;
     return `
         <a href="#/files/${id}" class="block group relative" data-face-id="${escapeHtml(String(faceId))}">
-            <img src="/api/thumbs/${id}?w=320" alt="${name}" loading="lazy"
+            <img src="${faceCrop || thumbFallback}" alt="${name}" loading="lazy"
+                ${faceCrop ? `onerror="this.onerror=null;this.src='${thumbFallback}'"` : ''}
                 class="aspect-square w-full object-cover rounded-lg bg-tg-bg/40">
             ${
                 qualityScore == null

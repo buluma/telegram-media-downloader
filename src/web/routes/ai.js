@@ -1,4 +1,5 @@
 import express from 'express';
+import sharp from 'sharp';
 import { loadConfig, watchConfig } from '../../config/manager.js';
 import { getDb } from '../../core/db.js';
 import {
@@ -29,6 +30,7 @@ import {
     getUnindexedAiBatch,
 } from '../../core/db/faces.js';
 import { pregenerateAi as aiPregenerateAi } from '../../core/ai/index.js';
+import { safeResolveDownload } from '../lib/resolve-download.js';
 
 export function createAiRouter({ broadcast, log, jobTrackers }) {
     const router = express.Router();
@@ -785,6 +787,106 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             `)
                 .all(limit);
             res.json({ success: true, groups: rows });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    // Best-face crop for a person tile/avatar.
+    router.get('/ai/person/:id/face', async (req, res) => {
+        try {
+            const personId = Number(req.params.id);
+            if (!Number.isFinite(personId) || personId <= 0) {
+                return res.status(400).json({ error: 'invalid person id' });
+            }
+            const size = Math.max(64, Math.min(512, Number(req.query.w) || 160));
+            const row = getDb()
+                .prepare(
+                    `SELECT f.x, f.y, f.w, f.h, d.file_path
+                       FROM faces f
+                       JOIN downloads d ON d.id = f.download_id
+                      WHERE f.person_id = ?
+                      ORDER BY COALESCE(f.quality_score, 0) DESC, f.w * f.h DESC
+                      LIMIT 1`,
+                )
+                .get(personId);
+            if (!row) return res.status(404).json({ error: 'no face found' });
+
+            const resolved = await safeResolveDownload(row.file_path);
+            if (!resolved.ok) {
+                return res
+                    .status(resolved.reason === 'missing' ? 404 : 403)
+                    .json({ error: resolved.reason });
+            }
+
+            const pad = 0.4;
+            const meta = await sharp(resolved.real, { failOn: 'none' }).metadata();
+            const imgW = meta.width || 9999;
+            const imgH = meta.height || 9999;
+            const left = Math.max(0, Math.round(row.x - row.w * pad));
+            const top = Math.max(0, Math.round(row.y - row.h * pad));
+            const right = Math.min(imgW, Math.round(row.x + row.w + row.w * pad));
+            const bottom = Math.min(imgH, Math.round(row.y + row.h + row.h * pad));
+            const width = Math.max(1, right - left);
+            const height = Math.max(1, bottom - top);
+
+            const buf = await sharp(resolved.real, { failOn: 'none' })
+                .extract({ left, top, width, height })
+                .resize(size, size, { fit: 'cover', position: 'centre' })
+                .jpeg({ quality: 82, progressive: true })
+                .toBuffer();
+            res.set('content-type', 'image/jpeg');
+            res.set('cache-control', 'public, max-age=604800, immutable');
+            res.send(buf);
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    // Crop for one face row (used in person photo gallery).
+    router.get('/ai/faces/:id/crop', async (req, res) => {
+        try {
+            const faceId = Number(req.params.id);
+            if (!Number.isFinite(faceId) || faceId <= 0) {
+                return res.status(400).json({ error: 'invalid face id' });
+            }
+            const size = Math.max(64, Math.min(512, Number(req.query.w) || 128));
+            const row = getDb()
+                .prepare(
+                    `SELECT f.x, f.y, f.w, f.h, d.file_path
+                       FROM faces f
+                       JOIN downloads d ON d.id = f.download_id
+                      WHERE f.id = ?`,
+                )
+                .get(faceId);
+            if (!row) return res.status(404).json({ error: 'face not found' });
+
+            const resolved = await safeResolveDownload(row.file_path);
+            if (!resolved.ok) {
+                return res
+                    .status(resolved.reason === 'missing' ? 404 : 403)
+                    .json({ error: resolved.reason });
+            }
+
+            const pad = 0.4;
+            const meta = await sharp(resolved.real, { failOn: 'none' }).metadata();
+            const imgW = meta.width || 9999;
+            const imgH = meta.height || 9999;
+            const left = Math.max(0, Math.round(row.x - row.w * pad));
+            const top = Math.max(0, Math.round(row.y - row.h * pad));
+            const right = Math.min(imgW, Math.round(row.x + row.w + row.w * pad));
+            const bottom = Math.min(imgH, Math.round(row.y + row.h + row.h * pad));
+            const width = Math.max(1, right - left);
+            const height = Math.max(1, bottom - top);
+
+            const buf = await sharp(resolved.real, { failOn: 'none' })
+                .extract({ left, top, width, height })
+                .resize(size, size, { fit: 'cover', position: 'centre' })
+                .jpeg({ quality: 82, progressive: true })
+                .toBuffer();
+            res.set('content-type', 'image/jpeg');
+            res.set('cache-control', 'public, max-age=604800, immutable');
+            res.send(buf);
         } catch (e) {
             res.status(500).json({ error: e.message });
         }
