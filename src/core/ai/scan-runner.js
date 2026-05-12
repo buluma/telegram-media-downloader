@@ -388,6 +388,10 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
             const envBatch = resolveFacesValue('batchSize', facesCfgIn);
             const batchSizeRaw = _pickNumber([facesCfgIn.batchSize, cfg.batchSize, envBatch], 16);
             const batchSize = Math.max(1, Math.min(200, Number(batchSizeRaw) || 16));
+            let _statNull = 0;
+            let _statEmpty = 0;
+            let _statFaces = 0;
+            let _statPhotos = 0;
             while (!signal.aborted) {
                 const batch = getUnindexedAiBatch({ fileTypes, limit: batchSize });
                 if (!batch.length) break;
