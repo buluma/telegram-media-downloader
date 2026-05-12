@@ -517,6 +517,13 @@ export function isScanRunning() {
 const _bgQueue = [];
 let _bgRunning = false;
 
+// Optional callback registered by server.js so auto-deletes are visible
+// in the realtime log + cause the queue/downloads UI to remove the row.
+let _onBlocklistDelete = null;
+export function setBlocklistDeleteCallback(fn) {
+    _onBlocklistDelete = typeof fn === 'function' ? fn : null;
+}
+
 export function pregenerateNsfw(downloadId) {
     queueMicrotask(() => {
         // Defer the actual work + cap queue depth so a 1000-file backfill
