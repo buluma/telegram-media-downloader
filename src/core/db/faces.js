@@ -518,6 +518,33 @@ export function getUnscannedObjectBatch({ fileTypes = ['photo'], limit = 50 } = 
         .all(...types, Math.max(1, Math.min(500, Number(limit) || 50)));
 }
 
+export function getUnscannedTagsBatch({ fileTypes = ['photo'], limit = 50 } = {}) {
+    const types = Array.isArray(fileTypes) && fileTypes.length ? fileTypes : ['photo'];
+    const placeholders = types.map(() => '?').join(',');
+    return getDb()
+        .prepare(`
+        SELECT id, group_id, group_name, file_name, file_path, file_type, file_size, created_at
+          FROM downloads
+         WHERE file_type IN (${placeholders})
+           AND id NOT IN (SELECT DISTINCT download_id FROM image_tags)
+         ORDER BY created_at ASC, id ASC
+         LIMIT ?
+    `)
+        .all(...types, Math.max(1, Math.min(500, Number(limit) || 50)));
+}
+
+export function countUnscannedTags({ fileTypes = ['photo'] } = {}) {
+    const types = Array.isArray(fileTypes) && fileTypes.length ? fileTypes : ['photo'];
+    const placeholders = types.map(() => '?').join(',');
+    return getDb()
+        .prepare(`
+        SELECT COUNT(*) AS n FROM downloads
+         WHERE file_type IN (${placeholders})
+           AND id NOT IN (SELECT DISTINCT download_id FROM image_tags)
+    `)
+        .get(...types).n;
+}
+
 /**
  * Counters for the Maintenance → AI page header. One COUNT per capability
  * + a totalEligible/indexed roll-up so the UI can paint progress bars
@@ -1058,6 +1085,7 @@ export function listAllTags({ minCount = 1 } = {}) {
         .prepare(`
         SELECT tag, COUNT(*) AS count, AVG(score) AS avg_score
           FROM image_tags
+         WHERE tag != '_scanned_'
          GROUP BY tag
         HAVING count >= ?
          ORDER BY count DESC, tag ASC
@@ -1109,6 +1137,7 @@ export function getTagCooccurrenceSuggestions({
         .prepare(`
         SELECT tag, COUNT(DISTINCT download_id) AS count
           FROM image_tags
+         WHERE tag != '_scanned_'
          GROUP BY tag
         HAVING count >= ?
          ORDER BY count DESC
@@ -1159,7 +1188,7 @@ export function getTagCooccurrenceSuggestions({
 // ---- Image Text (OCR) --------------------------------------------------
 
 export function setImageText(downloadId, text, language = null, confidence = null) {
-    if (!downloadId || !text) return 0;
+    if (!downloadId) return 0;
     return getDb()
         .prepare(`
         INSERT INTO image_text (download_id, text, language, confidence, scanned_at)
@@ -1168,7 +1197,7 @@ export function setImageText(downloadId, text, language = null, confidence = nul
     `)
         .run(
             Number(downloadId),
-            String(text).slice(0, 50000),
+            String(text || '').slice(0, 50000),
             language,
             confidence,
             Math.floor(Date.now() / 1000),
@@ -1246,7 +1275,7 @@ export function getImageObjects(downloadId) {
         .prepare(`
         SELECT object, confidence, x, y, w, h
           FROM image_objects
-         WHERE download_id = ?
+         WHERE download_id = ? AND object != '_scanned_'
          ORDER BY confidence DESC
     `)
         .all(Number(downloadId));
@@ -1267,7 +1296,7 @@ export function listDetectedObjects({ minConfidence = 0.5, limit = 50, offset = 
         .prepare(`
         SELECT object, COUNT(DISTINCT download_id) AS count, AVG(confidence) AS avg_confidence
           FROM image_objects
-         WHERE confidence >= ?
+         WHERE confidence >= ? AND object != '_scanned_'
          GROUP BY object
          ORDER BY count DESC
          LIMIT ?  OFFSET ?
