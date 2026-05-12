@@ -427,7 +427,9 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             }
             // Allow request-level parameter overrides (e.g., minConfidence from slider)
             if (feature === 'objects' && typeof req.body?.minConfidence === 'number') {
-                if (!cfg.objectDetection) cfg.objectDetection = {};
+                if (typeof cfg.objectDetection !== 'object' || !cfg.objectDetection) {
+                    cfg.objectDetection = {};
+                }
                 cfg.objectDetection.minConfidence = req.body.minConfidence;
             }
             const tracker = _aiTrackerFor(feature);
