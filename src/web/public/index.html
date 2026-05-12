@@ -4320,6 +4320,24 @@
                 </div>
             </div>
 
+            <!-- AI Results Panel (OCR text + detected objects) — hidden until populated -->
+            <div id="modal-ai-panel" class="w-full hidden border-t border-white/10 bg-black/30">
+                <div class="max-w-4xl mx-auto px-4 py-2">
+                    <div id="modal-ai-panel-inner" class="flex flex-wrap gap-3 items-start">
+                        <!-- OCR text block -->
+                        <div id="modal-ocr-block" class="hidden flex-1 min-w-0">
+                            <p class="text-[10px] uppercase tracking-wide text-white/40 mb-1 font-medium">OCR Text</p>
+                            <p id="modal-ocr-text" class="text-xs text-white/80 leading-relaxed whitespace-pre-wrap break-words max-h-20 overflow-y-auto"></p>
+                        </div>
+                        <!-- Object detection chips -->
+                        <div id="modal-objects-block" class="hidden shrink-0">
+                            <p class="text-[10px] uppercase tracking-wide text-white/40 mb-1 font-medium">Detected</p>
+                            <div id="modal-objects-chips" class="flex flex-wrap gap-1"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Info Bar -->
             <div id="modal-info-bar" class="w-full p-4 border-t border-white/10 bg-black/40 backdrop-blur-sm">
                 <div class="max-w-4xl mx-auto flex items-center justify-between gap-4">

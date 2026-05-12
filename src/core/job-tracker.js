@@ -236,8 +236,9 @@ export function createJobTracker({ kind, broadcast, log, eventPrefix } = {}) {
 function _shortProgress(p) {
     if (!p || typeof p !== 'object') return '';
     const parts = [];
-    if (Number.isFinite(p.processed) || Number.isFinite(p.total)) {
-        parts.push(`${p.processed ?? 0}/${p.total ?? 0}`);
+    const done = Number.isFinite(p.processed) ? p.processed : p.scanned;
+    if (Number.isFinite(done) || Number.isFinite(p.total)) {
+        parts.push(`${done ?? 0}/${p.total ?? 0}`);
     }
     if (p.stage) parts.push(p.stage);
     return parts.join(' ');
