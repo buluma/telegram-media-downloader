@@ -497,6 +497,7 @@ export function getUnscannedOcrBatch({ fileTypes = ['photo'], limit = 50 } = {})
           FROM downloads
          WHERE file_type IN (${placeholders})
            AND id NOT IN (SELECT DISTINCT download_id FROM image_text)
+           AND LOWER(file_name) NOT LIKE '%.webp' 
          ORDER BY created_at ASC, id ASC
          LIMIT ?
     `)
@@ -512,6 +513,7 @@ export function getUnscannedObjectBatch({ fileTypes = ['photo'], limit = 50 } = 
           FROM downloads
          WHERE file_type IN (${placeholders})
            AND id NOT IN (SELECT DISTINCT download_id FROM image_objects)
+           AND LOWER(file_name) NOT LIKE '%.webp'
          ORDER BY created_at ASC, id ASC
          LIMIT ?
     `)
@@ -527,6 +529,7 @@ export function getUnscannedTagsBatch({ fileTypes = ['photo'], limit = 50 } = {}
           FROM downloads
          WHERE file_type IN (${placeholders})
            AND id NOT IN (SELECT DISTINCT download_id FROM image_tags)
+           AND LOWER(file_name) NOT LIKE '%.webp'
          ORDER BY created_at ASC, id ASC
          LIMIT ?
     `)
