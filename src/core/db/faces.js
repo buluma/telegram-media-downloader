@@ -1746,7 +1746,7 @@ async function _precomputeSemanticEmbeddings(rule, cache) {
  */
 async function _fetchEmbedding(query) {
     try {
-        const { embedText } = await import('../../ai/faces-client.js');
+        const { embedText } = await import('../../core/ai/faces-client.js');
         const r = await embedText(query);
         if (r?.embedding?.length) return Float32Array.from(r.embedding);
     } catch {}

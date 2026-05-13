@@ -24,7 +24,7 @@ export class OpenAIProvider extends LLMProvider {
         }
         const baseUrl = _baseUrl(llmCfg);
         try {
-            const res = await fetch(`${baseUrl}/models`, {
+            const res = await fetch(`${baseUrl}/v1/models`, {
                 headers: { Authorization: `Bearer ${apiKey}` },
                 signal: AbortSignal.timeout(5000),
             });

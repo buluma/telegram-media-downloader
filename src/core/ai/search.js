@@ -323,7 +323,7 @@ function _matchFilename(db, tokens, fileTypes) {
     }
     let sql = `SELECT DISTINCT d.id, d.file_name, d.group_name
                  FROM downloads d
-                WHERE ${clauses.join(' OR ')}`;
+                WHERE (${clauses.join(' OR ')})`;
     if (Array.isArray(fileTypes) && fileTypes.length) {
         params.push(...fileTypes);
         sql += ` AND d.file_type IN (${fileTypes.map(() => '?').join(',')})`;
