@@ -149,6 +149,46 @@ export function createMaintenanceRouter({
         return true;
     }
 
+    // High-cost maintenance mutations are cheap to trigger but expensive to
+    // execute. Add a small in-memory burst gate per (ip, method, path) so a
+    // noisy client cannot repeatedly hammer scan/rebuild endpoints.
+    const _heavyRoutePolicies = new Map([
+        ['POST /maintenance/db/vacuum', { windowMs: 60_000, max: 2 }],
+        ['POST /maintenance/dedup/scan', { windowMs: 60_000, max: 3 }],
+        ['POST /maintenance/thumbs/rebuild', { windowMs: 60_000, max: 3 }],
+        ['POST /maintenance/thumbs/build-all', { windowMs: 60_000, max: 3 }],
+        ['POST /maintenance/seekbar/rebuild', { windowMs: 60_000, max: 3 }],
+        ['POST /maintenance/seekbar/build-all', { windowMs: 60_000, max: 3 }],
+        ['POST /maintenance/faststart/scan', { windowMs: 60_000, max: 3 }],
+        ['POST /maintenance/nsfw/scan', { windowMs: 60_000, max: 3 }],
+        ['POST /maintenance/files/verify', { windowMs: 60_000, max: 3 }],
+        ['POST /maintenance/reindex', { windowMs: 60_000, max: 3 }],
+        ['POST /maintenance/resync-dialogs', { windowMs: 60_000, max: 3 }],
+        ['POST /maintenance/restart-monitor', { windowMs: 60_000, max: 5 }],
+        ['DELETE /maintenance/nsfw/cache', { windowMs: 60_000, max: 2 }],
+        ['POST /maintenance/nsfw/v2/bulk-delete', { windowMs: 60_000, max: 4 }],
+        ['POST /maintenance/recovery/resolve', { windowMs: 60_000, max: 6 }],
+        ['POST /maintenance/recovery/delete', { windowMs: 60_000, max: 6 }],
+        ['POST /maintenance/recovery/reassign', { windowMs: 60_000, max: 6 }],
+    ]);
+    const _heavyRouteHits = new Map();
+    router.use((req, res, next) => {
+        const policy = _heavyRoutePolicies.get(`${req.method} ${req.path}`);
+        if (!policy) return next();
+        const now = Date.now();
+        const key = `${req.ip || 'unknown'}|${req.method}|${req.path}`;
+        const hits = (_heavyRouteHits.get(key) || []).filter((ts) => now - ts < policy.windowMs);
+        if (hits.length >= policy.max) {
+            return res.status(429).json({
+                error: 'Too many maintenance requests. Please retry shortly.',
+                retryAfterMs: policy.windowMs,
+            });
+        }
+        hits.push(now);
+        _heavyRouteHits.set(key, hits);
+        next();
+    });
+
     // Force re-resolve every group entity (name + photo) against Telegram. This is
     // /api/groups/refresh-info under a friendlier name; the SPA already calls the
     // underlying handler, this is the explicit "Resync now" button.
