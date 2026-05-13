@@ -39,7 +39,7 @@ const DEFAULT_WEIGHTS = {
  * @param {object} [opts.weights] - Per-modality weight overrides
  * @param {string[]} [opts.fileTypes] - Filter by file type(s)
  * @param {boolean} [opts.skipSemantic=false] - Skip embedding search
- * @returns {Promise<{ query, results: object[], modalities: object }>}
+ * @returns {Promise<{ query, results: object[], modalities: string[], excludedTokens?: string[] }>}
  */
 export async function crossModalSearch(query, opts = {}) {
     const topK = Math.max(1, Math.min(500, Number(opts.topK) || 50));
@@ -47,9 +47,9 @@ export async function crossModalSearch(query, opts = {}) {
     const weights = { ...DEFAULT_WEIGHTS, ...opts.weights };
     const skipSemantic = opts.skipSemantic === true;
 
-    // Tokenise the query into lower-cased keywords
-    const tokens = _tokenise(query);
-    if (!tokens.length) return { query, results: [], modalities: {} };
+    // Tokenise the query into include / exclude lists
+    const { include: tokens, exclude: excludedTokens } = _tokenise(query);
+    if (!tokens.length) return { query, results: [], modalities: [] };
 
     const db = getDb();
     const resultsByModality = {};
@@ -109,17 +109,55 @@ export async function crossModalSearch(query, opts = {}) {
 
     await Promise.allSettled(tasks);
 
+    // Exclusion pass — collect IDs matching any exclude token across all
+    // non-semantic modalities, then remove them from every modality result.
+    if (excludedTokens.length) {
+        const excluded = new Set();
+        const exResults = await Promise.allSettled([
+            Promise.resolve(_matchTags(db, excludedTokens, opts.fileTypes)),
+            Promise.resolve(_matchObjects(db, excludedTokens, opts.fileTypes)),
+            Promise.resolve(_matchPeople(db, excludedTokens, opts.fileTypes)),
+            Promise.resolve(_matchText(db, excludedTokens, opts.fileTypes)),
+            Promise.resolve(_matchFilename(db, excludedTokens, opts.fileTypes)),
+        ]);
+        for (const r of exResults) {
+            if (r.status === 'fulfilled' && r.value) {
+                for (const id of r.value.keys()) excluded.add(id);
+            }
+        }
+        for (const map of Object.values(resultsByModality)) {
+            if (map) for (const id of excluded) map.delete(id);
+        }
+    }
+
     // Count how many modalities were active
     const activeModalities = Object.keys(resultsByModality).filter(
         (k) => resultsByModality[k] && resultsByModality[k].size > 0,
     );
 
     if (!activeModalities.length) {
-        return { query, results: [], modalities: [] };
+        return {
+            query,
+            results: [],
+            modalities: [],
+            ...(excludedTokens.length ? { excludedTokens } : {}),
+        };
     }
 
     // Combine scores across all active modalities
     const combined = _combineScores(resultsByModality, weights, activeModalities);
+
+    // Normalise so the highest-scoring result = 1.0. Preserves relative
+    // ranking while preventing scores from feeling arbitrarily low when
+    // only one modality fires or IDs match only a subset of modalities.
+    if (combined.size > 0) {
+        const max = Math.max(...combined.values());
+        if (max > 0 && max < 1) {
+            for (const [id, score] of combined) {
+                combined.set(id, score / max);
+            }
+        }
+    }
 
     // Build final result list sorted by combined score
     const entries = [...combined.entries()]
@@ -128,7 +166,12 @@ export async function crossModalSearch(query, opts = {}) {
         .slice(0, topK);
 
     if (!entries.length) {
-        return { query, results: [], modalities: activeModalities };
+        return {
+            query,
+            results: [],
+            modalities: activeModalities,
+            ...(excludedTokens.length ? { excludedTokens } : {}),
+        };
     }
 
     // Fetch file metadata for the matched download IDs
@@ -164,17 +207,33 @@ export async function crossModalSearch(query, opts = {}) {
         query,
         results,
         modalities: activeModalities,
+        ...(excludedTokens.length ? { excludedTokens } : {}),
     };
 }
 
 // ---- Tokeniser ----------------------------------------------------------
 
+/**
+ * Split a query string into include and exclude token lists.
+ * Tokens prefixed with `-` are exclusions (e.g. `beach -vacation`).
+ * Returns `{ include: string[], exclude: string[] }`.
+ */
 function _tokenise(text) {
-    return String(text || '')
+    const include = [];
+    const exclude = [];
+    String(text || '')
         .toLowerCase()
         .replace(/[^a-z0-9\s-]/g, '')
         .split(/\s+/)
-        .filter(Boolean);
+        .filter(Boolean)
+        .forEach((tok) => {
+            if (tok.startsWith('-') && tok.length > 1) {
+                exclude.push(tok.slice(1));
+            } else {
+                include.push(tok);
+            }
+        });
+    return { include, exclude };
 }
 
 // ---- Individual matchers ------------------------------------------------

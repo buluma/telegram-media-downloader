@@ -1352,7 +1352,6 @@ export function listOcrWords({ minLength = 3, minCount = 1, limit = 100 } = {}) 
     const db = getDb();
     const rows = db.prepare('SELECT text FROM image_text WHERE length(text) > 0').all();
     const freq = {};
-    const perDownload = new Map();
     for (const r of rows) {
         if (!r.text) continue;
         const seen = new Set();
