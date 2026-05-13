@@ -25,6 +25,7 @@ let _initOnce = false;
 let _lastStatus = null;
 let _selectedPerson = null;
 let _selectedPersonName = '';
+let _doctorScanReady = true;
 let _peopleCache = []; // full people list (un-filtered) for client-side search
 const _peopleFilter = { query: '', unlabeledOnly: false };
 let _tagListCache = [];
@@ -1150,8 +1151,12 @@ function _renderStatus(status) {
     const running = !!facesScan.running;
     const scanBtn = $('#ai-scan-btn');
     const cancelBtn = $('#ai-cancel-btn');
-    if (scanBtn) scanBtn.disabled = running;
+    if (scanBtn) scanBtn.disabled = running || !_doctorScanReady;
     if (cancelBtn) cancelBtn.disabled = !running;
+    const reindexBtn = $('#ai-reindex-btn');
+    if (reindexBtn) reindexBtn.disabled = running || !_doctorScanReady;
+    const reclusterBtn = $('#ai-recluster-btn');
+    if (reclusterBtn) reclusterBtn.disabled = running || !_doctorScanReady;
     const prog = $('#ai-progress');
     if (prog) prog.classList.toggle('hidden', !running);
     if (running) {
@@ -2479,6 +2484,7 @@ async function _refreshDoctor() {
         const r = await api.get('/api/ai/doctor');
         if (!r.success) throw new Error(r.error || 'doctor failed');
         const checks = Array.isArray(r.checks) ? r.checks : [];
+        _doctorScanReady = checks.every((c) => c.status !== 'fail');
         // Summary chip — colour reflects the worst-state check.
         const fails = checks.filter((c) => c.status === 'fail').length;
         const warns = checks.filter((c) => c.status === 'warn').length;
@@ -2507,11 +2513,15 @@ async function _refreshDoctor() {
             </div>`,
             )
             .join('');
+        // Re-apply control enable/disable state using the latest doctor gate.
+        _renderStatus(_lastStatus || {});
     } catch (e) {
+        _doctorScanReady = false;
         el.innerHTML = `<div class="text-red-300 text-xs py-2">${escapeHtml(e.message)}</div>`;
         if (sumEl) {
             sumEl.className = 'text-[10.5px] text-red-300';
             sumEl.textContent = `· ${i18nT('common.error', 'Error')}`;
         }
+        _renderStatus(_lastStatus || {});
     }
 }

@@ -34,6 +34,14 @@ import { safeResolveDownload } from '../lib/resolve-download.js';
 
 export function createAiRouter({ broadcast, log, jobTrackers }) {
     const router = express.Router();
+    function _facesScanFileTypes(cfg = _aiCfg()) {
+        const facesBlk = cfg.faces && typeof cfg.faces === 'object' ? cfg.faces : {};
+        const base =
+            Array.isArray(cfg.fileTypes) && cfg.fileTypes.length ? cfg.fileTypes : ['photo'];
+        const set = new Set(base.map((t) => String(t || '').toLowerCase()).filter(Boolean));
+        if (facesBlk.includeVideos === true) set.add('video');
+        return [...set];
+    }
 
     // Provide jobTrackers-compatible access via the injected jobTrackers dep.
     function _aiTrackerFor(feature) {
@@ -121,7 +129,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             const cfg = _aiCfg();
             const counts = (() => {
                 try {
-                    return getAiCounts({ fileTypes: cfg.fileTypes || ['photo'] });
+                    return getAiCounts({ fileTypes: _facesScanFileTypes(cfg) });
                 } catch {
                     return { totalEligible: 0, indexed: 0, withFaces: 0 };
                 }
@@ -138,7 +146,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                     enabled: cfg.enabled === true,
                     faceClustering: cfg.faceClustering !== false,
                     federateFaces: cfg.federateFaces === true,
-                    fileTypes: cfg.fileTypes || ['photo'],
+                    fileTypes: _facesScanFileTypes(cfg),
                     facesEpsilon: Number.isFinite(cfg.facesEpsilon) ? cfg.facesEpsilon : 0.5,
                     facesMinPoints: Number.isFinite(cfg.facesMinPoints) ? cfg.facesMinPoints : 3,
                     facesDetector: cfg.facesDetector || 'tiny',
@@ -635,7 +643,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                 });
             }
             const cfg = _aiCfg();
-            const types = cfg.fileTypes || ['photo'];
+            const types = _facesScanFileTypes(cfg);
             const placeholders = types.map(() => '?').join(',');
             const db = getDb();
             const tx = db.transaction(() => {
@@ -1105,7 +1113,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                 _aiAutoScanLastEnqueued = 0;
                 return;
             }
-            const fileTypes = cfg.fileTypes || ['photo'];
+            const fileTypes = _facesScanFileTypes(cfg);
             const batch = getUnindexedAiBatch({ fileTypes, limit: batchSize });
             if (!batch.length) {
                 _aiAutoScanLastTickAt = Date.now();
@@ -1470,18 +1478,19 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         // 6. Photos indexed — kept from the prior probe set. Drives the
         //    operator's sense of progress; cheap (single SQL aggregate).
         try {
-            const c = getAiCounts({ fileTypes: ['photo'] });
+            const cfg = _aiCfg();
+            const c = getAiCounts({ fileTypes: _facesScanFileTypes(cfg) });
             const pct = c.totalEligible ? Math.floor((c.indexed / c.totalEligible) * 100) : 0;
             checks.push({
                 id: 'indexed',
-                label: 'Photos indexed',
+                label: cfg?.faces?.includeVideos === true ? 'Files indexed' : 'Photos indexed',
                 status: 'ok',
                 detail: `${c.indexed}/${c.totalEligible} (${pct}%) · with faces ${c.withFaces || 0}`,
             });
         } catch (e) {
             checks.push({
                 id: 'indexed',
-                label: 'Photos indexed',
+                label: 'Files indexed',
                 status: 'warn',
                 detail: e?.message || String(e),
             });
