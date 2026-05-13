@@ -1,6 +1,13 @@
+import { existsSync } from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import express from 'express';
 import sharp from 'sharp';
 import { loadConfig, watchConfig } from '../../config/manager.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = path.resolve(__dirname, '..', '..', '..');
+const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
 import { getDb } from '../../core/db.js';
 import {
     startFacesScan as aiStartFacesScan,
@@ -30,6 +37,7 @@ import {
     getUnindexedAiBatch,
 } from '../../core/db/faces.js';
 import { pregenerateAi as aiPregenerateAi } from '../../core/ai/index.js';
+import * as llm from '../../core/llm/index.js';
 import { safeResolveDownload } from '../lib/resolve-download.js';
 
 export function createAiRouter({ broadcast, log, jobTrackers }) {
@@ -49,6 +57,19 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         if (feature === 'tags') return jobTrackers.aiTags;
         if (feature === 'ocr') return jobTrackers.aiOcr;
         if (feature === 'objects') return jobTrackers.aiObjects;
+        return null;
+    }
+
+    // Resolve a stored file_path to an absolute path on disk. Mirrors
+    // the same logic in scan-runner.js and ai/index.js.
+    function _resolveAiPath(storedPath) {
+        if (!storedPath) return null;
+        if (path.isAbsolute(storedPath) && existsSync(storedPath)) return storedPath;
+        let s = String(storedPath).replace(/\\/g, '/');
+        while (s.startsWith('data/downloads/')) s = s.slice('data/downloads/'.length);
+        const candidate = path.join(DATA_DIR, 'downloads', s);
+        if (existsSync(candidate)) return candidate;
+        if (existsSync(storedPath)) return storedPath;
         return null;
     }
 
@@ -364,7 +385,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             const enabled = req.body?.enabled !== false;
             const sortKey = String(req.body?.sortKey || 'created_at_desc');
             const albumId = upsertSmartAlbum({ id, name, rule, enabled, sortKey });
-            const rebuilt = rebuildSmartAlbum(albumId);
+            const rebuilt = await rebuildSmartAlbum(albumId);
             res.json({ success: true, id: albumId, rebuilt });
         } catch (e) {
             res.status(400).json({ error: e.message });
@@ -385,10 +406,109 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
     router.post('/ai/smart-albums/:id/rebuild', async (req, res) => {
         try {
             const id = Number(req.params.id);
-            const rebuilt = rebuildSmartAlbum(id);
+            const rebuilt = await rebuildSmartAlbum(id);
             res.json({ success: true, id, rebuilt });
         } catch (e) {
             res.status(400).json({ error: e.message });
+        }
+    });
+
+    // Parse a natural-language album description into a validated compound
+    // rule using the active LLM provider. Returns the parsed rule JSON for
+    // the operator to preview before saving. Returns 503 when the LLM is
+    // unavailable so the UI can fall back to the manual rule builder.
+    router.post('/ai/smart-albums/parse', async (req, res) => {
+        try {
+            const description = String(req.body?.description || '').trim();
+            if (!description) {
+                return res.status(400).json({
+                    error: 'description is required',
+                    code: 'MISSING_DESCRIPTION',
+                });
+            }
+
+            const llm = await import('../../core/llm/index.js');
+
+            const systemPrompt = [
+                'You are a media album builder. Given a natural-language',
+                'description, return a JSON rule object for a smart album.',
+                '',
+                'Response must be ONLY valid JSON with this schema:',
+                JSON.stringify(
+                    {
+                        type: 'compound',
+                        all: [
+                            { type: 'tags_contains', tag: 'beach', minScore: 0.55 },
+                            { type: 'people_count', min: 2 },
+                            { type: 'semantic', query: 'smiling at sunset', minScore: 0.7 },
+                            { type: 'objects', names: ['person', 'dog'] },
+                            { type: 'text_contains', substring: 'receipt' },
+                            { type: 'date', from: '2025-06-01', to: '2025-09-01' },
+                            { type: 'file_type', fileType: 'photo' },
+                        ],
+                        any: [],
+                        sort: 'score_desc',
+                    },
+                    null,
+                    2,
+                ),
+                '',
+                'Rules:',
+                '- Use "compound" type at top level.',
+                '- "all" = every sub-rule must match (AND).',
+                '- "any" = at least one must match (OR).',
+                '- Combine all/any for complex logic.',
+                '- "tags_contains" for CLIP tag matches.',
+                '- "people_count" for minimum people in photo.',
+                '- "semantic" for natural-language similarity.',
+                '- "objects" for YOLO detected objects.',
+                '- "text_contains" for OCR text search.',
+                '- "date" with ISO date strings.',
+                '- "file_type": photo/video/audio/file/voice.',
+                '- Omit empty arrays (all/any).',
+                '- sort: "score_desc" or "date_desc" or "date_asc".',
+                '',
+                'Example: "beach photos with 2+ people from last summer"',
+                'should produce the schema above.',
+                '',
+                'Return ONLY the JSON object, no markdown, no explanation.',
+            ].join('\n');
+
+            const result = await llm.generate({
+                prompt: description,
+                systemPrompt,
+                temperature: 0.1,
+                maxTokens: 1024,
+            });
+
+            if (result.unavailable) {
+                return res.status(503).json({
+                    error: result.reason,
+                    code: 'LLM_UNAVAILABLE',
+                });
+            }
+
+            let parsed;
+            try {
+                let json = (result.text || '').trim();
+                if (json.startsWith('```')) {
+                    json = json.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/g, '');
+                }
+                parsed = JSON.parse(json);
+            } catch {
+                return res.status(422).json({
+                    error: 'LLM returned invalid JSON',
+                    code: 'INVALID_JSON',
+                    raw: (result.text || '').slice(0, 500),
+                });
+            }
+
+            const facesMod = await import('../../core/db/faces.js');
+            const normalized = facesMod._normalizeSmartAlbumRule(parsed);
+
+            res.json({ success: true, description, rule: normalized });
+        } catch (e) {
+            res.status(500).json({ error: e?.message || String(e) });
         }
     });
 
@@ -400,7 +520,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             const result = listSmartAlbumItems(id, { limit, offset });
             res.json({ success: true, id, ...result });
         } catch (e) {
-            res.status(400).json({ error: e.message });
+            return res.status(400).json({ error: e.message });
         }
     });
 
@@ -543,6 +663,227 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             }
             const body = await r.json();
             res.json(body);
+        } catch (e) {
+            res.status(500).json({ error: e?.message || String(e) });
+        }
+    });
+
+    // ====== LLM provider status ===========================================
+
+    // Return LLM provider availability, active provider info, and
+    // capabilities. Follows the same pattern as the faces provider-probe
+    // endpoint — lightweight probes the AI maintenance page polls.
+    router.get('/ai/llm/status', async (_req, res) => {
+        try {
+            const [providers, active] = await Promise.all([
+                llm.probeProviders(),
+                llm.getActiveProvider(),
+            ]);
+            // Include the resolved config so the UI can pre-fill the
+            // inline config form without a separate /api/config call.
+            let config = {};
+            try {
+                const { loadConfig } = await import('../../config/manager.js');
+                const live = loadConfig();
+                config = live?.advanced?.ai?.llm || {};
+            } catch {}
+            res.json({
+                success: true,
+                providers,
+                active,
+                list: llm.listProviders(),
+                config,
+            });
+        } catch (e) {
+            res.status(500).json({ error: e?.message || String(e) });
+        }
+    });
+
+    // Run a quick test prompt through the active LLM provider. Useful for
+    // the AI maintenance page to verify the provider is responding before
+    // the operator tries to use it for a real task.
+    router.post('/ai/llm/test', async (req, res) => {
+        try {
+            const { prompt, systemPrompt, model, temperature, maxTokens } = req.body || {};
+            const result = await llm.generate({
+                prompt: prompt || 'Reply with exactly one word: ok',
+                systemPrompt,
+                model,
+                temperature,
+                maxTokens: maxTokens || 50,
+            });
+            if (result.unavailable) {
+                return res.status(503).json({
+                    error: result.reason,
+                    code: 'LLM_UNAVAILABLE',
+                });
+            }
+            res.json({ success: true, text: result.text });
+        } catch (e) {
+            res.status(500).json({ error: e?.message || String(e) });
+        }
+    });
+
+    // ====== Semantic / natural-language search (image embeddings) =============
+
+    // Search images by natural-language query. Internally embeds the query
+    // text via the sidecar's CLIP text encoder, then cosine-ranks against
+    // stored image embeddings. Returns top-N results with file metadata.
+    router.get('/ai/search', async (req, res) => {
+        try {
+            const query = String(req.query.q || '').trim();
+            if (!query) {
+                return res.status(400).json({
+                    error: 'query parameter q is required',
+                    code: 'MISSING_QUERY',
+                });
+            }
+
+            const topK = Math.min(Math.max(1, Number(req.query.topK) || 50), 500);
+            const minScore = Number(req.query.minScore) || 0.0;
+            const fileTypes = req.query.fileTypes
+                ? String(req.query.fileTypes)
+                      .split(',')
+                      .map((s) => s.trim())
+                      .filter(Boolean)
+                : undefined;
+
+            // Run cross-modal search
+            const { crossModalSearch } = await import('../../core/ai/search.js');
+
+            const result = await crossModalSearch(query, {
+                topK,
+                minScore,
+                fileTypes,
+            });
+
+            res.json({
+                success: true,
+                query: result.query,
+                total: result.results.length,
+                results: result.results,
+                modalities: result.modalities,
+            });
+        } catch (e) {
+            res.status(500).json({ error: e?.message || String(e) });
+        }
+    });
+
+    // Return embedding coverage stats for the AI maintenance page.
+    router.get('/ai/embeddings/stats', async (_req, res) => {
+        try {
+            const { listEmbeddingModels } = await import('../../core/db/faces.js');
+            const models = listEmbeddingModels();
+            const totalImages = models.reduce((sum, m) => sum + m.count, 0);
+            res.json({ success: true, total: totalImages, models });
+        } catch (e) {
+            res.status(500).json({ error: e?.message || String(e) });
+        }
+    });
+
+    // Re-index embeddings — compute CLIP image embeddings for every
+    // download that is missing one (or whose model is stale). Iterates
+    // in batches so the sidecar isn't flooded and the operator can watch
+    // progress on the AI maintenance page.
+    router.post('/ai/embeddings/reindex', async (req, res) => {
+        try {
+            const { loadConfig } = await import('../../config/manager.js');
+            const { embedImage } = await import('../../core/ai/faces-client.js');
+            const { clearStaleEmbeddings, listEmbeddingModels, setImageEmbedding } = await import(
+                '../../core/db/faces.js'
+            );
+            const { getDb } = await import('../../core/db.js');
+
+            const live = loadConfig();
+            const llmCfg = live?.advanced?.ai?.llm || {};
+            const clipModel = live?.advanced?.ai?.clipModel || 'Xenova/clip-vit-base-patch32';
+
+            // Clear stale embeddings if the model changed.
+            // Always pick the most common model for comparison — when
+            // multiple models exist (e.g. after an interrupted migration)
+            // we still detect the change and purge non-matching rows.
+            const before = listEmbeddingModels();
+            const activeModel = before.length
+                ? before.reduce((a, b) => (a.count > b.count ? a : b)).model
+                : null;
+
+            if (activeModel && activeModel !== clipModel) {
+                const purged = clearStaleEmbeddings(clipModel);
+                console.log(
+                    '[ai-embeddings] model changed from',
+                    activeModel,
+                    'to',
+                    clipModel,
+                    '- purged',
+                    purged.dropped,
+                    'stale rows, requeued',
+                    purged.requeued,
+                );
+            }
+
+            // Find downloads that have no embedding yet
+            const db = getDb();
+            const missing = db
+                .prepare(
+                    `SELECT d.id, d.file_path, d.file_type
+                       FROM downloads d
+                      WHERE d.id NOT IN (
+                          SELECT download_id FROM image_embeddings
+                      )
+                        AND d.file_type IN ('photo', 'image')
+                      ORDER BY d.id
+                      LIMIT ?`,
+                )
+                .all(req.body?.limit || 250);
+
+            if (!missing.length) {
+                return res.json({
+                    success: true,
+                    processed: 0,
+                    remaining: 0,
+                    done: true,
+                });
+            }
+
+            let processed = 0;
+            let errors = 0;
+            const errors_ = [];
+
+            for (const row of missing) {
+                const abs = _resolveAiPath(row.file_path);
+                if (!abs) {
+                    errors++;
+                    continue;
+                }
+                try {
+                    const r = await embedImage(abs);
+                    if (r?.embedding?.length) {
+                        const blob = Buffer.from(
+                            new Uint8Array(Float32Array.from(r.embedding).buffer),
+                        );
+                        setImageEmbedding(row.id, blob, clipModel);
+                        processed++;
+                    } else {
+                        errors++;
+                    }
+                } catch {
+                    errors++;
+                    if (errors_.length < 5) errors_.push(row.id);
+                }
+            }
+
+            const after = listEmbeddingModels();
+            const totalAfter = after.reduce((s, m) => s + m.count, 0);
+
+            res.json({
+                success: true,
+                processed,
+                errors,
+                sampleErrors: errors_.length ? errors_ : undefined,
+                total: totalAfter,
+                remaining: Math.max(0, missing.length - processed - errors),
+                done: errors > 0 ? false : true,
+            });
         } catch (e) {
             res.status(500).json({ error: e?.message || String(e) });
         }

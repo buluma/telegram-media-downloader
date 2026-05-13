@@ -556,3 +556,61 @@ export function _runtimeKnobs() {
         sidecarMaxConcurrency: _maxConcurrency,
     };
 }
+
+// ---- Embeddings (CLIP) ---------------------------------------------------
+
+/**
+ * Compute the CLIP image embedding for a single file on disk.
+ * Returns ``{ embedding: number[], dim: number }`` or throws.
+ */
+export async function embedImage(absPath) {
+    const url = getSidecarUrl();
+    if (!url) throw new Error('sidecar URL not configured');
+
+    // Path mode first — fast path for local installs.
+    let res;
+    try {
+        res = await _postWithRetry(url + '/embed-image', { path: absPath });
+    } catch (e) {
+        throw new Error(`embed-image path-mode failed: ${e?.message || e}`);
+    }
+
+    // If sidecar can't read the path (Docker sandbox / strict allow_roots),
+    // fall back to base64 mode.
+    if (res && res.status === 403) {
+        let code = null;
+        try {
+            const body = await res.clone().json();
+            code = body?.code || null;
+        } catch {}
+        if (code === 'path_not_allowed') {
+            const maxBytes = 20 * 1024 * 1024; // 20 MB safety limit
+            const stat = await fs.stat(absPath);
+            if (stat.size > maxBytes) {
+                throw new Error(`file too large for b64 fallback: ${absPath} (${stat.size} bytes)`);
+            }
+            const bytes = await fs.readFile(absPath);
+            const b64 = bytes.toString('base64');
+            res = await _postWithRetry(url + '/embed-image', {
+                image_b64: b64,
+            });
+        }
+    }
+
+    const body = await res.json();
+    if (!res.ok) throw new Error(body?.error || `sidecar http ${res.status}`);
+    return body;
+}
+
+/**
+ * Compute a CLIP text embedding for a natural-language query string.
+ * Returns ``{ embedding: number[], dim: number }`` or throws.
+ */
+export async function embedText(text) {
+    const url = getSidecarUrl();
+    if (!url) throw new Error('sidecar URL not configured');
+    const res = await _postWithRetry(url + '/embed-text', { text: String(text) });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body?.error || `sidecar http ${res.status}`);
+    return body;
+}

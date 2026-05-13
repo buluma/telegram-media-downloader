@@ -628,6 +628,76 @@ export function iterateAllImageEmbeddings({ fileTypes = null } = {}) {
 }
 
 /**
+ * Cosine-similarity search over all stored image embeddings. Loads every
+ * row matching the optional filters into memory, computes cosine similarity
+ * against the query embedding, and returns the top-K results with file
+ * metadata. Uses iterators so only the top-K are materialised in the heap.
+ *
+ * @param {Float32Array|number[]} queryEmbedding - L2-normalised query vector
+ * @param {object} [opts]
+ * @param {number} [opts.topK=50] - Max results to return
+ * @param {number} [opts.minScore=0.0] - Minimum cosine similarity threshold
+ * @param {string[]} [opts.fileTypes] - Filter by file type(s)
+ * @param {string} [opts.model] - Only match rows with this embedding model
+ * @returns {{ id, groupId, groupName, fileName, filePath, fileType, fileSize, createdAt, score }[]}
+ */
+export function searchEmbeddings(queryEmbedding, opts = {}) {
+    const { topK = 50, minScore = 0.0, fileTypes = null, model = null } = opts;
+
+    const q =
+        queryEmbedding instanceof Float32Array ? queryEmbedding : Float32Array.from(queryEmbedding);
+    const qNorm = (() => {
+        const s = q.reduce((a, b) => a + b * b, 0);
+        return Math.sqrt(s) || 1;
+    })();
+    const qNormalized = new Float32Array(q.length);
+    for (let i = 0; i < q.length; i++) qNormalized[i] = q[i] / qNorm;
+
+    // Min-heap of size topK: [-score, id, ...]
+    const heap = [];
+
+    const iter = iterateAllImageEmbeddings({ fileTypes });
+    for (const row of iter) {
+        // Optional model filter
+        if (model && row.model !== model) continue;
+
+        // Decode embedding blob
+        const dim = row.embedding.byteLength / 4;
+        const emb = new Float32Array(row.embedding.buffer, row.embedding.byteOffset, dim);
+
+        // Cosine similarity (both are L2-normalised)
+        let dot = 0;
+        for (let i = 0; i < dim; i++) dot += qNormalized[i] * emb[i];
+        const score = Math.min(1, Math.max(-1, dot));
+
+        if (score < minScore) continue;
+
+        // Push [-score, id, ...] for min-heap behaviour
+        if (heap.length < topK) {
+            heap.push([-score, row.download_id, row]);
+            heap.sort((a, b) => a[0] - b[0]);
+        } else if (-score < heap[topK - 1][0]) {
+            heap[topK - 1] = [-score, row.download_id, row];
+            heap.sort((a, b) => a[0] - b[0]);
+        }
+    }
+
+    // Extract results sorted by score descending
+    heap.sort((a, b) => a[0] - b[0]); // lowest neg-score first = highest score first
+    return heap.map(([negScore, , row]) => ({
+        id: row.download_id,
+        groupId: row.group_id,
+        groupName: row.group_name,
+        fileName: row.file_name,
+        filePath: row.file_path,
+        fileType: row.file_type,
+        fileSize: row.file_size,
+        createdAt: row.created_at,
+        score: Math.round(-negScore * 1000) / 1000, // round to 3 decimal places
+    }));
+}
+
+/**
  * Distinct embedding-model values currently stored. Used by
  * `clearStaleEmbeddings` after a model swap.
  */
@@ -1359,17 +1429,134 @@ export function getImagesWithObject(object, { limit = 50, offset = 0 } = {}) {
 
 // ---- Smart Albums --------------------------------------------------------
 
-function _normalizeSmartAlbumRule(rule) {
+/**
+ * Allowed sub-rule types for compound smart album rules.
+ */
+const COMPOUND_RULE_TYPES = new Set([
+    'tags_contains',
+    'people_count',
+    'semantic',
+    'objects',
+    'text_contains',
+    'date',
+    'file_type',
+]);
+
+/**
+ * Normalise a smart album rule. v1 only accepted `tags_contains`;
+ * v2 introduces `compound` (an AND/OR container of sub-rules) plus
+ * several new leaf rule types.
+ *
+ * Throws on invalid rules — never return partial / silently-corrected
+ * structures so the operator knows their input was rejected.
+ */
+export function _normalizeSmartAlbumRule(rule) {
     const type = String(rule?.type || '').trim();
-    if (type !== 'tags_contains') {
-        throw new Error('unsupported rule type; expected tags_contains');
+
+    // --- v1 backward-compatible single rule ---------------------------
+    if (type === 'tags_contains') {
+        const tag = String(rule?.tag || '')
+            .trim()
+            .slice(0, 80);
+        if (!tag) throw new Error('tags_contains: tag is required');
+        const minScore = Math.max(0, Math.min(1, Number(rule?.minScore) || 0));
+        return { type, tag, minScore };
     }
-    const tag = String(rule?.tag || '')
-        .trim()
-        .slice(0, 80);
-    if (!tag) throw new Error('tag is required');
-    const minScore = Math.max(0, Math.min(1, Number(rule?.minScore) || 0));
-    return { type, tag, minScore };
+
+    // --- v2 compound rule ---------------------------------------------
+    if (type === 'compound') {
+        const all = Array.isArray(rule?.all) ? rule.all : [];
+        const any = Array.isArray(rule?.any) ? rule.any : [];
+        if (!all.length && !any.length) {
+            throw new Error('compound: at least one of `all` or `any` is required');
+        }
+        const normalizedAll = all.map((sr) => _normalizeSmartAlbumSubRule(sr, 'all'));
+        const normalizedAny = any.map((sr) => _normalizeSmartAlbumSubRule(sr, 'any'));
+        return {
+            type: 'compound',
+            all: normalizedAll.length ? normalizedAll : undefined,
+            any: normalizedAny.length ? normalizedAny : undefined,
+            sort: String(rule?.sort || 'score_desc').slice(0, 30),
+        };
+    }
+
+    throw new Error(
+        `unsupported rule type "${escapeForError(type)}"; expected tags_contains or compound`,
+    );
+}
+
+/** Normalise a single sub-rule inside a compound. */
+function _normalizeSmartAlbumSubRule(sr, container) {
+    const t = String(sr?.type || '').trim();
+    if (!COMPOUND_RULE_TYPES.has(t)) {
+        throw new Error(`${container}: unsupported sub-rule type "${escapeForError(t)}"`);
+    }
+    switch (t) {
+        case 'tags_contains': {
+            const tag = String(sr?.tag || '')
+                .trim()
+                .slice(0, 80);
+            if (!tag) throw new Error('tags_contains: tag is required');
+            const minScore = Math.max(0, Math.min(1, Number(sr?.minScore) || 0));
+            return { type: t, tag, minScore };
+        }
+        case 'people_count': {
+            const min = Math.max(0, Math.floor(Number(sr?.min) || 0));
+            return { type: t, min };
+        }
+        case 'semantic': {
+            const query = String(sr?.query || '')
+                .trim()
+                .slice(0, 200);
+            if (!query) throw new Error('semantic: query is required');
+            const minScore = Math.max(0, Math.min(1, Number(sr?.minScore) || 0));
+            return { type: t, query, minScore };
+        }
+        case 'objects': {
+            const names = Array.isArray(sr?.names) ? sr.names : [];
+            if (!names.length) throw new Error('objects: names[] is required');
+            return {
+                type: t,
+                names: names.map((n) => String(n).trim().slice(0, 60)).filter(Boolean),
+            };
+        }
+        case 'text_contains': {
+            const substr = String(sr?.substring || '')
+                .trim()
+                .slice(0, 100);
+            if (!substr) throw new Error('text_contains: substring is required');
+            return { type: t, substring: substr };
+        }
+        case 'date': {
+            const from =
+                String(sr?.from || '')
+                    .trim()
+                    .slice(0, 20) || undefined;
+            const to =
+                String(sr?.to || '')
+                    .trim()
+                    .slice(0, 20) || undefined;
+            if (!from && !to) throw new Error('date: at least one of from/to is required');
+            return { type: t, from, to };
+        }
+        case 'file_type': {
+            const ft = String(sr?.fileType || '')
+                .trim()
+                .toLowerCase()
+                .slice(0, 10);
+            if (!['photo', 'video', 'audio', 'file', 'voice'].includes(ft)) {
+                throw new Error(`file_type: unsupported type "${escapeForError(ft)}"`);
+            }
+            return { type: t, fileType: ft };
+        }
+        default:
+            throw new Error(`${container}: unhandled sub-rule type "${escapeForError(t)}"`);
+    }
+}
+
+/** Minimal HTML/JSON-safe string for error messages. */
+function escapeForError(s) {
+    return String(s).replace(/[<>&"]/g, (c) => `&#${c.charCodeAt(0)};`);
 }
 
 export function listSmartAlbums() {
@@ -1452,7 +1639,20 @@ export function deleteSmartAlbum(id) {
     return getDb().prepare(`DELETE FROM smart_albums WHERE id = ?`).run(Number(id)).changes;
 }
 
-export function rebuildSmartAlbum(id) {
+/**
+ * Rebuild a smart album's materialised item list by matching every
+ * download against the album's (possibly compound) rule. Handles
+ * both v1 `tags_contains` rules and v2 `compound` rules with
+ * sub-rules connected by `all` (intersection) or `any` (union).
+ *
+ * For semantic sub-rules the sidecar must be reachable — if it is
+ * not, those sub-rules silently produce zero matches so the operator
+ * sees an empty album rather than a crash.
+ *
+ * Now **async** — semantic sub-rules need an async embedding call
+ * before the transaction starts. Existing callers must `await`.
+ */
+export async function rebuildSmartAlbum(id) {
     const db = getDb();
     const albumId = Number(id);
     if (!Number.isFinite(albumId) || albumId <= 0) throw new Error('invalid album id');
@@ -1461,29 +1661,274 @@ export function rebuildSmartAlbum(id) {
         .get(albumId);
     if (!row) throw new Error('album not found');
     const rule = _normalizeSmartAlbumRule(JSON.parse(row.rule_json || '{}'));
+
+    // Pre-compute text embeddings for semantic sub-rules (async, outside txn)
+    const embCache = new Map();
+    if (rule.type === 'compound') {
+        await _precomputeSemanticEmbeddings(rule, embCache);
+    }
+
     const tx = db.transaction(() => {
         db.prepare(`DELETE FROM smart_album_items WHERE album_id = ?`).run(albumId);
         if (Number(row.enabled) !== 1) return { matched: 0 };
-        const ins = db.prepare(
-            `INSERT INTO smart_album_items (album_id, download_id, matched_at) VALUES (?, ?, ?)`,
-        );
+
         const matchedAt = Date.now();
-        const hits = db
-            .prepare(
-                `SELECT DISTINCT t.download_id
-                   FROM image_tags t
-                   JOIN downloads d ON d.id = t.download_id
-                  WHERE t.tag = ? AND t.score >= ?`,
-            )
-            .all(rule.tag, rule.minScore);
         let matched = 0;
-        for (const h of hits) {
-            matched += ins.run(albumId, Number(h.download_id), matchedAt).changes;
+        let downloadIds;
+
+        if (rule.type === 'tags_contains') {
+            // v1 simple rule — existing path
+            downloadIds = _matchTagsContains(rule.tag, rule.minScore);
+        } else if (rule.type === 'compound') {
+            downloadIds = _matchCompound(rule, embCache);
+        } else {
+            return { matched: 0 };
+        }
+
+        if (!downloadIds || !downloadIds.length) {
+            db.prepare(`UPDATE smart_albums SET updated_at = ? WHERE id = ?`).run(
+                Date.now(),
+                albumId,
+            );
+            return { matched: 0 };
+        }
+
+        const ins = db.prepare(
+            `INSERT OR IGNORE INTO smart_album_items (album_id, download_id, matched_at)
+             VALUES (?, ?, ?)`,
+        );
+        for (const id of downloadIds) {
+            matched += ins.run(albumId, id, matchedAt).changes;
         }
         db.prepare(`UPDATE smart_albums SET updated_at = ? WHERE id = ?`).run(Date.now(), albumId);
         return { matched };
     });
     return tx();
+}
+
+/**
+ * Walk all sub-rules in a compound rule, find `semantic` ones, and
+ * pre-compute their text embeddings via the sidecar. Populates
+ * `embCache` keyed by the sub-rule index ("all-0", "any-1", etc.).
+ */
+async function _precomputeSemanticEmbeddings(rule, cache) {
+    const tasks = [];
+    if (Array.isArray(rule.all)) {
+        for (let i = 0; i < rule.all.length; i++) {
+            if (rule.all[i].type === 'semantic') {
+                const idx = `all-${i}`;
+                tasks.push(
+                    _fetchEmbedding(rule.all[i].query)
+                        .then((emb) => emb && cache.set(idx, emb))
+                        .catch(() => {}),
+                );
+            }
+        }
+    }
+    if (Array.isArray(rule.any)) {
+        for (let i = 0; i < rule.any.length; i++) {
+            if (rule.any[i].type === 'semantic') {
+                const idx = `any-${i}`;
+                tasks.push(
+                    _fetchEmbedding(rule.any[i].query)
+                        .then((emb) => emb && cache.set(idx, emb))
+                        .catch(() => {}),
+                );
+            }
+        }
+    }
+    await Promise.allSettled(tasks);
+}
+
+/**
+ * Fetch a text embedding from the sidecar. Returns null if the
+ * sidecar is unavailable.
+ */
+async function _fetchEmbedding(query) {
+    try {
+        const { embedText } = await import('../../core/ai/faces-client.js');
+        const r = await embedText(query);
+        if (r?.embedding?.length) return Float32Array.from(r.embedding);
+    } catch {}
+    return null;
+}
+
+/**
+ * Evaluate a compound rule and return the set of matching download IDs.
+ * `all` sub-rules are intersected, `any` sub-rules are unioned.
+ */
+function _matchCompound(rule, embCache = new Map()) {
+    let allSet = null; // intersection accumulator
+    let anySet = null; // union accumulator
+
+    // `all` — every sub-rule must match (intersection)
+    if (Array.isArray(rule.all) && rule.all.length) {
+        for (let i = 0; i < rule.all.length; i++) {
+            const ids = _matchSubRule(rule.all[i], embCache, `all-${i}`);
+            if (!ids || !ids.size) {
+                // One sub-rule matched nothing → intersection is empty
+                allSet = new Set();
+                break;
+            }
+            if (allSet === null) {
+                allSet = new Set(ids);
+            } else {
+                allSet = new Set([...allSet].filter((id) => ids.has(id)));
+            }
+        }
+    }
+
+    // `any` — at least one sub-rule must match (union)
+    if (Array.isArray(rule.any) && rule.any.length) {
+        for (let i = 0; i < rule.any.length; i++) {
+            const ids = _matchSubRule(rule.any[i], embCache, `any-${i}`);
+            if (ids && ids.size) {
+                if (anySet === null) {
+                    anySet = new Set(ids);
+                } else {
+                    for (const id of ids) anySet.add(id);
+                }
+            }
+        }
+    }
+
+    // Combine: (all) AND (any)
+    if (allSet !== null && anySet !== null) {
+        return [...allSet].filter((id) => anySet.has(id));
+    }
+    if (allSet !== null) return [...allSet];
+    if (anySet !== null) return [...anySet];
+    return [];
+}
+
+/**
+ * Execute a single sub-rule and return a Set of matching download IDs.
+ */
+function _matchSubRule(sr, embCache = new Map(), cacheKey = '') {
+    const db = getDb();
+    switch (sr.type) {
+        case 'tags_contains':
+            return _matchTagsContains(sr.tag, sr.minScore);
+
+        case 'people_count': {
+            const rows = db
+                .prepare(
+                    `SELECT download_id
+                       FROM faces
+                      GROUP BY download_id
+                     HAVING COUNT(*) >= ?`,
+                )
+                .all(sr.min);
+            return new Set(rows.map((r) => Number(r.download_id)));
+        }
+
+        case 'semantic': {
+            const embedding = embCache.get(cacheKey);
+            if (!embedding) return new Set();
+            return _matchEmbedding(embedding, sr.minScore);
+        }
+
+        case 'objects': {
+            if (!Array.isArray(sr.names) || !sr.names.length) return new Set();
+            const placeholders = sr.names.map(() => '?').join(',');
+            const rows = db
+                .prepare(
+                    `SELECT DISTINCT download_id
+                       FROM image_objects
+                      WHERE object IN (${placeholders})`,
+                )
+                .all(...sr.names);
+            return new Set(rows.map((r) => Number(r.download_id)));
+        }
+
+        case 'text_contains': {
+            const like = `%${sr.substring}%`;
+            const rows = db
+                .prepare(
+                    `SELECT DISTINCT download_id
+                       FROM image_text
+                      WHERE text LIKE ?`,
+                )
+                .all(like);
+            return new Set(rows.map((r) => Number(r.download_id)));
+        }
+
+        case 'date': {
+            let sql = `SELECT id FROM downloads WHERE 1=1`;
+            const params = [];
+            if (sr.from) {
+                sql += ` AND created_at >= ?`;
+                params.push(new Date(sr.from).getTime());
+            }
+            if (sr.to) {
+                const toDate = new Date(sr.to);
+                toDate.setDate(toDate.getDate() + 1);
+                sql += ` AND created_at < ?`;
+                params.push(toDate.getTime());
+            }
+            const rows = db.prepare(sql).all(...params);
+            return new Set(rows.map((r) => Number(r.id)));
+        }
+
+        case 'file_type': {
+            const rows = db
+                .prepare(`SELECT id FROM downloads WHERE file_type = ?`)
+                .all(sr.fileType);
+            return new Set(rows.map((r) => Number(r.id)));
+        }
+
+        default:
+            return new Set();
+    }
+}
+
+/** Match a tags_contains sub-rule — returns a Set of download IDs. */
+function _matchTagsContains(tag, minScore) {
+    const db = getDb();
+    const rows = db
+        .prepare(
+            `SELECT DISTINCT t.download_id
+               FROM image_tags t
+               JOIN downloads d ON d.id = t.download_id
+              WHERE t.tag = ? AND t.score >= ?`,
+        )
+        .all(tag, minScore);
+    return new Set(rows.map((r) => Number(r.download_id)));
+}
+
+/**
+ * Match a pre-computed embedding against stored image embeddings using
+ * cosine similarity. Returns a Set of download IDs whose similarity
+ * is >= minScore.
+ */
+function _matchEmbedding(queryEmbedding, minScore) {
+    const db = getDb();
+    const rows = db.prepare(`SELECT download_id, embedding FROM image_embeddings`).all();
+
+    const q =
+        queryEmbedding instanceof Float32Array ? queryEmbedding : Float32Array.from(queryEmbedding);
+    const qNorm = Math.sqrt(q.reduce((a, b) => a + b * b, 0)) || 1;
+    const qn = new Float32Array(q.length);
+    for (let i = 0; i < q.length; i++) qn[i] = q[i] / qNorm;
+    const dim = q.length;
+
+    const matches = new Set();
+    for (const row of rows) {
+        if (!row.embedding || !row.embedding.byteLength) continue;
+        const emb = new Float32Array(
+            row.embedding.buffer,
+            row.embedding.byteOffset,
+            row.embedding.byteLength / 4,
+        );
+        if (emb.length !== dim) continue;
+        let dot = 0;
+        for (let i = 0; i < dim; i++) dot += qn[i] * emb[i];
+        const score = Math.min(1, Math.max(-1, dot));
+        if (score >= minScore) {
+            matches.add(Number(row.download_id));
+        }
+    }
+    return matches;
 }
 
 export function listSmartAlbumItems(id, { limit = 50, offset = 0 } = {}) {
