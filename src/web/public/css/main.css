@@ -2818,6 +2818,14 @@ textarea:focus {
     background: var(--tg-hover, #2b5278);
 }
 .chat-row.is-selected::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 8px;
+    bottom: 8px;
+    width: 3px;
+    background: var(--tg-blue, #2aabee);
+    border-radius: 0 3px 3px 0;
     opacity: 1;
     transform: scaleY(1);
 }
