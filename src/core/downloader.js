@@ -36,9 +36,34 @@ const LOGS_DIR = path.join(DATA_DIR, 'logs');
 // case-insensitively against the part BEFORE the first dot.
 const _WIN_RESERVED = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)/i;
 
+// Unicode invisible / zero-width / formatting chars that produce ghost
+// folder names or confuse filesystem tools. Stripped before any other
+// sanitisation. U+200D (ZWJ) included — emoji ZWJ sequences aren't
+// useful in folder names and their components survive individually.
+const _INVISIBLE_RE = new RegExp(
+    '[' +
+        '­' + // soft hyphen
+        '͏' + // combining grapheme joiner
+        '؜' + // Arabic letter mark
+        'ᅟᅠ' + // Hangul fillers
+        '឴឵' + // Khmer vowel inherent
+        '᠎' + // Mongolian vowel separator
+        '​-‏' + // ZW space, ZWNJ, ZWJ, LTR/RTL marks
+        '‪-‮' + // bidi embedding/override
+        '⁠-⁯' + // word joiner, invisible operators
+        '⠀' + // Braille blank
+        'ㅤ' + // Hangul filler ㅤ
+        '︀-️' + // variation selectors
+        '﻿' + // BOM / ZWNBS
+        'ﾠ' + // halfwidth Hangul filler
+        ']',
+    'g',
+);
+
 /**
  * Shared folder + filename sanitizer.
  *
+ * - Strips invisible / zero-width Unicode chars that produce ghost names.
  * - Strips path / control / NUL chars and collapses whitespace.
  * - Prefixes Windows reserved names with `_` so a chat literally named
  *   `CON` or a file like `PRN.jpg` doesn't ENOENT on Windows hosts.
@@ -46,12 +71,22 @@ const _WIN_RESERVED = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)/i;
  *   (`.slice(80)` would silently corrupt multi-byte CJK / emoji at the
  *   boundary; we cut at a byte cap and back off to the last full
  *   codepoint).
+ * - Falls back to `_unnamed` when stripping leaves nothing.
  */
 export function sanitizeName(name) {
-    let s = String(name || '')
+    const raw = String(name || '');
+    let s = raw
+        .replace(_INVISIBLE_RE, '')
         .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
         .replace(/\s+/g, '_')
-        .replace(/_+/g, '_');
+        .replace(/_+/g, '_')
+        .replace(/^_|_$/g, '');
+    if (!s) {
+        if (!raw || !_INVISIBLE_RE.test(raw)) return '_unnamed';
+        let h = 0;
+        for (let i = 0; i < raw.length; i++) h = ((h << 5) - h + raw.charCodeAt(i)) | 0;
+        return `_unnamed_${(h >>> 0).toString(36)}`;
+    }
     if (_WIN_RESERVED.test(s)) s = '_' + s;
     return _truncUtf8(s, 80);
 }

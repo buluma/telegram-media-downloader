@@ -34,6 +34,7 @@ import {
 } from '../../core/seekbar/spawn.js';
 import { probeHwaccel as probeSeekbarHwaccel } from '../../core/seekbar/client.js';
 import { getSeekbarSprite } from '../../core/db/seekbar.js';
+import { clearNsfwBlocklist, getNsfwBlocklistCount } from '../../core/db/nsfw.js';
 import {
     NSFW_DEFAULTS,
     startScan as nsfwStartScan,
@@ -1450,6 +1451,30 @@ export function createMaintenanceRouter({
         res.json({ success: true, ...nsfwClassifierReady() });
     });
 
+    // Hash blocklist — hashes of previously-deleted NSFW files so
+    // re-downloads are auto-deleted during the next scan drain loop.
+    router.get('/maintenance/nsfw/blocklist/stats', (req, res) => {
+        try {
+            res.json({ count: getNsfwBlocklistCount() });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    router.delete('/maintenance/nsfw/blocklist', (req, res) => {
+        try {
+            const removed = clearNsfwBlocklist();
+            log({
+                source: 'nsfw',
+                level: 'info',
+                msg: `blocklist cleared — ${removed} entries removed`,
+            });
+            res.json({ success: true, removed });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
     // Wipe the cached weights on disk. Confirm-gated in the UI; safe-by-
     // design here (the cache dir is allow-listed via _resolveCacheDirAbs
     // inside nsfw.js — there's no caller-supplied path).
@@ -1601,9 +1626,27 @@ export function createMaintenanceRouter({
     router.get('/maintenance/nsfw/v2/list', async (req, res) => {
         try {
             const cfg = _nsfwCfg();
+            const kind = String(req.query.kind || '').toLowerCase();
+            let fileTypes = cfg.fileTypes;
+            if (kind === 'photo') {
+                fileTypes = (fileTypes || []).filter((t) => String(t).toLowerCase() === 'photo');
+            } else if (kind === 'video') {
+                fileTypes = (fileTypes || []).filter((t) => String(t).toLowerCase() === 'video');
+            }
+            if (
+                (kind === 'photo' || kind === 'video') &&
+                (!Array.isArray(fileTypes) || !fileTypes.length)
+            ) {
+                return res.json({
+                    rows: [],
+                    total: 0,
+                    page: Math.max(1, Number(req.query.page) || 1),
+                    totalPages: 1,
+                });
+            }
             const list = getNsfwListByTier({
                 tier: req.query.tier || null,
-                fileTypes: cfg.fileTypes,
+                fileTypes,
                 groupId: req.query.group || null,
                 includeWhitelisted: req.query.include_whitelisted === '1',
                 page: Number(req.query.page) || 1,
