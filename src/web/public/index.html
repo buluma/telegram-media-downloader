@@ -3611,6 +3611,14 @@
                             </select>
                         </div>
                         <div id="ai-tag-chips" class="flex flex-wrap gap-1.5 mb-3"></div>
+                        <div id="ai-tag-ocr-section" class="mb-3 hidden">
+                            <div class="flex items-center gap-2 mb-1.5">
+                                <span class="text-[11px] font-medium text-tg-textSecondary uppercase tracking-wide">Text in images</span>
+                                <span id="ai-tag-ocr-count" class="text-[10px] text-tg-textSecondary tabular-nums"></span>
+                                <button id="ai-tag-ocr-clear" type="button" class="text-[10px] text-tg-blue hover:underline ml-auto hidden" data-i18n="maintenance.ai.tags.ocr_clear">Clear filter</button>
+                            </div>
+                            <div id="ai-tag-ocr-chips" class="flex flex-wrap gap-1.5"></div>
+                        </div>
                         <section class="bg-tg-panel rounded-xl p-3">
                             <div id="ai-tag-photos" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2 max-h-[70vh] overflow-y-auto pr-1">
                                 <p class="text-[11px] text-tg-textSecondary col-span-full text-center py-6">Select a tag above to browse photos.</p>

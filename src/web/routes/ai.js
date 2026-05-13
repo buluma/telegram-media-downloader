@@ -340,6 +340,19 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         }
     });
 
+    router.get('/ai/ocr/words', async (req, res) => {
+        try {
+            const { listOcrWords } = await import('../../core/db/faces.js');
+            const minLength = Math.max(2, Number(req.query.minLength) || 3);
+            const minCount = Math.max(1, Number(req.query.minCount) || 1);
+            const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 100));
+            const words = listOcrWords({ minLength, minCount, limit });
+            res.json({ success: true, words });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
     router.get('/ai/objects/:downloadId', async (req, res) => {
         try {
             const { getImageObjects } = await import('../../core/db/faces.js');

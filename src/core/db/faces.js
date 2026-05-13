@@ -1200,9 +1200,11 @@ export function listPhotosForTag(tag, { limit = 50, offset = 0 } = {}) {
     const off = Math.max(0, Number(offset) || 0);
     const rows = getDb()
         .prepare(`
-        SELECT d.*, t.score AS tag_score
+        SELECT d.*, t.score AS tag_score,
+               substr(it.text, 1, 200) AS ocr_text
           FROM image_tags t
           JOIN downloads d ON d.id = t.download_id
+          LEFT JOIN image_text it ON it.download_id = d.id
          WHERE t.tag = ?
          ORDER BY t.score DESC, d.created_at DESC
          LIMIT ? OFFSET ?
@@ -1339,6 +1341,37 @@ export function getImagesWithText({ minLength = 10, limit = 50, offset = 0 } = {
         .get(minLen).n;
 
     return { files: rows, total };
+}
+
+/**
+ * Return unique words extracted from OCR text, sorted by frequency descending.
+ * Words are lowercased, stripped of non-alphanumeric, filtered by min length.
+ * Returns [{ word, count }].
+ */
+export function listOcrWords({ minLength = 3, minCount = 1, limit = 100 } = {}) {
+    const db = getDb();
+    const rows = db.prepare('SELECT text FROM image_text WHERE length(text) > 0').all();
+    const freq = {};
+    const perDownload = new Map();
+    for (const r of rows) {
+        if (!r.text) continue;
+        const seen = new Set();
+        const words = r.text
+            .toLowerCase()
+            .split(/[^a-z0-9]+/)
+            .filter((w) => w.length >= minLength);
+        for (const w of words) {
+            if (!seen.has(w)) {
+                seen.add(w);
+                freq[w] = (freq[w] || 0) + 1;
+            }
+        }
+    }
+    return Object.entries(freq)
+        .filter(([, c]) => c >= minCount)
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .slice(0, Math.max(1, Number(limit) || 100))
+        .map(([word, cnt]) => ({ word, cnt }));
 }
 
 // ---- Image Objects (Detection) -----------------------------------------

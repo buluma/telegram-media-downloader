@@ -35,6 +35,7 @@ let _tagListCache = [];
 let _tagSelected = '';
 let _tagFilterQuery = '';
 let _tagSortMode = 'count_desc';
+let _ocrWordFilter = ''; // when set, only show photos whose ocr_text contains this word
 let _tagPhotosTotal = 0;
 let _tagPhotosPage = 1;
 let _tagPhotosTotalPages = 1;
@@ -233,6 +234,9 @@ async function _renderTagBrowser(forceReload = true) {
             )
             .join('');
 
+        // ---- OCR words chips ----
+        _renderOcrChips();
+
         // Wire chip clicks — load photos for the selected tag
         chips.querySelectorAll('.tag-chip').forEach((btn) => {
             btn.addEventListener('click', () => {
@@ -242,6 +246,8 @@ async function _renderTagBrowser(forceReload = true) {
                 btn.setAttribute('aria-pressed', 'true');
                 if (tag) {
                     _tagSelected = tag;
+                    _ocrWordFilter = '';
+                    _renderOcrChips();
                     _loadTagPhotos(tag);
                 }
             });
@@ -322,16 +328,23 @@ async function _loadTagPhotoPage() {
             `/api/ai/tags/photos?tag=${encodeURIComponent(tag)}&limit=${_tagPhotosLimit}&offset=${offset}`,
         );
         const files = Array.isArray(r?.files) ? r.files : [];
-        _tagCurrentRows = files;
+        let filtered = files;
+        if (_ocrWordFilter) {
+            const lowerWord = _ocrWordFilter.toLowerCase();
+            filtered = files.filter((f) => {
+                const txt = (f.ocr_text || '').toLowerCase();
+                return txt.includes(lowerWord);
+            });
+        }
+        _tagCurrentRows = filtered;
         _tagPhotosTotal = Number(r?.total) || files.length;
         _tagPhotosTotalPages = Math.max(1, Math.ceil(_tagPhotosTotal / _tagPhotosLimit));
-        if (!files.length) {
-            photos.innerHTML =
-                '<p class="text-[11px] text-tg-textSecondary col-span-full text-center py-6">No photos with this tag.</p>';
+        if (!filtered.length) {
+            photos.innerHTML = `<p class="text-[11px] text-tg-textSecondary col-span-full text-center py-6">${_ocrWordFilter ? `No photos with this tag containing "${escapeHtml(_ocrWordFilter)}".` : 'No photos with this tag.'}</p>`;
             _syncTagPager();
             return;
         }
-        photos.innerHTML = files.map((f, i) => _renderTagPhotoTile(f, i)).join('');
+        photos.innerHTML = filtered.map((f, i) => _renderTagPhotoTile(f, i)).join('');
         _wireTagPhotoClicks();
         _syncTagPager();
     } catch (e) {
@@ -344,6 +357,7 @@ async function _loadTagPhotoPage() {
 function _renderTagPhotoTile(file, index) {
     const thumb = `/api/thumbs/${encodeURIComponent(file.id)}?w=320`;
     const scorePct = file.tag_score ? Math.round(file.tag_score * 100) : 0;
+    const ocrSnippet = file.ocr_text ? String(file.ocr_text).slice(0, 100).trim() : '';
     return `<button type="button" data-tag-tile-index="${index}" data-id="${file.id}"
             class="nsfw-tile group relative aspect-square rounded-md overflow-hidden bg-tg-bg/40 focus:outline-none focus:ring-2 focus:ring-tg-blue">
         <img loading="lazy" decoding="async"
@@ -351,6 +365,7 @@ function _renderTagPhotoTile(file, index) {
              src="${escapeHtml(thumb)}" alt=""
              onerror="this.style.display='none'">
         <span class="hidden sm:block absolute top-1 right-1 px-1.5 py-0.5 text-[10px] font-mono rounded bg-tg-blue/85 text-white tabular-nums">${scorePct}%</span>
+        ${ocrSnippet ? `<span class="absolute bottom-1 left-1 right-1 px-1.5 py-0.5 text-[9px] leading-tight rounded bg-black/60 text-white/80 truncate">${escapeHtml(ocrSnippet)}</span>` : ''}
         <span class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 group-focus:opacity-100 transition flex items-end p-2 pointer-events-none">
             <span class="text-[11px] text-white truncate w-full text-left">${escapeHtml(file.file_name || '')}</span>
         </span>
@@ -427,6 +442,57 @@ function _moveTagChipFocus(currentBtn, dir) {
     if (next < 0) next = list.length - 1;
     if (next >= list.length) next = 0;
     list[next]?.focus();
+}
+
+// ---- OCR word chips -----------------------------------------------------
+
+let _ocrWordsCache = [];
+
+async function _renderOcrChips() {
+    const section = $('#ai-tag-ocr-section');
+    const chips = $('#ai-tag-ocr-chips');
+    const countEl = $('#ai-tag-ocr-count');
+    const clearBtn = $('#ai-tag-ocr-clear');
+    if (!chips) return;
+    try {
+        if (!_ocrWordsCache.length) {
+            const r = await api.get('/api/ai/ocr/words?minLength=3&minCount=2&limit=60');
+            _ocrWordsCache = Array.isArray(r?.words) ? r.words : [];
+        }
+        if (!_ocrWordsCache.length) {
+            section?.classList.add('hidden');
+            return;
+        }
+        section?.classList.remove('hidden');
+        if (countEl) countEl.textContent = `(${_ocrWordsCache.length})`;
+        if (clearBtn) {
+            clearBtn.classList.toggle('hidden', !_ocrWordFilter);
+            clearBtn.onclick = () => {
+                _ocrWordFilter = '';
+                _renderOcrChips();
+                if (_tagSelected) _loadTagPhotos(_tagSelected);
+            };
+        }
+        chips.innerHTML = _ocrWordsCache
+            .map(
+                (w) =>
+                    `<button type="button" class="tg-btn-input text-[10px] px-2 py-0.5 inline-flex items-center gap-1 ocr-chip${_ocrWordFilter === w.word ? ' active' : ''}" data-word="${escapeHtml(w.word)}">
+                        ${escapeHtml(w.word)}
+                        <span class="text-[9px] text-tg-textSecondary tabular-nums">${w.cnt}</span>
+                    </button>`,
+            )
+            .join('');
+        chips.querySelectorAll('.ocr-chip').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const word = btn.dataset.word;
+                _ocrWordFilter = _ocrWordFilter === word ? '' : word;
+                _renderOcrChips();
+                if (_tagSelected) _loadTagPhotos(_tagSelected);
+            });
+        });
+    } catch {
+        section?.classList.add('hidden');
+    }
 }
 
 // ---- Tag suggestions ---------------------------------------------------
