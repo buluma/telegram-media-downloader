@@ -544,6 +544,7 @@ export function countUnscannedTags({ fileTypes = ['photo'] } = {}) {
         SELECT COUNT(*) AS n FROM downloads
          WHERE file_type IN (${placeholders})
            AND id NOT IN (SELECT DISTINCT download_id FROM image_tags)
+           AND LOWER(file_name) NOT LIKE '%.webp'
     `)
         .get(...types).n;
 }
@@ -1519,6 +1520,7 @@ export function getUnscannedWd14Batch({ fileTypes = ['photo'], limit = 50 } = {}
                FROM downloads
               WHERE file_type IN (${ph})
                 AND id NOT IN (SELECT DISTINCT download_id FROM image_tags_wd14)
+                AND LOWER(file_name) NOT LIKE '%.webp'
               ORDER BY created_at ASC
               LIMIT ?`,
         )
@@ -1540,7 +1542,8 @@ export function countUnscannedWd14({ fileTypes = ['photo'] } = {}) {
             `SELECT COUNT(*) AS n
                FROM downloads
               WHERE file_type IN (${ph})
-                AND id NOT IN (SELECT DISTINCT download_id FROM image_tags_wd14)`,
+                AND id NOT IN (SELECT DISTINCT download_id FROM image_tags_wd14)
+                AND LOWER(file_name) NOT LIKE '%.webp'`,
         )
         .get(...types).n;
 }
