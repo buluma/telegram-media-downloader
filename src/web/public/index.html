@@ -3043,8 +3043,8 @@
                                         </button>
                                         <div class="border-t border-tg-border/40 my-1"></div>
                                         <button id="ai-open-install-btn" type="button" class="w-full text-left px-3 py-2 text-xs text-tg-text hover:bg-tg-bg/40 inline-flex items-center gap-2"
-                                                title="Reinstall or change GPU support">
-                                            <i class="ri-magic-line text-tg-blue"></i><span data-i18n="maintenance.ai.install.open">Manage GPU support</span>
+                                                title="Reinstall or change AI runtime backend">
+                                            <i class="ri-magic-line text-tg-blue"></i><span data-i18n="maintenance.ai.install.open">AI runtime setup</span>
                                         </button>
                                     </div>
                                 </details>
@@ -3110,7 +3110,7 @@
                         <div id="ai-doctor-list" class="mt-2"></div>
                     </details>
 
-                    <!-- Setup / GPU acceleration card.
+                    <!-- AI runtime setup card.
                          Auto-shown by maintenance-ai.js when the sidecar is
                          unhealthy (deps missing / install pending) OR when
                          the operator explicitly opens it via the badge.
@@ -3123,7 +3123,7 @@
                             <div class="min-w-0">
                                 <h3 class="text-tg-text text-sm font-semibold flex items-center gap-2">
                                     <i class="ri-magic-line text-tg-blue"></i>
-                                    <span data-i18n="maintenance.ai.install.title">Install GPU acceleration</span>
+                                    <span data-i18n="maintenance.ai.install.title">AI runtime setup</span>
                                 </h3>
                                 <p class="text-[11px] text-tg-textSecondary mt-1 max-w-xl" data-i18n="maintenance.ai.install.desc">One click installs the matching onnxruntime backend for this host (DirectML on Windows, CUDA on Linux + NVIDIA, OpenVINO on Linux + Intel, CoreML on macOS, CPU elsewhere) and starts the sidecar. Takes 1–5 minutes the first time while wheels download.</p>
                             </div>
@@ -3403,13 +3403,19 @@
                                 <i class="ri-arrow-right-s-line text-tg-textSecondary text-xs transition-transform group-open:rotate-90"></i>
                                 <i class="ri-price-tag-3-line text-tg-orange"></i>
                                 <span data-i18n="maintenance.ai.tags.browser_title">Tag browser</span>
+                                <span id="ai-tag-browser-count" class="text-[10.5px] text-tg-textSecondary"></span>
                             </h3>
                         </summary>
                         <div class="flex items-start justify-between gap-3 flex-wrap mb-3">
                             <p class="text-[11px] text-tg-textSecondary min-w-0" data-i18n="maintenance.ai.tags.browser_desc">Browse photos by detected tag. Customise tags in the Image tagging card above.</p>
-                            <button id="ai-tag-browser-refresh" type="button" class="tg-btn-secondary text-xs px-2.5 py-1 inline-flex items-center gap-1">
-                                <i class="ri-refresh-line"></i><span data-i18n="common.refresh">Refresh</span>
-                            </button>
+                            <div class="flex items-center gap-1.5 flex-wrap">
+                                <button id="ai-tag-create-album" type="button" class="tg-btn text-xs px-2.5 py-1 inline-flex items-center gap-1" disabled>
+                                    <i class="ri-album-line"></i><span>Create album</span>
+                                </button>
+                                <button id="ai-tag-browser-refresh" type="button" class="tg-btn-secondary text-xs px-2.5 py-1 inline-flex items-center gap-1">
+                                    <i class="ri-refresh-line"></i><span data-i18n="common.refresh">Refresh</span>
+                                </button>
+                            </div>
                         </div>
                         <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
                             <input id="ai-tag-filter" type="search" class="tg-input text-xs" placeholder="Filter tags…">
@@ -3463,6 +3469,7 @@
                                 <i class="ri-arrow-right-s-line text-tg-textSecondary text-xs transition-transform group-open:rotate-90"></i>
                                 <i class="ri-file-text-line text-tg-blue"></i>
                                 <span data-i18n="maintenance.ai.ocr.title">Text extraction (OCR)</span>
+                                <span id="ai-ocr-count" class="text-[10.5px] text-tg-textSecondary"></span>
                             </h3>
                         </summary>
                         <p class="text-[11px] text-tg-textSecondary mb-3" data-i18n="maintenance.ai.ocr.desc">Extracts visible text from images using Tesseract OCR. Works best on documents, screenshots, and text-heavy images.</p>
@@ -3497,6 +3504,7 @@
                                 <i class="ri-arrow-right-s-line text-tg-textSecondary text-xs transition-transform group-open:rotate-90"></i>
                                 <i class="ri-search-eye-line text-tg-blue"></i>
                                 <span data-i18n="maintenance.ai.objects.title">Object detection</span>
+                                <span id="ai-objects-count" class="text-[10.5px] text-tg-textSecondary"></span>
                             </h3>
                         </summary>
                         <p class="text-[11px] text-tg-textSecondary mb-3" data-i18n="maintenance.ai.objects.desc">Detects objects in images using YOLOv8. Recognises 80 common object classes (person, car, dog, chair, etc). Includes bounding box coordinates.</p>
@@ -3540,6 +3548,7 @@
                                 <i class="ri-arrow-right-s-line text-tg-textSecondary text-xs transition-transform group-open:rotate-90"></i>
                                 <i class="ri-album-line text-tg-blue"></i>
                                 <span>Smart albums</span>
+                                <span id="ai-smart-albums-count" class="text-[10.5px] text-tg-textSecondary"></span>
                             </h3>
                         </summary>
                         <div class="flex items-start justify-between gap-3 flex-wrap mb-2">

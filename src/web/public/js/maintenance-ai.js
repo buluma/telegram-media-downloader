@@ -13,7 +13,7 @@ import { api } from './api.js';
 import { t as i18nT, tf as i18nTf } from './i18n.js';
 import { showToast, escapeHtml } from './utils.js';
 import { ws } from './ws.js';
-import { confirmSheet, promptSheet } from './sheet.js';
+import { confirmSheet, openSheet, promptSheet } from './sheet.js';
 import { openMediaViewerForReview } from './viewer.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -40,6 +40,7 @@ let _tagPhotosPage = 1;
 let _tagPhotosTotalPages = 1;
 const _tagPhotosLimit = 50;
 let _tagCurrentRows = [];
+let _lastTagsChangedAt = 0;
 let _smartAlbumSelected = null;
 let _smartAlbumSelectedName = '';
 let _smartAlbumItemsPage = 1;
@@ -199,6 +200,9 @@ async function _renderTagBrowser(forceReload = true) {
             const r = await api.get('/api/ai/tags/list');
             _tagListCache = Array.isArray(r?.tags) ? r.tags : [];
         }
+        const tagCount = $('#ai-tag-browser-count');
+        if (tagCount)
+            tagCount.textContent = _tagListCache.length ? `(${_tagListCache.length})` : '';
         section.classList.remove('hidden');
         if (!_tagListCache.length) {
             chips.innerHTML = '';
@@ -404,6 +408,8 @@ function _syncTagPager() {
             ? `Page ${_tagPhotosPage} / ${_tagPhotosTotalPages} · ${_tagPhotosTotal.toLocaleString()} photos`
             : '';
     }
+    const createBtn = $('#ai-tag-create-album');
+    if (createBtn) createBtn.disabled = !hasTag;
     if (prevBtn) prevBtn.disabled = !hasTag || _tagPhotosPage <= 1;
     if (nextBtn) nextBtn.disabled = !hasTag || _tagPhotosPage >= _tagPhotosTotalPages;
 }
@@ -520,6 +526,8 @@ async function _renderSmartAlbums() {
     try {
         const r = await api.get('/api/ai/smart-albums');
         const albums = Array.isArray(r?.albums) ? r.albums : [];
+        const countEl = $('#ai-smart-albums-count');
+        if (countEl) countEl.textContent = albums.length ? `(${albums.length})` : '';
         if (!albums.length) {
             list.innerHTML =
                 '<p class="text-[11px] text-tg-textSecondary text-center py-3">No smart albums yet. Add one above.</p>';
@@ -536,6 +544,11 @@ async function _renderSmartAlbums() {
         list.innerHTML = albums
             .map((a) => {
                 const rule = a?.rule || {};
+                const stale =
+                    _lastTagsChangedAt > 0 && Number(a.updated_at || 0) < _lastTagsChangedAt;
+                const staleBadge = stale
+                    ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-tg-orange/15 text-tg-orange">Needs rebuild</span>'
+                    : '';
                 const subtitle =
                     rule.type === 'tags_contains'
                         ? `tag:${rule.tag} (min ${Math.round((Number(rule.minScore) || 0) * 100)}%)`
@@ -543,7 +556,9 @@ async function _renderSmartAlbums() {
                 return `<div class="bg-tg-panelOverlay rounded p-2.5">
                     <div class="flex items-center justify-between gap-2 flex-wrap">
                         <div class="min-w-0 flex-1">
-                            <div class="text-xs text-tg-text font-medium truncate">${escapeHtml(a.name || `Album #${a.id}`)}</div>
+                            <div class="text-xs text-tg-text font-medium truncate inline-flex items-center gap-1.5 max-w-full">
+                                <span class="truncate">${escapeHtml(a.name || `Album #${a.id}`)}</span>${staleBadge}
+                            </div>
                             <div class="text-[10px] text-tg-textSecondary truncate">${escapeHtml(subtitle)} · ${Number(a.item_count) || 0} items</div>
                         </div>
                         <div class="flex items-center gap-1 shrink-0 flex-wrap justify-end">
@@ -698,23 +713,29 @@ function _syncSmartAlbumPager() {
     }
 }
 
-async function _createSmartAlbum() {
-    const name = await promptSheet({
-        title: 'New smart album',
-        message: 'Album name',
-        confirmLabel: 'Next',
-    });
-    if (name == null) return;
-    const tag = await promptSheet({
-        title: 'Tag rule',
-        message: 'Tag to match (exact)',
-        confirmLabel: 'Create',
-    });
-    if (tag == null) return;
+async function _createSmartAlbum(prefillTag = '') {
+    if (!_tagListCache.length) {
+        try {
+            const r = await api.get('/api/ai/tags/list');
+            _tagListCache = Array.isArray(r?.tags) ? r.tags : [];
+        } catch {}
+    }
+    if (!_tagListCache.length) {
+        showToast('No tags yet. Run image tagging first.', 'info');
+        return;
+    }
+    const choice = await _smartAlbumPickerSheet(
+        prefillTag || _tagSelected || _tagListCache[0]?.tag,
+    );
+    if (!choice) return;
     try {
         const r = await api.post('/api/ai/smart-albums', {
-            name: String(name).trim(),
-            rule: { type: 'tags_contains', tag: String(tag).trim(), minScore: 0 },
+            name: choice.name,
+            rule: {
+                type: 'tags_contains',
+                tag: choice.tag,
+                minScore: choice.minScore,
+            },
         });
         if (!r.success) throw new Error(r.error || 'create failed');
         showToast('Smart album created', 'success');
@@ -722,6 +743,83 @@ async function _createSmartAlbum() {
     } catch (e) {
         showToast(`Create failed: ${e?.data?.error || e?.message || 'unknown'}`, 'error');
     }
+}
+
+function _smartAlbumPickerSheet(preferredTag = '') {
+    return new Promise((resolve) => {
+        const tags = _tagListCache
+            .slice()
+            .sort((a, b) => String(a.tag).localeCompare(String(b.tag)));
+        const selected = tags.find((t) => t.tag === preferredTag)?.tag || tags[0]?.tag || '';
+        let decided = false;
+        const settle = (value) => {
+            if (decided) return;
+            decided = true;
+            resolve(value);
+        };
+        const options = tags
+            .map((t) => {
+                const tag = String(t.tag || '');
+                const count = Number(t.count) || 0;
+                return `<option value="${escapeHtml(tag)}" ${tag === selected ? 'selected' : ''}>${escapeHtml(tag)} (${count.toLocaleString()})</option>`;
+            })
+            .join('');
+        const sheet = openSheet({
+            title: 'New smart album',
+            size: 'sm',
+            content: `
+                <label class="text-tg-text text-xs block mb-1" for="smart-album-name">Album name</label>
+                <input id="smart-album-name" class="tg-input w-full text-sm mb-3" value="${escapeHtml(selected ? `${selected} photos` : 'Smart album')}" autocomplete="off">
+                <label class="text-tg-text text-xs block mb-1" for="smart-album-tag">Tag</label>
+                <select id="smart-album-tag" class="tg-input w-full text-sm mb-3">${options}</select>
+                <div class="flex items-center justify-between gap-3 mb-1">
+                    <label class="text-tg-text text-xs" for="smart-album-score">Minimum confidence</label>
+                    <output id="smart-album-score-out" class="text-xs text-tg-textSecondary font-mono tabular-nums">0%</output>
+                </div>
+                <input id="smart-album-score" type="range" min="0" max="1" step="0.05" value="0" class="w-full">
+                <p class="text-[10px] text-tg-textSecondary mt-1">Higher values make the album stricter.</p>
+                <div class="flex items-center justify-end gap-2 mt-4">
+                    <button data-sa-cancel class="px-4 py-2 rounded-lg text-tg-textSecondary hover:bg-tg-hover transition text-sm">Cancel</button>
+                    <button data-sa-create class="px-4 py-2 rounded-lg bg-tg-blue text-white hover:bg-opacity-90 font-medium text-sm transition">Create</button>
+                </div>`,
+            onClose: () => settle(null),
+        });
+        setTimeout(() => {
+            const root = sheet.root;
+            const nameEl = root?.querySelector('#smart-album-name');
+            const tagEl = root?.querySelector('#smart-album-tag');
+            const scoreEl = root?.querySelector('#smart-album-score');
+            const scoreOut = root?.querySelector('#smart-album-score-out');
+            const syncScore = () => {
+                if (scoreOut)
+                    scoreOut.textContent = `${Math.round((Number(scoreEl?.value) || 0) * 100)}%`;
+            };
+            const syncName = () => {
+                if (!nameEl || !tagEl) return;
+                const cur = String(nameEl.value || '').trim();
+                if (!cur || tags.some((t) => cur === `${t.tag} photos`)) {
+                    nameEl.value = `${tagEl.value} photos`;
+                }
+            };
+            scoreEl?.addEventListener('input', syncScore);
+            tagEl?.addEventListener('change', syncName);
+            root?.querySelector('[data-sa-cancel]')?.addEventListener('click', () => sheet.close());
+            root?.querySelector('[data-sa-create]')?.addEventListener('click', () => {
+                const tag = String(tagEl?.value || '').trim();
+                const name = String(nameEl?.value || '').trim() || `${tag} photos`;
+                if (!tag) return;
+                settle({
+                    name,
+                    tag,
+                    minScore: Math.max(0, Math.min(1, Number(scoreEl?.value) || 0)),
+                });
+                sheet.close();
+            });
+            syncScore();
+            nameEl?.focus();
+            nameEl?.select?.();
+        }, 60);
+    });
 }
 
 async function _rebuildSmartAlbum(id) {
@@ -1056,6 +1154,7 @@ function _bindOnce() {
         _tagPhotosPage += 1;
         _loadTagPhotoPage();
     });
+    $('#ai-tag-create-album')?.addEventListener('click', () => _createSmartAlbum(_tagSelected));
     $('#ai-tag-suggestions-refresh')?.addEventListener('click', () => _renderTagSuggestions());
     $('#ai-smart-albums-refresh')?.addEventListener('click', () => _renderSmartAlbums());
     $('#ai-smart-albums-add')?.addEventListener('click', () => _createSmartAlbum());
@@ -1137,7 +1236,7 @@ function _bindOnce() {
     ws.on('ai_faces_install_progress', _onInstallProgress);
     ws.on('ai_faces_install_done', _onInstallDone);
 
-    // Overflow menu → "Manage GPU support". Reveals the install card
+    // Overflow menu -> AI runtime setup. Reveals the install card
     // even when the sidecar is healthy (so operators can switch EP),
     // closes the <details> menu, scrolls the card into view.
     $('#ai-open-install-btn')?.addEventListener('click', () => {
@@ -1374,6 +1473,17 @@ function _renderStatus(status) {
     if (taggedEl) {
         taggedEl.textContent = String(counts.withTags ?? 0);
     }
+    const ocrCount = $('#ai-ocr-count');
+    if (ocrCount) {
+        const n = Number(counts.withText) || 0;
+        ocrCount.textContent = n ? `(${n.toLocaleString()})` : '';
+    }
+    const objectsCount = $('#ai-objects-count');
+    if (objectsCount) {
+        const n = Number(counts.withObjects) || 0;
+        objectsCount.textContent = n ? `(${n.toLocaleString()})` : '';
+    }
+    _lastTagsChangedAt = Number(scans?.tags?.finishedAt) || _lastTagsChangedAt || 0;
     const lastEl = $('#ai-stat-last');
     if (lastEl) {
         const finishedAt = Number(scans?.faces?.finishedAt) || 0;
@@ -2409,6 +2519,7 @@ function _renderPeopleGrid() {
         b.addEventListener('click', () => {
             _selectedPerson = Number(b.dataset.person);
             _selectedPersonName = b.dataset.name || '';
+            _syncSelectedPersonTile();
             _showPersonPhotos({ scrollIntoSection: true });
         });
         b.addEventListener('dblclick', (e) => {
@@ -2423,6 +2534,17 @@ function _renderPeopleGrid() {
     });
 }
 
+function _syncSelectedPersonTile() {
+    document.querySelectorAll('#ai-people-grid [data-person]').forEach((tile) => {
+        const selected = Number(tile.dataset.person) === Number(_selectedPerson);
+        tile.classList.toggle('bg-tg-blue/10', selected);
+        tile.classList.toggle('ring-2', selected);
+        tile.classList.toggle('ring-tg-blue/60', selected);
+        tile.classList.toggle('hover:bg-tg-bg/50', !selected);
+        tile.setAttribute('aria-pressed', String(selected));
+    });
+}
+
 function _personTile(p) {
     const isUnclassified = p.id === -1 || p.noise === true;
     const name = isUnclassified
@@ -2433,6 +2555,10 @@ function _personTile(p) {
     const faceCount = Number(p.face_count) || 0;
     const safeName = escapeHtml(name);
     const dimCls = !p.label && !isUnclassified ? 'opacity-50' : '';
+    const selectedCls =
+        Number(p.id) === Number(_selectedPerson)
+            ? 'bg-tg-blue/10 ring-2 ring-tg-blue/60'
+            : 'hover:bg-tg-bg/50';
     let imgHtml;
     if (faceCover) {
         const fb = fallbackCover
@@ -2446,7 +2572,8 @@ function _personTile(p) {
     }
 
     return `<button type="button" data-person="${p.id}" data-name="${safeName}"
-        class="flex flex-col items-center gap-1.5 px-1 py-2 rounded-xl hover:bg-tg-bg/50 active:scale-95 transition-all group text-center select-none ${dimCls}"
+        class="flex flex-col items-center gap-1.5 px-1 py-2 rounded-xl active:scale-95 transition-all group text-center select-none ${selectedCls} ${dimCls}"
+        aria-pressed="${Number(p.id) === Number(_selectedPerson) ? 'true' : 'false'}"
         title="${safeName} · ${faceCount} ${escapeHtml(i18nT('maintenance.ai.faces_short', 'faces'))}">
         <div class="w-[60px] h-[60px] rounded-full overflow-hidden flex items-center justify-center bg-tg-bg/40 flex-shrink-0">
             ${imgHtml}

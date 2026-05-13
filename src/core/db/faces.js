@@ -568,6 +568,10 @@ export function getAiCounts({ fileTypes = ['photo'] } = {}) {
     const withEmbedding = db.prepare(`SELECT COUNT(*) AS n FROM image_embeddings`).get().n;
     const withFaces = db.prepare(`SELECT COUNT(DISTINCT download_id) AS n FROM faces`).get().n;
     const withTags = db.prepare(`SELECT COUNT(DISTINCT download_id) AS n FROM image_tags`).get().n;
+    const withText = db.prepare(`SELECT COUNT(DISTINCT download_id) AS n FROM image_text`).get().n;
+    const withObjects = db
+        .prepare(`SELECT COUNT(DISTINCT download_id) AS n FROM image_objects`)
+        .get().n;
     const peopleCount = db.prepare(`SELECT COUNT(*) AS n FROM people`).get().n;
     return {
         totalEligible: total,
@@ -576,6 +580,8 @@ export function getAiCounts({ fileTypes = ['photo'] } = {}) {
         withEmbedding,
         withFaces,
         withTags,
+        withText,
+        withObjects,
         peopleCount,
     };
 }
