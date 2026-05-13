@@ -46,6 +46,7 @@ import {
 import { clusterFaces, computeFaceQualityScore, detectFaces } from './faces.js';
 import { resolveFacesValue } from './faces-config.js';
 import { detectFacesBatch, getSidecarUrl } from './faces-client.js';
+import { getVocabularyPreset } from './tag-vocabulary.js';
 import { hasFfmpeg, resolveFfmpegBin } from '../thumbs.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -731,9 +732,14 @@ export function startTagsScan(cfg, onProgress, onDone, onLog) {
                 );
             }
 
-            // Resolve custom tag labels from config. Falls back to the
-            // sidecar's default vocabulary when empty.
-            const tagLabels = Array.isArray(cfg.tagLabels) ? cfg.tagLabels.filter(Boolean) : [];
+            // Resolve tag vocabulary: explicit list > named preset > sidecar default.
+            const presetLabels = cfg.tagVocabularyPreset
+                ? (getVocabularyPreset(String(cfg.tagVocabularyPreset)) ?? [])
+                : [];
+            const tagLabels =
+                Array.isArray(cfg.tagLabels) && cfg.tagLabels.length
+                    ? cfg.tagLabels.filter(Boolean)
+                    : presetLabels;
 
             const batchSize = Math.max(1, Math.min(50, Number(cfg.batchSize) || 16));
 
