@@ -17,6 +17,7 @@ import { t as i18nT, tf as i18nTf } from './i18n.js';
 import { showToast, escapeHtml } from './utils.js';
 import { ws } from './ws.js';
 import { confirmSheet, promptSheet } from './sheet.js';
+import { openMediaViewerForReview } from './viewer.js';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -32,9 +33,11 @@ let _tagListCache = [];
 let _tagSelected = '';
 let _tagFilterQuery = '';
 let _tagSortMode = 'count_desc';
-let _tagPhotosOffset = 0;
 let _tagPhotosTotal = 0;
+let _tagPhotosPage = 1;
+let _tagPhotosTotalPages = 1;
 const _tagPhotosLimit = 50;
+let _tagCurrentRows = [];
 const LS_FACES_COLLAPSED = 'tgdl.ai.faces.collapsed';
 const LS_TAGS_COLLAPSED = 'tgdl.ai.tags.collapsed';
 const LS_PEOPLE_COLLAPSED = 'tgdl.ai.people.collapsed';
@@ -212,7 +215,12 @@ async function _renderTagBrowser(forceReload = true) {
                     '<p class="text-[11px] text-tg-textSecondary col-span-full text-center py-6">No tags yet — run a tag scan to populate.</p>';
             }
             if (empty) empty.classList.remove('hidden');
-            _setTagLoadMoreVisible(false);
+            _tagSelected = '';
+            _tagPhotosTotal = 0;
+            _tagPhotosPage = 1;
+            _tagPhotosTotalPages = 1;
+            _tagCurrentRows = [];
+            _syncTagPager();
             return;
         }
         if (empty) empty.classList.add('hidden');
@@ -278,7 +286,11 @@ async function _renderTagBrowser(forceReload = true) {
             photos.innerHTML =
                 '<p class="text-[11px] text-tg-textSecondary col-span-full text-center py-6">No tags match the current filter.</p>';
         }
-        _setTagLoadMoreVisible(false);
+        _tagPhotosTotal = 0;
+        _tagPhotosPage = 1;
+        _tagPhotosTotalPages = 1;
+        _tagCurrentRows = [];
+        _syncTagPager();
     } catch (e) {
         console.warn('tag browser:', e);
         section.classList.add('hidden');
@@ -292,84 +304,116 @@ async function _loadTagPhotos(tag) {
     const photos = $('#ai-tag-photos');
     if (!photos) return;
     _tagSelected = String(tag || '');
-    _tagPhotosOffset = 0;
+    _tagPhotosPage = 1;
     _tagPhotosTotal = 0;
-    _setTagLoadMoreVisible(false);
+    _tagPhotosTotalPages = 1;
+    _tagCurrentRows = [];
+    _syncTagPager();
+    await _loadTagPhotoPage();
+}
+
+async function _loadTagPhotoPage() {
+    const photos = $('#ai-tag-photos');
+    const tag = _tagSelected;
+    if (!photos || !tag) return;
     photos.innerHTML =
         '<p class="text-[11px] text-tg-textSecondary col-span-full text-center py-6"><i class="ri-loader-4-line animate-spin mr-1"></i>Loading…</p>';
     try {
+        const offset = Math.max(0, (_tagPhotosPage - 1) * _tagPhotosLimit);
         const r = await api.get(
-            `/api/ai/tags/photos?tag=${encodeURIComponent(tag)}&limit=${_tagPhotosLimit}&offset=0`,
+            `/api/ai/tags/photos?tag=${encodeURIComponent(tag)}&limit=${_tagPhotosLimit}&offset=${offset}`,
         );
         const files = Array.isArray(r?.files) ? r.files : [];
+        _tagCurrentRows = files;
         _tagPhotosTotal = Number(r?.total) || files.length;
-        _tagPhotosOffset = files.length;
+        _tagPhotosTotalPages = Math.max(1, Math.ceil(_tagPhotosTotal / _tagPhotosLimit));
         if (!files.length) {
             photos.innerHTML =
                 '<p class="text-[11px] text-tg-textSecondary col-span-full text-center py-6">No photos with this tag.</p>';
+            _syncTagPager();
             return;
         }
-        photos.innerHTML = files
-            .map((f) => {
-                const thumb = `/api/thumbs/${encodeURIComponent(f.id)}?w=320`;
-                const score = f.tag_score ? Math.round(f.tag_score * 100) + '%' : '';
-                return `<div class="relative aspect-square rounded-md overflow-hidden bg-tg-bg/40 group cursor-pointer" onclick="navigateTo('viewer/${encodeURIComponent(f.group_name || '')}')">
-                    <img loading="lazy" class="absolute inset-0 w-full h-full object-cover" src="${escapeHtml(thumb)}" onerror="this.style.display='none'">
-                    <span class="absolute bottom-1 right-1 text-[10px] px-1 py-0.5 rounded bg-black/60 text-white tabular-nums">${escapeHtml(score)}</span>
-                </div>`;
-            })
-            .join('');
-        _setTagLoadMoreVisible(_tagPhotosOffset < _tagPhotosTotal);
+        photos.innerHTML = files.map((f, i) => _renderTagPhotoTile(f, i)).join('');
+        _wireTagPhotoClicks();
+        _syncTagPager();
     } catch (e) {
-        _setTagLoadMoreVisible(false);
+        _tagCurrentRows = [];
+        _syncTagPager();
         photos.innerHTML = `<p class="text-[11px] text-red-400 col-span-full text-center py-6">Failed: ${escapeHtml(e?.message || 'unknown')}</p>`;
     }
 }
 
-async function _loadMoreTagPhotos() {
-    const photos = $('#ai-tag-photos');
-    const tag = _tagSelected;
-    if (!photos || !tag) return;
-    if (_tagPhotosOffset >= _tagPhotosTotal) {
-        _setTagLoadMoreVisible(false);
-        return;
-    }
-    const loadMoreBtn = $('#ai-tag-load-more');
-    if (loadMoreBtn) loadMoreBtn.disabled = true;
-    try {
-        const r = await api.get(
-            `/api/ai/tags/photos?tag=${encodeURIComponent(tag)}&limit=${_tagPhotosLimit}&offset=${_tagPhotosOffset}`,
-        );
-        const files = Array.isArray(r?.files) ? r.files : [];
-        _tagPhotosTotal = Number(r?.total) || _tagPhotosTotal;
-        if (!files.length) {
-            _setTagLoadMoreVisible(false);
-            return;
-        }
-        const html = files
-            .map((f) => {
-                const thumb = `/api/thumbs/${encodeURIComponent(f.id)}?w=320`;
-                const score = f.tag_score ? Math.round(f.tag_score * 100) + '%' : '';
-                return `<div class="relative aspect-square rounded-md overflow-hidden bg-tg-bg/40 group cursor-pointer" onclick="navigateTo('viewer/${encodeURIComponent(f.group_name || '')}')">
-                    <img loading="lazy" class="absolute inset-0 w-full h-full object-cover" src="${escapeHtml(thumb)}" onerror="this.style.display='none'">
-                    <span class="absolute bottom-1 right-1 text-[10px] px-1 py-0.5 rounded bg-black/60 text-white tabular-nums">${escapeHtml(score)}</span>
-                </div>`;
-            })
-            .join('');
-        photos.insertAdjacentHTML('beforeend', html);
-        _tagPhotosOffset += files.length;
-        _setTagLoadMoreVisible(_tagPhotosOffset < _tagPhotosTotal);
-    } catch (e) {
-        showToast(`Failed to load more: ${e?.message || 'unknown'}`, 'error');
-    } finally {
-        if (loadMoreBtn) loadMoreBtn.disabled = false;
-    }
+function _renderTagPhotoTile(file, index) {
+    const thumb = `/api/thumbs/${encodeURIComponent(file.id)}?w=320`;
+    const scorePct = file.tag_score ? Math.round(file.tag_score * 100) : 0;
+    return `<button type="button" data-tag-tile-index="${index}" data-id="${file.id}"
+            class="nsfw-tile group relative aspect-square rounded-md overflow-hidden bg-tg-bg/40 focus:outline-none focus:ring-2 focus:ring-tg-blue">
+        <img loading="lazy" decoding="async"
+             class="absolute inset-0 w-full h-full object-cover"
+             src="${escapeHtml(thumb)}" alt=""
+             onerror="this.style.display='none'">
+        <span class="hidden sm:block absolute top-1 right-1 px-1.5 py-0.5 text-[10px] font-mono rounded bg-tg-blue/85 text-white tabular-nums">${scorePct}%</span>
+        <span class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 group-focus:opacity-100 transition flex items-end p-2 pointer-events-none">
+            <span class="text-[11px] text-white truncate w-full text-left">${escapeHtml(file.file_name || '')}</span>
+        </span>
+    </button>`;
 }
 
-function _setTagLoadMoreVisible(show) {
-    const btn = $('#ai-tag-load-more');
-    if (!btn) return;
-    btn.classList.toggle('hidden', !show);
+function _wireTagPhotoClicks() {
+    const photos = $('#ai-tag-photos');
+    if (!photos) return;
+    photos.querySelectorAll('[data-tag-tile-index]').forEach((tile) => {
+        if (tile.dataset.wired) return;
+        tile.dataset.wired = '1';
+        tile.addEventListener('click', () => {
+            const idx = Number(tile.dataset.tagTileIndex);
+            if (Number.isFinite(idx)) _openTagLightbox(idx);
+        });
+    });
+}
+
+function _tagRowToViewerFile(row) {
+    const sizeMb = row.file_size ? (row.file_size / (1024 * 1024)).toFixed(1) : '0';
+    return {
+        fullPath: row.file_path || '',
+        type: row.file_type === 'video' ? 'videos' : 'images',
+        name: row.file_name || '',
+        sizeFormatted: `${sizeMb} MB`,
+        modified: row.created_at || Date.now(),
+        _tagRow: row,
+    };
+}
+
+function _tagReviewMetaFor(file) {
+    const row = file?._tagRow;
+    const score = Math.round((Number(row?.tag_score) || 0) * 100);
+    return `<span class="inline-flex items-center gap-2">
+        <span class="inline-block w-2.5 h-2.5 rounded-full bg-tg-blue"></span>
+        <span>${escapeHtml(_tagSelected || '')}</span>
+        <span class="font-mono tabular-nums">${score}%</span>
+    </span>`;
+}
+
+function _openTagLightbox(startIndex) {
+    if (!_tagCurrentRows.length) return;
+    openMediaViewerForReview(_tagCurrentRows.map(_tagRowToViewerFile), startIndex, {
+        actions: [],
+        metaRender: _tagReviewMetaFor,
+    });
+}
+
+function _syncTagPager() {
+    const pageInfo = $('#ai-tag-page-info');
+    const prevBtn = $('#ai-tag-prev-btn');
+    const nextBtn = $('#ai-tag-next-btn');
+    const hasTag = !!_tagSelected;
+    if (pageInfo) {
+        pageInfo.textContent = hasTag
+            ? `Page ${_tagPhotosPage} / ${_tagPhotosTotalPages} · ${_tagPhotosTotal.toLocaleString()} rows`
+            : '';
+    }
+    if (prevBtn) prevBtn.disabled = !hasTag || _tagPhotosPage <= 1;
+    if (nextBtn) nextBtn.disabled = !hasTag || _tagPhotosPage >= _tagPhotosTotalPages;
 }
 
 function _moveTagChipFocus(currentBtn, dir) {
@@ -914,7 +958,16 @@ function _bindOnce() {
         _tagSortMode = String(e.target?.value || 'count_desc');
         _renderTagBrowser(false);
     });
-    $('#ai-tag-load-more')?.addEventListener('click', _loadMoreTagPhotos);
+    $('#ai-tag-prev-btn')?.addEventListener('click', () => {
+        if (!_tagSelected || _tagPhotosPage <= 1) return;
+        _tagPhotosPage -= 1;
+        _loadTagPhotoPage();
+    });
+    $('#ai-tag-next-btn')?.addEventListener('click', () => {
+        if (!_tagSelected || _tagPhotosPage >= _tagPhotosTotalPages) return;
+        _tagPhotosPage += 1;
+        _loadTagPhotoPage();
+    });
     $('#ai-tag-suggestions-refresh')?.addEventListener('click', () => _renderTagSuggestions());
     $('#ai-smart-albums-refresh')?.addEventListener('click', () => _renderSmartAlbums());
     $('#ai-smart-albums-add')?.addEventListener('click', () => _createSmartAlbum());
