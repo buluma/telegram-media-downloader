@@ -3426,12 +3426,16 @@
                     </details>
 
                     <!-- Tag suggestions — shows co-occurring tags that might be merged -->
-                    <section id="ai-tag-suggestions" class="hidden bg-tg-panel rounded-xl p-4 mb-3">
+                    <details id="ai-tag-suggestions" class="hidden bg-tg-panel rounded-xl p-4 mb-3 group">
+                        <summary class="cursor-pointer list-none flex items-center justify-between gap-2 mb-1">
+                            <h3 class="text-tg-text text-sm font-medium flex items-center gap-2">
+                                <i class="ri-arrow-right-s-line text-tg-textSecondary text-xs transition-transform group-open:rotate-90"></i>
+                                <i class="ri-lightbulb-flash-line text-tg-orange"></i>
+                                <span data-i18n="maintenance.ai.tags.suggestions_title">Tag suggestions</span>
+                            </h3>
+                        </summary>
                         <div class="flex items-start justify-between gap-3 flex-wrap mb-2">
-                            <div class="min-w-0">
-                                <h3 class="text-tg-text text-sm font-semibold" data-i18n="maintenance.ai.tags.suggestions_title">Tag suggestions</h3>
-                                <p class="text-[11px] text-tg-textSecondary mt-0.5" data-i18n="maintenance.ai.tags.suggestions_desc">Tags that appear together often might be duplicates or related. Consider merging them to improve your tag vocabulary.</p>
-                            </div>
+                            <p class="text-[11px] text-tg-textSecondary mt-0.5 min-w-0" data-i18n="maintenance.ai.tags.suggestions_desc">Tags that appear together often might be duplicates or related. Consider merging them to improve your tag vocabulary.</p>
                             <button id="ai-tag-suggestions-refresh" type="button" class="tg-btn-secondary text-xs px-2.5 py-1 inline-flex items-center gap-1">
                                 <i class="ri-refresh-line"></i><span data-i18n="common.refresh">Refresh</span>
                             </button>
@@ -3440,7 +3444,7 @@
                             <p class="text-[11px] text-tg-textSecondary text-center py-3">Loading suggestions…</p>
                         </div>
                         <p id="ai-tag-suggestions-empty" class="text-[11px] text-tg-textSecondary text-center py-3 hidden">No tag suggestions yet.</p>
-                    </section>
+                    </details>
 
                     <!-- OCR text extraction card. -->
                     <details id="ai-pane-ocr" class="bg-tg-panel rounded-xl p-4 mb-3 group">
@@ -3520,12 +3524,16 @@
                         </div>
                     </details>
 
-                    <section id="ai-smart-albums" class="bg-tg-panel rounded-xl p-4 mb-3">
+                    <details id="ai-smart-albums" class="bg-tg-panel rounded-xl p-4 mb-3 group">
+                        <summary class="cursor-pointer list-none flex items-center justify-between gap-2 mb-1">
+                            <h3 class="text-tg-text text-sm font-medium flex items-center gap-2">
+                                <i class="ri-arrow-right-s-line text-tg-textSecondary text-xs transition-transform group-open:rotate-90"></i>
+                                <i class="ri-album-line text-tg-blue"></i>
+                                <span>Smart albums</span>
+                            </h3>
+                        </summary>
                         <div class="flex items-start justify-between gap-3 flex-wrap mb-2">
-                            <div class="min-w-0">
-                                <h3 class="text-tg-text text-sm font-semibold">Smart albums</h3>
-                                <p class="text-[11px] text-tg-textSecondary mt-0.5">Rule-based collections. v1 supports tag rules.</p>
-                            </div>
+                            <p class="text-[11px] text-tg-textSecondary mt-0.5 min-w-0">Rule-based collections. v1 supports tag rules.</p>
                             <div class="flex items-center gap-1.5">
                                 <button id="ai-smart-albums-add" type="button" class="tg-btn text-xs px-2.5 py-1 inline-flex items-center gap-1">
                                     <i class="ri-add-line"></i><span>Add</span>
@@ -3542,7 +3550,7 @@
                             <div class="text-[11px] text-tg-textSecondary mb-2">Items in <span id="ai-smart-album-items-name" class="text-tg-text font-medium"></span></div>
                             <div id="ai-smart-album-items-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2"></div>
                         </div>
-                    </section>
+                    </details>
 
                     <!-- Future capabilities footer. -->
                     <p class="text-[11px] text-tg-textSecondary text-center my-3" data-i18n="maintenance.ai.coming_soon.list">More capabilities coming: Face quality scoring · Smart albums</p>

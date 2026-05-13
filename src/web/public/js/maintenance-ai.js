@@ -39,6 +39,8 @@ const LS_FACES_COLLAPSED = 'tgdl.ai.faces.collapsed';
 const LS_TAGS_COLLAPSED = 'tgdl.ai.tags.collapsed';
 const LS_PEOPLE_COLLAPSED = 'tgdl.ai.people.collapsed';
 const LS_TAG_BROWSER_COLLAPSED = 'tgdl.ai.tagBrowser.collapsed';
+const LS_TAG_SUGGESTIONS_COLLAPSED = 'tgdl.ai.tagSuggestions.collapsed';
+const LS_SMART_ALBUMS_COLLAPSED = 'tgdl.ai.smartAlbums.collapsed';
 
 /* ----------------------------------------------------------------------
  * Capability registry.
@@ -934,6 +936,16 @@ function _bindOnce() {
     _initDetailsCollapsedState({
         detailsId: 'ai-tag-browser',
         storageKey: LS_TAG_BROWSER_COLLAPSED,
+        defaultOpen: false,
+    });
+    _initDetailsCollapsedState({
+        detailsId: 'ai-tag-suggestions',
+        storageKey: LS_TAG_SUGGESTIONS_COLLAPSED,
+        defaultOpen: false,
+    });
+    _initDetailsCollapsedState({
+        detailsId: 'ai-smart-albums',
+        storageKey: LS_SMART_ALBUMS_COLLAPSED,
         defaultOpen: false,
     });
 
