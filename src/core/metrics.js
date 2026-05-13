@@ -151,6 +151,11 @@ metrics.declare('tgdl_url_downloads_total', 'counter', 'Total Download-by-Link e
 metrics.declare('tgdl_stories_downloads_total', 'counter', 'Total Stories enqueued for download.');
 metrics.declare('tgdl_login_total', 'counter', 'Dashboard login attempts.');
 metrics.declare(
+    'tgdl_maintenance_throttled_total',
+    'counter',
+    'Maintenance requests blocked by burst throttling.',
+);
+metrics.declare(
     'tgdl_queue_size',
     'gauge',
     'Current downloader queue depth (high + normal lanes).',

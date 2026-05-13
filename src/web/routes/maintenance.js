@@ -75,6 +75,7 @@ import {
 import { readConfigSafe } from '../lib/config-cache.js';
 import { saveConfig } from '../../config/manager.js';
 import { tgAuthErrorBody } from '../lib/tg-error.js';
+import { metrics } from '../../core/metrics.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -179,6 +180,10 @@ export function createMaintenanceRouter({
         const key = `${req.ip || 'unknown'}|${req.method}|${req.path}`;
         const hits = (_heavyRouteHits.get(key) || []).filter((ts) => now - ts < policy.windowMs);
         if (hits.length >= policy.max) {
+            metrics.inc('tgdl_maintenance_throttled_total', 1, {
+                method: req.method,
+                path: req.path,
+            });
             return res.status(429).json({
                 error: 'Too many maintenance requests. Please retry shortly.',
                 retryAfterMs: policy.windowMs,
