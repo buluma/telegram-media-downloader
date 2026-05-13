@@ -110,7 +110,8 @@ export function createGroupsRouter({
 
             const groupsWithPhotos = await Promise.all(
                 (config.groups || []).map(async (group) => {
-                    const photoPath = path.join(PHOTOS_DIR, `${group.id}.jpg`);
+                    const safeGroupId = String(group.id).replace(/[^A-Za-z0-9_.-]/g, '_');
+                    const photoPath = path.join(PHOTOS_DIR, `${safeGroupId}.jpg`);
                     const hasPhoto = existsSync(photoPath);
                     return {
                         ...group,
@@ -126,7 +127,7 @@ export function createGroupsRouter({
                         // heuristic in createAvatar() which painted every
                         // supergroup as a channel.
                         type: group.type || dialogsTypeFor(group.id),
-                        photoUrl: hasPhoto ? `/photos/${group.id}.jpg` : null,
+                        photoUrl: hasPhoto ? `/photos/${safeGroupId}.jpg` : null,
                         // Federation surface — own groups carry peerId: null
                         // so the sidebar can distinguish them from peer rows
                         // appended below.
@@ -264,7 +265,8 @@ export function createGroupsRouter({
             await writeConfigAtomic(config);
 
             // 4. Delete profile photo
-            const photoPath = path.join(PHOTOS_DIR, `${groupId}.jpg`);
+            const safeGroupId = String(groupId).replace(/[^A-Za-z0-9_.-]/g, '_');
+            const photoPath = path.join(PHOTOS_DIR, `${safeGroupId}.jpg`);
             if (existsSync(photoPath)) await fs.unlink(photoPath);
 
             console.log(
@@ -745,7 +747,8 @@ export function createGroupsRouter({
                 }
                 if (matchId) {
                     // Reuse the numeric photo — fetch on demand if missing.
-                    const numericPath = path.join(PHOTOS_DIR, `${matchId}.jpg`);
+                    const safeMatchId = String(matchId).replace(/[^A-Za-z0-9_.-]/g, '_');
+                    const numericPath = path.join(PHOTOS_DIR, `${safeMatchId}.jpg`);
                     if (!existsSync(numericPath)) await downloadProfilePhoto(matchId);
                     if (existsSync(numericPath)) {
                         try {

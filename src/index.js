@@ -10,10 +10,9 @@ import fs from 'fs';
 import path from 'path';
 import net from 'net';
 import os from 'os';
-import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
-import { loadConfig, saveConfig, addGroup } from './config/manager.js';
+import { loadConfig, saveConfig } from './config/manager.js';
 import { resolveFfmpegBin, resolveFfprobeBin } from './core/thumbs.js';
 import { hashPassword } from './core/web-auth.js';
 import { suppressNoise, wrapConsoleMethod, NATIVE_LOAD_FAIL } from './core/logger.js';

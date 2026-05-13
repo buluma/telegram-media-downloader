@@ -1232,8 +1232,9 @@ async function resolveEntityAcrossAccounts(idStr) {
 
 async function downloadProfilePhoto(groupId) {
     const idStr = String(groupId);
-    const photoPath = path.join(PHOTOS_DIR, `${idStr}.jpg`);
-    if (existsSync(photoPath)) return `/photos/${idStr}.jpg`;
+    const safeId = idStr.replace(/[^A-Za-z0-9_.-]/g, '_');
+    const photoPath = path.join(PHOTOS_DIR, `${safeId}.jpg`);
+    if (existsSync(photoPath)) return `/photos/${safeId}.jpg`;
 
     const resolved = await resolveEntityAcrossAccounts(idStr);
     if (!resolved) return null;
@@ -1243,7 +1244,7 @@ async function downloadProfilePhoto(groupId) {
             const buffer = await client.downloadProfilePhoto(entity, { isBig: false });
             if (buffer) {
                 await fs.writeFile(photoPath, buffer);
-                return `/photos/${idStr}.jpg`;
+                return `/photos/${safeId}.jpg`;
             }
         }
     } catch (e) {
