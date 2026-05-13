@@ -387,7 +387,21 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
             const envBatch = resolveFacesValue('batchSize', facesCfgIn);
             const batchSizeRaw = _pickNumber([facesCfgIn.batchSize, cfg.batchSize, envBatch], 16);
             const batchSize = Math.max(1, Math.min(200, Number(batchSizeRaw) || 16));
+            const envExclude = resolveFacesValue('excludeExtensions', facesCfgIn);
+            const excludeExtsRaw = Array.isArray(facesCfgIn.excludeExtensions)
+                ? facesCfgIn.excludeExtensions
+                : Array.isArray(envExclude)
+                  ? envExclude
+                  : [];
+            const excludeExts = new Set(
+                excludeExtsRaw.map((e) =>
+                    String(e || '')
+                        .toLowerCase()
+                        .replace(/^\.?/, '.'),
+                ),
+            );
             let _statNull = 0;
+            let _statSkip = 0;
             let _statEmpty = 0;
             let _statFaces = 0;
             let _statPhotos = 0;
@@ -399,15 +413,32 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                 // use one HTTP round-trip via /detect/batch.
                 const items = batch.map((row) => ({ row, abs: _resolveAbs(row.file_path) }));
                 const nullItems = items.filter((i) => !i.abs);
+                const skipItems = items.filter(
+                    (i) =>
+                        i.abs &&
+                        excludeExts.has(path.extname(String(i.abs || '')).toLowerCase() || ''),
+                );
                 const videoItems = items.filter(
-                    (i) => i.abs && String(i.row.file_type || '').toLowerCase() === 'video',
+                    (i) =>
+                        i.abs &&
+                        !excludeExts.has(path.extname(String(i.abs || '')).toLowerCase() || '') &&
+                        String(i.row.file_type || '').toLowerCase() === 'video',
                 );
                 const imageItems = items.filter(
-                    (i) => i.abs && String(i.row.file_type || '').toLowerCase() !== 'video',
+                    (i) =>
+                        i.abs &&
+                        !excludeExts.has(path.extname(String(i.abs || '')).toLowerCase() || '') &&
+                        String(i.row.file_type || '').toLowerCase() !== 'video',
                 );
 
                 for (const { row } of nullItems) {
                     _statNull++;
+                    setAiIndexedAt(row.id);
+                    state.scanned += 1;
+                    bump();
+                }
+                for (const { row } of skipItems) {
+                    _statSkip++;
                     setAiIndexedAt(row.id);
                     state.scanned += 1;
                     bump();
@@ -509,7 +540,7 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                         'info',
                         `faces scan progress: ${state.scanned}/${phaseATotal} — ` +
                             `${_statPhotos} with faces (${_statFaces} total), ` +
-                            `${_statEmpty} no-face, ${_statNull} errors`,
+                            `${_statEmpty} no-face, ${_statNull} errors, ${_statSkip} skipped`,
                     );
                     _nextStatLog = state.scanned + 200;
                 }
