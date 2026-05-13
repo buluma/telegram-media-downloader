@@ -2242,34 +2242,50 @@ function _renderPeopleGrid() {
             _selectedPersonName = b.dataset.name || '';
             _showPersonPhotos({ scrollIntoSection: true });
         });
+        b.addEventListener('dblclick', (e) => {
+            if (e.target.closest('.ai-person-name')) {
+                e.preventDefault();
+                e.stopPropagation();
+                _selectedPerson = Number(b.dataset.person);
+                _selectedPersonName = b.dataset.name || '';
+                _renameSelectedPerson();
+            }
+        });
     });
 }
 
 function _personTile(p) {
-    const name = p.label || `${i18nT('maintenance.ai.person_default', 'Person')} #${p.id}`;
-    const faceCover = p.id > 0 ? `/api/ai/person/${p.id}/face?w=160` : '';
-    const fallbackCover = p.cover_download_id ? `/api/thumbs/${p.cover_download_id}?w=320` : '';
-    const cover = faceCover || fallbackCover;
+    const isUnclassified = p.id === -1 || p.noise === true;
+    const name = isUnclassified
+        ? i18nT('maintenance.ai.person_unclassified', 'Unclassified')
+        : p.label || `${i18nT('maintenance.ai.person_default', 'Person')} #${p.id}`;
+    const faceCover = !isUnclassified && p.id > 0 ? `/api/ai/person/${p.id}/face?w=128` : '';
+    const fallbackCover = p.cover_download_id ? `/api/thumbs/${p.cover_download_id}?w=128` : '';
     const faceCount = Number(p.face_count) || 0;
-    const lastSeen = p.last_seen_at ? new Date(p.last_seen_at).toLocaleDateString() : '';
     const safeName = escapeHtml(name);
+    const dimCls = !p.label && !isUnclassified ? 'opacity-50' : '';
+    let imgHtml;
+    if (faceCover) {
+        const fb = fallbackCover
+            ? `this.onerror=null;this.src='${fallbackCover}'`
+            : `this.onerror=null;this.parentElement.innerHTML='<i class=\\'ri-user-line text-xl text-tg-textSecondary/40\\'></i>'`;
+        imgHtml = `<img src="${faceCover}" alt="${safeName}" loading="lazy" class="w-full h-full object-cover" onerror="${fb}">`;
+    } else if (fallbackCover) {
+        imgHtml = `<img src="${fallbackCover}" alt="${safeName}" loading="lazy" class="w-full h-full object-cover">`;
+    } else {
+        imgHtml = `<i class="ri-user-line text-xl text-tg-textSecondary/40"></i>`;
+    }
+
     return `<button type="button" data-person="${p.id}" data-name="${safeName}"
-        class="block group relative bg-tg-bg/30 rounded-lg overflow-hidden hover:ring-2 hover:ring-tg-blue/40 transition-shadow"
-        title="${safeName}">
-        ${
-            cover
-                ? `<img src="${cover}" alt="${safeName}" loading="lazy" class="aspect-square w-full object-cover" ${
-                      faceCover && fallbackCover
-                          ? `onerror="this.onerror=null;this.src='${fallbackCover}'"`
-                          : ''
-                  }>`
-                : '<div class="aspect-square w-full bg-tg-bg/40 flex items-center justify-center"><i class="ri-user-line text-3xl text-tg-textSecondary/50"></i></div>'
-        }
-        <div class="absolute bottom-0 left-0 right-0 p-1 bg-gradient-to-t from-black/80 to-transparent text-left">
-            <div class="text-[11px] text-white truncate font-medium">${safeName}</div>
-            <div class="text-[10px] text-white/70 flex items-center justify-between gap-1">
-                <span>${faceCount} ${escapeHtml(i18nT('maintenance.ai.faces_short', 'faces'))}</span>
-                ${lastSeen ? `<span class="opacity-70">${escapeHtml(lastSeen)}</span>` : ''}
+        class="flex flex-col items-center gap-1.5 px-1 py-2 rounded-xl hover:bg-tg-bg/50 active:scale-95 transition-all group text-center select-none ${dimCls}"
+        title="${safeName} · ${faceCount} ${escapeHtml(i18nT('maintenance.ai.faces_short', 'faces'))}">
+        <div class="w-[52px] h-[52px] rounded-full overflow-hidden ring-2 ring-tg-border/30 group-hover:ring-tg-blue/60 transition-shadow flex items-center justify-center bg-tg-bg/40 flex-shrink-0">
+            ${imgHtml}
+        </div>
+        <div class="w-full min-w-0 space-y-0.5">
+            <div class="ai-person-name text-[10.5px] font-medium text-tg-text leading-tight line-clamp-2 break-words px-0.5">${safeName}</div>
+            <div class="text-[10px] text-tg-textSecondary tabular-nums">
+                ${faceCount}
             </div>
         </div>
     </button>`;
@@ -2288,9 +2304,17 @@ async function _showPersonPhotos({ scrollIntoSection = false } = {}) {
     if (!grid) return;
     grid.innerHTML = `<div class="col-span-full text-center text-xs text-tg-textSecondary py-8">${escapeHtml(i18nT('common.loading', 'Loading…'))}</div>`;
     try {
-        const r = await api.get(`/api/ai/people/${_selectedPerson}/photos?limit=120`);
-        if (!r.success) throw new Error(r.error || 'load failed');
-        const files = r.files || [];
+        let r = null;
+        let files = [];
+        try {
+            r = await api.get(`/api/ai/person/${_selectedPerson}/downloads?limit=120`);
+            if (r?.success) files = r.downloads || r.files || [];
+        } catch {}
+        if (!files.length) {
+            r = await api.get(`/api/ai/people/${_selectedPerson}/photos?limit=120`);
+            if (!r.success) throw new Error(r.error || 'load failed');
+            files = r.files || [];
+        }
         if (!files.length) {
             grid.innerHTML = `<div class="col-span-full text-center text-xs text-tg-textSecondary py-8">${escapeHtml(i18nT('maintenance.ai.no_photos', 'No photos in this cluster.'))}</div>`;
             return;
