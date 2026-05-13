@@ -3349,12 +3349,15 @@
                          top, then the cluster grid. Clicking a tile
                          opens the details panel (photos + Rename /
                          Merge / Split / Delete). -->
-                    <section id="ai-pane-people" class="bg-tg-panel rounded-xl p-4 mb-3" role="region" aria-label="Face clusters">
-                        <div class="flex items-center gap-2 mb-3">
-                            <i class="ri-group-line text-tg-blue"></i>
-                            <h3 class="text-tg-text text-sm font-medium" data-i18n="maintenance.ai.people.heading">People</h3>
-                            <span id="ai-people-count" class="text-[10.5px] text-tg-textSecondary"></span>
-                        </div>
+                    <details id="ai-pane-people" class="bg-tg-panel rounded-xl p-4 mb-3 group" role="region" aria-label="Face clusters">
+                        <summary class="cursor-pointer list-none flex items-center justify-between gap-2 mb-1">
+                            <h3 class="text-tg-text text-sm font-medium flex items-center gap-2">
+                                <i class="ri-arrow-right-s-line text-tg-textSecondary text-xs transition-transform group-open:rotate-90"></i>
+                                <i class="ri-group-line text-tg-blue"></i>
+                                <span data-i18n="maintenance.ai.people.heading">People</span>
+                                <span id="ai-people-count" class="text-[10.5px] text-tg-textSecondary"></span>
+                            </h3>
+                        </summary>
                         <div class="flex items-center gap-2 flex-wrap mb-3">
                             <input id="ai-people-search" type="search" class="tg-input flex-1 min-w-[160px] text-xs py-1.5"
                                 placeholder="Search names or IDs…" data-i18n-placeholder="maintenance.ai.people.search_placeholder"
@@ -3385,17 +3388,21 @@
                             </div>
                             <div id="ai-people-photos-grid" class="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-8 gap-1.5"></div>
                         </div>
-                    </section>
+                    </details>
 
                     <!-- Tag browser -- populated by maintenance-ai.js when
                          image tagging is enabled. Shows all detected tags
                          as chips; clicking a chip shows matching photos. -->
-                    <section id="ai-tag-browser" class="hidden bg-tg-panel rounded-xl p-4 mb-3">
-                        <div class="flex items-start justify-between gap-3 flex-wrap mb-2">
-                            <div class="min-w-0">
-                                <h3 class="text-tg-text text-sm font-semibold" data-i18n="maintenance.ai.tags.browser_title">Tag browser</h3>
-                                <p class="text-[11px] text-tg-textSecondary mt-0.5" data-i18n="maintenance.ai.tags.browser_desc">Browse photos by detected tag. Customise tags in the Image tagging card above.</p>
-                            </div>
+                    <details id="ai-tag-browser" class="hidden bg-tg-panel rounded-xl p-4 mb-3 group">
+                        <summary class="cursor-pointer list-none flex items-center justify-between gap-2 mb-1">
+                            <h3 class="text-tg-text text-sm font-medium flex items-center gap-2">
+                                <i class="ri-arrow-right-s-line text-tg-textSecondary text-xs transition-transform group-open:rotate-90"></i>
+                                <i class="ri-price-tag-3-line text-tg-orange"></i>
+                                <span data-i18n="maintenance.ai.tags.browser_title">Tag browser</span>
+                            </h3>
+                        </summary>
+                        <div class="flex items-start justify-between gap-3 flex-wrap mb-3">
+                            <p class="text-[11px] text-tg-textSecondary min-w-0" data-i18n="maintenance.ai.tags.browser_desc">Browse photos by detected tag. Customise tags in the Image tagging card above.</p>
                             <button id="ai-tag-browser-refresh" type="button" class="tg-btn-secondary text-xs px-2.5 py-1 inline-flex items-center gap-1">
                                 <i class="ri-refresh-line"></i><span data-i18n="common.refresh">Refresh</span>
                             </button>
@@ -3416,7 +3423,7 @@
                             <button id="ai-tag-load-more" type="button" class="tg-btn-secondary text-xs px-3 py-1.5 hidden">Load more</button>
                         </div>
                         <p id="ai-tag-empty" class="text-[11px] text-tg-textSecondary text-center py-3 hidden">No tags yet — run a tag scan to populate.</p>
-                    </section>
+                    </details>
 
                     <!-- Tag suggestions — shows co-occurring tags that might be merged -->
                     <section id="ai-tag-suggestions" class="hidden bg-tg-panel rounded-xl p-4 mb-3">

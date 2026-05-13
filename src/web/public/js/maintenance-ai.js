@@ -37,6 +37,8 @@ let _tagPhotosTotal = 0;
 const _tagPhotosLimit = 50;
 const LS_FACES_COLLAPSED = 'tgdl.ai.faces.collapsed';
 const LS_TAGS_COLLAPSED = 'tgdl.ai.tags.collapsed';
+const LS_PEOPLE_COLLAPSED = 'tgdl.ai.people.collapsed';
+const LS_TAG_BROWSER_COLLAPSED = 'tgdl.ai.tagBrowser.collapsed';
 
 /* ----------------------------------------------------------------------
  * Capability registry.
@@ -922,6 +924,16 @@ function _bindOnce() {
     _initDetailsCollapsedState({
         detailsId: 'ai-pane-tags',
         storageKey: LS_TAGS_COLLAPSED,
+        defaultOpen: false,
+    });
+    _initDetailsCollapsedState({
+        detailsId: 'ai-pane-people',
+        storageKey: LS_PEOPLE_COLLAPSED,
+        defaultOpen: false,
+    });
+    _initDetailsCollapsedState({
+        detailsId: 'ai-tag-browser',
+        storageKey: LS_TAG_BROWSER_COLLAPSED,
         defaultOpen: false,
     });
 
