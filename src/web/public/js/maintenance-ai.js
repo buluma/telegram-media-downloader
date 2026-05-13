@@ -1,11 +1,8 @@
 /* Maintenance → AI page module.
  *
- * Faces-only build. The Python face-clustering sidecar (insightface
- * buffalo_l, 512-dim embeddings) is the only AI surface here today;
- * Search + Auto-tag were removed in v2.14. The page is structured as
- * a capability grid so future drops (OCR, object detection, face
- * quality scoring) can land by pushing a single entry into the
- * CAPABILITIES array — no layout surgery, no new endpoints.
+ * AI maintenance surface for local-only analysis: face clustering,
+ * image tagging, OCR, object detection, people management, tag
+ * browsing, and smart albums.
  *
  * Init contract: `init()` is called every time the SPA navigates to
  * `#/maintenance/ai`. It must be idempotent — repeated calls re-bind
@@ -38,6 +35,13 @@ let _tagPhotosPage = 1;
 let _tagPhotosTotalPages = 1;
 const _tagPhotosLimit = 50;
 let _tagCurrentRows = [];
+let _smartAlbumSelected = null;
+let _smartAlbumSelectedName = '';
+let _smartAlbumItemsPage = 1;
+let _smartAlbumItemsTotal = 0;
+let _smartAlbumItemsTotalPages = 1;
+const _smartAlbumItemsLimit = 50;
+let _smartAlbumCurrentRows = [];
 const LS_FACES_COLLAPSED = 'tgdl.ai.faces.collapsed';
 const LS_TAGS_COLLAPSED = 'tgdl.ai.tags.collapsed';
 const LS_PEOPLE_COLLAPSED = 'tgdl.ai.people.collapsed';
@@ -48,11 +52,10 @@ const LS_SMART_ALBUMS_COLLAPSED = 'tgdl.ai.smartAlbums.collapsed';
 /* ----------------------------------------------------------------------
  * Capability registry.
  *
- * Drives the capability grid. Adding a new capability later (OCR /
- * object detection / face quality) is a single push here + matching
- * i18n keys + (optionally) a renderer override. The defaults work
- * as English fallbacks so a fresh install reads cleanly even before
- * locale files load.
+ * Legacy capability-grid registry retained for the hidden compatibility
+ * host at #ai-capabilities-grid. The visible AI page uses explicit
+ * panels below; keep this registry accurate enough for old extensions
+ * or bookmarks that still touch the legacy host.
  *
  * Shape:
  *   id            — internal key, matches `models.<id>` in /api/ai/status
@@ -141,22 +144,6 @@ const CAPABILITIES = [
                 default: 2,
             },
         ],
-    },
-    // Placeholder card — communicates the extensible nature of the grid
-    // to operators without leaving an empty section. Rendered separately
-    // (no controls / no toggle / dashed border).
-    {
-        id: '__comingSoon__',
-        comingSoon: true,
-        icon: 'ri-flask-line',
-        i18n: {
-            title: 'maintenance.ai.coming_soon.title',
-            desc: 'maintenance.ai.coming_soon.list',
-        },
-        defaults: {
-            title: 'Coming soon',
-            desc: 'Object detection · OCR · Face quality ranking · Smart albums',
-        },
     },
     {
         id: 'tags',
@@ -409,7 +396,7 @@ function _syncTagPager() {
     const hasTag = !!_tagSelected;
     if (pageInfo) {
         pageInfo.textContent = hasTag
-            ? `Page ${_tagPhotosPage} / ${_tagPhotosTotalPages} · ${_tagPhotosTotal.toLocaleString()} rows`
+            ? `Page ${_tagPhotosPage} / ${_tagPhotosTotalPages} · ${_tagPhotosTotal.toLocaleString()} photos`
             : '';
     }
     if (prevBtn) prevBtn.disabled = !hasTag || _tagPhotosPage <= 1;
@@ -445,7 +432,9 @@ async function _renderTagSuggestions(forceReload = true) {
         const suggestions = Array.isArray(r?.suggestions) ? r.suggestions : [];
 
         if (!suggestions.length) {
-            section.classList.add('hidden');
+            section.classList.remove('hidden');
+            list.innerHTML = '';
+            if (empty) empty.classList.remove('hidden');
             return;
         }
 
@@ -530,6 +519,13 @@ async function _renderSmartAlbums() {
             list.innerHTML =
                 '<p class="text-[11px] text-tg-textSecondary text-center py-3">No smart albums yet. Add one above.</p>';
             $('#ai-smart-album-items')?.classList.add('hidden');
+            _smartAlbumSelected = null;
+            _smartAlbumSelectedName = '';
+            _smartAlbumItemsPage = 1;
+            _smartAlbumItemsTotal = 0;
+            _smartAlbumItemsTotalPages = 1;
+            _smartAlbumCurrentRows = [];
+            _syncSmartAlbumPager();
             return;
         }
         list.innerHTML = albums
@@ -582,28 +578,118 @@ async function _loadSmartAlbumItems(id, name) {
     const nameEl = $('#ai-smart-album-items-name');
     const grid = $('#ai-smart-album-items-grid');
     if (!section || !grid) return;
+    _smartAlbumSelected = id;
+    _smartAlbumSelectedName = String(name || `#${id}`);
+    _smartAlbumItemsPage = 1;
+    _smartAlbumItemsTotal = 0;
+    _smartAlbumItemsTotalPages = 1;
+    _smartAlbumCurrentRows = [];
     section.classList.remove('hidden');
-    if (nameEl) nameEl.textContent = String(name || `#${id}`);
+    if (nameEl) nameEl.textContent = _smartAlbumSelectedName;
+    _syncSmartAlbumPager();
+    await _loadSmartAlbumItemsPage();
+}
+
+async function _loadSmartAlbumItemsPage() {
+    const grid = $('#ai-smart-album-items-grid');
+    if (!grid || !_smartAlbumSelected) return;
     grid.innerHTML =
         '<p class="text-[11px] text-tg-textSecondary col-span-full text-center py-3">Loading…</p>';
     try {
-        const r = await api.get(`/api/ai/smart-albums/${encodeURIComponent(id)}/items?limit=120`);
+        const offset = Math.max(0, (_smartAlbumItemsPage - 1) * _smartAlbumItemsLimit);
+        const r = await api.get(
+            `/api/ai/smart-albums/${encodeURIComponent(_smartAlbumSelected)}/items?limit=${_smartAlbumItemsLimit}&offset=${offset}`,
+        );
         const files = Array.isArray(r?.files) ? r.files : [];
+        _smartAlbumCurrentRows = files;
+        _smartAlbumItemsTotal = Number(r?.total) || files.length;
+        _smartAlbumItemsTotalPages = Math.max(
+            1,
+            Math.ceil(_smartAlbumItemsTotal / _smartAlbumItemsLimit),
+        );
         if (!files.length) {
             grid.innerHTML =
                 '<p class="text-[11px] text-tg-textSecondary col-span-full text-center py-3">No items matched.</p>';
+            _syncSmartAlbumPager();
             return;
         }
-        grid.innerHTML = files
-            .map((f) => {
-                const thumb = `/api/thumbs/${encodeURIComponent(f.id)}?w=320`;
-                return `<a href="#/files/${f.id}" class="block group relative">
-                    <img loading="lazy" class="aspect-square w-full object-cover rounded-md bg-tg-bg/40" src="${escapeHtml(thumb)}" alt="${escapeHtml(f.file_name || String(f.id))}">
-                </a>`;
-            })
-            .join('');
+        grid.innerHTML = files.map((f, i) => _renderSmartAlbumTile(f, i)).join('');
+        _wireSmartAlbumClicks();
+        _syncSmartAlbumPager();
     } catch (e) {
+        _smartAlbumCurrentRows = [];
+        _syncSmartAlbumPager();
         grid.innerHTML = `<p class="text-[11px] text-red-300 col-span-full text-center py-3">Failed: ${escapeHtml(e?.message || 'unknown')}</p>`;
+    }
+}
+
+function _renderSmartAlbumTile(file, index) {
+    const thumb = `/api/thumbs/${encodeURIComponent(file.id)}?w=320`;
+    return `<button type="button" data-smart-album-tile-index="${index}" data-id="${file.id}"
+            class="nsfw-tile group relative aspect-square rounded-md overflow-hidden bg-tg-bg/40 focus:outline-none focus:ring-2 focus:ring-tg-blue">
+        <img loading="lazy" decoding="async"
+             class="absolute inset-0 w-full h-full object-cover"
+             src="${escapeHtml(thumb)}" alt="${escapeHtml(file.file_name || String(file.id))}"
+             onerror="this.style.display='none'">
+        <span class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 group-focus:opacity-100 transition flex items-end p-2 pointer-events-none">
+            <span class="text-[11px] text-white truncate w-full text-left">${escapeHtml(file.file_name || '')}</span>
+        </span>
+    </button>`;
+}
+
+function _wireSmartAlbumClicks() {
+    const grid = $('#ai-smart-album-items-grid');
+    if (!grid) return;
+    grid.querySelectorAll('[data-smart-album-tile-index]').forEach((tile) => {
+        if (tile.dataset.wired) return;
+        tile.dataset.wired = '1';
+        tile.addEventListener('click', () => {
+            const idx = Number(tile.dataset.smartAlbumTileIndex);
+            if (Number.isFinite(idx)) _openSmartAlbumLightbox(idx);
+        });
+    });
+}
+
+function _smartAlbumRowToViewerFile(row) {
+    const sizeMb = row.file_size ? (row.file_size / (1024 * 1024)).toFixed(1) : '0';
+    return {
+        fullPath: row.file_path || '',
+        type: row.file_type === 'video' ? 'videos' : 'images',
+        name: row.file_name || '',
+        sizeFormatted: `${sizeMb} MB`,
+        modified: row.created_at || Date.now(),
+        _smartAlbumRow: row,
+    };
+}
+
+function _smartAlbumMetaFor() {
+    return `<span class="inline-flex items-center gap-2">
+        <span class="inline-block w-2.5 h-2.5 rounded-full bg-tg-blue"></span>
+        <span>${escapeHtml(_smartAlbumSelectedName || 'Smart album')}</span>
+    </span>`;
+}
+
+function _openSmartAlbumLightbox(startIndex) {
+    if (!_smartAlbumCurrentRows.length) return;
+    openMediaViewerForReview(_smartAlbumCurrentRows.map(_smartAlbumRowToViewerFile), startIndex, {
+        actions: [],
+        metaRender: _smartAlbumMetaFor,
+    });
+}
+
+function _syncSmartAlbumPager() {
+    const pageInfo = $('#ai-smart-album-page-info');
+    const prevBtn = $('#ai-smart-album-prev-btn');
+    const nextBtn = $('#ai-smart-album-next-btn');
+    const hasAlbum = !!_smartAlbumSelected;
+    if (pageInfo) {
+        pageInfo.textContent = hasAlbum
+            ? `Page ${_smartAlbumItemsPage} / ${_smartAlbumItemsTotalPages} · ${_smartAlbumItemsTotal.toLocaleString()} photos`
+            : '';
+    }
+    if (prevBtn) prevBtn.disabled = !hasAlbum || _smartAlbumItemsPage <= 1;
+    if (nextBtn) {
+        nextBtn.disabled = !hasAlbum || _smartAlbumItemsPage >= _smartAlbumItemsTotalPages;
     }
 }
 
@@ -702,9 +788,6 @@ export async function init() {
     await refreshStatus();
     _refreshDoctor().catch(() => {});
     _loadPeople().catch(() => {});
-    _renderTagBrowser().catch(() => {});
-    _renderTagSuggestions().catch(() => {});
-    _renderSmartAlbums().catch(() => {});
 }
 
 // Public refresher — exported so the SPA shell can poke us after a
@@ -971,6 +1054,16 @@ function _bindOnce() {
     $('#ai-tag-suggestions-refresh')?.addEventListener('click', () => _renderTagSuggestions());
     $('#ai-smart-albums-refresh')?.addEventListener('click', () => _renderSmartAlbums());
     $('#ai-smart-albums-add')?.addEventListener('click', () => _createSmartAlbum());
+    $('#ai-smart-album-prev-btn')?.addEventListener('click', () => {
+        if (!_smartAlbumSelected || _smartAlbumItemsPage <= 1) return;
+        _smartAlbumItemsPage -= 1;
+        _loadSmartAlbumItemsPage();
+    });
+    $('#ai-smart-album-next-btn')?.addEventListener('click', () => {
+        if (!_smartAlbumSelected || _smartAlbumItemsPage >= _smartAlbumItemsTotalPages) return;
+        _smartAlbumItemsPage += 1;
+        _loadSmartAlbumItemsPage();
+    });
     _initDetailsCollapsedState({
         detailsId: 'ai-pane-faces',
         storageKey: LS_FACES_COLLAPSED,
@@ -1535,7 +1628,6 @@ function _renderCapabilities(status) {
     const models = status?.models || {};
 
     const html = CAPABILITIES.map((cap) => {
-        if (cap.comingSoon) return _renderComingSoonCard(cap);
         const m = models[cap.id] || {};
         return _renderCapabilityCard(cap, m, cfg);
     }).join('');
@@ -1545,7 +1637,6 @@ function _renderCapabilities(status) {
     // bound once per render because the markup is rebuilt on every
     // status refresh.
     for (const cap of CAPABILITIES) {
-        if (cap.comingSoon) continue;
         const card = root.querySelector(`[data-cap="${cap.id}"]`);
         if (!card) continue;
 
@@ -1580,7 +1671,7 @@ function _renderCapabilities(status) {
             }
         }
 
-        // Faces-only: hardware-provider probe + dropdown. The card itself
+        // Face-clustering provider probe + dropdown. The card itself
         // is markup-only — wiring lives here so the renderer stays
         // declarative.
         if (cap.id === 'faces' && card.querySelector('[data-faces-provider-card]')) {
@@ -1961,22 +2052,6 @@ function _renderControl(ctrl, cfg) {
         `;
     }
     return '';
-}
-
-function _renderComingSoonCard(cap) {
-    const title = escapeHtml(i18nT(cap.i18n?.title, cap.defaults.title));
-    const desc = escapeHtml(i18nT(cap.i18n?.desc, cap.defaults.desc));
-    return `
-        <div class="ai-coming-soon-card rounded-lg p-3 border border-dashed border-tg-border/40 bg-tg-bg/20 text-tg-textSecondary" aria-hidden="true">
-            <div class="flex items-start gap-3 flex-wrap">
-                <i class="${escapeHtml(cap.icon || 'ri-flask-line')} text-tg-textSecondary text-xl shrink-0"></i>
-                <div class="flex-1 min-w-0">
-                    <div class="text-tg-text/70 text-sm font-medium">${title}</div>
-                    <p class="text-[11px] text-tg-textSecondary mt-0.5">${desc}</p>
-                </div>
-            </div>
-        </div>
-    `;
 }
 
 async function _toggleCapability(toggleKey, el) {
