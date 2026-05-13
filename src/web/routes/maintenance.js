@@ -1149,6 +1149,18 @@ export function createMaintenanceRouter({
             const finalPath = (await import('fs')).existsSync(row.sprite_path)
                 ? row.sprite_path
                 : spritePath;
+            // Defense in depth: sprite paths should always live under
+            // data/seekbar. Reject escaped/symlinked targets even if a row
+            // in DB is tampered.
+            try {
+                const realFile = fsSync.realpathSync(finalPath);
+                const realRoot = fsSync.realpathSync(path.join(DATA_DIR, 'seekbar'));
+                if (realFile !== realRoot && !realFile.startsWith(realRoot + path.sep)) {
+                    return res.status(400).end();
+                }
+            } catch {
+                return res.status(404).end();
+            }
             const etag = `"sk-${id}-${row.generated_at || 0}"`;
             if (req.headers['if-none-match'] === etag) {
                 res.set('ETag', etag);
