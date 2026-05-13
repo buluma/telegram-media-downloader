@@ -140,6 +140,64 @@ describe('llm-config', () => {
         const m = mod._envMap();
         expect(m.TGDL_LLM_PROVIDER).toEqual(['', 'provider']);
     });
+
+    it('LLM_DEFAULTS includes ollama.embedModel', () => {
+        expect(mod.LLM_DEFAULTS.ollama.embedModel).toBe('nomic-embed-text');
+    });
+
+    it('LLM_DEFAULTS includes openai.embedModel', () => {
+        expect(mod.LLM_DEFAULTS.openai.embedModel).toBe('text-embedding-3-small');
+    });
+
+    it('resolveAllLlm preserves ollama.embedModel from config', () => {
+        const cfg = mod.resolveAllLlm({ ollama: { embedModel: 'custom-embed' } });
+        expect(cfg.ollama.embedModel).toBe('custom-embed');
+    });
+
+    it('resolveAllLlm preserves openai.embedModel from config', () => {
+        const cfg = mod.resolveAllLlm({ openai: { embedModel: 'text-embedding-3-large' } });
+        expect(cfg.openai.embedModel).toBe('text-embedding-3-large');
+    });
+
+    it('applies TGDL_LLM_OLLAMA_EMBED_MODEL env override', () => {
+        process.env.TGDL_LLM_OLLAMA_EMBED_MODEL = 'all-minilm';
+        const cfg = mod.resolveAllLlm({});
+        expect(cfg.ollama.embedModel).toBe('all-minilm');
+    });
+
+    it('applies TGDL_LLM_OPENAI_EMBED_MODEL env override', () => {
+        process.env.TGDL_LLM_OPENAI_EMBED_MODEL = 'text-embedding-3-large';
+        const cfg = mod.resolveAllLlm({});
+        expect(cfg.openai.embedModel).toBe('text-embedding-3-large');
+    });
+
+    it('exports maskLlmConfig', () => {
+        expect(typeof mod.maskLlmConfig).toBe('function');
+    });
+
+    it('maskLlmConfig masks non-empty apiKey', () => {
+        const masked = mod.maskLlmConfig({
+            openai: { apiKey: 'sk-real-key', model: 'gpt-4o-mini' },
+        });
+        expect(masked.openai.apiKey).toBe('***');
+        expect(masked.openai.model).toBe('gpt-4o-mini');
+    });
+
+    it('maskLlmConfig leaves empty apiKey unchanged', () => {
+        const masked = mod.maskLlmConfig({ openai: { apiKey: '' } });
+        expect(masked.openai.apiKey).toBe('');
+    });
+
+    it('maskLlmConfig does not mutate the original object', () => {
+        const orig = { openai: { apiKey: 'sk-secret' } };
+        mod.maskLlmConfig(orig);
+        expect(orig.openai.apiKey).toBe('sk-secret');
+    });
+
+    it('maskLlmConfig handles config without openai block', () => {
+        const masked = mod.maskLlmConfig({ provider: 'ollama' });
+        expect(masked.provider).toBe('ollama');
+    });
 });
 
 // ======================================================================
@@ -231,6 +289,18 @@ describe('Ollama provider', () => {
             vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('ECONNREFUSED'));
             const result = await OllamaProvider.probe(makeCfg());
             expect(result.available).toBe(false);
+        });
+
+        it('includes code LLM_NETWORK_ERROR on connection failure', async () => {
+            vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('ECONNREFUSED'));
+            const result = await OllamaProvider.probe(makeCfg());
+            expect(result.code).toBe('LLM_NETWORK_ERROR');
+        });
+
+        it('includes code LLM_PROBE_FAILED on non-ok HTTP response', async () => {
+            mockFetch(503, { error: 'busy' });
+            const result = await OllamaProvider.probe(makeCfg());
+            expect(result.code).toBe('LLM_PROBE_FAILED');
         });
 
         it('uses configured baseUrl', async () => {
@@ -341,6 +411,52 @@ describe('Ollama provider', () => {
             );
             expect(p.supportsVision).toBe(true);
         });
+
+        it('config override true forces supportsVision regardless of model name', () => {
+            const p = new OllamaProvider(
+                makeCfg({
+                    ollama: {
+                        baseUrl: 'http://ollama:11434',
+                        model: 'llama3.2:latest',
+                        supportsVision: true,
+                    },
+                }),
+            );
+            expect(p.supportsVision).toBe(true);
+        });
+
+        it('config override false suppresses supportsVision regardless of model name', () => {
+            const p = new OllamaProvider(
+                makeCfg({
+                    ollama: {
+                        baseUrl: 'http://ollama:11434',
+                        model: 'llava:13b',
+                        supportsVision: false,
+                    },
+                }),
+            );
+            expect(p.supportsVision).toBe(false);
+        });
+
+        it('null/undefined override falls back to regex', () => {
+            const p = new OllamaProvider(
+                makeCfg({
+                    ollama: { baseUrl: 'http://ollama:11434', model: 'llava:13b' },
+                }),
+            );
+            expect(p.supportsVision).toBe(true);
+        });
+
+        it('TGDL_LLM_OLLAMA_SUPPORTS_VISION env var overrides vision detection', () => {
+            process.env.TGDL_LLM_OLLAMA_SUPPORTS_VISION = 'true';
+            const p = new OllamaProvider(
+                makeCfg({
+                    ollama: { baseUrl: 'http://ollama:11434', model: 'llama3.2:latest' },
+                }),
+            );
+            expect(p.supportsVision).toBe(true);
+            delete process.env.TGDL_LLM_OLLAMA_SUPPORTS_VISION;
+        });
     });
 
     describe('embed()', () => {
@@ -362,6 +478,30 @@ describe('Ollama provider', () => {
             vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('fail'));
             const p = new OllamaProvider(makeCfg());
             await expect(p.embed({ texts: 'test' })).rejects.toThrow(/fail/);
+        });
+
+        it('uses configured embedModel in request body', async () => {
+            const fetchSpy = mockFetch(200, { data: [{ embedding: [0.1] }] });
+            const p = new OllamaProvider(
+                makeCfg({
+                    ollama: {
+                        baseUrl: 'http://ollama:11434',
+                        model: 'qwen3',
+                        embedModel: 'custom-embed-model',
+                    },
+                }),
+            );
+            await p.embed({ texts: 'hello' });
+            const body = JSON.parse(fetchSpy.mock.calls[0][1]?.body);
+            expect(body.model).toBe('custom-embed-model');
+        });
+
+        it('defaults to nomic-embed-text when embedModel not in config', async () => {
+            const fetchSpy = mockFetch(200, { data: [{ embedding: [0.1] }] });
+            const p = new OllamaProvider(makeCfg());
+            await p.embed({ texts: 'hello' });
+            const body = JSON.parse(fetchSpy.mock.calls[0][1]?.body);
+            expect(body.model).toBe('nomic-embed-text');
         });
     });
 });
@@ -418,6 +558,37 @@ describe('OpenAI provider', () => {
             const result = await OpenAIProvider.probe(makeCfg({ provider: 'openai' }));
             expect(result.available).toBe(false);
         });
+
+        it('includes code LLM_AUTH_FAILED when no API key', async () => {
+            const result = await OpenAIProvider.probe(
+                makeCfg({ provider: 'openai', openai: { apiKey: '', model: 'gpt-4o-mini' } }),
+            );
+            expect(result.code).toBe('LLM_AUTH_FAILED');
+        });
+
+        it('includes code LLM_AUTH_FAILED on 401', async () => {
+            mockFetch(401, { error: { message: 'Unauthorized' } });
+            const result = await OpenAIProvider.probe(makeCfg({ provider: 'openai' }));
+            expect(result.code).toBe('LLM_AUTH_FAILED');
+        });
+
+        it('includes code LLM_AUTH_FAILED on 403', async () => {
+            mockFetch(403, { error: { message: 'Forbidden' } });
+            const result = await OpenAIProvider.probe(makeCfg({ provider: 'openai' }));
+            expect(result.code).toBe('LLM_AUTH_FAILED');
+        });
+
+        it('includes code LLM_PROBE_FAILED on non-auth HTTP error', async () => {
+            mockFetch(500, { error: { message: 'Internal Server Error' } });
+            const result = await OpenAIProvider.probe(makeCfg({ provider: 'openai' }));
+            expect(result.code).toBe('LLM_PROBE_FAILED');
+        });
+
+        it('includes code LLM_NETWORK_ERROR on connection failure', async () => {
+            vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('ECONNREFUSED'));
+            const result = await OpenAIProvider.probe(makeCfg({ provider: 'openai' }));
+            expect(result.code).toBe('LLM_NETWORK_ERROR');
+        });
     });
 
     describe('generate() / chat()', () => {
@@ -465,6 +636,32 @@ describe('OpenAI provider', () => {
             vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('fail'));
             const p = new OpenAIProvider(makeCfg({ provider: 'openai' }));
             await expect(p.embed({ texts: 'test' })).rejects.toThrow(/fail/);
+        });
+
+        it('uses configured embedModel in request body', async () => {
+            const fetchSpy = mockFetch(200, { data: [{ embedding: [0.4] }] });
+            const p = new OpenAIProvider(
+                makeCfg({
+                    provider: 'openai',
+                    openai: {
+                        apiKey: 'sk-test',
+                        model: 'gpt-4o',
+                        baseUrl: 'https://api.openai.com',
+                        embedModel: 'text-embedding-3-large',
+                    },
+                }),
+            );
+            await p.embed({ texts: 'hello' });
+            const body = JSON.parse(fetchSpy.mock.calls[0][1]?.body);
+            expect(body.model).toBe('text-embedding-3-large');
+        });
+
+        it('defaults to text-embedding-3-small when embedModel not in config', async () => {
+            const fetchSpy = mockFetch(200, { data: [{ embedding: [0.4] }] });
+            const p = new OpenAIProvider(makeCfg({ provider: 'openai' }));
+            await p.embed({ texts: 'hello' });
+            const body = JSON.parse(fetchSpy.mock.calls[0][1]?.body);
+            expect(body.model).toBe('text-embedding-3-small');
         });
     });
 });
@@ -565,6 +762,36 @@ describe('LLM Registry (_registry.js)', () => {
         await registry.resolveProvider(makeCfg({ provider: 'disabled' }));
         expect(registry.getActiveProviderId()).toBe('disabled');
     });
+
+    it('exports getLastProviderError', () => {
+        expect(typeof registry.getLastProviderError).toBe('function');
+    });
+
+    it('getLastProviderError() returns null when no error recorded', () => {
+        registry.resetProvider();
+        expect(registry.getLastProviderError('ollama')).toBeNull();
+    });
+
+    it('getLastProviderError() returns probe code after failed resolve', async () => {
+        vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('ECONNREFUSED'));
+        await registry.resolveProvider(makeCfg({ provider: 'ollama' }));
+        const err = registry.getLastProviderError('ollama');
+        expect(err).not.toBeNull();
+        expect(err.code).toBe('LLM_NETWORK_ERROR');
+    });
+
+    it('getLastProviderError() returns LLM_PROVIDER_NOT_FOUND for unknown id', async () => {
+        await registry.resolveProvider(makeCfg({ provider: 'ghost' }));
+        const err = registry.getLastProviderError('ghost');
+        expect(err?.code).toBe('LLM_PROVIDER_NOT_FOUND');
+    });
+
+    it('resetProvider() clears last error', async () => {
+        vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('ECONNREFUSED'));
+        await registry.resolveProvider(makeCfg({ provider: 'ollama' }));
+        registry.resetProvider();
+        expect(registry.getLastProviderError('ollama')).toBeNull();
+    });
 });
 
 // ======================================================================
@@ -627,5 +854,46 @@ describe('LLM Facade (index.js)', () => {
         expect('id' in active).toBe(true);
         expect('label' in active).toBe(true);
         expect('available' in active).toBe(true);
+    });
+
+    it('generate() returns code LLM_DISABLED when provider is disabled', async () => {
+        // No fetch mock needed — disabled path doesn't probe
+        const result = await llm.generate({ prompt: 'test' });
+        // Default config has provider: 'disabled'
+        if (result.unavailable) {
+            expect(result.code).toBe('LLM_DISABLED');
+        }
+    });
+
+    it('generate() returns structured code from probe failure', async () => {
+        vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('ECONNREFUSED'));
+        // Force ollama provider to trigger a probe
+        const { resolveAllLlm } = await import('../../src/core/llm/llm-config.js');
+        // Directly reset and re-configure via env
+        process.env.TGDL_LLM_PROVIDER = 'ollama';
+        llm.resetLlmProvider();
+        const result = await llm.generate({ prompt: 'test' });
+        expect(result.unavailable).toBe(true);
+        expect(result.code).toBe('LLM_NETWORK_ERROR');
+        delete process.env.TGDL_LLM_PROVIDER;
+        llm.resetLlmProvider();
+    });
+
+    it('chat() returns structured code when unavailable', async () => {
+        llm.resetLlmProvider();
+        const result = await llm.chat({ messages: [{ role: 'user', content: 'hi' }] });
+        if (result.unavailable) {
+            expect(typeof result.code).toBe('string');
+            expect(result.code.startsWith('LLM_')).toBe(true);
+        }
+    });
+
+    it('embed() returns structured code when unavailable', async () => {
+        llm.resetLlmProvider();
+        const result = await llm.embed({ texts: 'test' });
+        if (result.unavailable) {
+            expect(typeof result.code).toBe('string');
+            expect(result.code.startsWith('LLM_')).toBe(true);
+        }
     });
 });

@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import express from 'express';
 import sharp from 'sharp';
 import { loadConfig, watchConfig } from '../../config/manager.js';
+import { maskLlmConfig } from '../../core/llm/llm-config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..', '..');
@@ -497,7 +498,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             if (result.unavailable) {
                 return res.status(503).json({
                     error: result.reason,
-                    code: 'LLM_UNAVAILABLE',
+                    code: result.code || 'LLM_UNAVAILABLE',
                 });
             }
 
@@ -698,7 +699,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             try {
                 const { loadConfig } = await import('../../config/manager.js');
                 const live = loadConfig();
-                config = live?.advanced?.ai?.llm || {};
+                config = maskLlmConfig(live?.advanced?.ai?.llm || {});
             } catch {}
             res.json({
                 success: true,
@@ -728,10 +729,74 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             if (result.unavailable) {
                 return res.status(503).json({
                     error: result.reason,
-                    code: 'LLM_UNAVAILABLE',
+                    code: result.code || 'LLM_UNAVAILABLE',
                 });
             }
             res.json({ success: true, text: result.text });
+        } catch (e) {
+            res.status(500).json({ error: e?.message || String(e) });
+        }
+    });
+
+    router.post('/ai/llm/generate', async (req, res) => {
+        try {
+            const { prompt, systemPrompt, model, temperature, maxTokens } = req.body || {};
+            if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
+                return res
+                    .status(400)
+                    .json({ error: 'prompt is required', code: 'MISSING_PROMPT' });
+            }
+            if (prompt.length > 32_000) {
+                return res
+                    .status(400)
+                    .json({ error: 'prompt too long (max 32000 chars)', code: 'PROMPT_TOO_LONG' });
+            }
+            const result = await llm.generate({
+                prompt: prompt.trim(),
+                systemPrompt,
+                model,
+                temperature,
+                maxTokens,
+            });
+            if (result.unavailable) {
+                return res
+                    .status(503)
+                    .json({ error: result.reason, code: result.code || 'LLM_UNAVAILABLE' });
+            }
+            res.json({ success: true, text: result.text, finishReason: result.finishReason });
+        } catch (e) {
+            res.status(500).json({ error: e?.message || String(e) });
+        }
+    });
+
+    router.post('/ai/llm/chat', async (req, res) => {
+        try {
+            const { messages, model, temperature, maxTokens } = req.body || {};
+            if (!Array.isArray(messages) || !messages.length) {
+                return res
+                    .status(400)
+                    .json({ error: 'messages array is required', code: 'MISSING_MESSAGES' });
+            }
+            if (messages.length > 100) {
+                return res
+                    .status(400)
+                    .json({ error: 'too many messages (max 100)', code: 'TOO_MANY_MESSAGES' });
+            }
+            for (const msg of messages) {
+                if (!msg?.role || typeof msg.content !== 'string') {
+                    return res.status(400).json({
+                        error: 'each message must have role and string content',
+                        code: 'INVALID_MESSAGE',
+                    });
+                }
+            }
+            const result = await llm.chat({ messages, model, temperature, maxTokens });
+            if (result.unavailable) {
+                return res
+                    .status(503)
+                    .json({ error: result.reason, code: result.code || 'LLM_UNAVAILABLE' });
+            }
+            res.json({ success: true, text: result.text, finishReason: result.finishReason });
         } catch (e) {
             res.status(500).json({ error: e?.message || String(e) });
         }

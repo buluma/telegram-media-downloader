@@ -28,6 +28,7 @@ import {
     resolveProvider as _resolveProvider,
     resetProvider as _resetProvider,
     getActiveProviderId,
+    getLastProviderError as _getLastProviderError,
 } from './_registry.js';
 
 // Lazily-loaded config-manager reference. Set on first call so this module
@@ -115,7 +116,7 @@ export async function generate(opts) {
     const cfg = await _getLlmCfg();
     const provider = await _resolveProvider(cfg);
     if (!provider) {
-        return { unavailable: true, reason: _unavailableReason(cfg) };
+        return { unavailable: true, ..._unavailableResult(cfg) };
     }
     return provider.generate(opts);
 }
@@ -135,7 +136,7 @@ export async function chat(opts) {
     const cfg = await _getLlmCfg();
     const provider = await _resolveProvider(cfg);
     if (!provider) {
-        return { unavailable: true, reason: _unavailableReason(cfg) };
+        return { unavailable: true, ..._unavailableResult(cfg) };
     }
     return provider.chat(opts);
 }
@@ -151,7 +152,7 @@ export async function embed(opts) {
     const cfg = await _getLlmCfg();
     const provider = await _resolveProvider(cfg);
     if (!provider) {
-        return { unavailable: true, reason: _unavailableReason(cfg) };
+        return { unavailable: true, ..._unavailableResult(cfg) };
     }
     return provider.embed(opts);
 }
@@ -166,10 +167,22 @@ export function resetLlmProvider() {
     _loadConfigFn = null; // force re-resolve on next call
 }
 
-function _unavailableReason(cfg) {
+function _unavailableResult(cfg) {
     const id = cfg?.provider || 'disabled';
-    if (id === 'disabled') return 'LLM provider is disabled in config';
-    return `LLM provider "${id}" is not available — check the AI maintenance page for details`;
+    if (id === 'disabled') {
+        return { reason: 'LLM provider is disabled in config', code: 'LLM_DISABLED' };
+    }
+    const lastErr = _getLastProviderError(id);
+    if (lastErr?.code) {
+        return {
+            reason: `LLM provider "${id}" is not available — ${lastErr.error || 'check the AI maintenance page'}`,
+            code: lastErr.code,
+        };
+    }
+    return {
+        reason: `LLM provider "${id}" is not available — check the AI maintenance page for details`,
+        code: 'LLM_UNAVAILABLE',
+    };
 }
 
 // Auto-register a config-change watcher so the provider singleton stays in
