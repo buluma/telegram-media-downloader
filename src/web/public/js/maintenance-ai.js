@@ -2283,8 +2283,8 @@ function _personTile(p) {
     const name = isUnclassified
         ? i18nT('maintenance.ai.person_unclassified', 'Unclassified')
         : p.label || `${i18nT('maintenance.ai.person_default', 'Person')} #${p.id}`;
-    const faceCover = !isUnclassified && p.id > 0 ? `/api/ai/person/${p.id}/face?w=140` : '';
-    const fallbackCover = p.cover_download_id ? `/api/thumbs/${p.cover_download_id}?w=140` : '';
+    const faceCover = !isUnclassified && p.id > 0 ? `/api/ai/person/${p.id}/face?w=160` : '';
+    const fallbackCover = p.cover_download_id ? `/api/thumbs/${p.cover_download_id}?w=160` : '';
     const faceCount = Number(p.face_count) || 0;
     const safeName = escapeHtml(name);
     const dimCls = !p.label && !isUnclassified ? 'opacity-50' : '';
@@ -2303,7 +2303,7 @@ function _personTile(p) {
     return `<button type="button" data-person="${p.id}" data-name="${safeName}"
         class="flex flex-col items-center gap-1.5 px-1 py-2 rounded-xl hover:bg-tg-bg/50 active:scale-95 transition-all group text-center select-none ${dimCls}"
         title="${safeName} · ${faceCount} ${escapeHtml(i18nT('maintenance.ai.faces_short', 'faces'))}">
-        <div class="w-[52px] h-[52px] rounded-full overflow-hidden flex items-center justify-center bg-tg-bg/40 flex-shrink-0">
+        <div class="w-[60px] h-[60px] rounded-full overflow-hidden flex items-center justify-center bg-tg-bg/40 flex-shrink-0">
             ${imgHtml}
         </div>
         <div class="w-full min-w-0 space-y-0.5">
