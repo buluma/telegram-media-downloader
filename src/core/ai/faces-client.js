@@ -335,7 +335,10 @@ export async function detectFacesBatch(absPaths, cfg = {}, onLog = null) {
             continue;
         }
         if (item.error) {
-            _log(onLog, 'warn', `batch detect ${absPaths[i]}: sidecar soft-error="${item.error}"`);
+            // decode_failed is expected for some non-image payloads with image-like
+            // extensions (for example compressed sticker documents).
+            const lvl = item.error === 'decode_failed' ? 'info' : 'warn';
+            _log(onLog, lvl, `batch detect ${absPaths[i]}: sidecar soft-error="${item.error}"`);
             output[i] = []; // soft error → empty (sidecar reached the file)
             continue;
         }
