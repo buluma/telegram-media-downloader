@@ -22,7 +22,9 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import { deleteFacesForDownload, getDb, insertFace, setAiIndexedAt } from '../db.js';
+import { setImageEmbedding } from '../db/faces.js';
 import { computeFaceQualityScore, detectFaces } from './faces.js';
+import { embedImage as _clientEmbedImage } from './faces-client.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..', '..');
@@ -170,6 +172,25 @@ async function _drainBg() {
                 }
             }
 
+            // Per-row image embedding for semantic/natural-language search.
+            // Computed once per download; the `image_embeddings` table
+            // already exists with an UPSERT, so repeated calls are safe.
+            // The embedding model identifier (sidecar CLIP model) is used
+            // so model swaps trigger a re-index via `clearStaleEmbeddings`.
+            let imageEmbedding = null;
+            let embeddingModel = '';
+            try {
+                const r = await _clientEmbedImage(abs);
+                if (r?.embedding?.length) {
+                    imageEmbedding = Float32Array.from(r.embedding);
+                    // Derive model id from the sidecar CLIP model.
+                    // Falls back to the default repo id if unavailable.
+                    embeddingModel = cfg.clipModel || 'Xenova/clip-vit-base-patch32';
+                }
+            } catch {
+                /* sidecar unavailable or non-image — skip silently */
+            }
+
             // All DB writes go through the busy-aware retry: a long-running
             // sweep / cluster iterator on the same connection will throw
             // "This database connection is busy" on any concurrent UPDATE.
@@ -190,6 +211,10 @@ async function _drainBg() {
                                 qualityScore: computeFaceQualityScore(f, cfg),
                             });
                         }
+                    }
+                    // Persist CLIP image embedding for semantic search
+                    if (imageEmbedding && embeddingModel) {
+                        setImageEmbedding(row.id, _f32ToBlob(imageEmbedding), embeddingModel);
                     }
                     setAiIndexedAt(row.id);
                 });

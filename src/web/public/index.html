@@ -3152,6 +3152,157 @@
                         </div>
                     </section>
 
+                    <!-- LLM provider status card.
+                         Shows available providers (Ollama, OpenAI) with
+                         health indicators, the active provider, model
+                         selector, and a test-prompt button. -->
+                    <details id="ai-pane-llm" class="bg-tg-panel rounded-xl px-3 py-2 mb-3 group">
+                        <summary class="cursor-pointer list-none flex items-center justify-between gap-2 flex-wrap">
+                            <div class="min-w-0 flex items-center gap-1.5 flex-wrap">
+                                <i class="ri-arrow-right-s-line text-tg-textSecondary text-xs transition-transform group-open:rotate-90"></i>
+                                <i class="ri-brain-line text-tg-blue text-xs"></i>
+                                <span class="text-tg-text text-xs font-medium" data-i18n="maintenance.ai.llm.heading">LLM providers</span>
+                                <span id="ai-llm-summary" class="text-[10.5px] text-tg-textSecondary"></span>
+                            </div>
+                            <button id="ai-llm-refresh-btn" type="button" class="text-[10.5px] text-tg-textSecondary hover:text-tg-text inline-flex items-center gap-1 px-2 py-0.5 rounded hover:bg-tg-bg/40">
+                                <i class="ri-refresh-line"></i><span data-i18n="common.refresh">Refresh</span>
+                            </button>
+                        </summary>
+                        <div id="ai-llm-body" class="mt-2">
+                            <!-- Provider rows rendered by JS -->
+                            <div id="ai-llm-providers" class="space-y-1.5 mb-3"></div>
+
+                            <!-- Active provider info -->
+                            <div id="ai-llm-active" class="bg-tg-bg/40 rounded p-2.5 mb-3 hidden">
+                                <div class="text-xs text-tg-text font-medium mb-1" data-i18n="maintenance.ai.llm.active">Active provider</div>
+                                <div id="ai-llm-active-details" class="text-xs text-tg-textSecondary space-y-0.5"></div>
+                            </div>
+
+                            <!-- Test prompt -->
+                            <div id="ai-llm-test" class="hidden">
+                                <label class="text-xs text-tg-text block mb-1" for="ai-llm-test-prompt" data-i18n="maintenance.ai.llm.test_label">Test prompt</label>
+                                <div class="flex gap-2">
+                                    <input id="ai-llm-test-prompt" class="tg-input flex-1 text-xs py-1.5 px-2" type="text" value="Say hello in one word" autocomplete="off">
+                                    <button id="ai-llm-test-btn" type="button" class="tg-btn text-xs px-3 py-1.5 inline-flex items-center gap-1.5">
+                                        <i class="ri-play-line"></i><span data-i18n="common.run">Run</span>
+                                    </button>
+                                </div>
+                                <pre id="ai-llm-test-output" class="bg-tg-bg/60 rounded p-2 mt-1.5 text-[10.5px] font-mono whitespace-pre-wrap leading-snug max-h-24 overflow-auto hidden"></pre>
+                            </div>
+
+                            <!-- Inline config form (shown when no provider is active, or always editable) -->
+                            <div id="ai-llm-config" class="hidden border-t border-white/10 pt-3 mt-3">
+                                <div class="text-xs text-tg-text font-medium mb-2" data-i18n="maintenance.ai.llm.config_heading">Configuration</div>
+
+                                <label class="text-[11px] text-tg-textSecondary block mb-1" for="ai-llm-provider-select">Provider</label>
+                                <select id="ai-llm-provider-select" class="tg-input text-xs w-full mb-2.5">
+                                    <option value="disabled" data-i18n="maintenance.ai.llm.provider_disabled">Disabled</option>
+                                    <option value="ollama">Ollama (local)</option>
+                                    <option value="openai">OpenAI / Azure</option>
+                                </select>
+
+                                <!-- Ollama fields -->
+                                <div id="ai-llm-ollama-fields" class="hidden space-y-2">
+                                    <div>
+                                        <label class="text-[11px] text-tg-textSecondary block mb-0.5" for="ai-llm-ollama-url">Base URL</label>
+                                        <input id="ai-llm-ollama-url" class="tg-input text-xs w-full py-1.5 px-2" type="url" value="http://localhost:11434" autocomplete="off">
+                                    </div>
+                                    <div>
+                                        <label class="text-[11px] text-tg-textSecondary block mb-0.5" for="ai-llm-ollama-model">Model</label>
+                                        <input id="ai-llm-ollama-model" class="tg-input text-xs w-full py-1.5 px-2" type="text" value="qwen3-vl:235b-cloud" autocomplete="off">
+                                    </div>
+                                </div>
+
+                                <!-- OpenAI fields -->
+                                <div id="ai-llm-openai-fields" class="hidden space-y-2">
+                                    <div>
+                                        <label class="text-[11px] text-tg-textSecondary block mb-0.5" for="ai-llm-openai-key">API Key</label>
+                                        <input id="ai-llm-openai-key" class="tg-input text-xs w-full py-1.5 px-2" type="password" placeholder="sk-..." autocomplete="off">
+                                    </div>
+                                    <div>
+                                        <label class="text-[11px] text-tg-textSecondary block mb-0.5" for="ai-llm-openai-model">Model</label>
+                                        <input id="ai-llm-openai-model" class="tg-input text-xs w-full py-1.5 px-2" type="text" value="gpt-4o-mini" autocomplete="off">
+                                    </div>
+                                    <div>
+                                        <label class="text-[11px] text-tg-textSecondary block mb-0.5" for="ai-llm-openai-url">Base URL <span class="text-[10px] text-tg-textSecondary">(optional, for Azure/proxy)</span></label>
+                                        <input id="ai-llm-openai-url" class="tg-input text-xs w-full py-1.5 px-2" type="url" placeholder="https://api.openai.com" autocomplete="off">
+                                    </div>
+                                </div>
+
+                                <!-- Defaults -->
+                                <div class="mt-2.5 pt-2.5 border-t border-white/10">
+                                    <div class="flex gap-2">
+                                        <div class="flex-1">
+                                            <label class="text-[11px] text-tg-textSecondary block mb-0.5" for="ai-llm-temperature">Temperature</label>
+                                            <input id="ai-llm-temperature" class="tg-input text-xs w-full py-1.5 px-2" type="number" min="0" max="2" step="0.1" value="0.7" autocomplete="off">
+                                        </div>
+                                        <div class="flex-1">
+                                            <label class="text-[11px] text-tg-textSecondary block mb-0.5" for="ai-llm-max-tokens">Max tokens</label>
+                                            <input id="ai-llm-max-tokens" class="tg-input text-xs w-full py-1.5 px-2" type="number" min="1" max="16384" step="1" value="512" autocomplete="off">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="flex items-center justify-end gap-2 mt-3">
+                                    <button id="ai-llm-config-save" type="button" class="tg-btn text-xs px-4 py-1.5 inline-flex items-center gap-1.5">
+                                        <i class="ri-save-line"></i><span data-i18n="common.save">Save &amp; apply</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </details>
+
+                    <!-- Semantic Search pane -->
+                    <details id="ai-pane-embeddings" class="bg-tg-panel rounded-xl px-3 py-2 mb-3 group">
+                        <summary class="cursor-pointer list-none flex items-center justify-between gap-2 flex-wrap">
+                            <div class="min-w-0 flex items-center gap-1.5 flex-wrap">
+                                <i class="ri-arrow-right-s-line text-tg-textSecondary text-xs transition-transform group-open:rotate-90"></i>
+                                <i class="ri-search-eye-line text-tg-blue text-xs"></i>
+                                <span class="text-tg-text text-xs font-medium" data-i18n="maintenance.ai.embeddings.heading">Semantic search</span>
+                                <span id="ai-embeddings-summary" class="text-[10.5px] text-tg-textSecondary"></span>
+                            </div>
+                            <button id="ai-embeddings-refresh-btn" type="button" class="text-[10.5px] text-tg-textSecondary hover:text-tg-text inline-flex items-center gap-1 px-2 py-0.5 rounded hover:bg-tg-bg/40">
+                                <i class="ri-refresh-line"></i><span data-i18n="common.refresh">Refresh</span>
+                            </button>
+                        </summary>
+                        <div id="ai-embeddings-body" class="mt-2">
+                            <!-- Embedding coverage stats -->
+                            <div id="ai-embeddings-stats" class="text-xs text-tg-textSecondary space-y-1">
+                                <p class="text-[11px]" data-i18n="maintenance.ai.embeddings.count_label">Indexed images:</p>
+                                <p id="ai-embeddings-count" class="text-tg-text font-medium tabular-nums mt-0.5">—</p>
+                                <p id="ai-embeddings-model" class="text-[10.5px]"></p>
+                            </div>
+
+                            <!-- Re-index button -->
+                            <div class="flex items-center gap-2 mt-2.5">
+                                <button id="ai-embeddings-reindex-btn" type="button" class="tg-btn text-xs px-3 py-1.5 inline-flex items-center gap-1.5">
+                                    <i class="ri-refresh-line"></i><span data-i18n="maintenance.ai.embeddings.reindex">Re-index embeddings</span>
+                                </button>
+                                <span id="ai-embeddings-reindex-status" class="text-[10.5px] text-tg-textSecondary hidden"></span>
+                            </div>
+
+                            <!-- Re-index progress log -->
+                            <pre id="ai-embeddings-reindex-log" class="bg-tg-bg/60 rounded p-2 mt-2 text-[10px] font-mono whitespace-pre-wrap leading-snug max-h-32 overflow-auto hidden"></pre>
+
+                            <!-- Search test (quick sanity) -->
+                            <div class="mt-3 pt-3 border-t border-white/10">
+                                <label class="text-xs text-tg-text block mb-1" for="ai-embeddings-search-query" data-i18n="maintenance.ai.embeddings.search_label">Test search</label>
+                                <div class="flex gap-2">
+                                    <input id="ai-embeddings-search-query" class="tg-input flex-1 text-xs py-1.5 px-2" type="text" placeholder="dog in a park" autocomplete="off">
+                                    <button id="ai-embeddings-search-btn" type="button" class="tg-btn text-xs px-3 py-1.5 inline-flex items-center gap-1.5">
+                                        <i class="ri-search-line"></i><span data-i18n="common.search">Search</span>
+                                    </button>
+                                </div>
+                                <!-- Search result count + status -->
+                                <div id="ai-embeddings-search-meta" class="text-[10.5px] text-tg-textSecondary mt-1.5 hidden"></div>
+                                <!-- Thumbnail grid (same pattern as tag browser) -->
+                                <div id="ai-embeddings-search-grid" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-1.5 mt-1.5 hidden"></div>
+                                <!-- Fallback text output for the old pre block -->
+                                <pre id="ai-embeddings-search-output" class="bg-tg-bg/60 rounded p-2 mt-1.5 text-[10.5px] font-mono whitespace-pre-wrap leading-snug max-h-48 overflow-auto hidden"></pre>
+                            </div>
+                        </div>
+                    </details>
+
                     <!-- Face clustering settings card — flat layout
                          matching maintenance/thumbs hardware-acceleration
                          section. All controls are top-level (no
@@ -3552,7 +3703,7 @@
                             </h3>
                         </summary>
                         <div class="flex items-start justify-between gap-3 flex-wrap mb-2">
-                            <p class="text-[11px] text-tg-textSecondary mt-0.5 min-w-0">Rule-based collections. v1 supports tag rules.</p>
+                            <p class="text-[11px] text-tg-textSecondary mt-0.5 min-w-0">Rule-based collections. v1 supports tag rules; v2 adds compound rules with people, date, semantic search, and more.</p>
                             <div class="flex items-center gap-1.5">
                                 <button id="ai-smart-albums-add" type="button" class="tg-btn text-xs px-2.5 py-1 inline-flex items-center gap-1">
                                     <i class="ri-add-line"></i><span>Add</span>
@@ -3561,6 +3712,34 @@
                                     <i class="ri-refresh-line"></i><span>Refresh</span>
                                 </button>
                             </div>
+                        </div>
+
+                        <!-- Natural-language album builder (v2) -->
+                        <div class="bg-tg-bg/30 rounded-lg p-2.5 mb-3">
+                            <details>
+                                <summary class="cursor-pointer text-[11px] text-tg-textSecondary hover:text-tg-text font-medium list-none flex items-center gap-1.5">
+                                    <i class="ri-arrow-right-s-line text-tg-textSecondary text-xs transition-transform group-open:rotate-90"></i>
+                                    <i class="ri-sparkling-2-line"></i>
+                                    <span data-i18n="maintenance.ai.smart_albums.nl_builder">Natural-language builder (v2)</span>
+                                </summary>
+                                <div class="mt-2 space-y-2">
+                                    <p class="text-[10px] text-tg-textSecondary">Describe the album in plain English, e.g. "beach photos with 2+ people from last summer sorted by date".</p>
+                                    <textarea id="ai-album-nl-input" class="tg-input text-xs w-full py-1.5 px-2 resize-none" rows="2" placeholder="beach photos with 2+ people from last summer" autocomplete="off"></textarea>
+                                    <div class="flex items-center gap-2">
+                                        <button id="ai-album-nl-parse-btn" type="button" class="tg-btn text-xs px-3 py-1.5 inline-flex items-center gap-1">
+                                            <i class="ri-sparkling-2-line"></i><span>Parse with AI</span>
+                                        </button>
+                                        <span id="ai-album-nl-status" class="text-[10px] text-tg-textSecondary hidden"></span>
+                                    </div>
+                                    <pre id="ai-album-nl-preview" class="bg-tg-bg/60 rounded p-2 text-[10px] font-mono whitespace-pre-wrap leading-snug max-h-48 overflow-auto hidden"></pre>
+                                    <div id="ai-album-nl-actions" class="flex items-center gap-2 hidden">
+                                        <button id="ai-album-nl-create-btn" type="button" class="tg-btn text-xs px-3 py-1.5 inline-flex items-center gap-1">
+                                            <i class="ri-album-add-line"></i><span>Create album with this rule</span>
+                                        </button>
+                                        <button id="ai-album-nl-cancel-btn" type="button" class="tg-btn-secondary text-xs px-3 py-1.5">Clear</button>
+                                    </div>
+                                </div>
+                            </details>
                         </div>
                         <div id="ai-smart-albums-list" class="space-y-2">
                             <p class="text-[11px] text-tg-textSecondary text-center py-3">Loading albums…</p>

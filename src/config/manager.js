@@ -592,6 +592,27 @@ const DEFAULT_CONFIG = {
                 // flat key.
                 federate: false,
             },
+            // ===== LLM provider =====
+            // Pluggable text-generation backend for caption generation,
+            // smart album query parsing, and future chat-style helpers.
+            // Defaults to disabled — operator must set `provider` to
+            // `'ollama'` or `'openai'` and configure matching keys.
+            llm: {
+                provider: 'disabled',
+                ollama: {
+                    baseUrl: 'http://localhost:11434',
+                    model: 'qwen3-vl:235b-cloud',
+                },
+                openai: {
+                    apiKey: '',
+                    model: 'gpt-4o-mini',
+                    baseUrl: '',
+                },
+                defaults: {
+                    temperature: 0.7,
+                    maxTokens: 512,
+                },
+            },
         },
     },
 };

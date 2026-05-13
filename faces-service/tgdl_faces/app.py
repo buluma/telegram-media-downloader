@@ -687,6 +687,127 @@ def tag_image(body: Annotated[TagRequest, ...]) -> JSONResponse:
     )
 
 
+# ---- Embeddings (CLIP) ---------------------------------------------------
+
+
+class EmbedImageRequest(BaseModel):
+    """Body for ``/embed-image`` — produces a CLIP embedding for one image."""
+
+    path: str | None = Field(default=None, description="Absolute path to image on disk.")
+    image_b64: str | None = Field(default=None, description="Base64-encoded image bytes.")
+
+    @model_validator(mode="after")
+    def _validate_source(self) -> EmbedImageRequest:
+        if (self.path is None) == (self.image_b64 is None):
+            raise ValueError("exactly one of path or image_b64 must be set")
+        return self
+
+
+class EmbedImageResponse(BaseModel):
+    embedding: list[float]
+    dim: int
+
+
+class EmbedTextRequest(BaseModel):
+    text: str = Field(..., description="Natural-language search query.")
+
+
+class EmbedTextResponse(BaseModel):
+    embedding: list[float]
+    dim: int
+
+
+@app.post("/embed-image")
+def embed_image(body: Annotated[EmbedImageRequest, ...]) -> JSONResponse:
+    """Compute a CLIP image embedding for the given image.
+
+    Returns ``{embedding: [float], dim: int}``.
+
+    Error codes mirror ``/tag``: ``path_not_allowed`` (403),
+    ``file_not_found`` (404), ``image_decode_failed`` (415),
+    ``tagger_not_ready`` (503).
+    """
+    try:
+        tagger = get_clip_tagger()
+    except Exception as exc:
+        return _error(
+            f"tagger not ready: {type(exc).__name__}: {exc}",
+            code="tagger_not_ready",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+
+    try:
+        if body.path:
+            img = load_image_from_path(body.path, _allow_roots())
+        else:
+            assert body.image_b64 is not None
+            img = load_image_from_b64(body.image_b64)
+    except PathNotAllowedError as exc:
+        return _error(str(exc), code="path_not_allowed",
+                      status_code=status.HTTP_403_FORBIDDEN)
+    except FileNotFoundError as exc:
+        return _error(str(exc), code="file_not_found",
+                      status_code=status.HTTP_404_NOT_FOUND)
+    except ImageDecodeError as exc:
+        return _error(str(exc), code="image_decode_failed",
+                      status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
+
+    try:
+        embedding = tagger.embed_image(img)
+    except Exception as exc:
+        _LOG.exception("embed_image failed")
+        return _error(
+            f"embed_image failed: {type(exc).__name__}: {exc}",
+            code="embedding_failed",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content=EmbedImageResponse(
+            embedding=embedding,
+            dim=len(embedding),
+        ).model_dump(),
+    )
+
+
+@app.post("/embed-text")
+def embed_text(body: Annotated[EmbedTextRequest, ...]) -> JSONResponse:
+    """Compute a CLIP text embedding for a natural-language query.
+
+    Returns ``{embedding: [float], dim: int}``.
+
+    Error codes: ``tagger_not_ready`` (503), ``embedding_failed`` (500).
+    """
+    try:
+        tagger = get_clip_tagger()
+    except Exception as exc:
+        return _error(
+            f"tagger not ready: {type(exc).__name__}: {exc}",
+            code="tagger_not_ready",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+
+    try:
+        embeddings = tagger.embed_text([body.text])
+    except Exception as exc:
+        _LOG.exception("embed_text failed")
+        return _error(
+            f"embed_text failed: {type(exc).__name__}: {exc}",
+            code="embedding_failed",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+    embedding = embeddings[0] if embeddings else []
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content=EmbedTextResponse(
+            embedding=embedding,
+            dim=len(embedding),
+        ).model_dump(),
+    )
+
+
 # ---- OCR (Text Detection) -------------------------------------------------
 
 

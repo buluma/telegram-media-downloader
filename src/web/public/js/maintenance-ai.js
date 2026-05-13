@@ -54,6 +54,8 @@ const LS_PEOPLE_COLLAPSED = 'tgdl.ai.people.collapsed';
 const LS_TAG_BROWSER_COLLAPSED = 'tgdl.ai.tagBrowser.collapsed';
 const LS_TAG_SUGGESTIONS_COLLAPSED = 'tgdl.ai.tagSuggestions.collapsed';
 const LS_SMART_ALBUMS_COLLAPSED = 'tgdl.ai.smartAlbums.collapsed';
+const LS_LLM_COLLAPSED = 'tgdl.ai.llm.collapsed';
+const LS_EMBEDDINGS_COLLAPSED = 'tgdl.ai.embeddings.collapsed';
 
 /* ----------------------------------------------------------------------
  * Capability registry.
@@ -851,6 +853,102 @@ async function _deleteSmartAlbum(id) {
     }
 }
 
+// ---- Natural-language album builder (v2) --------------------------------
+
+/** Current parsed rule from the NL builder, or null. */
+let _nlAlbumRule = null;
+
+/** Parse the NL description via the LLM provider and show a preview. */
+async function _parseAlbumWithAi() {
+    const input = $('#ai-album-nl-input');
+    const preview = $('#ai-album-nl-preview');
+    const status = $('#ai-album-nl-status');
+    const actions = $('#ai-album-nl-actions');
+    const btn = $('#ai-album-nl-parse-btn');
+    if (!input || !preview || !btn) return;
+
+    const description = String(input.value || '').trim();
+    if (!description) {
+        showToast('Describe the album in plain English first.', 'info');
+        return;
+    }
+
+    btn.disabled = true;
+    preview.classList.remove('hidden');
+    preview.textContent = 'Parsing with AI\u2026';
+    status?.classList.remove('hidden');
+    if (status) status.textContent = '\u2022 waiting for model';
+    actions?.classList.add('hidden');
+    _nlAlbumRule = null;
+
+    try {
+        const r = await api.post('/api/ai/smart-albums/parse', { description });
+        if (!r.success) {
+            preview.textContent = `Error: ${r.error || 'unknown'}`;
+            preview.classList.add('text-red-400');
+            if (status) status.textContent = 'Failed';
+            return;
+        }
+
+        _nlAlbumRule = r.rule;
+        preview.classList.remove('text-red-400');
+        preview.textContent = JSON.stringify(r.rule, null, 2);
+        if (status) status.textContent = '\u2713 Parsed';
+        actions?.classList.remove('hidden');
+    } catch (e) {
+        preview.textContent = `Error: ${e?.message || 'unknown'}`;
+        preview.classList.add('text-red-400');
+        if (status) status.textContent = 'Failed';
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+/** Create a smart album from the previously parsed NL rule. */
+async function _createAlbumFromNl() {
+    if (!_nlAlbumRule) {
+        showToast('Parse a description first.', 'info');
+        return;
+    }
+
+    // Prompt for a name
+    const name = prompt('Album name:', 'Smart album');
+    if (!name || !name.trim()) return;
+
+    try {
+        const r = await api.post('/api/ai/smart-albums', {
+            name: name.trim(),
+            rule: _nlAlbumRule,
+        });
+        if (!r.success) throw new Error(r.error || 'create failed');
+        showToast('Smart album created', 'success');
+        await _renderSmartAlbums();
+        _clearAlbumNlBuilder();
+    } catch (e) {
+        showToast(`Create failed: ${e?.data?.error || e?.message || 'unknown'}`, 'error');
+    }
+}
+
+/** Reset the NL builder inputs. */
+function _clearAlbumNlBuilder() {
+    _nlAlbumRule = null;
+    const input = $('#ai-album-nl-input');
+    const preview = $('#ai-album-nl-preview');
+    const status = $('#ai-album-nl-status');
+    const actions = $('#ai-album-nl-actions');
+    if (input) input.value = '';
+    if (preview) {
+        preview.classList.add('hidden');
+        preview.textContent = '';
+        preview.classList.remove('text-red-400');
+    }
+    if (status) {
+        status.classList.add('hidden');
+        status.textContent = '';
+    }
+    if (actions) actions.classList.add('hidden');
+}
+
 function _getVisibleTags() {
     const q = _tagFilterQuery.trim().toLowerCase();
     let tags = _tagListCache.slice();
@@ -883,6 +981,433 @@ function _initDetailsCollapsedState({ detailsId, storageKey, defaultOpen = false
     });
 }
 
+// ---- LLM provider status ------------------------------------------------
+
+/**
+ * Fetch LLM provider status from the server and render the provider
+ * health panel, active provider details, and test-prompt section.
+ */
+async function _renderLlmStatus() {
+    const section = $('#ai-pane-llm');
+    const summary = $('#ai-llm-summary');
+    const providersEl = $('#ai-llm-providers');
+    const activeEl = $('#ai-llm-active');
+    const activeDetails = $('#ai-llm-active-details');
+    const testSection = $('#ai-llm-test');
+    if (!section || !providersEl) return;
+
+    try {
+        const r = await api.get('/api/ai/llm/status');
+        const providers = Array.isArray(r?.providers) ? r.providers : [];
+        const active = r?.active || null;
+
+        // Summary badge
+        const availableCount = providers.filter((p) => p.available).length;
+        if (summary) {
+            summary.textContent = active?.available
+                ? `${active.label} \u2713`
+                : availableCount > 0
+                  ? `${availableCount} available (none active)`
+                  : 'Not configured';
+        }
+
+        // Provider rows
+        providersEl.innerHTML = providers
+            .map(
+                (p) =>
+                    `<div class="flex items-center justify-between gap-2 text-xs py-1">
+                        <div class="flex items-center gap-1.5 min-w-0">
+                            <span class="inline-block w-2 h-2 rounded-full shrink-0 ${
+                                p.available ? 'bg-tg-green' : 'bg-tg-red/60'
+                            }"></span>
+                            <span class="text-tg-text">${escapeHtml(p.label)}</span>
+                            ${
+                                p.version
+                                    ? `<span class="text-[10px] text-tg-textSecondary tabular-nums">${escapeHtml(p.version)}</span>`
+                                    : ''
+                            }
+                        </div>
+                        ${
+                            p.available
+                                ? '<span class="text-tg-green text-[10px]">Available</span>'
+                                : `<span class="text-tg-textSecondary text-[10px]">${escapeHtml(p.error || 'Unavailable')}</span>`
+                        }
+                    </div>`,
+            )
+            .join('');
+
+        // Populate the inline config form from the current active config
+        _populateLlmConfig(r);
+
+        // Active provider details + test prompt (only when a provider is active)
+        if (active?.available && activeDetails) {
+            activeEl?.classList.remove('hidden');
+            activeDetails.innerHTML = `
+                <div class="flex justify-between"><span>Provider</span><span class="text-tg-text font-medium">${escapeHtml(active.label)}</span></div>
+                <div class="flex justify-between"><span>Vision support</span><span class="text-tg-text font-medium">${active.supportsVision ? '\u2713 Yes' : '\u2014'}</span></div>
+            `;
+            testSection?.classList.remove('hidden');
+        } else {
+            activeEl?.classList.add('hidden');
+            testSection?.classList.add('hidden');
+        }
+    } catch (e) {
+        console.warn('llm status:', e);
+        if (summary) summary.textContent = 'Error';
+        providersEl.innerHTML =
+            '<p class="text-[11px] text-red-400">Failed to load LLM status.</p>';
+    }
+}
+
+/**
+ * Run a test prompt through the active LLM provider and display
+ * the result in the test output area.
+ */
+async function _runLlmTest() {
+    const promptEl = $('#ai-llm-test-prompt');
+    const outputEl = $('#ai-llm-test-output');
+    const btn = $('#ai-llm-test-btn');
+    if (!promptEl || !outputEl || !btn) return;
+
+    const prompt = String(promptEl.value || '').trim() || 'Say hello in one word';
+    outputEl.classList.remove('hidden');
+    outputEl.textContent = 'Running\u2026';
+    btn.disabled = true;
+
+    try {
+        const r = await api.post('/api/ai/llm/test', { prompt, maxTokens: 50 });
+        if (r.text !== undefined) {
+            outputEl.textContent = r.text;
+            outputEl.classList.remove('text-red-400');
+        } else if (r.error) {
+            outputEl.textContent = `Error: ${r.error}`;
+            outputEl.classList.add('text-red-400');
+        } else {
+            outputEl.textContent = JSON.stringify(r, null, 2);
+        }
+    } catch (e) {
+        outputEl.textContent = `Request failed: ${e?.message || 'unknown'}`;
+        outputEl.classList.add('text-red-400');
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+// ---- LLM config form -----------------------------------------------------
+
+/**
+ * Populate the inline config form from the status response's `config` block.
+ * Called every time the panel is refreshed.
+ */
+function _populateLlmConfig(status) {
+    const cfg = status?.config || {};
+    const configEl = $('#ai-llm-config');
+    if (!configEl) return;
+
+    // Always show the config form
+    configEl.classList.remove('hidden');
+
+    // Provider selector
+    const sel = $('#ai-llm-provider-select');
+    if (sel) {
+        sel.value = cfg.provider || 'disabled';
+        _toggleLlmProviderFields(cfg.provider || 'disabled');
+    }
+
+    // Ollama fields
+    const ollamaUrl = $('#ai-llm-ollama-url');
+    const ollamaModel = $('#ai-llm-ollama-model');
+    if (ollamaUrl) ollamaUrl.value = cfg.ollama?.baseUrl || 'http://localhost:11434';
+    if (ollamaModel) ollamaModel.value = cfg.ollama?.model || 'qwen3-vl:235b-cloud';
+
+    // OpenAI fields
+    const openaiKey = $('#ai-llm-openai-key');
+    const openaiModel = $('#ai-llm-openai-model');
+    const openaiUrl = $('#ai-llm-openai-url');
+    if (openaiKey) openaiKey.value = cfg.openai?.apiKey || '';
+    if (openaiModel) openaiModel.value = cfg.openai?.model || 'gpt-4o-mini';
+    if (openaiUrl) openaiUrl.value = cfg.openai?.baseUrl || '';
+
+    // Defaults
+    const temp = $('#ai-llm-temperature');
+    const mt = $('#ai-llm-max-tokens');
+    if (temp) temp.value = String(cfg.defaults?.temperature ?? 0.7);
+    if (mt) mt.value = String(cfg.defaults?.maxTokens ?? 512);
+}
+
+/**
+ * Toggle which provider-specific field sections are visible based on
+ * the selected provider.
+ */
+function _toggleLlmProviderFields(provider) {
+    const ollamaFields = $('#ai-llm-ollama-fields');
+    const openaiFields = $('#ai-llm-openai-fields');
+    if (ollamaFields) ollamaFields.classList.toggle('hidden', provider !== 'ollama');
+    if (openaiFields) openaiFields.classList.toggle('hidden', provider !== 'openai');
+}
+
+/** Called when the provider dropdown changes — toggle field visibility. */
+function _onLlmProviderChange(e) {
+    _toggleLlmProviderFields(e?.target?.value || 'disabled');
+}
+
+/**
+ * Save the inline config form values to the server and refresh status.
+ */
+async function _saveLlmConfig() {
+    const btn = $('#ai-llm-config-save');
+    if (btn) btn.disabled = true;
+
+    try {
+        const provider = $('#ai-llm-provider-select')?.value || 'disabled';
+        const body = {
+            advanced: {
+                ai: {
+                    llm: {
+                        provider,
+                        ollama: {
+                            baseUrl: $('#ai-llm-ollama-url')?.value || 'http://localhost:11434',
+                            model: $('#ai-llm-ollama-model')?.value || 'qwen3-vl:235b-cloud',
+                        },
+                        openai: {
+                            apiKey: $('#ai-llm-openai-key')?.value || '',
+                            model: $('#ai-llm-openai-model')?.value || 'gpt-4o-mini',
+                            baseUrl: $('#ai-llm-openai-url')?.value || '',
+                        },
+                        defaults: {
+                            temperature: Number($('#ai-llm-temperature')?.value ?? 0.7),
+                            maxTokens: Number($('#ai-llm-max-tokens')?.value ?? 512),
+                        },
+                    },
+                },
+            },
+        };
+
+        const r = await api.post('/api/config', body);
+        if (!r.success) throw new Error(r.error || 'save failed');
+
+        showToast('LLM config saved', 'success');
+
+        // Refresh the panel to reflect the new active provider state
+        await _renderLlmStatus();
+    } catch (e) {
+        showToast(`Save failed: ${e?.data?.error || e?.message || 'unknown'}`, 'error');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+// ---- Semantic search / embeddings status ---------------------------------
+
+/**
+ * Fetch embedding stats from the server and update the semantic-search
+ * pane on the AI maintenance page.
+ */
+async function _renderEmbeddingsStatus() {
+    const summary = $('#ai-embeddings-summary');
+    const countEl = $('#ai-embeddings-count');
+    const modelEl = $('#ai-embeddings-model');
+
+    try {
+        const r = await api.get('/api/ai/embeddings/stats');
+        const total = r?.total ?? 0;
+        const models = Array.isArray(r?.models) ? r.models : [];
+
+        if (summary) {
+            summary.textContent = total > 0 ? `${total} indexed` : 'No embeddings';
+        }
+        if (countEl) {
+            countEl.textContent = total > 0 ? String(total) : 'No embeddings stored';
+        }
+        if (modelEl) {
+            if (models.length === 1) {
+                modelEl.textContent = `Model: ${models[0].model}`;
+            } else if (models.length > 1) {
+                modelEl.textContent = `Models: ${models.map((m) => `${m.model} (${m.count})`).join(', ')}`;
+            } else {
+                modelEl.textContent = 'No embedding model active — run a re-index first.';
+            }
+        }
+    } catch (e) {
+        console.warn('embeddings stats:', e);
+        if (summary) summary.textContent = 'Error';
+        if (countEl) countEl.textContent = 'Failed to load';
+    }
+}
+
+/**
+ * Re-index missing image embeddings. Calls the API in a batch loop
+ * so the operator can watch progress on the AI maintenance page.
+ */
+async function _reindexEmbeddings() {
+    const btn = $('#ai-embeddings-reindex-btn');
+    const statusEl = $('#ai-embeddings-reindex-status');
+    const logEl = $('#ai-embeddings-reindex-log');
+    if (!btn) return;
+
+    btn.disabled = true;
+    statusEl?.classList.remove('hidden');
+    logEl?.classList.remove('hidden');
+    if (statusEl) statusEl.textContent = 'Re-indexing\u2026';
+    if (logEl) logEl.textContent = '';
+
+    let total = 0;
+    let errors = 0;
+    let remaining = 1;
+
+    try {
+        while (remaining > 0) {
+            const r = await api.post('/api/ai/embeddings/reindex', { limit: 100 });
+            if (!r.success) throw new Error(r.error || 'reindex failed');
+
+            total += r.processed || 0;
+            errors += r.errors || 0;
+            remaining = r.remaining || 0;
+
+            const msg =
+                `Processed ${total}, errors ${errors}, remaining ${remaining}` +
+                (r.done ? ' \u2014 Done!' : '');
+            if (statusEl) statusEl.textContent = msg;
+            if (logEl) {
+                logEl.textContent += `Batch: +${r.processed} processed, ${r.errors} errors, ${r.remaining} remaining\n`;
+                logEl.scrollTop = logEl.scrollHeight;
+            }
+
+            if (r.done) break;
+            if (remaining <= 0) break;
+
+            // Small yield so the UI stays responsive
+            await new Promise((r) => setTimeout(r, 100));
+        }
+
+        // Refresh stats once done
+        await _renderEmbeddingsStatus();
+        showToast('Embedding re-index complete', 'success');
+    } catch (e) {
+        if (statusEl) statusEl.textContent = `Error: ${e?.message || 'unknown'}`;
+        if (logEl) logEl.textContent += `\nError: ${e?.message || e}\n`;
+        showToast(`Re-index failed: ${e?.message || 'unknown'}`, 'error');
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+// ---- Semantic search results (stored for lightbox navigation) -----------
+let _searchResults = [];
+let _searchQuery = '';
+
+/**
+ * Run a semantic search and render results as a thumbnail grid (same
+ * visual pattern as the tag / people browsers). Clicking a tile opens
+ * the media viewer for browsing through results.
+ */
+async function _runEmbeddingSearch() {
+    const input = $('#ai-embeddings-search-query');
+    const grid = $('#ai-embeddings-search-grid');
+    const meta = $('#ai-embeddings-search-meta');
+    const btn = $('#ai-embeddings-search-btn');
+    if (!input || !grid || !btn) return;
+
+    const query = String(input.value || '').trim();
+    if (!query) return;
+
+    grid.classList.add('hidden');
+    meta?.classList.add('hidden');
+    grid.innerHTML = '';
+    if (meta) meta.textContent = '';
+    btn.disabled = true;
+
+    try {
+        const qs = new URLSearchParams({ q: query, topK: '50' }).toString();
+        const r = await api.get('/api/ai/search?' + qs);
+        if (!r.success) {
+            grid.classList.remove('hidden');
+            grid.innerHTML = `<p class="text-[11px] text-red-400 col-span-full text-center py-6">Error: ${escapeHtml(r.error || 'unknown')}</p>`;
+            return;
+        }
+
+        const results = Array.isArray(r.results) ? r.results : [];
+        _searchResults = results;
+        _searchQuery = r.query || query;
+
+        if (results.length === 0) {
+            grid.classList.remove('hidden');
+            grid.innerHTML = `<p class="text-[11px] text-tg-textSecondary col-span-full text-center py-6">No matches for &quot;${escapeHtml(_searchQuery)}&quot;. Try a different query.</p>`;
+            return;
+        }
+
+        // Render thumbnail grid
+        grid.classList.remove('hidden');
+        grid.innerHTML = results
+            .map(
+                (res, i) =>
+                    `<button type="button" data-search-idx="${i}" data-id="${res.id}"
+                            class="nsfw-tile group relative aspect-square rounded-md overflow-hidden bg-tg-bg/40 focus:outline-none focus:ring-2 focus:ring-tg-blue">
+                <img loading="lazy" decoding="async"
+                     class="absolute inset-0 w-full h-full object-cover"
+                     src="/api/thumbs/${encodeURIComponent(res.id)}?w=320" alt=""
+                     onerror="this.style.display='none'">
+                <span class="hidden sm:block absolute top-1 right-1 px-1.5 py-0.5 text-[10px] font-mono rounded bg-tg-blue/85 text-white tabular-nums">${String(Math.round(res.score * 100)).padStart(2)}%</span>
+                <span class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 group-focus:opacity-100 transition flex items-end p-2 pointer-events-none">
+                    <span class="text-[11px] text-white truncate w-full text-left">${escapeHtml(res.fileName || '')}</span>
+                </span>
+            </button>`,
+            )
+            .join('');
+
+        // Meta: result count + query + modalities
+        if (meta) {
+            meta.classList.remove('hidden');
+            const mods =
+                Array.isArray(r.modalities) && r.modalities.length
+                    ? ` — via ${r.modalities.join(', ')}`
+                    : '';
+            meta.textContent = `${results.length} results for "${_searchQuery}"${mods}`;
+        }
+
+        // Wire click events — open media viewer
+        grid.querySelectorAll('[data-search-idx]').forEach((tile) => {
+            tile.addEventListener('click', () => {
+                const idx = Number(tile.dataset.searchIdx);
+                if (Number.isFinite(idx)) _openSearchLightbox(idx);
+            });
+        });
+    } catch (e) {
+        grid.classList.remove('hidden');
+        grid.innerHTML = `<p class="text-[11px] text-red-400 col-span-full text-center py-6">Error: ${escapeHtml(e?.message || 'unknown')}</p>`;
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+function _openSearchLightbox(startIndex) {
+    const rows = _searchResults;
+    if (!rows.length) return;
+    const files = rows.map((row) => {
+        const sizeMb = row.fileSize ? (row.fileSize / (1024 * 1024)).toFixed(1) : '0';
+        return {
+            fullPath: row.filePath || '',
+            type: row.fileType === 'video' ? 'videos' : 'images',
+            name: row.fileName || '',
+            sizeFormatted: `${sizeMb} MB`,
+            modified: row.createdAt || Date.now(),
+            _searchRow: row,
+        };
+    });
+    openMediaViewerForReview(files, startIndex, {
+        actions: [],
+        metaRender: (file) => {
+            const row = file?._searchRow;
+            const score = row?.score ? Math.round(row.score * 100) : 0;
+            return `<span class="inline-flex items-center gap-2">
+                <span class="inline-block w-2.5 h-2.5 rounded-full bg-tg-blue"></span>
+                <span>Search: &quot;${escapeHtml(_searchQuery)}&quot;</span>
+                <span class="font-mono tabular-nums">${score}%</span>
+            </span>`;
+        },
+    });
+}
+
 export async function init() {
     if (!_initOnce) {
         _bindOnce();
@@ -904,6 +1429,8 @@ export async function refreshStatus() {
         _renderTagBrowser().catch(() => {});
         _renderTagSuggestions().catch(() => {});
         _renderSmartAlbums().catch(() => {});
+        _renderLlmStatus().catch(() => {});
+        _renderEmbeddingsStatus().catch(() => {});
     } catch (e) {
         console.warn('ai/status:', e);
     }
@@ -1157,6 +1684,9 @@ function _bindOnce() {
     $('#ai-tag-create-album')?.addEventListener('click', () => _createSmartAlbum(_tagSelected));
     $('#ai-tag-suggestions-refresh')?.addEventListener('click', () => _renderTagSuggestions());
     $('#ai-smart-albums-refresh')?.addEventListener('click', () => _renderSmartAlbums());
+    $('#ai-album-nl-parse-btn')?.addEventListener('click', _parseAlbumWithAi);
+    $('#ai-album-nl-create-btn')?.addEventListener('click', _createAlbumFromNl);
+    $('#ai-album-nl-cancel-btn')?.addEventListener('click', _clearAlbumNlBuilder);
     $('#ai-smart-albums-add')?.addEventListener('click', () => _createSmartAlbum());
     $('#ai-smart-album-prev-btn')?.addEventListener('click', () => {
         if (!_smartAlbumSelected || _smartAlbumItemsPage <= 1) return;
@@ -1198,6 +1728,16 @@ function _bindOnce() {
         storageKey: LS_SMART_ALBUMS_COLLAPSED,
         defaultOpen: false,
     });
+    _initDetailsCollapsedState({
+        detailsId: 'ai-pane-llm',
+        storageKey: LS_LLM_COLLAPSED,
+        defaultOpen: false,
+    });
+    _initDetailsCollapsedState({
+        detailsId: 'ai-pane-embeddings',
+        storageKey: LS_EMBEDDINGS_COLLAPSED,
+        defaultOpen: false,
+    });
 
     // Person action buttons.
     $('#ai-person-rename-btn')?.addEventListener('click', _renameSelectedPerson);
@@ -1213,6 +1753,23 @@ function _bindOnce() {
         if (!_selectedPerson || _peoplePhotosPage >= _peoplePhotosTotalPages) return;
         _peoplePhotosPage += 1;
         _loadPersonPhotosPage();
+    });
+
+    // LLM provider pane
+    $('#ai-llm-refresh-btn')?.addEventListener('click', () => _renderLlmStatus());
+    $('#ai-llm-test-btn')?.addEventListener('click', _runLlmTest);
+    $('#ai-llm-test-prompt')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') _runLlmTest();
+    });
+    $('#ai-llm-provider-select')?.addEventListener('change', _onLlmProviderChange);
+    $('#ai-llm-config-save')?.addEventListener('click', _saveLlmConfig);
+
+    // Semantic search / embeddings pane
+    $('#ai-embeddings-refresh-btn')?.addEventListener('click', () => _renderEmbeddingsStatus());
+    $('#ai-embeddings-reindex-btn')?.addEventListener('click', _reindexEmbeddings);
+    $('#ai-embeddings-search-btn')?.addEventListener('click', _runEmbeddingSearch);
+    $('#ai-embeddings-search-query')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') _runEmbeddingSearch();
     });
 
     // WebSocket — scan events for all capabilities.

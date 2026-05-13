@@ -139,7 +139,7 @@ Use the existing AI namespace. Do not introduce `config.advanced.llm`.
   "provider": "disabled",      // "disabled" | "ollama" | "openai" | "anthropic"
   "ollama": {
     "baseUrl": "http://localhost:11434",
-    "model": "llama3.2-vision:latest"
+    "model": "qwen3-vl:235b-cloud"
   },
   "openai": {
     "apiKey": "",
@@ -444,7 +444,7 @@ All new features must default to disabled or passive behavior.
     "provider": "disabled",
     "ollama": {
       "baseUrl": "http://localhost:11434",
-      "model": "llama3.2-vision:latest"
+      "model": "qwen3-vl:235b-cloud"
     },
     "openai": {
       "apiKey": "",

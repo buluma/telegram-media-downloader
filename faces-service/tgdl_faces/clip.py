@@ -325,6 +325,45 @@ class CLIPTagger:
 
     # ---- public API -------------------------------------------------------
 
+    def embed_image(self, image_bgr: np.ndarray) -> list[float]:
+        """Compute the L2-normalised CLIP embedding for a single image.
+
+        Parameters
+        ----------
+        image_bgr
+            H×W×3 ``uint8`` BGR ndarray (the same format ``cv2`` and
+            :func:`~tgdl_faces.io.load_image_from_path` produce).
+
+        Returns
+        -------
+        list[float]
+            A 512-dim floating-point vector (L2-normalised), suitable for
+            cosine-similarity search against text embeddings produced by
+            :meth:`embed_text`.
+        """
+        image = self._preprocess(image_bgr)
+        emb = self._vision_session.run(None, {self._vision_input_name: image})[0]
+        emb = emb.flatten()
+        norm = max(float(np.linalg.norm(emb)), 1e-9)
+        return (emb / norm).tolist()
+
+    def embed_text(self, texts: list[str]) -> list[list[float]]:
+        """Compute L2-normalised CLIP text embeddings for one or more strings.
+
+        Parameters
+        ----------
+        texts
+            A list of natural-language queries (e.g. ``["dog in a park"]``).
+
+        Returns
+        -------
+        list[list[float]]
+            A list of 512-dim float vectors, one per input string, each
+            L2-normalised for cosine-similarity search.
+        """
+        embeddings = self._encode_texts(texts)
+        return embeddings.tolist()
+
     def tag_image(
         self,
         image_bgr: np.ndarray,
