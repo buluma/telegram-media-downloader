@@ -798,9 +798,14 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             const llmCfg = live?.advanced?.ai?.llm || {};
             const clipModel = live?.advanced?.ai?.clipModel || 'Xenova/clip-vit-base-patch32';
 
-            // Clear stale embeddings if the model changed
+            // Clear stale embeddings if the model changed.
+            // Always pick the most common model for comparison — when
+            // multiple models exist (e.g. after an interrupted migration)
+            // we still detect the change and purge non-matching rows.
             const before = listEmbeddingModels();
-            const activeModel = before.length === 1 ? before[0].model : null;
+            const activeModel = before.length
+                ? before.reduce((a, b) => (a.count > b.count ? a : b)).model
+                : null;
 
             if (activeModel && activeModel !== clipModel) {
                 const purged = clearStaleEmbeddings(clipModel);

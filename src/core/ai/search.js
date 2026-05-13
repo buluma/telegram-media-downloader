@@ -173,8 +173,9 @@ function _tokenise(text) {
 // ---- Individual matchers ------------------------------------------------
 
 /**
- * Semantic matcher — cosine similarity against stored image embeddings.
- * Returns Map<downloadId, score>.
+ * Semantic matcher — cosine similarity against stored image embeddings
+ * for a single active model. If multiple models exist, uses the most
+ * common one. Returns Map<downloadId, score>.
  */
 function _matchSemantic(db, embedding, fileTypes) {
     const q = embedding instanceof Float32Array ? embedding : Float32Array.from(embedding);
@@ -183,13 +184,29 @@ function _matchSemantic(db, embedding, fileTypes) {
     for (let i = 0; i < q.length; i++) qn[i] = q[i] / qNorm;
     const dim = q.length;
 
+    // Detect the active embedding model — use the most common one
+    const modelCounts = db
+        .prepare(
+            `SELECT model, COUNT(*) AS cnt FROM image_embeddings GROUP BY model ORDER BY cnt DESC`,
+        )
+        .all();
+    const activeModel = modelCounts.length ? modelCounts[0].model : null;
+
     let sql = `SELECT e.download_id, e.embedding
                  FROM image_embeddings e`;
     const params = [];
+    const wheres = [];
+    if (activeModel) {
+        wheres.push(`e.model = ?`);
+        params.push(activeModel);
+    }
     if (Array.isArray(fileTypes) && fileTypes.length) {
-        sql += ` JOIN downloads d ON d.id = e.download_id
-                  WHERE d.file_type IN (${fileTypes.map(() => '?').join(',')})`;
+        sql += ` JOIN downloads d ON d.id = e.download_id`;
+        wheres.push(`d.file_type IN (${fileTypes.map(() => '?').join(',')})`);
         params.push(...fileTypes);
+    }
+    if (wheres.length) {
+        sql += ` WHERE ${wheres.join(' AND ')}`;
     }
 
     const rows = db.prepare(sql).all(...params);
