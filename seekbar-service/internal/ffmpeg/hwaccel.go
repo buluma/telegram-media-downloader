@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -34,7 +35,9 @@ func PlatformDefaults() []HWAccelBackend {
 	case "darwin":
 		return []HWAccelBackend{HWVideoToolbox}
 	case "windows":
-		return []HWAccelBackend{HWCUDA, HWQSV, HWD3D11}
+		// D3D11va first — available on all modern Windows GPUs (Intel,
+		// AMD, NVIDIA) without needing a CUDA installation.
+		return []HWAccelBackend{HWD3D11, HWCUDA, HWQSV}
 	case "linux":
 		if runtime.GOARCH == "arm" || runtime.GOARCH == "arm64" {
 			// Raspberry Pi + ARM NAS — V4L2 M2M is the standard
@@ -42,7 +45,9 @@ func PlatformDefaults() []HWAccelBackend {
 			// Rockchip / ARM Mali boards.
 			return []HWAccelBackend{HWV4L2M2M, HWVAAPI}
 		}
-		return []HWAccelBackend{HWCUDA, HWVAAPI, HWQSV}
+		// VAAPI first — covers both Intel iGPU and AMD on Linux/Docker
+		// (/dev/dri); CUDA requires a separate NVIDIA driver install.
+		return []HWAccelBackend{HWVAAPI, HWCUDA, HWQSV}
 	}
 	return nil
 }
@@ -89,6 +94,18 @@ func CompiledIn(ctx context.Context, ffmpegBin string) ([]HWAccelBackend, error)
 // that compile in but lack a driver / device file are dropped here.
 // Each probe gets a hard 5s timeout.
 func ProbeAvailable(ctx context.Context, ffmpegBin string, candidates []HWAccelBackend) []HWAccelBackend {
+	return ProbeAvailableWithDevice(ctx, ffmpegBin, candidates, "")
+}
+
+// ProbeAvailableWithDevice is like ProbeAvailable but accepts an explicit
+// vaapiDevice path (e.g. "/dev/dri/renderD128") for VAAPI probes.
+// Per-backend probe strategy:
+//   - vaapi:   uses -vaapi_device <path> init so the correct render node is tested.
+//   - d3d11va: init_hw_device probe is sufficient; the device always enumerates
+//     via the D3D11 API on Windows.
+//   - v4l2m2m: glob /dev/video* — device files must exist for the codec to work.
+//   - others:  generic -init_hw_device <name>=hw lavfi probe.
+func ProbeAvailableWithDevice(ctx context.Context, ffmpegBin string, candidates []HWAccelBackend, vaapiDevice string) []HWAccelBackend {
 	if ffmpegBin == "" {
 		ffmpegBin = "ffmpeg"
 	}
@@ -97,16 +114,44 @@ func ProbeAvailable(ctx context.Context, ffmpegBin string, candidates []HWAccelB
 		if b == "" {
 			continue
 		}
+		// V4L2 M2M requires physical device files — skip the ffmpeg probe
+		// entirely and just check /dev/video* exists.
+		if b == HWV4L2M2M {
+			matches, err := filepath.Glob("/dev/video*")
+			if err == nil && len(matches) > 0 {
+				out = append(out, b)
+			}
+			continue
+		}
 		pctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		args := []string{
-			"-hide_banner",
-			"-v", "error",
-			"-init_hw_device", string(b) + "=hw",
-			"-f", "lavfi",
-			"-i", "nullsrc=s=2x2:d=0.04",
-			"-frames:v", "1",
-			"-f", "null",
-			"-",
+		var args []string
+		if b == HWVAAPI {
+			dev := vaapiDevice
+			if dev == "" {
+				dev = "/dev/dri/renderD128"
+			}
+			args = []string{
+				"-hide_banner",
+				"-v", "error",
+				"-vaapi_device", dev,
+				"-init_hw_device", "vaapi=hw:" + dev,
+				"-f", "lavfi",
+				"-i", "nullsrc=s=2x2:d=0.04",
+				"-frames:v", "1",
+				"-f", "null",
+				"-",
+			}
+		} else {
+			args = []string{
+				"-hide_banner",
+				"-v", "error",
+				"-init_hw_device", string(b) + "=hw",
+				"-f", "lavfi",
+				"-i", "nullsrc=s=2x2:d=0.04",
+				"-frames:v", "1",
+				"-f", "null",
+				"-",
+			}
 		}
 		cmd := exec.CommandContext(pctx, ffmpegBin, args...)
 		err := cmd.Run()
@@ -119,10 +164,13 @@ func ProbeAvailable(ctx context.Context, ffmpegBin string, candidates []HWAccelB
 }
 
 // Resolve picks an hwaccel backend based on the configured mode. `auto`
-// runs CompiledIn + ProbeAvailable + PlatformDefaults; explicit modes
-// validate against the compiled-in set. Returns `("", nil)` when CPU is
-// the right choice (mode `none` / `cpu` / nothing usable).
-func Resolve(ctx context.Context, ffmpegBin, mode string) (HWAccelBackend, error) {
+// runs CompiledIn + ProbeAvailableWithDevice + PlatformDefaults; explicit
+// modes validate against the compiled-in set. Returns `("", nil)` when
+// CPU is the right choice (mode `none` / `cpu` / nothing usable).
+//
+// vaapiDevice is forwarded to ProbeAvailableWithDevice for VAAPI probes;
+// pass "" to use the default /dev/dri/renderD128.
+func Resolve(ctx context.Context, ffmpegBin, mode, vaapiDevice string) (HWAccelBackend, error) {
 	mode = strings.ToLower(strings.TrimSpace(mode))
 	switch mode {
 	case "none", "cpu", "":
@@ -167,7 +215,7 @@ func Resolve(ctx context.Context, ffmpegBin, mode string) (HWAccelBackend, error
 			seen[c] = true
 		}
 	}
-	avail := ProbeAvailable(ctx, ffmpegBin, ordered)
+	avail := ProbeAvailableWithDevice(ctx, ffmpegBin, ordered, vaapiDevice)
 	if len(avail) == 0 {
 		return HWNone, nil
 	}
@@ -175,14 +223,19 @@ func Resolve(ctx context.Context, ffmpegBin, mode string) (HWAccelBackend, error
 }
 
 // Args returns the ffmpeg flags to prepend to the input for a given
-// backend. VAAPI needs `-vaapi_device <path>` so the device file gets
-// opened; the rest are single-flag forms.
+// backend. VAAPI needs `-vaapi_device <path>` and `-hwaccel_output_format
+// vaapi` so frames stay on the GPU surface until the scale filter runs;
+// the rest are single-flag forms.
 func Args(b HWAccelBackend, vaapiDevice string) []string {
 	if b == HWNone {
 		return nil
 	}
-	if b == HWVAAPI && vaapiDevice != "" {
-		return []string{"-hwaccel", "vaapi", "-vaapi_device", vaapiDevice}
+	if b == HWVAAPI {
+		args := []string{"-hwaccel", "vaapi", "-hwaccel_output_format", "vaapi"}
+		if vaapiDevice != "" {
+			args = append(args, "-vaapi_device", vaapiDevice)
+		}
+		return args
 	}
 	return []string{"-hwaccel", string(b)}
 }

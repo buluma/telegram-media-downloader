@@ -417,6 +417,13 @@ export function touchSession(token) {
     _prep('UPDATE web_sessions SET last_seen = ? WHERE token = ?').run(Date.now(), String(token));
 }
 
+export function extendSession(token, newExpiresAt) {
+    _prep('UPDATE web_sessions SET expires_at = ? WHERE token = ?').run(
+        Number(newExpiresAt),
+        String(token),
+    );
+}
+
 export function deleteSession(token) {
     return _prep('DELETE FROM web_sessions WHERE token = ?').run(String(token)).changes;
 }

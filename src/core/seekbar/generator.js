@@ -29,7 +29,7 @@ import { upsertSeekbarSprite } from '../db.js';
 import {
     ffmpegHasLibwebp,
     hasFfmpeg,
-    hwaccelPrefix,
+    hwaccelUploadPipeline,
     resolveFfmpegBin,
     resolveFfprobeBin,
     runFfmpegArgs,
@@ -158,9 +158,13 @@ async function _writeAtomic(absPath, body) {
 async function _runSpriteFfmpeg({ srcAbs, dstAbs, plan, cfg }) {
     const useWebp =
         (cfg.format === 'webp' || !cfg.format) && ffmpegHasLibwebp() && dstAbs.endsWith('.webp');
-    const hwa = await hwaccelPrefix(cfg.hwaccel ?? null);
+    const { inputArgs: hwa, scaleVf } = hwaccelUploadPipeline(cfg.hwaccel ?? null);
     const tmp = dstAbs + '.tmp.' + crypto.randomBytes(4).toString('hex');
-    const filterChain = `fps=1/${plan.intervalSec},scale=${plan.tileW}:-2:flags=fast_bilinear,tile=${plan.cols}x${plan.rows}`;
+    // When a GPU scaler is available (vaapi/cuda/qsv), use the upload pipeline:
+    // fps and tile run on CPU; the scale step runs on GPU between them.
+    // Fallback to the pure-SW scale filter when no GPU scaler is present.
+    const scalePart = scaleVf ? scaleVf(plan.tileW) : `scale=${plan.tileW}:-2:flags=fast_bilinear`;
+    const filterChain = `fps=1/${plan.intervalSec},${scalePart},tile=${plan.cols}x${plan.rows}`;
     if (useWebp) {
         const args = [
             '-hide_banner',

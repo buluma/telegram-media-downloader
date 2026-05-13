@@ -290,7 +290,7 @@ async function _remuxInPlace(absPath) {
     // A wildly different size means something went wrong (codec
     // mismatch, container conversion). Bail rather than overwrite.
     const [srcStat, tmpStat] = await Promise.all([fs.stat(absPath), fs.stat(tmp)]);
-    if (tmpStat.size < srcStat.size * 0.95 || tmpStat.size > srcStat.size * 1.1) {
+    if (tmpStat.size < srcStat.size * 0.8 || tmpStat.size > srcStat.size * 1.1) {
         try {
             await fs.unlink(tmp);
         } catch {}
@@ -386,6 +386,12 @@ export function optimizeDownloadInBackground(id) {
         const newSize = r?.newSize || 0;
         const reason = r?.reason || null;
         const error = r?.error || null;
+        // Suppress the high-volume "not video/document" skip — every photo,
+        // audio, and sticker download triggers it, drowning out real signals.
+        if (status === 'skipped' && reason === 'not video/document') {
+            _bumpAutoStats(status, error);
+            return;
+        }
         // Single log line per file — `result=optimized|already|skipped|errored`
         // makes the stream greppable. Skipped includes a `reason` so the
         // operator can tell "not an MP4" from "ffmpeg missing".

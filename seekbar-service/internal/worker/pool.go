@@ -113,7 +113,7 @@ func (p *Pool) Submit(j *Job) {
 // to drain.
 func (p *Pool) Start(ctx context.Context) {
 	// Resolve hwaccel once at boot rather than per-job.
-	hwa, err := ffmpeg.Resolve(ctx, p.cfg.FFmpeg.Path, p.cfg.FFmpeg.HWAccel)
+	hwa, err := ffmpeg.Resolve(ctx, p.cfg.FFmpeg.Path, p.cfg.FFmpeg.HWAccel, p.cfg.FFmpeg.VAAPIDevice)
 	if err != nil {
 		p.log.Warn("hwaccel resolve failed, using CPU", "err", err)
 	}

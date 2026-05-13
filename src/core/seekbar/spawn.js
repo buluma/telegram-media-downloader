@@ -47,7 +47,7 @@ const DATA_DIR = process.env.TGDL_DATA_DIR
  * on next boot — the matching GitHub Release `seekbar-v<VER>` must exist
  * with `tgdl-seekbar-<platform>-<arch>.tar.gz` assets attached.
  */
-export const SIDECAR_VERSION = '0.2.0';
+export const SIDECAR_VERSION = '0.3.1';
 const GH_RELEASE_BASE = `https://github.com/botnick/telegram-media-downloader/releases/download/seekbar-v${SIDECAR_VERSION}`;
 const DOWNLOAD_CONNECT_TIMEOUT_MS = 30_000;
 const DOWNLOAD_REDIRECT_LIMIT = 5;
@@ -64,6 +64,7 @@ let _state = {
 let _child = null;
 let _broadcast = null;
 let _startingPromise = null;
+let _stopped = false;
 
 export function setBroadcast(fn) {
     _broadcast = typeof fn === 'function' ? fn : null;
@@ -430,6 +431,8 @@ async function _spawnLocal(cfg) {
         // Guard: if _child already points to a newer child (from refreshSidecar),
         // this is a stale exit from the previously-killed process — ignore it.
         if (_child !== thisChild) return;
+        // Guard: stopSidecar() set _stopped — don't try to restart a clean shutdown.
+        if (_stopped) return;
         _child = null;
         _setState({
             ok: false,
@@ -519,6 +522,7 @@ export async function refreshSidecar() {
 }
 
 export function stopSidecar() {
+    _stopped = true;
     if (_child) {
         try {
             _child.kill('SIGTERM');

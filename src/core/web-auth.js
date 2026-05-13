@@ -19,12 +19,14 @@ import {
     deleteAllSessions,
     deleteSessionsByRole,
     deleteExpiredSessions,
+    extendSession,
 } from './db.js';
 
 const SCRYPT_PARAMS = { N: 16384, r: 8, p: 1, keylen: 64 };
-// Default 7-day cookie lifetime. Callers (server.js) may override per-issue
-// via issueSession({ ttlMs }) — pulled from config.advanced.web.sessionTtlDays.
-const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+// Default 30-day cookie lifetime with sliding renewal. Callers (server.js)
+// may override per-issue via issueSession({ ttlMs }) — pulled from
+// config.advanced.web.sessionTtlDays.
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const TOKEN_BYTES = 32;
 
 // ---- password hashing -----------------------------------------------------
@@ -139,14 +141,28 @@ export function issueSession(opts = {}) {
 
 /**
  * Returns false if the session is invalid/expired, otherwise an object with
- * `{ role }`. findSession() self-cleans expired rows so a stale token never
- * satisfies a request.
+ * `{ role, expiresAt, issuedAt }`. findSession() self-cleans expired rows so
+ * a stale token never satisfies a request.
  */
 export function validateSession(token) {
     if (!token || typeof token !== 'string') return false;
     const row = findSession(token);
     if (!row) return false;
-    return { role: row.role === 'guest' ? 'guest' : 'admin' };
+    return {
+        role: row.role === 'guest' ? 'guest' : 'admin',
+        expiresAt: row.expiresAt,
+        issuedAt: row.issuedAt,
+    };
+}
+
+/**
+ * Extend an existing session's expiry by SESSION_TTL_MS from now (sliding
+ * window). Safe to call on every authenticated request — updates only when
+ * the session exists.
+ */
+export function renewSession(token) {
+    if (!token || typeof token !== 'string') return;
+    extendSession(token, Date.now() + SESSION_TTL_MS);
 }
 
 export function revokeSession(token) {

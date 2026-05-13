@@ -7,6 +7,7 @@ import {
     isGuestEnabled,
     issueSession,
     validateSession,
+    renewSession,
     revokeSession,
     revokeAllSessions,
     revokeAllGuestSessions,
@@ -121,20 +122,20 @@ describe('session tokens — role', () => {
     it('issues an admin session by default', () => {
         const { token, role } = issueSession();
         expect(role).toBe('admin');
-        expect(validateSession(token)).toEqual({ role: 'admin' });
+        expect(validateSession(token)).toMatchObject({ role: 'admin' });
     });
 
     it('issues a guest session when role:guest is requested', () => {
         const { token, role } = issueSession({ role: 'guest' });
         expect(role).toBe('guest');
-        expect(validateSession(token)).toEqual({ role: 'guest' });
+        expect(validateSession(token)).toMatchObject({ role: 'guest' });
     });
 
     it('revokeAllGuestSessions only drops guest tokens', () => {
         const admin = issueSession({ role: 'admin' }).token;
         const guest = issueSession({ role: 'guest' }).token;
         revokeAllGuestSessions();
-        expect(validateSession(admin)).toEqual({ role: 'admin' });
+        expect(validateSession(admin)).toMatchObject({ role: 'admin' });
         expect(validateSession(guest)).toBe(false);
     });
 
@@ -150,8 +151,26 @@ describe('session tokens — role', () => {
 
     it('revokeSession removes one token', () => {
         const { token } = issueSession();
-        expect(validateSession(token)).toEqual({ role: 'admin' });
+        expect(validateSession(token)).toMatchObject({ role: 'admin' });
         revokeSession(token);
         expect(validateSession(token)).toBe(false);
+    });
+
+    it('validateSession returns expiresAt and issuedAt', () => {
+        const before = Date.now();
+        const { token } = issueSession();
+        const session = validateSession(token);
+        expect(typeof session.expiresAt).toBe('number');
+        expect(typeof session.issuedAt).toBe('number');
+        expect(session.issuedAt).toBeGreaterThanOrEqual(before);
+        expect(session.expiresAt).toBeGreaterThan(session.issuedAt);
+    });
+
+    it('renewSession extends the expiry', () => {
+        const { token } = issueSession();
+        const before = validateSession(token).expiresAt;
+        renewSession(token);
+        const after = validateSession(token).expiresAt;
+        expect(after).toBeGreaterThanOrEqual(before);
     });
 });

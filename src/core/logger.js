@@ -24,6 +24,7 @@ export class DebugLogger {
         }
         logLine += `\n${'-'.repeat(50)}\n`;
 
+        _rotateIfNeeded(logFile);
         fs.appendFileSync(logFile, logLine);
     }
 
@@ -32,6 +33,7 @@ export class DebugLogger {
         const logFile = path.join(LOG_DIR, 'errors.log');
 
         const logLine = `[${timestamp}] ERROR ${context}: ${error.message}\nStack: ${error.stack}\n${'-'.repeat(50)}\n`;
+        _rotateIfNeeded(logFile);
         fs.appendFileSync(logFile, logLine);
     }
 }
@@ -62,12 +64,25 @@ const NOISE_PATTERNS = [
     /\bRunning gramJS\b/,
 ];
 
-// network.log rotation — keep the file complete (every line preserved)
-// but cap each file at MAX_BYTES so a long-running container can't fill
-// the disk. When the size threshold is crossed, rename to .1 (keeping
-// one previous generation) and start fresh. Two files × MAX_BYTES is
-// the worst-case footprint.
-const NETWORK_LOG_MAX_BYTES = 5 * 1024 * 1024; // 5 MB per file → 10 MB total
+// Log rotation — keep files complete (every line preserved) but cap each
+// file at MAX_BYTES so a long-running container can't fill the disk. When
+// the size threshold is crossed, rename to .1 (keeping one previous
+// generation) and start fresh. Two files × MAX_BYTES is the worst-case
+// footprint.
+const LOG_MAX_BYTES = 5 * 1024 * 1024; // 5 MB per file → 10 MB total
+
+function _rotateIfNeeded(file) {
+    try {
+        const st = fs.statSync(file);
+        if (st.size > LOG_MAX_BYTES) {
+            try {
+                fs.renameSync(file, file + '.1');
+            } catch {}
+        }
+    } catch {
+        /* file doesn't exist yet — fine */
+    }
+}
 
 function isNoise(msg) {
     if (!msg) return false;
@@ -105,18 +120,7 @@ export function suppressNoise(msg, label = 'gramjs') {
     try {
         const ts = new Date().toISOString();
         const file = path.join(LOG_DIR, 'network.log');
-        // Rotate when the active file crosses the cap — preserves every
-        // line, just splits across two generations.
-        try {
-            const st = fs.statSync(file);
-            if (st.size > NETWORK_LOG_MAX_BYTES) {
-                try {
-                    fs.renameSync(file, file + '.1');
-                } catch {}
-            }
-        } catch {
-            /* file doesn't exist yet — fine */
-        }
+        _rotateIfNeeded(file);
         fs.appendFileSync(file, `[${ts}] [${label}] ${text}\n`);
     } catch {
         /* never let logging crash the app */
