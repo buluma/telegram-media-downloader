@@ -2898,6 +2898,12 @@ async function openGroupSettings(groupId, groupName) {
     const fwdDeleteToggle = document.getElementById('fwd-delete-toggle');
     if (fwdDeleteToggle)
         fwdDeleteToggle.classList.toggle('active', fwd.deleteAfterForward === true);
+    const fwdKeepImagesToggle = document.getElementById('fwd-keep-images-toggle');
+    if (fwdKeepImagesToggle)
+        fwdKeepImagesToggle.classList.toggle('active', fwd.keepImages === true);
+    const fwdKeepVideosToggle = document.getElementById('fwd-keep-videos-toggle');
+    if (fwdKeepVideosToggle)
+        fwdKeepVideosToggle.classList.toggle('active', fwd.keepVideos === true);
 
     // Comment media tracking
     const commentsToggle = document.getElementById('track-comments-toggle');
