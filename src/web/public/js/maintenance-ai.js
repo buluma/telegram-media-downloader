@@ -1297,6 +1297,61 @@ let _searchResults = [];
 let _searchQuery = '';
 
 /**
+ * Shared search-result renderer. Fills a grid with thumbnail tiles and
+ * writes a meta line with result count, query, and modality breakdown.
+ * Tiles open the media viewer for browsing.
+ */
+function _renderSearchResults(results, query, modalities, grid, meta) {
+    _searchResults = results;
+    _searchQuery = query;
+
+    if (!results.length) {
+        grid.classList.remove('hidden');
+        grid.innerHTML = `<p class="text-[11px] text-tg-textSecondary col-span-full text-center py-6">No matches for &quot;${escapeHtml(query)}&quot;. Try a different query.</p>`;
+        if (meta) {
+            meta.classList.remove('hidden');
+            meta.textContent = `0 results for &quot;${escapeHtml(query)}&quot;`;
+        }
+        return;
+    }
+
+    grid.classList.remove('hidden');
+    grid.innerHTML = results
+        .map(
+            (res, i) =>
+                `<button type="button" data-search-idx="${i}" data-id="${res.id}"
+                        class="nsfw-tile group relative aspect-square rounded-md overflow-hidden bg-tg-bg/40 focus:outline-none focus:ring-2 focus:ring-tg-blue">
+            <img loading="lazy" decoding="async"
+                 class="absolute inset-0 w-full h-full object-cover"
+                 src="/api/thumbs/${encodeURIComponent(res.id)}?w=320" alt=""
+                 onerror="this.style.display='none'">
+            <span class="hidden sm:block absolute top-1 right-1 px-1.5 py-0.5 text-[10px] font-mono rounded bg-tg-blue/85 text-white tabular-nums">${String(Math.round(res.score * 100)).padStart(2)}%</span>
+            <span class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 group-focus:opacity-100 transition flex items-end p-2 pointer-events-none">
+                <span class="text-[11px] text-white truncate w-full text-left">${escapeHtml(res.fileName || '')}</span>
+            </span>
+        </button>`,
+        )
+        .join('');
+
+    if (meta) {
+        meta.classList.remove('hidden');
+        const mods =
+            Array.isArray(modalities) && modalities.length
+                ? ` \u2014 via ${modalities.join(', ')}`
+                : '';
+        meta.innerHTML = `${results.length} results for &quot;${escapeHtml(query)}&quot;${mods}`;
+    }
+
+    // Wire click events — open media viewer
+    grid.querySelectorAll('[data-search-idx]').forEach((tile) => {
+        tile.addEventListener('click', () => {
+            const idx = Number(tile.dataset.searchIdx);
+            if (Number.isFinite(idx)) _openSearchLightbox(idx);
+        });
+    });
+}
+
+/**
  * Run a semantic search and render results as a thumbnail grid (same
  * visual pattern as the tag / people browsers). Clicking a tile opens
  * the media viewer for browsing through results.
@@ -1326,57 +1381,126 @@ async function _runEmbeddingSearch() {
             return;
         }
 
-        const results = Array.isArray(r.results) ? r.results : [];
-        _searchResults = results;
-        _searchQuery = r.query || query;
-
-        if (results.length === 0) {
-            grid.classList.remove('hidden');
-            grid.innerHTML = `<p class="text-[11px] text-tg-textSecondary col-span-full text-center py-6">No matches for &quot;${escapeHtml(_searchQuery)}&quot;. Try a different query.</p>`;
-            return;
-        }
-
-        // Render thumbnail grid
-        grid.classList.remove('hidden');
-        grid.innerHTML = results
-            .map(
-                (res, i) =>
-                    `<button type="button" data-search-idx="${i}" data-id="${res.id}"
-                            class="nsfw-tile group relative aspect-square rounded-md overflow-hidden bg-tg-bg/40 focus:outline-none focus:ring-2 focus:ring-tg-blue">
-                <img loading="lazy" decoding="async"
-                     class="absolute inset-0 w-full h-full object-cover"
-                     src="/api/thumbs/${encodeURIComponent(res.id)}?w=320" alt=""
-                     onerror="this.style.display='none'">
-                <span class="hidden sm:block absolute top-1 right-1 px-1.5 py-0.5 text-[10px] font-mono rounded bg-tg-blue/85 text-white tabular-nums">${String(Math.round(res.score * 100)).padStart(2)}%</span>
-                <span class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 group-focus:opacity-100 transition flex items-end p-2 pointer-events-none">
-                    <span class="text-[11px] text-white truncate w-full text-left">${escapeHtml(res.fileName || '')}</span>
-                </span>
-            </button>`,
-            )
-            .join('');
-
-        // Meta: result count + query + modalities
-        if (meta) {
-            meta.classList.remove('hidden');
-            const mods =
-                Array.isArray(r.modalities) && r.modalities.length
-                    ? ` — via ${r.modalities.join(', ')}`
-                    : '';
-            meta.textContent = `${results.length} results for "${_searchQuery}"${mods}`;
-        }
-
-        // Wire click events — open media viewer
-        grid.querySelectorAll('[data-search-idx]').forEach((tile) => {
-            tile.addEventListener('click', () => {
-                const idx = Number(tile.dataset.searchIdx);
-                if (Number.isFinite(idx)) _openSearchLightbox(idx);
-            });
-        });
+        _renderSearchResults(
+            Array.isArray(r.results) ? r.results : [],
+            r.query || query,
+            r.modalities,
+            grid,
+            meta,
+        );
     } catch (e) {
         grid.classList.remove('hidden');
         grid.innerHTML = `<p class="text-[11px] text-red-400 col-span-full text-center py-6">Error: ${escapeHtml(e?.message || 'unknown')}</p>`;
     } finally {
         btn.disabled = false;
+    }
+}
+
+// ---- Unified query bar --------------------------------------------------
+
+/** Current query from the unified bar (stored for album creation). */
+let _unifiedQuery = '';
+
+/** Run a cross-modal search from the unified query bar. */
+async function _runUnifiedQuery() {
+    const input = $('#ai-query-input');
+    const grid = $('#ai-query-grid');
+    const meta = $('#ai-query-meta');
+    const searchBtn = $('#ai-query-search-btn');
+    const albumBtn = $('#ai-query-album-btn');
+    if (!input || !grid || !searchBtn) return;
+
+    const query = String(input.value || '').trim();
+    if (!query) return;
+
+    _unifiedQuery = query;
+
+    grid.classList.add('hidden');
+    meta?.classList.add('hidden');
+    grid.innerHTML = '';
+    if (meta) meta.textContent = '';
+    searchBtn.disabled = true;
+    if (albumBtn) {
+        albumBtn.disabled = true;
+        albumBtn.classList.add('opacity-50');
+    }
+
+    try {
+        const qs = new URLSearchParams({ q: query, topK: '50' }).toString();
+        const r = await api.get('/api/ai/search?' + qs);
+        if (!r.success) {
+            grid.classList.remove('hidden');
+            grid.innerHTML = `<p class="text-[11px] text-red-400 col-span-full text-center py-6">Error: ${escapeHtml(r.error || 'unknown')}</p>`;
+            return;
+        }
+
+        const results = Array.isArray(r.results) ? r.results : [];
+
+        // Enable the "Create album" button only when there are results
+        if (albumBtn && results.length) {
+            albumBtn.disabled = false;
+            albumBtn.classList.remove('opacity-50');
+        }
+
+        _renderSearchResults(results, r.query || query, r.modalities, grid, meta);
+    } catch (e) {
+        grid.classList.remove('hidden');
+        grid.innerHTML = `<p class="text-[11px] text-red-400 col-span-full text-center py-6">Error: ${escapeHtml(e?.message || 'unknown')}</p>`;
+    } finally {
+        searchBtn.disabled = false;
+    }
+}
+
+/** Parse the current unified query via LLM and create a smart album. */
+async function _createAlbumFromUnifiedQuery() {
+    const query = _unifiedQuery;
+    if (!query) {
+        showToast('Run a search first.', 'info');
+        return;
+    }
+
+    const albumBtn = $('#ai-query-album-btn');
+    if (albumBtn) {
+        albumBtn.disabled = true;
+        albumBtn.classList.add('opacity-50');
+    }
+
+    try {
+        // 1. Parse the natural-language query into a compound rule
+        const parseRes = await api.post('/api/ai/smart-albums/parse', {
+            description: query,
+        });
+        if (!parseRes.success) {
+            throw new Error(parseRes.error || 'parse failed');
+        }
+
+        const rule = parseRes.rule;
+        if (!rule) {
+            throw new Error('LLM returned an empty rule');
+        }
+
+        // 2. Prompt for album name
+        const name = prompt('Smart album name:', query.slice(0, 60));
+        if (!name || !name.trim()) return;
+
+        // 3. Create the smart album
+        const createRes = await api.post('/api/ai/smart-albums', {
+            name: name.trim(),
+            rule,
+        });
+        if (!createRes.success) {
+            throw new Error(createRes.error || 'create failed');
+        }
+
+        showToast(`Smart album &quot;${escapeHtml(name.trim())}&quot; created`, 'success');
+        await _renderSmartAlbums();
+    } catch (e) {
+        showToast(`Album creation failed: ${e?.data?.error || e?.message || 'unknown'}`, 'error');
+    } finally {
+        if (albumBtn) {
+            albumBtn.disabled = false;
+            albumBtn.classList.remove('opacity-50');
+        }
     }
 }
 
@@ -1770,6 +1894,13 @@ function _bindOnce() {
     $('#ai-embeddings-search-btn')?.addEventListener('click', _runEmbeddingSearch);
     $('#ai-embeddings-search-query')?.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') _runEmbeddingSearch();
+    });
+
+    // Unified query bar — one input to search + create albums
+    $('#ai-query-search-btn')?.addEventListener('click', _runUnifiedQuery);
+    $('#ai-query-album-btn')?.addEventListener('click', _createAlbumFromUnifiedQuery);
+    $('#ai-query-input')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') _runUnifiedQuery();
     });
 
     // WebSocket — scan events for all capabilities.

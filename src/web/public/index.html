@@ -3152,6 +3152,40 @@
                         </div>
                     </section>
 
+                    <!-- Unified query bar — one input to search, create
+                         smart albums, and discover across all modalities.
+                         Replaces the isolated test-search inside the
+                         semantic search pane. -->
+                    <section id="ai-unified-query" class="bg-tg-panel rounded-xl p-4 mb-4">
+                        <label class="text-xs text-tg-text font-medium block mb-2" for="ai-query-input">
+                            <i class="ri-search-line text-tg-blue mr-1"></i>
+                            <span data-i18n="maintenance.ai.unified.heading">Search all media</span>
+                        </label>
+                        <div class="flex gap-2 mb-2">
+                            <input id="ai-query-input"
+                                   class="tg-input flex-1 text-xs py-2 px-3"
+                                   type="text"
+                                   placeholder="dog on a beach, people at sunset, text with 'hello'&hellip;"
+                                   autocomplete="off">
+                            <button id="ai-query-search-btn" type="button"
+                                    class="tg-btn text-xs px-4 py-2 inline-flex items-center gap-1.5">
+                                <i class="ri-search-line"></i>
+                                <span data-i18n="maintenance.ai.unified.search">Search</span>
+                            </button>
+                            <button id="ai-query-album-btn" type="button"
+                                    class="tg-btn text-xs px-3 py-2 inline-flex items-center gap-1.5 opacity-50"
+                                    disabled>
+                                <i class="ri-album-add-line"></i>
+                                <span data-i18n="maintenance.ai.unified.create_album">Create album</span>
+                            </button>
+                        </div>
+                        <div id="ai-query-meta" class="text-[10.5px] text-tg-textSecondary mt-1 hidden"></div>
+                        <div id="ai-query-grid"
+                             class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-1.5 mt-1.5 hidden"></div>
+                        <pre id="ai-query-output"
+                             class="bg-tg-bg/60 rounded p-2 mt-1.5 text-[10.5px] font-mono whitespace-pre-wrap leading-snug max-h-48 overflow-auto hidden"></pre>
+                    </section>
+
                     <!-- LLM provider status card.
                          Shows available providers (Ollama, OpenAI) with
                          health indicators, the active provider, model
