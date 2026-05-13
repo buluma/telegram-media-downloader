@@ -46,6 +46,8 @@ const RELAY_DEFAULT_QUOTA_BYTES = 100 * 1024 * 1024; // 100 MB
 const RELAY_QUOTA_WINDOW_MS = 24 * 60 * 60 * 1000;
 const RELAY_TIMEOUT_MS = 30_000;
 const RELAY_MAX_BODY_BYTES = 16 * 1024 * 1024; // 16 MB single-shot
+const RELAY_ALLOWED_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD']);
+const RELAY_ALLOWED_PATH_PREFIX = '/api/cluster/';
 
 const _quota = new Map(); // sourcePeerId → { bytes, since }
 
@@ -163,6 +165,27 @@ export async function handleRelay({ envelope, sourcePeerId, fetcher = globalThis
         err.status = 400;
         throw err;
     }
+    const method = String(envelope.method || '')
+        .trim()
+        .toUpperCase();
+    if (!RELAY_ALLOWED_METHODS.has(method)) {
+        const err = new Error('relay method not allowed');
+        err.status = 400;
+        throw err;
+    }
+    const relayPath = String(envelope.path || '').trim();
+    // Relay is intentionally cluster-internal only. Disallow absolute URLs
+    // and non-cluster paths to reduce SSRF-style abuse surface.
+    if (
+        !relayPath.startsWith(RELAY_ALLOWED_PATH_PREFIX) ||
+        relayPath.includes('\0') ||
+        relayPath.includes('\r') ||
+        relayPath.includes('\n')
+    ) {
+        const err = new Error('relay path not allowed');
+        err.status = 400;
+        throw err;
+    }
     if (envelope.to_peer_id === getSelfPeerId()) {
         // Degenerate case — source asked to relay to us. Tell them to call
         // directly.
@@ -203,16 +226,16 @@ export async function handleRelay({ envelope, sourcePeerId, fetcher = globalThis
         'X-Peer-Signature': envelope.inner_sig,
     };
     const fetchInit = {
-        method: envelope.method,
+        method,
         headers,
         signal: AbortSignal.timeout ? AbortSignal.timeout(RELAY_TIMEOUT_MS) : undefined,
     };
-    if (envelope.method !== 'GET' && envelope.method !== 'HEAD' && bodyBuf.length) {
+    if (method !== 'GET' && method !== 'HEAD' && bodyBuf.length) {
         fetchInit.body = bodyBuf;
         // Best-effort content-type — most cluster JSON requests are app/json.
         headers['Content-Type'] = envelope.contentType || 'application/json';
     }
-    const url = target.url + envelope.path;
+    const url = target.url + relayPath;
     let res;
     try {
         res = await fetcher(url, fetchInit);
@@ -231,7 +254,7 @@ export async function handleRelay({ envelope, sourcePeerId, fetcher = globalThis
         kind: 'relay',
         ok: res.ok,
         peerId: sourcePeerId,
-        detail: `→ ${target.peerId} ${envelope.method} ${envelope.path} → ${res.status}`,
+        detail: `→ ${target.peerId} ${method} ${relayPath} → ${res.status}`,
     });
     return res;
 }

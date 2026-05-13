@@ -671,18 +671,31 @@ export function createClusterRouter({ broadcast, log }) {
         const v = _peerHmacGate(req, res);
         if (!v) return;
         const { file_path: filePath, remote_id: remoteId, reason = null } = req.body || {};
+        const hasRemoteId = remoteId != null;
+        const hasFilePath = typeof filePath === 'string' && filePath.trim().length > 0;
+        if ((hasRemoteId && hasFilePath) || (!hasRemoteId && !hasFilePath)) {
+            return res.status(400).json({ error: 'Provide exactly one of remote_id or file_path' });
+        }
+        const reasonText = reason == null ? null : String(reason);
+        if (reasonText && reasonText.length > 500) {
+            return res.status(400).json({ error: 'reason too long' });
+        }
         try {
             let row;
-            if (remoteId != null) {
+            if (hasRemoteId) {
+                const rid = Number(remoteId);
+                if (!Number.isInteger(rid) || rid <= 0) {
+                    return res.status(400).json({ error: 'invalid remote_id' });
+                }
                 row = getDb()
                     .prepare('SELECT id, file_path, file_size FROM downloads WHERE id = ?')
-                    .get(Number(remoteId));
-            } else if (filePath) {
+                    .get(rid);
+            } else if (hasFilePath) {
                 row = getDb()
                     .prepare(
                         'SELECT id, file_path, file_size FROM downloads WHERE file_path = ? LIMIT 1',
                     )
-                    .get(String(filePath));
+                    .get(String(filePath).trim());
             }
             if (!row) {
                 return res.status(404).json({ error: 'file not catalogued' });
@@ -702,7 +715,7 @@ export function createClusterRouter({ broadcast, log }) {
                 kind: 'cross_delete',
                 ok: true,
                 peerId: v.peerId,
-                detail: `${row.file_path} (reason=${reason || '-'})`,
+                detail: `${row.file_path} (reason=${reasonText || '-'})`,
             });
             // Tell paired peers the row is gone so their cache catches up.
             try {
