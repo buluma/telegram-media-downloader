@@ -135,7 +135,7 @@ export function renderChatRow(opts) {
     }
 
     return `
-        <div class="chat-row${selected ? ' is-selected' : ''}" ${datasetAttrs} role="button" tabindex="0">
+        <div class="chat-row${selected ? ' is-selected' : ''}" ${datasetAttrs} role="button" tabindex="0" aria-current="${selected ? 'true' : 'false'}">
             ${avatar}
             <div class="row-text">
                 <div class="row-title">
