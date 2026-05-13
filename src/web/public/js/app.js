@@ -3490,7 +3490,7 @@ function _renderGroupFiles(rows) {
                             <span class="text-xs text-tg-text truncate" title="${_escape(r.file_name || '')}">${_escape(r.file_name || '(unnamed)')}</span>
                             ${nsfwChip}
                         </div>
-                        <div class="text-[10px] text-tg-textSecondary tabular-nums mt-0.5 flex items-center gap-1.5">
+                        <div class="text-[10px] text-tg-blue tabular-nums mt-0.5 flex items-center gap-1.5">
                             <span>${_escape(_formatBytes(r.file_size))}</span>
                             <span class="opacity-50">·</span>
                             <span>${_escape(whenRel)}</span>
