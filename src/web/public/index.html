@@ -3381,7 +3381,16 @@
                                     <button id="ai-person-delete-btn" class="tg-btn-secondary text-xs px-2.5 py-1 inline-flex items-center gap-1 text-red-300"><i class="ri-delete-bin-line"></i><span data-i18n="maintenance.ai.people.actions.delete">Delete</span></button>
                                 </div>
                             </div>
-                            <div id="ai-people-photos-grid" class="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-8 gap-1.5"></div>
+                            <section class="bg-tg-panel rounded-xl p-3">
+                                <div id="ai-people-photos-grid" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2 max-h-[70vh] overflow-y-auto pr-1"></div>
+                                <div class="mt-3 flex items-center justify-between gap-3 flex-wrap">
+                                    <div id="ai-people-photos-page-info" class="text-xs text-tg-textSecondary"></div>
+                                    <div class="flex items-center gap-1.5">
+                                        <button id="ai-people-photos-prev-btn" type="button" class="tg-btn-secondary text-xs px-3 py-1.5" data-i18n="common.prev">Prev</button>
+                                        <button id="ai-people-photos-next-btn" type="button" class="tg-btn-secondary text-xs px-3 py-1.5" data-i18n="common.next">Next</button>
+                                    </div>
+                                </div>
+                            </section>
                         </div>
                     </details>
 

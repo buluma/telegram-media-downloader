@@ -23,6 +23,11 @@ let _initOnce = false;
 let _lastStatus = null;
 let _selectedPerson = null;
 let _selectedPersonName = '';
+let _peoplePhotosPage = 1;
+let _peoplePhotosTotal = 0;
+let _peoplePhotosTotalPages = 1;
+const _peoplePhotosLimit = 50;
+let _peoplePhotoRows = [];
 let _doctorScanReady = true;
 let _peopleCache = []; // full people list (un-filtered) for client-side search
 const _peopleFilter = { query: '', unlabeledOnly: false };
@@ -1100,6 +1105,16 @@ function _bindOnce() {
     $('#ai-person-merge-btn')?.addEventListener('click', _mergeSelectedPerson);
     $('#ai-person-split-btn')?.addEventListener('click', _splitSelectedPerson);
     $('#ai-person-delete-btn')?.addEventListener('click', _deleteSelectedPerson);
+    $('#ai-people-photos-prev-btn')?.addEventListener('click', () => {
+        if (!_selectedPerson || _peoplePhotosPage <= 1) return;
+        _peoplePhotosPage -= 1;
+        _loadPersonPhotosPage();
+    });
+    $('#ai-people-photos-next-btn')?.addEventListener('click', () => {
+        if (!_selectedPerson || _peoplePhotosPage >= _peoplePhotosTotalPages) return;
+        _peoplePhotosPage += 1;
+        _loadPersonPhotosPage();
+    });
 
     // WebSocket — scan events for all capabilities.
     // ai_faces_status surfaces sidecar lifecycle changes so the header badge updates without a polling loop.
@@ -2186,6 +2201,8 @@ async function _reindexFromScratch() {
         // scan progress events will refresh both as the run rebuilds them.
         _peopleCache = [];
         _selectedPerson = null;
+        _selectedPersonName = '';
+        _resetPeoplePhotosState();
         _renderPeopleGrid();
         await refreshStatus();
     } catch (e) {
@@ -2452,32 +2469,44 @@ async function _showPersonPhotos({ scrollIntoSection = false } = {}) {
     }
     const nameEl = $('#ai-people-photos-name');
     if (nameEl) nameEl.textContent = _selectedPersonName;
+    _peoplePhotosPage = 1;
+    _peoplePhotosTotal = 0;
+    _peoplePhotosTotalPages = 1;
+    _peoplePhotoRows = [];
+    _syncPeoplePhotosPager();
+    await _loadPersonPhotosPage();
+}
+
+async function _loadPersonPhotosPage() {
     const grid = $('#ai-people-photos-grid');
-    if (!grid) return;
+    if (!grid || !_selectedPerson) return;
     grid.innerHTML = `<div class="col-span-full text-center text-xs text-tg-textSecondary py-8">${escapeHtml(i18nT('common.loading', 'Loading…'))}</div>`;
     try {
-        let r = null;
-        let files = [];
-        try {
-            r = await api.get(`/api/ai/person/${_selectedPerson}/downloads?limit=120`);
-            if (r?.success) files = r.downloads || r.files || [];
-        } catch {}
-        if (!files.length) {
-            r = await api.get(`/api/ai/people/${_selectedPerson}/photos?limit=120`);
-            if (!r.success) throw new Error(r.error || 'load failed');
-            files = r.files || [];
-        }
+        const offset = Math.max(0, (_peoplePhotosPage - 1) * _peoplePhotosLimit);
+        const r = await api.get(
+            `/api/ai/people/${_selectedPerson}/photos?limit=${_peoplePhotosLimit}&offset=${offset}`,
+        );
+        if (!r.success) throw new Error(r.error || 'load failed');
+        const files = r.files || [];
+        _peoplePhotoRows = files;
+        _peoplePhotosTotal = Number(r.total) || files.length;
+        _peoplePhotosTotalPages = Math.max(1, Math.ceil(_peoplePhotosTotal / _peoplePhotosLimit));
         if (!files.length) {
             grid.innerHTML = `<div class="col-span-full text-center text-xs text-tg-textSecondary py-8">${escapeHtml(i18nT('maintenance.ai.no_photos', 'No photos in this cluster.'))}</div>`;
+            _syncPeoplePhotosPager();
             return;
         }
-        grid.innerHTML = files.map(_photoTile).join('');
+        grid.innerHTML = files.map((row, i) => _photoTile(row, i)).join('');
+        _wirePeoplePhotoClicks();
+        _syncPeoplePhotosPager();
     } catch (e) {
+        _peoplePhotoRows = [];
+        _syncPeoplePhotosPager();
         grid.innerHTML = `<div class="col-span-full text-center text-xs text-red-300 py-8">${escapeHtml(e.message)}</div>`;
     }
 }
 
-function _photoTile(row) {
+function _photoTile(row, index) {
     const id = row.download_id || row.id;
     const faceId = row.face_id || '';
     const name = escapeHtml(row.file_name || `#${id}`);
@@ -2486,17 +2515,87 @@ function _photoTile(row) {
     const q = Number(row.face_quality);
     const qualityScore = Number.isFinite(q) ? Math.round(Math.max(0, Math.min(1, q)) * 100) : null;
     return `
-        <a href="#/files/${id}" class="block group relative" data-face-id="${escapeHtml(String(faceId))}">
-            <img src="${faceCrop || thumbFallback}" alt="${name}" loading="lazy"
+        <button type="button" data-people-photo-index="${index}" data-face-id="${escapeHtml(String(faceId))}"
+                class="nsfw-tile group relative aspect-square rounded-md overflow-hidden bg-tg-bg/40 focus:outline-none focus:ring-2 focus:ring-tg-blue">
+            <img src="${faceCrop || thumbFallback}" alt="${name}" loading="lazy" decoding="async"
                 ${faceCrop ? `onerror="this.onerror=null;this.src='${thumbFallback}'"` : ''}
-                class="aspect-square w-full object-cover rounded-lg bg-tg-bg/40">
+                class="absolute inset-0 w-full h-full object-cover">
             ${
                 qualityScore == null
                     ? ''
                     : `<span class="absolute top-1 right-1 text-[10px] px-1.5 py-0.5 rounded bg-black/65 text-white tabular-nums">Q${qualityScore}</span>`
             }
-        </a>
+            <span class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 group-focus:opacity-100 transition flex items-end p-2 pointer-events-none">
+                <span class="text-[11px] text-white truncate w-full text-left">${name}</span>
+            </span>
+        </button>
     `;
+}
+
+function _wirePeoplePhotoClicks() {
+    const grid = $('#ai-people-photos-grid');
+    if (!grid) return;
+    grid.querySelectorAll('[data-people-photo-index]').forEach((tile) => {
+        if (tile.dataset.wired) return;
+        tile.dataset.wired = '1';
+        tile.addEventListener('click', () => {
+            const idx = Number(tile.dataset.peoplePhotoIndex);
+            if (Number.isFinite(idx)) _openPeoplePhotoLightbox(idx);
+        });
+    });
+}
+
+function _peoplePhotoRowToViewerFile(row) {
+    const sizeMb = row.file_size ? (row.file_size / (1024 * 1024)).toFixed(1) : '0';
+    return {
+        fullPath: row.file_path || '',
+        type: row.file_type === 'video' ? 'videos' : 'images',
+        name: row.file_name || '',
+        sizeFormatted: `${sizeMb} MB`,
+        modified: row.created_at || Date.now(),
+        _peoplePhotoRow: row,
+    };
+}
+
+function _peoplePhotoMetaFor(file) {
+    const row = file?._peoplePhotoRow;
+    const q = Number(row?.face_quality);
+    const qualityScore = Number.isFinite(q) ? Math.round(Math.max(0, Math.min(1, q)) * 100) : null;
+    return `<span class="inline-flex items-center gap-2">
+        <span class="inline-block w-2.5 h-2.5 rounded-full bg-tg-blue"></span>
+        <span>${escapeHtml(_selectedPersonName || 'Person')}</span>
+        ${qualityScore == null ? '' : `<span class="font-mono tabular-nums">Q${qualityScore}</span>`}
+    </span>`;
+}
+
+function _openPeoplePhotoLightbox(startIndex) {
+    if (!_peoplePhotoRows.length) return;
+    openMediaViewerForReview(_peoplePhotoRows.map(_peoplePhotoRowToViewerFile), startIndex, {
+        actions: [],
+        metaRender: _peoplePhotoMetaFor,
+    });
+}
+
+function _syncPeoplePhotosPager() {
+    const pageInfo = $('#ai-people-photos-page-info');
+    const prevBtn = $('#ai-people-photos-prev-btn');
+    const nextBtn = $('#ai-people-photos-next-btn');
+    const hasPerson = !!_selectedPerson;
+    if (pageInfo) {
+        pageInfo.textContent = hasPerson
+            ? `Page ${_peoplePhotosPage} / ${_peoplePhotosTotalPages} · ${_peoplePhotosTotal.toLocaleString()} photos`
+            : '';
+    }
+    if (prevBtn) prevBtn.disabled = !hasPerson || _peoplePhotosPage <= 1;
+    if (nextBtn) nextBtn.disabled = !hasPerson || _peoplePhotosPage >= _peoplePhotosTotalPages;
+}
+
+function _resetPeoplePhotosState() {
+    _peoplePhotosPage = 1;
+    _peoplePhotosTotal = 0;
+    _peoplePhotosTotalPages = 1;
+    _peoplePhotoRows = [];
+    _syncPeoplePhotosPager();
 }
 
 async function _renameSelectedPerson() {
@@ -2566,6 +2665,7 @@ async function _mergeSelectedPerson() {
         );
         _selectedPerson = null;
         _selectedPersonName = '';
+        _resetPeoplePhotosState();
         $('#ai-people-photos')?.classList.add('hidden');
         _loadPeople();
         await refreshStatus();
@@ -2641,6 +2741,7 @@ async function _deleteSelectedPerson() {
         showToast(i18nT('common.deleted', 'Deleted'), 'success');
         _selectedPerson = null;
         _selectedPersonName = '';
+        _resetPeoplePhotosState();
         $('#ai-people-photos')?.classList.add('hidden');
         _loadPeople();
     } catch (e) {
