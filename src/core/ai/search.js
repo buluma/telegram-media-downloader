@@ -59,6 +59,12 @@ export async function crossModalSearch(query, opts = {}) {
     const db = getDb();
     const resultsByModality = {};
     let semanticEmbedding = null;
+    // Track which semantic path fired so the exclusion pass uses the same source.
+    let semanticSource = null;
+
+    // Include tokens joined for embedding — exclude tokens are NOT included so
+    // their text doesn't pollute the embedding of the positive concept.
+    const includeQuery = tokens.join(' ');
 
     // Run matchers in parallel where possible
     const tasks = [];
@@ -67,13 +73,14 @@ export async function crossModalSearch(query, opts = {}) {
     if (!skipSemantic) {
         tasks.push(
             (async () => {
-                // Primary path: CLIP sidecar embeds the query into CLIP space,
+                // Primary path: CLIP sidecar embeds the include tokens into CLIP space,
                 // then we cosine-sim against stored image embeddings.
                 try {
                     const { embedText } = await import('./faces-client.js');
-                    const r = await embedText(query);
+                    const r = await embedText(includeQuery);
                     if (r?.embedding?.length) {
                         semanticEmbedding = Float32Array.from(r.embedding);
+                        semanticSource = 'clip';
                         resultsByModality.semantic = _matchSemantic(
                             db,
                             semanticEmbedding,
@@ -90,9 +97,10 @@ export async function crossModalSearch(query, opts = {}) {
                 // Only fires if llmEmbed was supplied by the caller.
                 if (!llmEmbed) return;
                 try {
-                    const vecs = await llmEmbed([query]);
+                    const vecs = await llmEmbed([includeQuery]);
                     if (Array.isArray(vecs) && vecs[0]?.length) {
                         semanticEmbedding = Float32Array.from(vecs[0]);
+                        semanticSource = 'llm';
                         resultsByModality.semantic = _matchTextSemantic(
                             semanticEmbedding,
                             opts.fileTypes,
@@ -134,10 +142,12 @@ export async function crossModalSearch(query, opts = {}) {
 
     await Promise.allSettled(tasks);
 
-    // Exclusion pass — collect IDs matching any exclude token across all
-    // non-semantic modalities, then remove them from every modality result.
+    // Exclusion pass — collect IDs matching any exclude token, then remove
+    // them from every modality result (including the semantic map).
     if (excludedTokens.length) {
         const excluded = new Set();
+
+        // Text-based matchers (tags, objects, people, OCR, filename)
         const exResults = await Promise.allSettled([
             Promise.resolve(_matchTags(db, excludedTokens, opts.fileTypes)),
             Promise.resolve(_matchObjects(db, excludedTokens, opts.fileTypes)),
@@ -150,6 +160,47 @@ export async function crossModalSearch(query, opts = {}) {
                 for (const id of r.value.keys()) excluded.add(id);
             }
         }
+
+        // Semantic exclusion — embed the exclude tokens in the same space as the
+        // include query so semantic-only results are pruned too. A result that
+        // has no tag/OCR/filename signal for the excluded concept but whose
+        // stored embedding is close to it must still be removed.
+        if (resultsByModality.semantic) {
+            if (semanticSource === 'clip') {
+                try {
+                    const { embedText } = await import('./faces-client.js');
+                    for (const tok of excludedTokens) {
+                        try {
+                            const r = await embedText(tok);
+                            if (r?.embedding?.length) {
+                                const exMap = _matchSemantic(
+                                    db,
+                                    Float32Array.from(r.embedding),
+                                    opts.fileTypes,
+                                );
+                                for (const id of exMap.keys()) excluded.add(id);
+                            }
+                        } catch {
+                            /* skip this token if sidecar fails mid-loop */
+                        }
+                    }
+                } catch {
+                    /* sidecar went away between include and exclusion — skip */
+                }
+            } else if (semanticSource === 'llm' && llmEmbed) {
+                try {
+                    const exVecs = await llmEmbed(excludedTokens);
+                    for (const vec of exVecs ?? []) {
+                        if (!Array.isArray(vec) || !vec.length) continue;
+                        const exMap = _matchTextSemantic(Float32Array.from(vec), opts.fileTypes);
+                        for (const id of exMap.keys()) excluded.add(id);
+                    }
+                } catch {
+                    /* LLM unavailable for exclusion — skip semantic exclusion */
+                }
+            }
+        }
+
         for (const map of Object.values(resultsByModality)) {
             if (map) for (const id of excluded) map.delete(id);
         }

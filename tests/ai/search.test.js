@@ -633,3 +633,76 @@ describe('crossModalSearch — LLM semantic fallback', () => {
         }
     });
 });
+
+// ---- semantic exclusion pass -----------------------------------------------
+//
+// -token must prune IDs that are semantic-only matches (no tags/OCR/filename
+// signal). The fix embeds the exclude tokens in the same space as the include
+// query and removes cosine-similar IDs from the semantic map.
+//
+// Test design: two orthogonal axes (beach=axis0, vacation=axis1). The "mixed"
+// download sits at 45° between them, so it appears in beach results AND in the
+// vacation exclusion set — but its filename/tags/OCR contain neither word, so
+// only the semantic exclusion path can remove it.
+
+describe('crossModalSearch — semantic exclusion via LLM path', () => {
+    const DIM = 4;
+    const BEACH_VEC = _unitVec(DIM, 0); // [1, 0, 0, 0]
+    const VACATION_VEC = _unitVec(DIM, 1); // [0, 1, 0, 0]
+    const MIXED_VEC = [Math.SQRT1_2, Math.SQRT1_2, 0, 0]; // 45° between beach and vacation
+
+    // llmEmbed receives the include tokens (joined) or an array of exclude tokens.
+    //   'beach'    → [BEACH_VEC]
+    //   'vacation' → [VACATION_VEC]
+    //   anything else → [[0,0,0,0]] (no match)
+    function _mkLlmEmbed() {
+        return async (texts) =>
+            texts.map((t) => {
+                if (t === 'beach') return BEACH_VEC;
+                if (t === 'vacation') return VACATION_VEC;
+                return new Array(DIM).fill(0);
+            });
+    }
+
+    it('-token excludes semantic-only result whose embedding is close to the exclude concept', async () => {
+        // neutral filenames and groupNames so no text-matcher can exclude dropId for 'vacation'
+        const keepId = _newDownload({ fileName: 'nature_photo.jpg', groupName: 'SemanticGroup' });
+        const dropId = _newDownload({ fileName: 'nature_photo2.jpg', groupName: 'SemanticGroup' });
+
+        // keepId aligns purely with "beach" → found by include, NOT found by vacation exclusion
+        setTextEmbedding(keepId, _f32Blob(BEACH_VEC), 'nomic-embed-text');
+        // dropId is at 45° between beach and vacation:
+        //   beach include query → score ≈ 0.707 (in results)
+        //   vacation exclude query → score ≈ 0.707 (should be removed by semantic exclusion)
+        setTextEmbedding(dropId, _f32Blob(MIXED_VEC), 'nomic-embed-text');
+
+        const r = await crossModalSearch('beach -vacation', {
+            skipSemantic: false,
+            llmEmbed: _mkLlmEmbed(),
+            topK: 100,
+            // zero out all non-semantic modalities so only the semantic map matters
+            weights: { filename: 0, tags: 0, objects: 0, people: 0, text: 0, semantic: 1 },
+        });
+
+        const ids = r.results.map((x) => x.id);
+        expect(ids).toContain(keepId);
+        expect(ids).not.toContain(dropId);
+    });
+
+    it('semantic result orthogonal to the exclude concept is kept', async () => {
+        const keepId = _newDownload({ fileName: 'pure_beach.jpg', groupName: 'SemanticGroup2' });
+
+        // keepId aligns purely with "beach", zero overlap with "vacation"
+        setTextEmbedding(keepId, _f32Blob(BEACH_VEC), 'nomic-embed-text');
+
+        const r = await crossModalSearch('beach -vacation', {
+            skipSemantic: false,
+            llmEmbed: _mkLlmEmbed(),
+            topK: 100,
+            weights: { filename: 0, tags: 0, objects: 0, people: 0, text: 0, semantic: 1 },
+        });
+
+        const ids = r.results.map((x) => x.id);
+        expect(ids).toContain(keepId);
+    });
+});
