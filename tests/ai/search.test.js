@@ -14,6 +14,7 @@ let insertFace;
 let insertPerson;
 let setFacePerson;
 let listOcrWords;
+let setTextEmbedding;
 let crossModalSearch;
 
 let _counter = 5000;
@@ -48,6 +49,7 @@ beforeAll(async () => {
     insertPerson = facesApi.insertPerson;
     setFacePerson = facesApi.setFacePerson;
     listOcrWords = facesApi.listOcrWords;
+    setTextEmbedding = facesApi.setTextEmbedding;
     const searchApi = await import('../../src/core/ai/search.js');
     crossModalSearch = searchApi.crossModalSearch;
     db.pragma('foreign_keys = OFF');
@@ -536,6 +538,98 @@ describe('listOcrWords', () => {
         const words = listOcrWords({ minLength: 3, minCount: 1, limit: 50 });
         for (let i = 0; i < words.length - 1; i++) {
             expect(words[i].cnt).toBeGreaterThanOrEqual(words[i + 1].cnt);
+        }
+    });
+});
+
+// ---- LLM semantic fallback -------------------------------------------------
+//
+// When the CLIP sidecar is unavailable (embedText throws), crossModalSearch
+// should fall back to LLM text embeddings stored in text_embeddings. The
+// fallback is injected via `opts.llmEmbed` so tests don't need a real LLM.
+
+function _f32Blob(arr) {
+    return Buffer.from(new Uint8Array(Float32Array.from(arr).buffer));
+}
+
+function _unitVec(dim, i) {
+    const v = new Array(dim).fill(0);
+    v[i] = 1;
+    return v;
+}
+
+describe('crossModalSearch — LLM semantic fallback', () => {
+    it('uses text_embeddings when llmEmbed returns vectors', async () => {
+        const dim = 8;
+        const dlId = _newDownload({ fileName: 'llmtest.jpg' });
+        // Store a text embedding for this download
+        setTextEmbedding(dlId, _f32Blob(_unitVec(dim, 0)), 'nomic-embed-text');
+
+        // llmEmbed aligned with stored embedding → cosine sim ≈ 1
+        const llmEmbed = async (texts) => [_unitVec(dim, 0)];
+
+        const r = await crossModalSearch('anything', {
+            skipSemantic: false,
+            llmEmbed,
+            topK: 10,
+        });
+
+        const ids = r.results.map((x) => x.id);
+        expect(ids).toContain(dlId);
+        expect(r.modalities).toContain('semantic');
+    });
+
+    it('does not include semantic modality when llmEmbed returns null', async () => {
+        const llmEmbed = async () => null;
+
+        const r = await crossModalSearch('phantomquery', {
+            skipSemantic: false,
+            llmEmbed,
+        });
+
+        // semantic modality should be absent (no rows, null embed)
+        expect(r.modalities).not.toContain('semantic');
+    });
+
+    it('does not include semantic modality when llmEmbed throws', async () => {
+        const llmEmbed = async () => {
+            throw new Error('LLM down');
+        };
+
+        const r = await crossModalSearch('crashquery', {
+            skipSemantic: false,
+            llmEmbed,
+        });
+
+        expect(r.modalities).not.toContain('semantic');
+    });
+
+    it('skips LLM fallback entirely when skipSemantic is true', async () => {
+        let called = false;
+        const llmEmbed = async () => {
+            called = true;
+            return [[1, 0, 0, 0]];
+        };
+
+        await crossModalSearch('skiptest', { skipSemantic: true, llmEmbed });
+        expect(called).toBe(false);
+    });
+
+    it('LLM fallback result scores are in [0, 1]', async () => {
+        const dim = 4;
+        const dlId = _newDownload();
+        setTextEmbedding(dlId, _f32Blob(_unitVec(dim, 3)), 'nomic-embed-text');
+
+        const llmEmbed = async () => [_unitVec(dim, 3)];
+        const r = await crossModalSearch('anything', {
+            skipSemantic: false,
+            llmEmbed,
+            topK: 20,
+        });
+
+        for (const result of r.results) {
+            expect(result.score).toBeGreaterThanOrEqual(0);
+            expect(result.score).toBeLessThanOrEqual(1);
         }
     });
 });

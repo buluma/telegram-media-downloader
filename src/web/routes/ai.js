@@ -826,13 +826,20 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                       .filter(Boolean)
                 : undefined;
 
-            // Run cross-modal search
+            // Run cross-modal search — wire LLM text embedding as fallback
+            // for when the CLIP sidecar is unavailable.
             const { crossModalSearch } = await import('../../core/ai/search.js');
+            const { embed: llmEmbedFn } = await import('../../core/llm/index.js');
+            const llmEmbed = async (texts) => {
+                const r = await llmEmbedFn({ texts });
+                return Array.isArray(r) ? r : null;
+            };
 
             const result = await crossModalSearch(query, {
                 topK,
                 minScore,
                 fileTypes,
+                llmEmbed,
             });
 
             res.json({

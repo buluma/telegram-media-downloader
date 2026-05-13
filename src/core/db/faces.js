@@ -572,12 +572,14 @@ export function getAiCounts({ fileTypes = ['photo'] } = {}) {
     const withObjects = db
         .prepare(`SELECT COUNT(DISTINCT download_id) AS n FROM image_objects`)
         .get().n;
+    const withTextEmbedding = db.prepare(`SELECT COUNT(*) AS n FROM text_embeddings`).get().n;
     const peopleCount = db.prepare(`SELECT COUNT(*) AS n FROM people`).get().n;
     return {
         totalEligible: total,
         indexed,
         unindexed: Math.max(0, total - indexed),
         withEmbedding,
+        withTextEmbedding,
         withFaces,
         withTags,
         withText,
@@ -722,6 +724,7 @@ export function resetAllAiData() {
     const db = getDb();
     const tx = db.transaction(() => {
         const embeddings = db.prepare('DELETE FROM image_embeddings').run().changes;
+        const textEmbeddings = db.prepare('DELETE FROM text_embeddings').run().changes;
         const tags = db.prepare('DELETE FROM image_tags').run().changes;
         const faces = db.prepare('DELETE FROM faces').run().changes;
         const people = db.prepare('DELETE FROM people').run().changes;
@@ -730,7 +733,7 @@ export function resetAllAiData() {
         const requeued = db
             .prepare('UPDATE downloads SET ai_indexed_at = NULL WHERE ai_indexed_at IS NOT NULL')
             .run().changes;
-        return { embeddings, tags, faces, people, text, objects, requeued };
+        return { embeddings, textEmbeddings, tags, faces, people, text, objects, requeued };
     });
     return tx();
 }
@@ -760,6 +763,146 @@ export function clearStaleEmbeddings(currentModelId) {
         return { dropped, requeued };
     });
     return tx(target);
+}
+
+// ---- LLM text embeddings --------------------------------------------------
+
+/**
+ * Upsert a text embedding (LLM-generated) for a download. Used by the
+ * background pregenerate hook as a fallback semantic search index when
+ * the CLIP sidecar is not available.
+ */
+export function setTextEmbedding(downloadId, embeddingBlob, model, now = Date.now()) {
+    return getDb()
+        .prepare(`
+        INSERT INTO text_embeddings (download_id, embedding, model, indexed_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(download_id) DO UPDATE SET
+            embedding  = excluded.embedding,
+            model      = excluded.model,
+            indexed_at = excluded.indexed_at
+    `)
+        .run(Number(downloadId), embeddingBlob, String(model), Math.floor(now / 1000)).changes;
+}
+
+/**
+ * Cosine-similarity search over stored LLM text embeddings. Returns the
+ * top-K results ranked by similarity. Min-heap keeps memory bounded.
+ *
+ * @param {Float32Array|number[]} queryEmbedding
+ * @param {object} [opts]
+ * @param {number} [opts.topK=50]
+ * @param {number} [opts.minScore=0.0]
+ * @param {string[]} [opts.fileTypes]
+ * @returns {{ id: number, score: number }[]}
+ */
+export function searchTextEmbeddings(queryEmbedding, opts = {}) {
+    const { topK = 50, minScore = 0.0, fileTypes = null } = opts;
+
+    const q =
+        queryEmbedding instanceof Float32Array ? queryEmbedding : Float32Array.from(queryEmbedding);
+    const qNorm = Math.sqrt(q.reduce((a, b) => a + b * b, 0)) || 1;
+    const qn = new Float32Array(q.length);
+    for (let i = 0; i < q.length; i++) qn[i] = q[i] / qNorm;
+
+    let sql = `SELECT e.download_id, e.embedding FROM text_embeddings e`;
+    const params = [];
+    if (Array.isArray(fileTypes) && fileTypes.length) {
+        sql += ` JOIN downloads d ON d.id = e.download_id WHERE d.file_type IN (${fileTypes.map(() => '?').join(',')})`;
+        params.push(...fileTypes);
+    }
+
+    const heap = [];
+    for (const row of getDb()
+        .prepare(sql)
+        .iterate(...params)) {
+        if (!row.embedding?.byteLength) continue;
+        const dim = row.embedding.byteLength / 4;
+        const emb = new Float32Array(row.embedding.buffer, row.embedding.byteOffset, dim);
+        if (emb.length !== qn.length) continue;
+
+        let dot = 0;
+        for (let i = 0; i < dim; i++) dot += qn[i] * emb[i];
+        const score = Math.min(1, Math.max(0, dot));
+
+        if (score < minScore) continue;
+
+        if (heap.length < topK) {
+            heap.push([-score, Number(row.download_id)]);
+            heap.sort((a, b) => a[0] - b[0]);
+        } else if (heap.length >= topK && -score < heap[topK - 1][0]) {
+            heap[topK - 1] = [-score, Number(row.download_id)];
+            heap.sort((a, b) => a[0] - b[0]);
+        }
+    }
+
+    return heap.map(([negScore, id]) => ({
+        id,
+        score: Math.round(-negScore * 1000) / 1000,
+    }));
+}
+
+/**
+ * Build a human-readable metadata string for a download from its tags,
+ * detected objects, OCR text, and filename. This text is embedded by the
+ * LLM and stored in `text_embeddings` so query embeddings can be matched
+ * against it via cosine similarity.
+ *
+ * @param {number} downloadId
+ * @returns {string}
+ */
+export function buildMetadataText(downloadId) {
+    const db = getDb();
+    const id = Number(downloadId);
+    const parts = [];
+    const seen = new Set();
+
+    const add = (term) => {
+        const k = String(term || '')
+            .toLowerCase()
+            .trim();
+        if (k && !seen.has(k)) {
+            seen.add(k);
+            parts.push(k);
+        }
+    };
+
+    // Top tags (threshold 0.2 keeps only meaningful CLIP labels)
+    const tags = db
+        .prepare(
+            `SELECT tag FROM image_tags WHERE download_id = ? AND score >= 0.2 ORDER BY score DESC LIMIT 30`,
+        )
+        .all(id);
+    for (const r of tags) add(r.tag);
+
+    // Detected objects (threshold 0.3 filters weak detections)
+    const objects = db
+        .prepare(
+            `SELECT object FROM image_objects WHERE download_id = ? AND confidence >= 0.3 ORDER BY confidence DESC LIMIT 20`,
+        )
+        .all(id);
+    for (const r of objects) add(r.object);
+
+    // Filename tokens (split on non-alphanumeric, skip very short tokens)
+    const row = db.prepare(`SELECT file_name, group_name FROM downloads WHERE id = ?`).get(id);
+    if (row?.file_name) {
+        for (const tok of row.file_name.split(/[^a-z0-9]+/i)) {
+            if (tok.length > 2) add(tok);
+        }
+    }
+    if (row?.group_name) {
+        for (const tok of row.group_name.split(/[^a-z0-9]+/i)) {
+            if (tok.length > 2) add(tok);
+        }
+    }
+
+    // OCR text appended as-is (truncated) so the embedding model sees full
+    // phrases rather than individual tokens.
+    const ocr = db.prepare(`SELECT text FROM image_text WHERE download_id = ?`).get(id);
+    const ocrText = ocr?.text ? String(ocr.text).slice(0, 300).trim() : '';
+
+    const base = parts.join(' ');
+    return ocrText ? `${base} ${ocrText}` : base;
 }
 
 // ---- Faces & people -------------------------------------------------------

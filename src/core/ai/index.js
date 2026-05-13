@@ -22,7 +22,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import { deleteFacesForDownload, getDb, insertFace, setAiIndexedAt } from '../db.js';
-import { setImageEmbedding } from '../db/faces.js';
+import { buildMetadataText, setImageEmbedding, setTextEmbedding } from '../db/faces.js';
 import { computeFaceQualityScore, detectFaces } from './faces.js';
 import { embedImage as _clientEmbedImage } from './faces-client.js';
 
@@ -191,6 +191,33 @@ async function _drainBg() {
                 /* sidecar unavailable or non-image — skip silently */
             }
 
+            // LLM text embedding — runs AFTER the CLIP step so tags/objects
+            // written in a prior scan pass are already present for buildMetadataText.
+            // Best-effort: if the LLM is unavailable the row is still marked
+            // indexed and will not be re-queued (text_embeddings gap is filled
+            // by the next full re-index when an LLM is configured).
+            let textEmbedding = null;
+            let textEmbeddingModel = '';
+            try {
+                const metaText = buildMetadataText(row.id);
+                if (metaText.trim()) {
+                    const { embed: llmEmbed, getActiveProvider } = await import('../llm/index.js');
+                    const providerInfo = await getActiveProvider();
+                    if (providerInfo.available) {
+                        const vecs = await llmEmbed({ texts: [metaText] });
+                        if (Array.isArray(vecs) && vecs[0]?.length) {
+                            textEmbedding = Float32Array.from(vecs[0]);
+                            textEmbeddingModel =
+                                cfg.llm?.ollama?.embedModel ||
+                                cfg.llm?.openai?.embedModel ||
+                                'nomic-embed-text';
+                        }
+                    }
+                }
+            } catch {
+                /* LLM unavailable or metadata empty — text_embeddings stays empty */
+            }
+
             // All DB writes go through the busy-aware retry: a long-running
             // sweep / cluster iterator on the same connection will throw
             // "This database connection is busy" on any concurrent UPDATE.
@@ -215,6 +242,10 @@ async function _drainBg() {
                     // Persist CLIP image embedding for semantic search
                     if (imageEmbedding && embeddingModel) {
                         setImageEmbedding(row.id, _f32ToBlob(imageEmbedding), embeddingModel);
+                    }
+                    // Persist LLM text embedding for semantic fallback search
+                    if (textEmbedding && textEmbeddingModel) {
+                        setTextEmbedding(row.id, _f32ToBlob(textEmbedding), textEmbeddingModel);
                     }
                     setAiIndexedAt(row.id);
                 });

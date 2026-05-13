@@ -15,6 +15,7 @@
  */
 
 import { getDb } from '../db.js';
+import { searchTextEmbeddings } from '../db/faces.js';
 
 // ---- Default weights (tunable via opts) ----------------------------------
 
@@ -39,6 +40,9 @@ const DEFAULT_WEIGHTS = {
  * @param {object} [opts.weights] - Per-modality weight overrides
  * @param {string[]} [opts.fileTypes] - Filter by file type(s)
  * @param {boolean} [opts.skipSemantic=false] - Skip embedding search
+ * @param {Function} [opts.llmEmbed] - Optional async (texts: string[]) => number[][] | null.
+ *   Used as fallback text embedding source when the CLIP sidecar is unavailable. Results are
+ *   matched against LLM text embeddings stored in text_embeddings (see buildMetadataText).
  * @returns {Promise<{ query, results: object[], modalities: string[], excludedTokens?: string[] }>}
  */
 export async function crossModalSearch(query, opts = {}) {
@@ -46,6 +50,7 @@ export async function crossModalSearch(query, opts = {}) {
     const minScore = Number(opts.minScore) || 0;
     const weights = { ...DEFAULT_WEIGHTS, ...opts.weights };
     const skipSemantic = opts.skipSemantic === true;
+    const llmEmbed = typeof opts.llmEmbed === 'function' ? opts.llmEmbed : null;
 
     // Tokenise the query into include / exclude lists
     const { include: tokens, exclude: excludedTokens } = _tokenise(query);
@@ -58,10 +63,12 @@ export async function crossModalSearch(query, opts = {}) {
     // Run matchers in parallel where possible
     const tasks = [];
 
-    // 1. Semantic (async — needs sidecar call for text embedding)
+    // 1. Semantic (async — try CLIP sidecar first, fall back to LLM text embeddings)
     if (!skipSemantic) {
         tasks.push(
             (async () => {
+                // Primary path: CLIP sidecar embeds the query into CLIP space,
+                // then we cosine-sim against stored image embeddings.
                 try {
                     const { embedText } = await import('./faces-client.js');
                     const r = await embedText(query);
@@ -72,9 +79,27 @@ export async function crossModalSearch(query, opts = {}) {
                             semanticEmbedding,
                             opts.fileTypes,
                         );
+                        return; // sidecar succeeded — skip LLM fallback
                     }
                 } catch {
-                    // sidecar unavailable — skip
+                    // sidecar unavailable — try LLM fallback below
+                }
+
+                // Fallback: LLM text embedding (nomic-embed-text / text-embedding-3-small).
+                // Matches against per-download metadata summaries stored in text_embeddings.
+                // Only fires if llmEmbed was supplied by the caller.
+                if (!llmEmbed) return;
+                try {
+                    const vecs = await llmEmbed([query]);
+                    if (Array.isArray(vecs) && vecs[0]?.length) {
+                        semanticEmbedding = Float32Array.from(vecs[0]);
+                        resultsByModality.semantic = _matchTextSemantic(
+                            semanticEmbedding,
+                            opts.fileTypes,
+                        );
+                    }
+                } catch {
+                    // LLM also unavailable — skip semantic modality entirely
                 }
             })(),
         );
@@ -294,6 +319,24 @@ function _matchSemantic(db, embedding, fileTypes) {
         }
     }
     return results;
+}
+
+/**
+ * LLM text-embedding semantic matcher — cosine similarity against stored
+ * LLM text embeddings (text_embeddings table). Used when the CLIP sidecar
+ * is unavailable. Returns Map<downloadId, score>.
+ */
+function _matchTextSemantic(embedding, fileTypes) {
+    const results = searchTextEmbeddings(embedding, {
+        topK: 500,
+        minScore: 0,
+        fileTypes: fileTypes || null,
+    });
+    const map = new Map();
+    for (const { id, score } of results) {
+        if (score > 0) map.set(id, score);
+    }
+    return map;
 }
 
 /**
