@@ -1358,9 +1358,10 @@ async function _reindexEmbeddings() {
     }
 }
 
-// ---- Semantic search results (stored for lightbox navigation) -----------
-let _searchResults = [];
-let _searchQuery = '';
+// ---- Shared search service for two independent grids -------------------
+// Each grid stores its own results + query via dataset. The lightbox
+// opener reads from the parent grid, so the embedding pane and unified
+// bar never clobber each other's state.
 
 /**
  * Shared search-result renderer. Fills a grid with thumbnail tiles and
@@ -1368,8 +1369,9 @@ let _searchQuery = '';
  * Tiles open the media viewer for browsing.
  */
 function _renderSearchResults(results, query, modalities, grid, meta) {
-    _searchResults = results;
-    _searchQuery = query;
+    // Store per-grid so two grids don't share state
+    grid.dataset.searchResults = JSON.stringify(results);
+    grid.dataset.searchQuery = query;
 
     if (!results.length) {
         grid.classList.remove('hidden');
@@ -1408,12 +1410,52 @@ function _renderSearchResults(results, query, modalities, grid, meta) {
         meta.innerHTML = `${results.length} results for &quot;${escapeHtml(query)}&quot;${mods}`;
     }
 
-    // Wire click events — open media viewer
+    // Wire click events — open media viewer against this grid's data
     grid.querySelectorAll('[data-search-idx]').forEach((tile) => {
         tile.addEventListener('click', () => {
             const idx = Number(tile.dataset.searchIdx);
-            if (Number.isFinite(idx)) _openSearchLightbox(idx);
+            if (Number.isFinite(idx)) _openSearchLightbox(tile, idx);
         });
+    });
+}
+
+/**
+ * Open the media viewer for a result tile, reading the parent grid's
+ * own stored data so two grids never cross-contaminate.
+ */
+function _openSearchLightbox(tile, startIndex) {
+    const grid = tile?.closest('[data-search-results]');
+    if (!grid) return;
+    let rows;
+    try {
+        rows = JSON.parse(grid.dataset.searchResults || '[]');
+    } catch {
+        return;
+    }
+    if (!Array.isArray(rows) || !rows.length) return;
+    const query = grid.dataset.searchQuery || '';
+    const files = rows.map((row) => {
+        const sizeMb = row.fileSize ? (row.fileSize / (1024 * 1024)).toFixed(1) : '0';
+        return {
+            fullPath: row.filePath || '',
+            type: row.fileType === 'video' ? 'videos' : 'images',
+            name: row.fileName || '',
+            sizeFormatted: `${sizeMb} MB`,
+            modified: row.createdAt || Date.now(),
+            _searchRow: row,
+        };
+    });
+    openMediaViewerForReview(files, startIndex, {
+        actions: [],
+        metaRender: (file) => {
+            const row = file?._searchRow;
+            const score = row?.score ? Math.round(row.score * 100) : 0;
+            return `<span class="inline-flex items-center gap-2">
+                <span class="inline-block w-2.5 h-2.5 rounded-full bg-tg-blue"></span>
+                <span>Search: &quot;${escapeHtml(query)}&quot;</span>
+                <span class="font-mono tabular-nums">${score}%</span>
+            </span>`;
+        },
     });
 }
 
@@ -1464,9 +1506,6 @@ async function _runEmbeddingSearch() {
 
 // ---- Unified query bar --------------------------------------------------
 
-/** Current query from the unified bar (stored for album creation). */
-let _unifiedQuery = '';
-
 /** Run a cross-modal search from the unified query bar. */
 async function _runUnifiedQuery() {
     const input = $('#ai-query-input');
@@ -1478,8 +1517,6 @@ async function _runUnifiedQuery() {
 
     const query = String(input.value || '').trim();
     if (!query) return;
-
-    _unifiedQuery = query;
 
     grid.classList.add('hidden');
     meta?.classList.add('hidden');
@@ -1519,9 +1556,9 @@ async function _runUnifiedQuery() {
 
 /** Parse the current unified query via LLM and create a smart album. */
 async function _createAlbumFromUnifiedQuery() {
-    const query = _unifiedQuery;
+    const query = String($('#ai-query-input')?.value || '').trim();
     if (!query) {
-        showToast('Run a search first.', 'info');
+        showToast('Type a query first.', 'info');
         return;
     }
 
@@ -1568,34 +1605,6 @@ async function _createAlbumFromUnifiedQuery() {
             albumBtn.classList.remove('opacity-50');
         }
     }
-}
-
-function _openSearchLightbox(startIndex) {
-    const rows = _searchResults;
-    if (!rows.length) return;
-    const files = rows.map((row) => {
-        const sizeMb = row.fileSize ? (row.fileSize / (1024 * 1024)).toFixed(1) : '0';
-        return {
-            fullPath: row.filePath || '',
-            type: row.fileType === 'video' ? 'videos' : 'images',
-            name: row.fileName || '',
-            sizeFormatted: `${sizeMb} MB`,
-            modified: row.createdAt || Date.now(),
-            _searchRow: row,
-        };
-    });
-    openMediaViewerForReview(files, startIndex, {
-        actions: [],
-        metaRender: (file) => {
-            const row = file?._searchRow;
-            const score = row?.score ? Math.round(row.score * 100) : 0;
-            return `<span class="inline-flex items-center gap-2">
-                <span class="inline-block w-2.5 h-2.5 rounded-full bg-tg-blue"></span>
-                <span>Search: &quot;${escapeHtml(_searchQuery)}&quot;</span>
-                <span class="font-mono tabular-nums">${score}%</span>
-            </span>`;
-        },
-    });
 }
 
 export async function init() {
