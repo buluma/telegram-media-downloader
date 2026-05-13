@@ -300,7 +300,7 @@ export function createClusterRouter({ broadcast, log }) {
     router.get('/cluster/audit', (req, res) => {
         const peerId = req.query.peerId || null;
         const kind = req.query.kind || null;
-        const limit = Number(req.query.limit) || 200;
+        const limit = Math.max(1, Math.min(2000, Number(req.query.limit) || 200));
         res.json({ entries: listClusterAudit({ peerId, kind, limit }) });
     });
 
@@ -311,8 +311,8 @@ export function createClusterRouter({ broadcast, log }) {
     router.get('/cluster/downloads/since', (req, res) => {
         const v = _peerHmacGate(req, res);
         if (!v) return;
-        const sinceId = Number(req.query.sinceId) || 0;
-        const limit = Number(req.query.limit) || 500;
+        const sinceId = Math.max(0, Number(req.query.sinceId) || 0);
+        const limit = Math.max(1, Math.min(2000, Number(req.query.limit) || 500));
         const rows = listOwnDownloadsSince({ sinceId, limit });
         res.json({ rows, peerId: getSelfPeerId(), now: Date.now() });
     });
@@ -820,7 +820,7 @@ export function createClusterRouter({ broadcast, log }) {
 
     router.get('/cluster/failover-log', (req, res) => {
         try {
-            const limit = Number(req.query.limit) || 100;
+            const limit = Math.max(1, Math.min(1000, Number(req.query.limit) || 100));
             res.json({ entries: listFailoverLog({ limit }) });
         } catch (e) {
             res.status(500).json({ error: 'failover log unavailable' });
