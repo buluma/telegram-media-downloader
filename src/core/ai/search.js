@@ -248,6 +248,7 @@ function _tokenise(text) {
     const exclude = [];
     String(text || '')
         .toLowerCase()
+        .replace(/_/g, ' ')
         .replace(/[^a-z0-9\s-]/g, '')
         .split(/\s+/)
         .filter(Boolean)
@@ -340,33 +341,39 @@ function _matchTextSemantic(embedding, fileTypes) {
 }
 
 /**
- * Tag matcher — find images whose CLIP tags match any query token.
+ * Tag matcher — find images whose CLIP or WD14 tags match any query token.
+ * Queries both `image_tags` (CLIP) and `image_tags_wd14` (WD14) and returns
+ * the highest-scoring match per download ID.
  * Returns Map<downloadId, score> where score = max matching tag score.
  */
 function _matchTags(db, tokens, fileTypes) {
     const likeClauses = tokens.map(() => `t.tag LIKE ?`);
-    let sql = `SELECT DISTINCT t.download_id, t.score
-                 FROM image_tags t
-                 JOIN downloads d ON d.id = t.download_id
-                WHERE (${likeClauses.join(' OR ')})
-                  AND t.score >= 0.1`;
-    const params = [];
-    for (const tok of tokens) params.push(`%${tok}%`);
-    if (Array.isArray(fileTypes) && fileTypes.length) {
-        const fps = fileTypes.map(() => '?').join(',');
-        sql += ` AND d.file_type IN (${fps})`;
-        params.push(...fileTypes);
-    }
-
-    const rows = db.prepare(sql).all(...params);
     const results = new Map();
-    for (const row of rows) {
-        const id = Number(row.download_id);
-        const score = Math.max(0, Math.min(1, Number(row.score) || 0));
-        if (!results.has(id) || score > results.get(id)) {
-            results.set(id, score);
+
+    for (const table of ['image_tags', 'image_tags_wd14']) {
+        let sql = `SELECT DISTINCT t.download_id, t.score
+                     FROM ${table} t
+                     JOIN downloads d ON d.id = t.download_id
+                    WHERE (${likeClauses.join(' OR ')})
+                      AND t.score >= 0.1`;
+        const params = [];
+        for (const tok of tokens) params.push(`%${tok}%`);
+        if (Array.isArray(fileTypes) && fileTypes.length) {
+            const fps = fileTypes.map(() => '?').join(',');
+            sql += ` AND d.file_type IN (${fps})`;
+            params.push(...fileTypes);
+        }
+
+        const rows = db.prepare(sql).all(...params);
+        for (const row of rows) {
+            const id = Number(row.download_id);
+            const score = Math.max(0, Math.min(1, Number(row.score) || 0));
+            if (!results.has(id) || score > results.get(id)) {
+                results.set(id, score);
+            }
         }
     }
+
     return results;
 }
 

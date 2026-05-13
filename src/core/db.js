@@ -295,6 +295,14 @@ function initSchema() {
             indexed_at  INTEGER NOT NULL,
             FOREIGN KEY (download_id) REFERENCES downloads(id) ON DELETE CASCADE
         );
+        CREATE TABLE IF NOT EXISTS image_tags_wd14 (
+            download_id INTEGER NOT NULL,
+            tag         TEXT    NOT NULL,
+            score       REAL    NOT NULL,
+            PRIMARY KEY (download_id, tag),
+            FOREIGN KEY (download_id) REFERENCES downloads(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_wd14_tags_tag ON image_tags_wd14(tag);
     `);
     try {
         db.exec('ALTER TABLE downloads ADD COLUMN ai_indexed_at INTEGER');

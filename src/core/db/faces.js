@@ -573,6 +573,11 @@ export function getAiCounts({ fileTypes = ['photo'] } = {}) {
         .prepare(`SELECT COUNT(DISTINCT download_id) AS n FROM image_objects`)
         .get().n;
     const withTextEmbedding = db.prepare(`SELECT COUNT(*) AS n FROM text_embeddings`).get().n;
+    const withWd14Tags = db
+        .prepare(
+            `SELECT COUNT(DISTINCT download_id) AS n FROM image_tags_wd14 WHERE tag != '_wd14_scanned_'`,
+        )
+        .get().n;
     const peopleCount = db.prepare(`SELECT COUNT(*) AS n FROM people`).get().n;
     return {
         totalEligible: total,
@@ -580,10 +585,11 @@ export function getAiCounts({ fileTypes = ['photo'] } = {}) {
         unindexed: Math.max(0, total - indexed),
         withEmbedding,
         withTextEmbedding,
-        withFaces,
         withTags,
+        withWd14Tags,
         withText,
         withObjects,
+        withFaces,
         peopleCount,
     };
 }
@@ -726,6 +732,7 @@ export function resetAllAiData() {
         const embeddings = db.prepare('DELETE FROM image_embeddings').run().changes;
         const textEmbeddings = db.prepare('DELETE FROM text_embeddings').run().changes;
         const tags = db.prepare('DELETE FROM image_tags').run().changes;
+        const wd14Tags = db.prepare('DELETE FROM image_tags_wd14').run().changes;
         const faces = db.prepare('DELETE FROM faces').run().changes;
         const people = db.prepare('DELETE FROM people').run().changes;
         const text = db.prepare('DELETE FROM image_text').run().changes;
@@ -733,7 +740,17 @@ export function resetAllAiData() {
         const requeued = db
             .prepare('UPDATE downloads SET ai_indexed_at = NULL WHERE ai_indexed_at IS NOT NULL')
             .run().changes;
-        return { embeddings, textEmbeddings, tags, faces, people, text, objects, requeued };
+        return {
+            embeddings,
+            textEmbeddings,
+            tags,
+            wd14Tags,
+            faces,
+            people,
+            text,
+            objects,
+            requeued,
+        };
     });
     return tx();
 }
@@ -1429,6 +1446,103 @@ export function getTagCooccurrenceSuggestions({
 
     // Sort by cooccurrence rate DESC
     return suggestions.sort((a, b) => b.cooccurrence_rate - a.cooccurrence_rate);
+}
+
+// ---- WD14 tags ------------------------------------------------------------
+//
+// Stored in `image_tags_wd14` — separate from CLIP `image_tags` so the two
+// sources can be independently scanned, cleared, and counted without schema
+// migration on the existing tags table.
+//
+// Sidecar endpoint contract:
+//   POST /tag-wd14  { path: "/abs/path.jpg" } OR { image_b64: "..." }
+//   → 200 { tags: [{ tag: string, score: number }, …], rating?: string }
+//   rating: "explicit" | "questionable" | "safe" (when the model emits it)
+//
+// The scan writes a `_wd14_scanned_` sentinel row with score=0 when the
+// sidecar returns an empty tag list so the batch query skips this download
+// on subsequent runs.
+
+/**
+ * Upsert WD14 tags for a download. Clears existing WD14 tags first so a
+ * re-run produces a clean slate. Writes a sentinel row for empty results
+ * so the download is marked as scanned.
+ *
+ * @param {number} downloadId
+ * @param {{ tag: string, score: number }[]} tags
+ */
+export function setWd14Tags(downloadId, tags) {
+    const db = getDb();
+    const id = Number(downloadId);
+    const tx = db.transaction(() => {
+        db.prepare('DELETE FROM image_tags_wd14 WHERE download_id = ?').run(id);
+        if (Array.isArray(tags) && tags.length) {
+            const stmt = db.prepare(
+                `INSERT OR REPLACE INTO image_tags_wd14 (download_id, tag, score) VALUES (?, ?, ?)`,
+            );
+            for (const t of tags) {
+                stmt.run(id, String(t.tag), Math.max(0, Math.min(1, Number(t.score) || 0)));
+            }
+        } else {
+            // Sentinel — marks download as processed with no results
+            db.prepare(
+                `INSERT OR REPLACE INTO image_tags_wd14 (download_id, tag, score) VALUES (?, '_wd14_scanned_', 0)`,
+            ).run(id);
+        }
+    });
+    return tx();
+}
+
+/**
+ * Remove all WD14 tags for a download (including the sentinel if present).
+ */
+export function clearWd14Tags(downloadId) {
+    return getDb()
+        .prepare('DELETE FROM image_tags_wd14 WHERE download_id = ?')
+        .run(Number(downloadId)).changes;
+}
+
+/**
+ * Return downloads that have no WD14 tag rows yet (i.e., not yet scanned).
+ *
+ * @param {object} [opts]
+ * @param {string[]} [opts.fileTypes=['photo']]
+ * @param {number} [opts.limit=50]
+ * @returns {{ id, file_path, file_type }[]}
+ */
+export function getUnscannedWd14Batch({ fileTypes = ['photo'], limit = 50 } = {}) {
+    const types = Array.isArray(fileTypes) && fileTypes.length ? fileTypes : ['photo'];
+    const ph = types.map(() => '?').join(',');
+    return getDb()
+        .prepare(
+            `SELECT id, file_path, file_type
+               FROM downloads
+              WHERE file_type IN (${ph})
+                AND id NOT IN (SELECT DISTINCT download_id FROM image_tags_wd14)
+              ORDER BY created_at ASC
+              LIMIT ?`,
+        )
+        .all(...types, Math.max(1, Math.min(500, Number(limit) || 50)));
+}
+
+/**
+ * Count downloads that have no WD14 tag rows.
+ *
+ * @param {object} [opts]
+ * @param {string[]} [opts.fileTypes=['photo']]
+ * @returns {number}
+ */
+export function countUnscannedWd14({ fileTypes = ['photo'] } = {}) {
+    const types = Array.isArray(fileTypes) && fileTypes.length ? fileTypes : ['photo'];
+    const ph = types.map(() => '?').join(',');
+    return getDb()
+        .prepare(
+            `SELECT COUNT(*) AS n
+               FROM downloads
+              WHERE file_type IN (${ph})
+                AND id NOT IN (SELECT DISTINCT download_id FROM image_tags_wd14)`,
+        )
+        .get(...types).n;
 }
 
 // ---- Image Text (OCR) --------------------------------------------------
