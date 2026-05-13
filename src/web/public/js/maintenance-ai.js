@@ -2283,8 +2283,8 @@ function _personTile(p) {
     const name = isUnclassified
         ? i18nT('maintenance.ai.person_unclassified', 'Unclassified')
         : p.label || `${i18nT('maintenance.ai.person_default', 'Person')} #${p.id}`;
-    const faceCover = !isUnclassified && p.id > 0 ? `/api/ai/person/${p.id}/face?w=128` : '';
-    const fallbackCover = p.cover_download_id ? `/api/thumbs/${p.cover_download_id}?w=128` : '';
+    const faceCover = !isUnclassified && p.id > 0 ? `/api/ai/person/${p.id}/face?w=140` : '';
+    const fallbackCover = p.cover_download_id ? `/api/thumbs/${p.cover_download_id}?w=140` : '';
     const faceCount = Number(p.face_count) || 0;
     const safeName = escapeHtml(name);
     const dimCls = !p.label && !isUnclassified ? 'opacity-50' : '';
