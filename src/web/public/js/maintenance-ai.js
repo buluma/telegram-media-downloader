@@ -496,12 +496,12 @@ async function _renderSmartAlbums() {
                         ? `tag:${rule.tag} (min ${Math.round((Number(rule.minScore) || 0) * 100)}%)`
                         : rule.type || 'unknown';
                 return `<div class="bg-tg-panelOverlay rounded p-2.5">
-                    <div class="flex items-center justify-between gap-2">
-                        <div class="min-w-0">
+                    <div class="flex items-center justify-between gap-2 flex-wrap">
+                        <div class="min-w-0 flex-1">
                             <div class="text-xs text-tg-text font-medium truncate">${escapeHtml(a.name || `Album #${a.id}`)}</div>
                             <div class="text-[10px] text-tg-textSecondary truncate">${escapeHtml(subtitle)} · ${Number(a.item_count) || 0} items</div>
                         </div>
-                        <div class="flex items-center gap-1 shrink-0">
+                        <div class="flex items-center gap-1 shrink-0 flex-wrap justify-end">
                             <button class="tg-btn-secondary text-[10px] px-2 py-1" data-sa-open="${a.id}" data-sa-name="${escapeHtml(a.name || `Album #${a.id}`)}">Open</button>
                             <button class="tg-btn-secondary text-[10px] px-2 py-1" data-sa-rebuild="${a.id}">Rebuild</button>
                             <button class="tg-btn-secondary text-[10px] px-2 py-1 text-red-300" data-sa-delete="${a.id}">Delete</button>

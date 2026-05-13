@@ -2807,10 +2807,6 @@ textarea:focus {
     width: 32px;
     height: 32px;
 }
-#groups-list .chat-row.is-selected::before {
-    top: 6px;
-    bottom: 6px;
-}
 .chat-row:hover {
     background: var(--tg-hover, #2b5278);
 }
@@ -2828,6 +2824,16 @@ textarea:focus {
     border-radius: 0 3px 3px 0;
     opacity: 1;
     transform: scaleY(1);
+}
+#groups-list .chat-row.is-selected::before {
+    top: 6px;
+    bottom: 6px;
+}
+@media (prefers-reduced-motion: reduce) {
+    .chat-row,
+    .chat-row::before {
+        transition: none;
+    }
 }
 .chat-row .row-text {
     flex: 1;
