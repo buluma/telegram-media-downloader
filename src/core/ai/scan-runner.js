@@ -550,6 +550,10 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                 ],
                 3,
             );
+            const qualityWeightedCentroid =
+                resolveFacesValue('qualityWeightedCentroid', facesCfgForCluster) === true ||
+                facesCfgForCluster.qualityWeightedCentroid === true ||
+                cfg.qualityWeightedCentroid === true;
             log(
                 'info',
                 `faces scan: clustering ${faces.length} faces (eps=${epsForCluster}, minPts=${minPointsForCluster})`,
@@ -557,6 +561,7 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
             const { clusters } = clusterFaces(faces, {
                 eps: epsForCluster,
                 minPts: minPointsForCluster,
+                qualityWeightedCentroid,
             });
             await new Promise((r) => setImmediate(r));
 

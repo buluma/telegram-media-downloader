@@ -55,7 +55,7 @@ const NUMBER_KEYS = new Set([
     'videoMaxFrames',
 ]);
 
-const BOOL_KEYS = new Set(['autoDownload', 'federate', 'includeVideos']);
+const BOOL_KEYS = new Set(['autoDownload', 'federate', 'includeVideos', 'qualityWeightedCentroid']);
 
 const STRING_KEYS = new Set(['backend', 'sidecarUrl', 'detectorModel', 'providers', 'detector']);
 
@@ -102,6 +102,7 @@ const ENV_MAP = Object.freeze({
     includeVideos: 'TGDL_FACES_INCLUDE_VIDEOS',
     videoFrameIntervalSec: 'TGDL_FACES_VIDEO_FRAME_INTERVAL_SEC',
     videoMaxFrames: 'TGDL_FACES_VIDEO_MAX_FRAMES',
+    qualityWeightedCentroid: 'TGDL_FACES_QUALITY_WEIGHTED_CENTROID',
 });
 
 /**
