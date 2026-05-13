@@ -21,6 +21,7 @@ import {
     startTagsScan as aiStartTagsScan,
     startOcrScan as aiStartOcrScan,
     startObjectDetectionScan as aiStartObjectDetectionScan,
+    startWd14Scan as aiStartWd14Scan,
 } from '../../core/ai/scan-runner.js';
 import {
     backfillMissingFaceQualityScores,
@@ -58,6 +59,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         if (feature === 'tags') return jobTrackers.aiTags;
         if (feature === 'ocr') return jobTrackers.aiOcr;
         if (feature === 'objects') return jobTrackers.aiObjects;
+        if (feature === 'wd14') return jobTrackers.aiWd14;
         return null;
     }
 
@@ -79,6 +81,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         if (feature === 'tags') return aiStartTagsScan;
         if (feature === 'ocr') return aiStartOcrScan;
         if (feature === 'objects') return aiStartObjectDetectionScan;
+        if (feature === 'wd14') return aiStartWd14Scan;
         return null;
     }
 
@@ -195,6 +198,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                     tags: aiGetScanState('tags'),
                     ocr: aiGetScanState('ocr'),
                     objects: aiGetScanState('objects'),
+                    wd14: aiGetScanState('wd14'),
                 },
                 models: {
                     faces: await (async () => {
@@ -283,6 +287,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                     aiTags: jobTrackers.aiTags.getStatus(),
                     aiOcr: jobTrackers.aiOcr.getStatus(),
                     aiObjects: jobTrackers.aiObjects.getStatus(),
+                    aiWd14: jobTrackers.aiWd14.getStatus(),
                 },
             });
         } catch (e) {
@@ -544,7 +549,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
     // branches have been removed. The handler still accepts a `feature`
     // field so older clients fail with a clear `unknown feature` error
     // rather than a silent no-op.
-    const AI_SCAN_FEATURES = new Set(['faces', 'tags', 'ocr', 'objects']);
+    const AI_SCAN_FEATURES = new Set(['faces', 'tags', 'ocr', 'objects', 'wd14']);
 
     // JobTracker integration for AI scans:
     //   The scan-runner module already owns the per-feature state machine
@@ -1467,7 +1472,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         try {
             // Cancel any in-flight scan before nuking the artefacts.
             let cancelled = 0;
-            for (const f of ['embed', 'tags', 'faces', 'ocr', 'objects']) {
+            for (const f of ['embed', 'tags', 'faces', 'ocr', 'objects', 'wd14']) {
                 if (aiCancelScan(f)) cancelled += 1;
             }
             // Settle one tick so the scan loops see the abort signal.
@@ -1476,7 +1481,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             log({
                 source: 'ai',
                 level: 'info',
-                msg: `re-index — wiped embeddings=${r.embeddings} tags=${r.tags} faces=${r.faces} people=${r.people} text=${r.text} objects=${r.objects}; re-queued=${r.requeued}; cancelled-scans=${cancelled}`,
+                msg: `re-index — wiped embeddings=${r.embeddings} tags=${r.tags} wd14Tags=${r.wd14Tags} faces=${r.faces} people=${r.people} text=${r.text} objects=${r.objects}; re-queued=${r.requeued}; cancelled-scans=${cancelled}`,
             });
             try {
                 broadcast({ type: 'ai_reindex', ...r });

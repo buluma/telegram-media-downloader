@@ -1427,6 +1427,7 @@ const _jobTrackers = {
     aiOcr: createJobTracker({ kind: 'aiOcr', broadcast, log, eventPrefix: 'ai_ocr' }),
     aiObjects: createJobTracker({ kind: 'aiObjects', broadcast, log, eventPrefix: 'ai_objects' }),
     aiPeople: createJobTracker({ kind: 'aiPeople', broadcast, log, eventPrefix: 'ai_people' }),
+    aiWd14: createJobTracker({ kind: 'aiWd14', broadcast, log, eventPrefix: 'ai_wd14' }),
 };
 // ---- Router mounts (registered here so _jobTrackers + broadcast are in scope)
 app.use('/api', createVersionRouter({ broadcast, autoUpdateTracker: _jobTrackers.autoUpdate }));
