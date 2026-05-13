@@ -337,8 +337,15 @@ async function _loadTagPhotoPage() {
             });
         }
         _tagCurrentRows = filtered;
-        _tagPhotosTotal = Number(r?.total) || files.length;
-        _tagPhotosTotalPages = Math.max(1, Math.ceil(_tagPhotosTotal / _tagPhotosLimit));
+        if (_ocrWordFilter) {
+            // OCR filter is client-side only; server total reflects unfiltered
+            // pages so use the filtered count to avoid phantom pages.
+            _tagPhotosTotal = filtered.length;
+            _tagPhotosTotalPages = 1;
+        } else {
+            _tagPhotosTotal = Number(r?.total) || files.length;
+            _tagPhotosTotalPages = Math.max(1, Math.ceil(_tagPhotosTotal / _tagPhotosLimit));
+        }
         if (!filtered.length) {
             photos.innerHTML = `<p class="text-[11px] text-tg-textSecondary col-span-full text-center py-6">${_ocrWordFilter ? `No photos with this tag containing "${escapeHtml(_ocrWordFilter)}".` : 'No photos with this tag.'}</p>`;
             _syncTagPager();

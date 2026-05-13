@@ -363,9 +363,12 @@ function _matchSemantic(db, embedding, fileTypes) {
             row.embedding.byteLength / 4,
         );
         if (emb.length !== dim) continue;
+        let embNorm = 0;
+        for (let i = 0; i < dim; i++) embNorm += emb[i] * emb[i];
+        embNorm = Math.sqrt(embNorm) || 1;
         let dot = 0;
         for (let i = 0; i < dim; i++) dot += qn[i] * emb[i];
-        const score = Math.max(0, Math.min(1, dot));
+        const score = Math.max(0, Math.min(1, dot / embNorm));
         if (score > 0) {
             results.set(Number(row.download_id), score);
         }

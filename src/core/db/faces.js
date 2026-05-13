@@ -839,9 +839,12 @@ export function searchTextEmbeddings(queryEmbedding, opts = {}) {
         const emb = new Float32Array(row.embedding.buffer, row.embedding.byteOffset, dim);
         if (emb.length !== qn.length) continue;
 
+        let embNorm = 0;
+        for (let i = 0; i < dim; i++) embNorm += emb[i] * emb[i];
+        embNorm = Math.sqrt(embNorm) || 1;
         let dot = 0;
         for (let i = 0; i < dim; i++) dot += qn[i] * emb[i];
-        const score = Math.min(1, Math.max(0, dot));
+        const score = Math.min(1, Math.max(0, dot / embNorm));
 
         if (score < minScore) continue;
 
