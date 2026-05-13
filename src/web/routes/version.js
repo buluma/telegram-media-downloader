@@ -8,7 +8,7 @@ import { recordUpdateAttempt, recordUpdateFailure, listUpdateHistory } from '../
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const UPDATE_CHECK_TTL_MS = 10 * 60 * 1000;
-const UPDATE_CHECK_REPO = 'botnick/telegram-media-downloader';
+const UPDATE_CHECK_REPO = 'buluma/telegram-media-downloader';
 let _updateCache = { fetchedAt: 0, data: null };
 
 function _readCurrentVersion() {

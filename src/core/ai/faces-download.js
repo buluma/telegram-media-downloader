@@ -7,7 +7,7 @@ import path from 'path';
 import { spawn as _spawn, spawnSync } from 'child_process';
 
 export const SIDECAR_VERSION = '0.1.0';
-export const GH_RELEASE_BASE = `https://github.com/botnick/telegram-media-downloader/releases/download/faces-v${SIDECAR_VERSION}`;
+export const GH_RELEASE_BASE = `https://github.com/buluma/telegram-media-downloader/releases/download/faces-v${SIDECAR_VERSION}`;
 
 const DOWNLOAD_CONNECT_TIMEOUT_MS = 30_000;
 const DOWNLOAD_REDIRECT_LIMIT_DEFAULT = 5;
