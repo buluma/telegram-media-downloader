@@ -2754,7 +2754,24 @@ textarea:focus {
     cursor: pointer;
     position: relative;
     -webkit-tap-highlight-color: transparent;
-    transition: background-color 120ms ease;
+    transition: background-color 160ms ease;
+}
+.chat-row::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 8px;
+    bottom: 8px;
+    width: 3px;
+    background: var(--tg-blue, #2aabee);
+    border-radius: 0 3px 3px 0;
+    opacity: 0;
+    transform: scaleY(0.6);
+    transform-origin: center;
+    transition:
+        opacity 160ms ease,
+        transform 160ms ease;
+    pointer-events: none;
 }
 
 /* Compact density for the sidebar groups list only. The Manage Groups
@@ -2801,14 +2818,8 @@ textarea:focus {
     background: var(--tg-hover, #2b5278);
 }
 .chat-row.is-selected::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    top: 8px;
-    bottom: 8px;
-    width: 3px;
-    background: var(--tg-blue, #2aabee);
-    border-radius: 0 3px 3px 0;
+    opacity: 1;
+    transform: scaleY(1);
 }
 .chat-row .row-text {
     flex: 1;
