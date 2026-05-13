@@ -2303,7 +2303,7 @@ function _personTile(p) {
     return `<button type="button" data-person="${p.id}" data-name="${safeName}"
         class="flex flex-col items-center gap-1.5 px-1 py-2 rounded-xl hover:bg-tg-bg/50 active:scale-95 transition-all group text-center select-none ${dimCls}"
         title="${safeName} · ${faceCount} ${escapeHtml(i18nT('maintenance.ai.faces_short', 'faces'))}">
-        <div class="w-[52px] h-[52px] rounded-full overflow-hidden ring-2 ring-tg-border/30 group-hover:ring-tg-blue/60 transition-shadow flex items-center justify-center bg-tg-bg/40 flex-shrink-0">
+        <div class="w-[52px] h-[52px] rounded-full overflow-hidden flex items-center justify-center bg-tg-bg/40 flex-shrink-0">
             ${imgHtml}
         </div>
         <div class="w-full min-w-0 space-y-0.5">
