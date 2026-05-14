@@ -741,38 +741,62 @@ export function startTagsScan(cfg, onProgress, onDone, onLog) {
                     ? cfg.tagLabels.filter(Boolean)
                     : presetLabels;
 
-            const batchSize = Math.max(1, Math.min(50, Number(cfg.batchSize) || 16));
+            const batchSize = Math.max(1, Math.min(200, Number(cfg.batchSize) || 64));
+            const concurrency = Math.max(1, Math.min(16, Number(cfg.tagConcurrency) || 4));
+
+            // Learned at runtime: once a 403 path_not_allowed is seen, skip
+            // the path attempt for every subsequent image in this scan run.
+            let skipPathMode = false;
 
             while (!signal.aborted) {
                 const batch = getUnscannedTagsBatch({ fileTypes, limit: batchSize });
                 if (!batch.length) break;
 
-                for (const row of batch) {
-                    if (signal.aborted) break;
-                    const abs = _resolveAbs(row.file_path);
-                    let tags = [];
-                    if (abs) {
-                        try {
-                            tags = await _tagOne(sidecarUrl, abs, tagLabels, log);
-                        } catch (e) {
-                            log('warn', `tagging failed for id=${row.id}: ${e?.message || e}`);
+                // Process batch with a fixed-width worker pool so `concurrency`
+                // requests are in-flight to the sidecar at any given time.
+                const queue = [...batch];
+                const workers = Array.from(
+                    { length: Math.min(concurrency, queue.length) },
+                    async () => {
+                        while (queue.length && !signal.aborted) {
+                            const row = queue.shift();
+                            if (!row) break;
+                            const abs = _resolveAbs(row.file_path);
+                            let tags = [];
+                            if (abs) {
+                                try {
+                                    const result = await _tagOne(
+                                        sidecarUrl,
+                                        abs,
+                                        tagLabels,
+                                        log,
+                                        skipPathMode,
+                                    );
+                                    tags = result.tags;
+                                    if (result.pathModeDisabled) skipPathMode = true;
+                                } catch (e) {
+                                    log(
+                                        'warn',
+                                        `tagging failed for id=${row.id}: ${e?.message || e}`,
+                                    );
+                                }
+                            }
+                            // DB writes are synchronous — safe across concurrent JS tasks.
+                            clearImageTagsForDownload(row.id);
+                            if (Array.isArray(tags) && tags.length) {
+                                setImageTags(
+                                    row.id,
+                                    tags.map((t) => ({ tag: t.tag, score: t.score })),
+                                );
+                            } else {
+                                setImageTags(row.id, [{ tag: '_scanned_', score: 0 }]);
+                            }
+                            state.scanned += 1;
+                            bump();
                         }
-                    }
-                    // Write tags to DB. Always write something (even empty
-                    // sentinel) so the row isn't re-picked next iteration.
-                    clearImageTagsForDownload(row.id);
-                    if (Array.isArray(tags) && tags.length) {
-                        setImageTags(
-                            row.id,
-                            tags.map((t) => ({ tag: t.tag, score: t.score })),
-                        );
-                    } else {
-                        setImageTags(row.id, [{ tag: '_scanned_', score: 0 }]);
-                    }
-                    state.scanned += 1;
-                    bump();
-                    await new Promise((r) => setImmediate(r));
-                }
+                    },
+                );
+                await Promise.all(workers);
             }
             log('info', `tags scan: finished — ${state.scanned} files tagged`);
         },
@@ -789,7 +813,7 @@ export function startTagsScan(cfg, onProgress, onDone, onLog) {
  * If ``tagLabels`` is non-empty, it overrides the sidecar's default
  * vocabulary for this request.
  */
-async function _tagOne(sidecarUrl, absPath, tagLabels, log) {
+async function _tagOne(sidecarUrl, absPath, tagLabels, log, skipPathMode = false) {
     const url = `${sidecarUrl.replace(/\/+$/, '')}/tag`;
     const baseBody = {};
     if (Array.isArray(tagLabels) && tagLabels.length) {
@@ -804,27 +828,38 @@ async function _tagOne(sidecarUrl, absPath, tagLabels, log) {
             signal: AbortSignal.timeout(30000),
         });
 
+    const _b64Body = async () => {
+        const { readFile } = await import('node:fs/promises');
+        const bytes = await readFile(absPath);
+        return { ...baseBody, image_b64: bytes.toString('base64') };
+    };
+
     try {
-        // Prefer path mode; fall back to b64 on 403 path_not_allowed.
-        let res = await _post({ ...baseBody, path: absPath });
-        if (res.status === 403) {
-            const errBody = await res.json().catch(() => ({}));
-            if (errBody?.code === 'path_not_allowed') {
-                const { readFile } = await import('node:fs/promises');
-                const bytes = await readFile(absPath);
-                const b64 = bytes.toString('base64');
-                res = await _post({ ...baseBody, image_b64: b64 });
+        let pathModeDisabled = false;
+        let res;
+
+        if (skipPathMode) {
+            res = await _post(await _b64Body());
+        } else {
+            res = await _post({ ...baseBody, path: absPath });
+            if (res.status === 403) {
+                const errBody = await res.json().catch(() => ({}));
+                if (errBody?.code === 'path_not_allowed') {
+                    pathModeDisabled = true;
+                    res = await _post(await _b64Body());
+                }
             }
         }
+
         if (!res.ok) {
             log('warn', `tag endpoint returned ${res.status} for ${absPath}`);
-            return [];
+            return { tags: [], pathModeDisabled };
         }
         const data = await res.json();
-        return Array.isArray(data?.tags) ? data.tags : [];
+        return { tags: Array.isArray(data?.tags) ? data.tags : [], pathModeDisabled };
     } catch (e) {
         log('warn', `tag request failed for ${absPath}: ${e?.message || e}`);
-        return [];
+        return { tags: [], pathModeDisabled: false };
     }
 }
 
