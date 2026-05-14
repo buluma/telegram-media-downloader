@@ -48,6 +48,43 @@ describe('AutoForwarder.process — early-exit gates', () => {
     });
 });
 
+describe('AutoForwarder.process — dedup skip', () => {
+    it('no-ops when deduped flag is true, even if group + autoForward are enabled', async () => {
+        const client = fakeClient({ sendFile: vi.fn() });
+        const fwd = new AutoForwarder(client, {
+            groups: [{ id: '1', autoForward: { enabled: true, destination: 'me' } }],
+        });
+        await fwd.process({
+            groupId: '1',
+            groupName: 'g',
+            filePath: '/some/file.jpg',
+            message: {},
+            mediaType: 'photos',
+            deduped: true,
+        });
+        expect(client.sendFile).not.toHaveBeenCalled();
+    });
+
+    it('proceeds normally when deduped is false', async () => {
+        const client = fakeClient({
+            getInputEntity: vi.fn().mockResolvedValue('me'),
+            sendFile: vi.fn().mockResolvedValue({ id: 42 }),
+        });
+        const fwd = new AutoForwarder(client, {
+            groups: [{ id: '1', autoForward: { enabled: true, destination: 'me' } }],
+        });
+        await fwd.process({
+            groupId: '1',
+            groupName: 'g',
+            filePath: '/some/file.jpg',
+            message: {},
+            mediaType: 'photos',
+            deduped: false,
+        });
+        expect(client.sendFile).toHaveBeenCalled();
+    });
+});
+
 describe('AutoForwarder.resolveDestination — alias + caching', () => {
     it('returns "me" for the "me" alias verbatim', async () => {
         const fwd = new AutoForwarder(fakeClient(), { groups: [] });

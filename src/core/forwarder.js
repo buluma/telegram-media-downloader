@@ -21,7 +21,19 @@ export class AutoForwarder {
      * @param {Object} downloadInfo - From downloader 'download_complete' event
      */
     async process(downloadInfo) {
-        const { filePath, groupId, groupName, message, mediaType } = downloadInfo;
+        const { filePath, groupId, groupName, message, mediaType, deduped } = downloadInfo;
+
+        // Skip forwarding for deduplicated files — the original was already forwarded
+        // when first downloaded; re-sending creates identical copies in the destination.
+        if (deduped) {
+            console.log(
+                colorize(
+                    `⏭️  [AutoForward] Skipping duplicate file: ${filePath ? path.basename(filePath) : groupName}`,
+                    'gray',
+                ),
+            );
+            return;
+        }
 
         // 1. Check Group Config
         const groupConfig = this.config.groups.find((g) => String(g.id) === String(groupId));
