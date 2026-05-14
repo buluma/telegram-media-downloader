@@ -66,54 +66,132 @@ _LOG = logging.getLogger(__name__)
 # receipts, etc.) plus common photographic subjects. The model scores every
 # image against every tag and returns those above threshold.
 # ---------------------------------------------------------------------------
+
+# Removed: Too Generic for our use case
+# DEFAULT_VOCABULARY = [
+#     # People
+#     "person", "portrait", "group photo", "selfie", "child", "baby",
+#     "couple", "family", "friends", "crowd",
+#     # Animals
+#     "animal", "cat", "dog", "bird", "fish", "horse", "insect",
+#     # Nature / outdoors
+#     "nature", "landscape", "sunset", "sunrise", "mountain", "beach",
+#     "ocean", "sea", "forest", "tree", "flower", "plant", "sky",
+#     "cloud", "night", "moon", "star", "snow", "ice", "rain",
+#     "rainbow", "river", "lake", "waterfall", "field", "garden", "park",
+#     # Food & drink
+#     "food", "drink", "coffee", "tea", "meal", "fruit", "vegetable",
+#     "dessert", "cake", "bread", "wine", "beer", "cocktail",
+#     # Urban & architecture
+#     "city", "building", "house", "road", "street", "car", "vehicle",
+#     "truck", "bicycle", "motorcycle", "airplane", "boat", "train",
+#     "architecture", "bridge", "tower", "church", "castle",
+#     "stadium", "museum", "store", "restaurant", "cafe",
+#     # Interiors
+#     "interior", "room", "kitchen", "bedroom", "living room",
+#     "bathroom", "office", "stairs", "door", "window",
+#     # Objects
+#     "book", "phone", "smartphone", "computer", "laptop", "screen",
+#     "clock", "watch", "jewelry", "camera", "shoe", "bag", "bottle",
+#     "toy", "gift", "key", "umbrella", "glasses", "hat",
+#     # Art & media
+#     "art", "drawing", "painting", "illustration", "cartoon", "meme",
+#     "screenshot", "document", "text", "letter", "newspaper",
+#     "magazine", "receipt", "invoice", "form", "id card",
+#     "passport", "book page", "slide", "presentation",
+#     # Graphic design
+#     "logo", "poster", "flyer", "sign", "billboard", "chart",
+#     "graph", "map", "infographic", "pattern", "abstract",
+#     # Style
+#     "black and white", "colorful", "vintage", "retro", "minimalist",
+#     "dark", "bright", "blurry", "sharp",
+#     # Events & activities
+#     "concert", "party", "wedding", "birthday", "celebration",
+#     "festival", "parade", "sport", "game", "travel",
+#     # Specifics
+#     "flag", "statue", "monument", "sculpture", "graffiti",
+#     "street art", "underwater", "aerial view", "macro",
+#     "panorama", "reflection", "shadow", "silhouette",
+#     "fireworks", "light", "neon", "candle",
+#     # Emotions / abstract
+#     "smile", "fun", "romantic", "sad", "surprise",
+#     "fashion", "makeup", "tattoo", "piercing",
+# ]
+
+# ---------------------------------------------------------------------------
+# Custom tag vocabulary — curated for Telegram media (documents, screenshots,
+# receipts, etc.) plus specific cases in this project. The model scores every
+# image against every tag and returns those above threshold.
+# ---------------------------------------------------------------------------
+
 DEFAULT_VOCABULARY = [
     # People
-    "person", "portrait", "group photo", "selfie", "child", "baby",
-    "couple", "family", "friends", "crowd",
-    # Animals
-    "animal", "cat", "dog", "bird", "fish", "horse", "insect",
-    # Nature / outdoors
-    "nature", "landscape", "sunset", "sunrise", "mountain", "beach",
-    "ocean", "sea", "forest", "tree", "flower", "plant", "sky",
-    "cloud", "night", "moon", "star", "snow", "ice", "rain",
-    "rainbow", "river", "lake", "waterfall", "field", "garden", "park",
-    # Food & drink
-    "food", "drink", "coffee", "tea", "meal", "fruit", "vegetable",
-    "dessert", "cake", "bread", "wine", "beer", "cocktail",
-    # Urban & architecture
-    "city", "building", "house", "road", "street", "car", "vehicle",
-    "truck", "bicycle", "motorcycle", "airplane", "boat", "train",
-    "architecture", "bridge", "tower", "church", "castle",
-    "stadium", "museum", "store", "restaurant", "cafe",
-    # Interiors
-    "interior", "room", "kitchen", "bedroom", "living room",
-    "bathroom", "office", "stairs", "door", "window",
-    # Objects
-    "book", "phone", "smartphone", "computer", "laptop", "screen",
-    "clock", "watch", "jewelry", "camera", "shoe", "bag", "bottle",
-    "toy", "gift", "key", "umbrella", "glasses", "hat",
-    # Art & media
-    "art", "drawing", "painting", "illustration", "cartoon", "meme",
-    "screenshot", "document", "text", "letter", "newspaper",
-    "magazine", "receipt", "invoice", "form", "id card",
-    "passport", "book page", "slide", "presentation",
-    # Graphic design
-    "logo", "poster", "flyer", "sign", "billboard", "chart",
-    "graph", "map", "infographic", "pattern", "abstract",
-    # Style
-    "black and white", "colorful", "vintage", "retro", "minimalist",
-    "dark", "bright", "blurry", "sharp",
-    # Events & activities
-    "concert", "party", "wedding", "birthday", "celebration",
-    "festival", "parade", "sport", "game", "travel",
-    # Specifics
-    "flag", "statue", "monument", "sculpture", "graffiti",
-    "street art", "underwater", "aerial view", "macro",
-    "panorama", "reflection", "shadow", "silhouette",
-    "fireworks", "light", "neon", "candle",
+    "person", "portrait", "group photo", "selfie",
+    # Nudity / state of dress
+    "nude woman", "nude man", "topless woman", "naked body",
+    "partial nudity", "fully clothed", "lingerie", "underwear",
+    "swimsuit", "bikini", "thong", "corset", "stockings", "fishnets",
+    "high heels", "costume", "cosplay",
+    # Body focus
+    "breasts", "cleavage", "bare chest", "exposed midriff", "buttocks",
+    "legs", "feet", "hands", "back", "neck", "shoulders", "curvy body",
+    "athletic body", "slim body", "busty", "muscular",
+    # Poses and positions
+    "standing pose", "sitting pose", "lying down", "kneeling", "bent over",
+    "arching back", "spreading legs", "crossed legs", "hands behind head",
+    "looking over shoulder", "seductive pose", "provocative pose",
+    "playful pose", "confident pose", "vulnerable pose",
+    # Facial expressions
+    "seductive expression", "smiling", "moaning expression", "eyes closed",
+    "direct eye contact", "biting lip", "open mouth",
+    # Acts — solo
+    "self touching", "masturbation", "using sex toy", "vibrator", "dildo",
+    "fingering", "nipple play",
+    # Acts — couples / group
+    "kissing", "making out", "oral sex", "blowjob", "cunnilingus",
+    "sexual intercourse", "missionary position", "doggy style position",
+    "cowgirl position", "spooning", "anal sex", "handjob", "threesome",
+    "group sex", "gang bang", "double penetration", "sex toys used together",
+    # BDSM / fetish
+    "bondage", "tied up", "handcuffs", "blindfold", "collar and leash",
+    "spanking", "dominance", "submission", "latex outfit", "leather outfit",
+    "role play", "feet fetish", "stockings fetish",
+    # Fluids / explicit detail
+    "ejaculation", "creampie", "facial", "cum on body", "cum on face",
+    "squirting", "wet body", "oiled body", "sweat",
+    # Demographics — gender
+    "woman", "man", "transgender woman", "transgender man", "non-binary person",
+    # Demographics — age markers (legal adult)
+    "young adult woman", "young adult man", "mature woman", "mature man",
+    "older woman", "older man",
+    # Demographics — body hair
+    "shaved pubic area", "hairy pubic area", "natural body hair",
+    # Ethnicity descriptors (neutral)
+    "asian woman", "black woman", "latina woman", "white woman", "asian man",
+    "black man", "latino man", "white man",
+    # Hair styles / colours
+    "blonde hair", "brunette hair", "red hair", "black hair", "grey hair",
+    "long hair", "short hair", "curly hair", "straight hair", "pigtails",
+    "ponytail", "braids",
+    # Scene / setting
+    "bedroom", "bathroom", "shower", "outdoors", "pool", "sofa", "office",
+    "hotel room", "car interior", "kitchen", "studio", "dungeon",
+    # Lighting / photography style
+    "professional photography", "amateur photography", "selfie", "mirror selfie",
+    "candid photo", "soft lighting", "dim lighting", "bright lighting",
+    "black and white photo", "close-up photo", "full body shot", "portrait",
+    # Media type
+    "video screenshot", "animated gif", "illustration", "drawing",
+    "hentai illustration", "3d render", "comic panel",
+    # Relationship / context
+    "couple", "lesbian couple", "gay couple", "interracial couple",
+    "amateur couple", "professional adult performer", "onlyfans style photo",
+    # Content rating signals
+    "explicit sexual content", "softcore content", "suggestive content",
+    "erotic content", "pornographic content", "nsfw content", "adult content",
     # Emotions / abstract
-    "smile", "fun", "romantic", "sad", "surprise",
-    "fashion", "makeup", "tattoo", "piercing",
+    "smile", "fun", "romantic", "sad", "surprise", "fashion", "makeup",
+    "tattoo", "piercing",
 ]
 
 # ONNX model file names inside the HuggingFace repo.

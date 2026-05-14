@@ -223,8 +223,8 @@ Two optional sidecars run beside the Node app. Both are off by default; each is 
 
 | Sidecar | Language | Source tree | Released as | Spawn module | Purpose |
 |---|---|---|---|---|---|
-| **`tgdl-faces`** | Python (FastAPI + insightface) | `faces-service/` | `ghcr.io/botnick/tgdl-faces:<tag>` + per-platform PyInstaller binaries | `src/core/ai/faces-spawn.js` | Face detection + 512-dim ArcFace embeddings (`buffalo_l`). Multi-platform GPU acceleration (DirectML / CUDA / OpenVINO / CoreML / CPU). |
-| **`tgdl-seekbar`** | Go (stdlib HTTP + ffmpeg) | `seekbar-service/` | `ghcr.io/botnick/tgdl-seekbar:<tag>` + per-platform Go binaries | `src/core/seekbar/spawn.js` | WebP sprite-sheet timeline preview generation for the video player. |
+| **`tgdl-faces`** | Python (FastAPI + insightface) | `faces-service/` | `ghcr.io/buluma/tgdl-faces:<tag>` + per-platform PyInstaller binaries | `src/core/ai/faces-spawn.js` | Face detection + 512-dim ArcFace embeddings (`buffalo_l`). Multi-platform GPU acceleration (DirectML / CUDA / OpenVINO / CoreML / CPU). |
+| **`tgdl-seekbar`** | Go (stdlib HTTP + ffmpeg) | `seekbar-service/` | `ghcr.io/buluma/tgdl-seekbar:<tag>` + per-platform Go binaries | `src/core/seekbar/spawn.js` | WebP sprite-sheet timeline preview generation for the video player. |
 
 Spawn order on each:
 

@@ -288,6 +288,21 @@ function initSchema() {
         );
         CREATE INDEX IF NOT EXISTS idx_faces_download ON faces(download_id);
         CREATE INDEX IF NOT EXISTS idx_faces_person   ON faces(person_id);
+        CREATE TABLE IF NOT EXISTS text_embeddings (
+            download_id INTEGER PRIMARY KEY,
+            embedding   BLOB    NOT NULL,
+            model       TEXT    NOT NULL,
+            indexed_at  INTEGER NOT NULL,
+            FOREIGN KEY (download_id) REFERENCES downloads(id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS image_tags_wd14 (
+            download_id INTEGER NOT NULL,
+            tag         TEXT    NOT NULL,
+            score       REAL    NOT NULL,
+            PRIMARY KEY (download_id, tag),
+            FOREIGN KEY (download_id) REFERENCES downloads(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_wd14_tags_tag ON image_tags_wd14(tag);
     `);
     try {
         db.exec('ALTER TABLE downloads ADD COLUMN ai_indexed_at INTEGER');

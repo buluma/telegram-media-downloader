@@ -544,6 +544,7 @@ export function countUnscannedTags({ fileTypes = ['photo'] } = {}) {
         SELECT COUNT(*) AS n FROM downloads
          WHERE file_type IN (${placeholders})
            AND id NOT IN (SELECT DISTINCT download_id FROM image_tags)
+           AND LOWER(file_name) NOT LIKE '%.webp'
     `)
         .get(...types).n;
 }
@@ -572,16 +573,24 @@ export function getAiCounts({ fileTypes = ['photo'] } = {}) {
     const withObjects = db
         .prepare(`SELECT COUNT(DISTINCT download_id) AS n FROM image_objects`)
         .get().n;
+    const withTextEmbedding = db.prepare(`SELECT COUNT(*) AS n FROM text_embeddings`).get().n;
+    const withWd14Tags = db
+        .prepare(
+            `SELECT COUNT(DISTINCT download_id) AS n FROM image_tags_wd14 WHERE tag != '_wd14_scanned_'`,
+        )
+        .get().n;
     const peopleCount = db.prepare(`SELECT COUNT(*) AS n FROM people`).get().n;
     return {
         totalEligible: total,
         indexed,
         unindexed: Math.max(0, total - indexed),
         withEmbedding,
-        withFaces,
+        withTextEmbedding,
         withTags,
+        withWd14Tags,
         withText,
         withObjects,
+        withFaces,
         peopleCount,
     };
 }
@@ -722,7 +731,9 @@ export function resetAllAiData() {
     const db = getDb();
     const tx = db.transaction(() => {
         const embeddings = db.prepare('DELETE FROM image_embeddings').run().changes;
+        const textEmbeddings = db.prepare('DELETE FROM text_embeddings').run().changes;
         const tags = db.prepare('DELETE FROM image_tags').run().changes;
+        const wd14Tags = db.prepare('DELETE FROM image_tags_wd14').run().changes;
         const faces = db.prepare('DELETE FROM faces').run().changes;
         const people = db.prepare('DELETE FROM people').run().changes;
         const text = db.prepare('DELETE FROM image_text').run().changes;
@@ -730,7 +741,17 @@ export function resetAllAiData() {
         const requeued = db
             .prepare('UPDATE downloads SET ai_indexed_at = NULL WHERE ai_indexed_at IS NOT NULL')
             .run().changes;
-        return { embeddings, tags, faces, people, text, objects, requeued };
+        return {
+            embeddings,
+            textEmbeddings,
+            tags,
+            wd14Tags,
+            faces,
+            people,
+            text,
+            objects,
+            requeued,
+        };
     });
     return tx();
 }
@@ -760,6 +781,149 @@ export function clearStaleEmbeddings(currentModelId) {
         return { dropped, requeued };
     });
     return tx(target);
+}
+
+// ---- LLM text embeddings --------------------------------------------------
+
+/**
+ * Upsert a text embedding (LLM-generated) for a download. Used by the
+ * background pregenerate hook as a fallback semantic search index when
+ * the CLIP sidecar is not available.
+ */
+export function setTextEmbedding(downloadId, embeddingBlob, model, now = Date.now()) {
+    return getDb()
+        .prepare(`
+        INSERT INTO text_embeddings (download_id, embedding, model, indexed_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(download_id) DO UPDATE SET
+            embedding  = excluded.embedding,
+            model      = excluded.model,
+            indexed_at = excluded.indexed_at
+    `)
+        .run(Number(downloadId), embeddingBlob, String(model), Math.floor(now / 1000)).changes;
+}
+
+/**
+ * Cosine-similarity search over stored LLM text embeddings. Returns the
+ * top-K results ranked by similarity. Min-heap keeps memory bounded.
+ *
+ * @param {Float32Array|number[]} queryEmbedding
+ * @param {object} [opts]
+ * @param {number} [opts.topK=50]
+ * @param {number} [opts.minScore=0.0]
+ * @param {string[]} [opts.fileTypes]
+ * @returns {{ id: number, score: number }[]}
+ */
+export function searchTextEmbeddings(queryEmbedding, opts = {}) {
+    const { topK = 50, minScore = 0.0, fileTypes = null } = opts;
+
+    const q =
+        queryEmbedding instanceof Float32Array ? queryEmbedding : Float32Array.from(queryEmbedding);
+    const qNorm = Math.sqrt(q.reduce((a, b) => a + b * b, 0)) || 1;
+    const qn = new Float32Array(q.length);
+    for (let i = 0; i < q.length; i++) qn[i] = q[i] / qNorm;
+
+    let sql = `SELECT e.download_id, e.embedding FROM text_embeddings e`;
+    const params = [];
+    if (Array.isArray(fileTypes) && fileTypes.length) {
+        sql += ` JOIN downloads d ON d.id = e.download_id WHERE d.file_type IN (${fileTypes.map(() => '?').join(',')})`;
+        params.push(...fileTypes);
+    }
+
+    const heap = [];
+    for (const row of getDb()
+        .prepare(sql)
+        .iterate(...params)) {
+        if (!row.embedding?.byteLength) continue;
+        const dim = row.embedding.byteLength / 4;
+        const emb = new Float32Array(row.embedding.buffer, row.embedding.byteOffset, dim);
+        if (emb.length !== qn.length) continue;
+
+        let embNorm = 0;
+        for (let i = 0; i < dim; i++) embNorm += emb[i] * emb[i];
+        embNorm = Math.sqrt(embNorm) || 1;
+        let dot = 0;
+        for (let i = 0; i < dim; i++) dot += qn[i] * emb[i];
+        const score = Math.min(1, Math.max(0, dot / embNorm));
+
+        if (score < minScore) continue;
+
+        if (heap.length < topK) {
+            heap.push([-score, Number(row.download_id)]);
+            heap.sort((a, b) => a[0] - b[0]);
+        } else if (heap.length >= topK && -score < heap[topK - 1][0]) {
+            heap[topK - 1] = [-score, Number(row.download_id)];
+            heap.sort((a, b) => a[0] - b[0]);
+        }
+    }
+
+    return heap.map(([negScore, id]) => ({
+        id,
+        score: Math.round(-negScore * 1000) / 1000,
+    }));
+}
+
+/**
+ * Build a human-readable metadata string for a download from its tags,
+ * detected objects, OCR text, and filename. This text is embedded by the
+ * LLM and stored in `text_embeddings` so query embeddings can be matched
+ * against it via cosine similarity.
+ *
+ * @param {number} downloadId
+ * @returns {string}
+ */
+export function buildMetadataText(downloadId) {
+    const db = getDb();
+    const id = Number(downloadId);
+    const parts = [];
+    const seen = new Set();
+
+    const add = (term) => {
+        const k = String(term || '')
+            .toLowerCase()
+            .trim();
+        if (k && !seen.has(k)) {
+            seen.add(k);
+            parts.push(k);
+        }
+    };
+
+    // Top tags (threshold 0.2 keeps only meaningful CLIP labels)
+    const tags = db
+        .prepare(
+            `SELECT tag FROM image_tags WHERE download_id = ? AND score >= 0.2 ORDER BY score DESC LIMIT 30`,
+        )
+        .all(id);
+    for (const r of tags) add(r.tag);
+
+    // Detected objects (threshold 0.3 filters weak detections)
+    const objects = db
+        .prepare(
+            `SELECT object FROM image_objects WHERE download_id = ? AND confidence >= 0.3 ORDER BY confidence DESC LIMIT 20`,
+        )
+        .all(id);
+    for (const r of objects) add(r.object);
+
+    // Filename tokens (split on non-alphanumeric, skip very short tokens)
+    const row = db.prepare(`SELECT file_name, group_name FROM downloads WHERE id = ?`).get(id);
+    if (row?.file_name) {
+        for (const tok of row.file_name.split(/[^a-z0-9]+/i)) {
+            if (tok.length > 2) add(tok);
+        }
+    }
+    if (row?.group_name) {
+        for (const tok of row.group_name.split(/[^a-z0-9]+/i)) {
+            if (tok.length > 2) add(tok);
+        }
+    }
+
+    // OCR text appended as-is (truncated) so the embedding model sees full
+    // phrases rather than individual tokens.
+    const ocr = db.prepare(`SELECT text FROM image_text WHERE download_id = ?`).get(id);
+    const ocrText = ocr?.text ? String(ocr.text).slice(0, 300).trim() : '';
+
+    const base = parts.join(' ');
+    return ocrText ? `${base} ${ocrText}` : base;
 }
 
 // ---- Faces & people -------------------------------------------------------
@@ -1200,9 +1364,11 @@ export function listPhotosForTag(tag, { limit = 50, offset = 0 } = {}) {
     const off = Math.max(0, Number(offset) || 0);
     const rows = getDb()
         .prepare(`
-        SELECT d.*, t.score AS tag_score
+        SELECT d.*, t.score AS tag_score,
+               substr(it.text, 1, 200) AS ocr_text
           FROM image_tags t
           JOIN downloads d ON d.id = t.download_id
+          LEFT JOIN image_text it ON it.download_id = d.id
          WHERE t.tag = ?
          ORDER BY t.score DESC, d.created_at DESC
          LIMIT ? OFFSET ?
@@ -1286,6 +1452,105 @@ export function getTagCooccurrenceSuggestions({
     return suggestions.sort((a, b) => b.cooccurrence_rate - a.cooccurrence_rate);
 }
 
+// ---- WD14 tags ------------------------------------------------------------
+//
+// Stored in `image_tags_wd14` — separate from CLIP `image_tags` so the two
+// sources can be independently scanned, cleared, and counted without schema
+// migration on the existing tags table.
+//
+// Sidecar endpoint contract:
+//   POST /tag-wd14  { path: "/abs/path.jpg" } OR { image_b64: "..." }
+//   → 200 { tags: [{ tag: string, score: number }, …], rating?: string }
+//   rating: "explicit" | "questionable" | "safe" (when the model emits it)
+//
+// The scan writes a `_wd14_scanned_` sentinel row with score=0 when the
+// sidecar returns an empty tag list so the batch query skips this download
+// on subsequent runs.
+
+/**
+ * Upsert WD14 tags for a download. Clears existing WD14 tags first so a
+ * re-run produces a clean slate. Writes a sentinel row for empty results
+ * so the download is marked as scanned.
+ *
+ * @param {number} downloadId
+ * @param {{ tag: string, score: number }[]} tags
+ */
+export function setWd14Tags(downloadId, tags) {
+    const db = getDb();
+    const id = Number(downloadId);
+    const tx = db.transaction(() => {
+        db.prepare('DELETE FROM image_tags_wd14 WHERE download_id = ?').run(id);
+        if (Array.isArray(tags) && tags.length) {
+            const stmt = db.prepare(
+                `INSERT OR REPLACE INTO image_tags_wd14 (download_id, tag, score) VALUES (?, ?, ?)`,
+            );
+            for (const t of tags) {
+                stmt.run(id, String(t.tag), Math.max(0, Math.min(1, Number(t.score) || 0)));
+            }
+        } else {
+            // Sentinel — marks download as processed with no results
+            db.prepare(
+                `INSERT OR REPLACE INTO image_tags_wd14 (download_id, tag, score) VALUES (?, '_wd14_scanned_', 0)`,
+            ).run(id);
+        }
+    });
+    return tx();
+}
+
+/**
+ * Remove all WD14 tags for a download (including the sentinel if present).
+ */
+export function clearWd14Tags(downloadId) {
+    return getDb()
+        .prepare('DELETE FROM image_tags_wd14 WHERE download_id = ?')
+        .run(Number(downloadId)).changes;
+}
+
+/**
+ * Return downloads that have no WD14 tag rows yet (i.e., not yet scanned).
+ *
+ * @param {object} [opts]
+ * @param {string[]} [opts.fileTypes=['photo']]
+ * @param {number} [opts.limit=50]
+ * @returns {{ id, file_path, file_type }[]}
+ */
+export function getUnscannedWd14Batch({ fileTypes = ['photo'], limit = 50 } = {}) {
+    const types = Array.isArray(fileTypes) && fileTypes.length ? fileTypes : ['photo'];
+    const ph = types.map(() => '?').join(',');
+    return getDb()
+        .prepare(
+            `SELECT id, file_path, file_type
+               FROM downloads
+              WHERE file_type IN (${ph})
+                AND id NOT IN (SELECT DISTINCT download_id FROM image_tags_wd14)
+                AND LOWER(file_name) NOT LIKE '%.webp'
+              ORDER BY created_at ASC
+              LIMIT ?`,
+        )
+        .all(...types, Math.max(1, Math.min(500, Number(limit) || 50)));
+}
+
+/**
+ * Count downloads that have no WD14 tag rows.
+ *
+ * @param {object} [opts]
+ * @param {string[]} [opts.fileTypes=['photo']]
+ * @returns {number}
+ */
+export function countUnscannedWd14({ fileTypes = ['photo'] } = {}) {
+    const types = Array.isArray(fileTypes) && fileTypes.length ? fileTypes : ['photo'];
+    const ph = types.map(() => '?').join(',');
+    return getDb()
+        .prepare(
+            `SELECT COUNT(*) AS n
+               FROM downloads
+              WHERE file_type IN (${ph})
+                AND id NOT IN (SELECT DISTINCT download_id FROM image_tags_wd14)
+                AND LOWER(file_name) NOT LIKE '%.webp'`,
+        )
+        .get(...types).n;
+}
+
 // ---- Image Text (OCR) --------------------------------------------------
 
 export function setImageText(downloadId, text, language = null, confidence = null) {
@@ -1339,6 +1604,36 @@ export function getImagesWithText({ minLength = 10, limit = 50, offset = 0 } = {
         .get(minLen).n;
 
     return { files: rows, total };
+}
+
+/**
+ * Return unique words extracted from OCR text, sorted by frequency descending.
+ * Words are lowercased, stripped of non-alphanumeric, filtered by min length.
+ * Returns [{ word, count }].
+ */
+export function listOcrWords({ minLength = 3, minCount = 1, limit = 100 } = {}) {
+    const db = getDb();
+    const rows = db.prepare('SELECT text FROM image_text WHERE length(text) > 0').all();
+    const freq = {};
+    for (const r of rows) {
+        if (!r.text) continue;
+        const seen = new Set();
+        const words = r.text
+            .toLowerCase()
+            .split(/[^a-z0-9]+/)
+            .filter((w) => w.length >= minLength);
+        for (const w of words) {
+            if (!seen.has(w)) {
+                seen.add(w);
+                freq[w] = (freq[w] || 0) + 1;
+            }
+        }
+    }
+    return Object.entries(freq)
+        .filter(([, c]) => c >= minCount)
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .slice(0, Math.max(1, Number(limit) || 100))
+        .map(([word, cnt]) => ({ word, cnt }));
 }
 
 // ---- Image Objects (Detection) -----------------------------------------

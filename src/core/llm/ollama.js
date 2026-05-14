@@ -25,19 +25,20 @@ export class OllamaProvider extends LLMProvider {
      */
     static async probe(llmCfg) {
         const baseUrl = _baseUrl(llmCfg);
-        if (!baseUrl) return { available: false, error: 'no base URL configured' };
+        if (!baseUrl)
+            return { available: false, error: 'no base URL configured', code: 'LLM_PROBE_FAILED' };
         try {
             const res = await fetch(`${baseUrl}/api/tags`, {
                 signal: AbortSignal.timeout(5000),
             });
             if (!res.ok) {
-                return { available: false, error: `http_${res.status}` };
+                return { available: false, error: `http_${res.status}`, code: 'LLM_PROBE_FAILED' };
             }
             const body = await res.json();
             const version = body?.models?.length > 0 ? `${body.models.length} models` : 'unknown';
             return { available: true, version };
         } catch (e) {
-            return { available: false, error: e?.message || String(e) };
+            return { available: false, error: e?.message || String(e), code: 'LLM_NETWORK_ERROR' };
         }
     }
 
@@ -45,13 +46,18 @@ export class OllamaProvider extends LLMProvider {
         super();
         this._baseUrl = _baseUrl(llmCfg);
         this._model = resolveLlmKey('ollama', 'model', llmCfg) || 'qwen3-vl:235b-cloud';
+        this._embedModel = resolveLlmKey('ollama', 'embedModel', llmCfg) || 'nomic-embed-text';
+        const visionOverride = resolveLlmKey('ollama', 'supportsVision', llmCfg);
+        this._supportsVisionOverride =
+            visionOverride === true ? true : visionOverride === false ? false : null;
         const defaults = llmCfg?.defaults || {};
         this._temperature = Number.isFinite(defaults.temperature) ? defaults.temperature : 0.7;
         this._maxTokens = Number.isFinite(defaults.maxTokens) ? defaults.maxTokens : 512;
     }
 
     get supportsVision() {
-        // Matches known vision-model naming patterns:
+        if (this._supportsVisionOverride !== null) return this._supportsVisionOverride;
+        // Regex matches known vision-model naming patterns:
         //   -vl      → qwen-vl, deepseek-vl, internvl
         //   vision   → llava-vision, bakllava
         //   llava    → llava, bakllava
@@ -134,7 +140,7 @@ export class OllamaProvider extends LLMProvider {
 
         const url = `${this._baseUrl}/v1/embeddings`;
         const body = {
-            model: 'nomic-embed-text',
+            model: this._embedModel,
             input: texts,
         };
 

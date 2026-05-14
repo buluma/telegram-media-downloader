@@ -1,4 +1,4 @@
-module github.com/botnick/telegram-media-downloader/seekbar-service
+module github.com/buluma/telegram-media-downloader/seekbar-service
 
 go 1.22
 

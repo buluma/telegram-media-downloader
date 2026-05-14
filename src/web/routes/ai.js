@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import express from 'express';
 import sharp from 'sharp';
 import { loadConfig, watchConfig } from '../../config/manager.js';
+import { maskLlmConfig } from '../../core/llm/llm-config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..', '..');
@@ -20,6 +21,7 @@ import {
     startTagsScan as aiStartTagsScan,
     startOcrScan as aiStartOcrScan,
     startObjectDetectionScan as aiStartObjectDetectionScan,
+    startWd14Scan as aiStartWd14Scan,
 } from '../../core/ai/scan-runner.js';
 import {
     backfillMissingFaceQualityScores,
@@ -57,6 +59,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         if (feature === 'tags') return jobTrackers.aiTags;
         if (feature === 'ocr') return jobTrackers.aiOcr;
         if (feature === 'objects') return jobTrackers.aiObjects;
+        if (feature === 'wd14') return jobTrackers.aiWd14;
         return null;
     }
 
@@ -78,6 +81,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         if (feature === 'tags') return aiStartTagsScan;
         if (feature === 'ocr') return aiStartOcrScan;
         if (feature === 'objects') return aiStartObjectDetectionScan;
+        if (feature === 'wd14') return aiStartWd14Scan;
         return null;
     }
 
@@ -194,6 +198,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                     tags: aiGetScanState('tags'),
                     ocr: aiGetScanState('ocr'),
                     objects: aiGetScanState('objects'),
+                    wd14: aiGetScanState('wd14'),
                 },
                 models: {
                     faces: await (async () => {
@@ -282,6 +287,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                     aiTags: jobTrackers.aiTags.getStatus(),
                     aiOcr: jobTrackers.aiOcr.getStatus(),
                     aiObjects: jobTrackers.aiObjects.getStatus(),
+                    aiWd14: jobTrackers.aiWd14.getStatus(),
                 },
             });
         } catch (e) {
@@ -335,6 +341,19 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             const { getImageText } = await import('../../core/db/faces.js');
             const result = getImageText(Number(req.params.downloadId));
             res.json({ success: true, result });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    router.get('/ai/ocr/words', async (req, res) => {
+        try {
+            const { listOcrWords } = await import('../../core/db/faces.js');
+            const minLength = Math.max(2, Number(req.query.minLength) || 3);
+            const minCount = Math.max(1, Number(req.query.minCount) || 1);
+            const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 100));
+            const words = listOcrWords({ minLength, minCount, limit });
+            res.json({ success: true, words });
         } catch (e) {
             res.status(500).json({ error: e.message });
         }
@@ -484,7 +503,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             if (result.unavailable) {
                 return res.status(503).json({
                     error: result.reason,
-                    code: 'LLM_UNAVAILABLE',
+                    code: result.code || 'LLM_UNAVAILABLE',
                 });
             }
 
@@ -530,7 +549,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
     // branches have been removed. The handler still accepts a `feature`
     // field so older clients fail with a clear `unknown feature` error
     // rather than a silent no-op.
-    const AI_SCAN_FEATURES = new Set(['faces', 'tags', 'ocr', 'objects']);
+    const AI_SCAN_FEATURES = new Set(['faces', 'tags', 'ocr', 'objects', 'wd14']);
 
     // JobTracker integration for AI scans:
     //   The scan-runner module already owns the per-feature state machine
@@ -685,7 +704,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             try {
                 const { loadConfig } = await import('../../config/manager.js');
                 const live = loadConfig();
-                config = live?.advanced?.ai?.llm || {};
+                config = maskLlmConfig(live?.advanced?.ai?.llm || {});
             } catch {}
             res.json({
                 success: true,
@@ -715,10 +734,74 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             if (result.unavailable) {
                 return res.status(503).json({
                     error: result.reason,
-                    code: 'LLM_UNAVAILABLE',
+                    code: result.code || 'LLM_UNAVAILABLE',
                 });
             }
             res.json({ success: true, text: result.text });
+        } catch (e) {
+            res.status(500).json({ error: e?.message || String(e) });
+        }
+    });
+
+    router.post('/ai/llm/generate', async (req, res) => {
+        try {
+            const { prompt, systemPrompt, model, temperature, maxTokens } = req.body || {};
+            if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
+                return res
+                    .status(400)
+                    .json({ error: 'prompt is required', code: 'MISSING_PROMPT' });
+            }
+            if (prompt.length > 32_000) {
+                return res
+                    .status(400)
+                    .json({ error: 'prompt too long (max 32000 chars)', code: 'PROMPT_TOO_LONG' });
+            }
+            const result = await llm.generate({
+                prompt: prompt.trim(),
+                systemPrompt,
+                model,
+                temperature,
+                maxTokens,
+            });
+            if (result.unavailable) {
+                return res
+                    .status(503)
+                    .json({ error: result.reason, code: result.code || 'LLM_UNAVAILABLE' });
+            }
+            res.json({ success: true, text: result.text, finishReason: result.finishReason });
+        } catch (e) {
+            res.status(500).json({ error: e?.message || String(e) });
+        }
+    });
+
+    router.post('/ai/llm/chat', async (req, res) => {
+        try {
+            const { messages, model, temperature, maxTokens } = req.body || {};
+            if (!Array.isArray(messages) || !messages.length) {
+                return res
+                    .status(400)
+                    .json({ error: 'messages array is required', code: 'MISSING_MESSAGES' });
+            }
+            if (messages.length > 100) {
+                return res
+                    .status(400)
+                    .json({ error: 'too many messages (max 100)', code: 'TOO_MANY_MESSAGES' });
+            }
+            for (const msg of messages) {
+                if (!msg?.role || typeof msg.content !== 'string') {
+                    return res.status(400).json({
+                        error: 'each message must have role and string content',
+                        code: 'INVALID_MESSAGE',
+                    });
+                }
+            }
+            const result = await llm.chat({ messages, model, temperature, maxTokens });
+            if (result.unavailable) {
+                return res
+                    .status(503)
+                    .json({ error: result.reason, code: result.code || 'LLM_UNAVAILABLE' });
+            }
+            res.json({ success: true, text: result.text, finishReason: result.finishReason });
         } catch (e) {
             res.status(500).json({ error: e?.message || String(e) });
         }
@@ -748,13 +831,20 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                       .filter(Boolean)
                 : undefined;
 
-            // Run cross-modal search
+            // Run cross-modal search — wire LLM text embedding as fallback
+            // for when the CLIP sidecar is unavailable.
             const { crossModalSearch } = await import('../../core/ai/search.js');
+            const { embed: llmEmbedFn } = await import('../../core/llm/index.js');
+            const llmEmbed = async (texts) => {
+                const r = await llmEmbedFn({ texts });
+                return Array.isArray(r) ? r : null;
+            };
 
             const result = await crossModalSearch(query, {
                 topK,
                 minScore,
                 fileTypes,
+                llmEmbed,
             });
 
             res.json({
@@ -1382,7 +1472,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         try {
             // Cancel any in-flight scan before nuking the artefacts.
             let cancelled = 0;
-            for (const f of ['embed', 'tags', 'faces', 'ocr', 'objects']) {
+            for (const f of ['embed', 'tags', 'faces', 'ocr', 'objects', 'wd14']) {
                 if (aiCancelScan(f)) cancelled += 1;
             }
             // Settle one tick so the scan loops see the abort signal.
@@ -1391,7 +1481,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             log({
                 source: 'ai',
                 level: 'info',
-                msg: `re-index — wiped embeddings=${r.embeddings} tags=${r.tags} faces=${r.faces} people=${r.people} text=${r.text} objects=${r.objects}; re-queued=${r.requeued}; cancelled-scans=${cancelled}`,
+                msg: `re-index — wiped embeddings=${r.embeddings} tags=${r.tags} wd14Tags=${r.wd14Tags} faces=${r.faces} people=${r.people} text=${r.text} objects=${r.objects}; re-queued=${r.requeued}; cancelled-scans=${cancelled}`,
             });
             try {
                 broadcast({ type: 'ai_reindex', ...r });

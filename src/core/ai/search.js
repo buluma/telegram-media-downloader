@@ -1,12 +1,13 @@
 /**
  * Cross-modal search engine.
  *
- * Combines five signal sources into one ranked result set:
+ * Combines six signal sources into one ranked result set:
  *   1. **Semantic** — CLIP image embedding cosine similarity (sidecar)
  *   2. **Tags** — CLIP zero-shot tag matches (image_tags table)
  *   3. **Objects** — YOLO detected object matches (image_objects table)
- *   4. **Text / OCR** — OCR text substring match (image_text table)
- *   5. **Filename** — keyword match on file_name / group_name (downloads)
+ *   4. **People** — labelled person matches (faces → people table)
+ *   5. **Text / OCR** — OCR text substring match (image_text table)
+ *   6. **Filename** — keyword match on file_name / group_name (downloads)
  *
  * Each matcher produces scored download-ID sets; the combiner normalises
  * and merges them via a weighted sum. Empty/unavailable matchers are
@@ -14,6 +15,7 @@
  */
 
 import { getDb } from '../db.js';
+import { searchTextEmbeddings } from '../db/faces.js';
 
 // ---- Default weights (tunable via opts) ----------------------------------
 
@@ -21,6 +23,7 @@ const DEFAULT_WEIGHTS = {
     semantic: 1.0,
     tags: 0.6,
     objects: 0.4,
+    people: 0.5,
     text: 0.3,
     filename: 0.3,
 };
@@ -37,48 +40,80 @@ const DEFAULT_WEIGHTS = {
  * @param {object} [opts.weights] - Per-modality weight overrides
  * @param {string[]} [opts.fileTypes] - Filter by file type(s)
  * @param {boolean} [opts.skipSemantic=false] - Skip embedding search
- * @returns {Promise<{ query, results: object[], modalities: object }>}
+ * @param {Function} [opts.llmEmbed] - Optional async (texts: string[]) => number[][] | null.
+ *   Used as fallback text embedding source when the CLIP sidecar is unavailable. Results are
+ *   matched against LLM text embeddings stored in text_embeddings (see buildMetadataText).
+ * @returns {Promise<{ query, results: object[], modalities: string[], excludedTokens?: string[] }>}
  */
 export async function crossModalSearch(query, opts = {}) {
     const topK = Math.max(1, Math.min(500, Number(opts.topK) || 50));
     const minScore = Number(opts.minScore) || 0;
     const weights = { ...DEFAULT_WEIGHTS, ...opts.weights };
     const skipSemantic = opts.skipSemantic === true;
+    const llmEmbed = typeof opts.llmEmbed === 'function' ? opts.llmEmbed : null;
 
-    // Tokenise the query into lower-cased keywords
-    const tokens = _tokenise(query);
-    if (!tokens.length) return { query, results: [], modalities: {} };
+    // Tokenise the query into include / exclude lists
+    const { include: tokens, exclude: excludedTokens } = _tokenise(query);
+    if (!tokens.length) return { query, results: [], modalities: [] };
 
     const db = getDb();
     const resultsByModality = {};
     let semanticEmbedding = null;
+    // Track which semantic path fired so the exclusion pass uses the same source.
+    let semanticSource = null;
+
+    // Include tokens joined for embedding — exclude tokens are NOT included so
+    // their text doesn't pollute the embedding of the positive concept.
+    const includeQuery = tokens.join(' ');
 
     // Run matchers in parallel where possible
     const tasks = [];
 
-    // 1. Semantic (async — needs sidecar call for text embedding)
+    // 1. Semantic (async — try CLIP sidecar first, fall back to LLM text embeddings)
     if (!skipSemantic) {
         tasks.push(
             (async () => {
+                // Primary path: CLIP sidecar embeds the include tokens into CLIP space,
+                // then we cosine-sim against stored image embeddings.
                 try {
                     const { embedText } = await import('./faces-client.js');
-                    const r = await embedText(query);
+                    const r = await embedText(includeQuery);
                     if (r?.embedding?.length) {
                         semanticEmbedding = Float32Array.from(r.embedding);
+                        semanticSource = 'clip';
                         resultsByModality.semantic = _matchSemantic(
                             db,
                             semanticEmbedding,
                             opts.fileTypes,
                         );
+                        return; // sidecar succeeded — skip LLM fallback
                     }
                 } catch {
-                    // sidecar unavailable — skip
+                    // sidecar unavailable — try LLM fallback below
+                }
+
+                // Fallback: LLM text embedding (nomic-embed-text / text-embedding-3-small).
+                // Matches against per-download metadata summaries stored in text_embeddings.
+                // Only fires if llmEmbed was supplied by the caller.
+                if (!llmEmbed) return;
+                try {
+                    const vecs = await llmEmbed([includeQuery]);
+                    if (Array.isArray(vecs) && vecs[0]?.length) {
+                        semanticEmbedding = Float32Array.from(vecs[0]);
+                        semanticSource = 'llm';
+                        resultsByModality.semantic = _matchTextSemantic(
+                            semanticEmbedding,
+                            opts.fileTypes,
+                        );
+                    }
+                } catch {
+                    // LLM also unavailable — skip semantic modality entirely
                 }
             })(),
         );
     }
 
-    // 2-5. Local DB matchers (fast, run in parallel)
+    // 2-6. Local DB matchers (fast, run in parallel)
     tasks.push(
         Promise.resolve().then(() => {
             resultsByModality.tags = _matchTags(db, tokens, opts.fileTypes);
@@ -87,6 +122,11 @@ export async function crossModalSearch(query, opts = {}) {
     tasks.push(
         Promise.resolve().then(() => {
             resultsByModality.objects = _matchObjects(db, tokens, opts.fileTypes);
+        }),
+    );
+    tasks.push(
+        Promise.resolve().then(() => {
+            resultsByModality.people = _matchPeople(db, tokens, opts.fileTypes);
         }),
     );
     tasks.push(
@@ -102,17 +142,98 @@ export async function crossModalSearch(query, opts = {}) {
 
     await Promise.allSettled(tasks);
 
+    // Exclusion pass — collect IDs matching any exclude token, then remove
+    // them from every modality result (including the semantic map).
+    if (excludedTokens.length) {
+        const excluded = new Set();
+
+        // Text-based matchers (tags, objects, people, OCR, filename)
+        const exResults = await Promise.allSettled([
+            Promise.resolve(_matchTags(db, excludedTokens, opts.fileTypes)),
+            Promise.resolve(_matchObjects(db, excludedTokens, opts.fileTypes)),
+            Promise.resolve(_matchPeople(db, excludedTokens, opts.fileTypes)),
+            Promise.resolve(_matchText(db, excludedTokens, opts.fileTypes)),
+            Promise.resolve(_matchFilename(db, excludedTokens, opts.fileTypes)),
+        ]);
+        for (const r of exResults) {
+            if (r.status === 'fulfilled' && r.value) {
+                for (const id of r.value.keys()) excluded.add(id);
+            }
+        }
+
+        // Semantic exclusion — embed the exclude tokens in the same space as the
+        // include query so semantic-only results are pruned too. A result that
+        // has no tag/OCR/filename signal for the excluded concept but whose
+        // stored embedding is close to it must still be removed.
+        if (resultsByModality.semantic) {
+            if (semanticSource === 'clip') {
+                try {
+                    const { embedText } = await import('./faces-client.js');
+                    for (const tok of excludedTokens) {
+                        try {
+                            const r = await embedText(tok);
+                            if (r?.embedding?.length) {
+                                const exMap = _matchSemantic(
+                                    db,
+                                    Float32Array.from(r.embedding),
+                                    opts.fileTypes,
+                                );
+                                for (const id of exMap.keys()) excluded.add(id);
+                            }
+                        } catch {
+                            /* skip this token if sidecar fails mid-loop */
+                        }
+                    }
+                } catch {
+                    /* sidecar went away between include and exclusion — skip */
+                }
+            } else if (semanticSource === 'llm' && llmEmbed) {
+                try {
+                    const exVecs = await llmEmbed(excludedTokens);
+                    for (const vec of exVecs ?? []) {
+                        if (!Array.isArray(vec) || !vec.length) continue;
+                        const exMap = _matchTextSemantic(Float32Array.from(vec), opts.fileTypes);
+                        for (const id of exMap.keys()) excluded.add(id);
+                    }
+                } catch {
+                    /* LLM unavailable for exclusion — skip semantic exclusion */
+                }
+            }
+        }
+
+        for (const map of Object.values(resultsByModality)) {
+            if (map) for (const id of excluded) map.delete(id);
+        }
+    }
+
     // Count how many modalities were active
     const activeModalities = Object.keys(resultsByModality).filter(
         (k) => resultsByModality[k] && resultsByModality[k].size > 0,
     );
 
     if (!activeModalities.length) {
-        return { query, results: [], modalities: [] };
+        return {
+            query,
+            results: [],
+            modalities: [],
+            ...(excludedTokens.length ? { excludedTokens } : {}),
+        };
     }
 
     // Combine scores across all active modalities
     const combined = _combineScores(resultsByModality, weights, activeModalities);
+
+    // Normalise so the highest-scoring result = 1.0. Preserves relative
+    // ranking while preventing scores from feeling arbitrarily low when
+    // only one modality fires or IDs match only a subset of modalities.
+    if (combined.size > 0) {
+        const max = Math.max(...combined.values());
+        if (max > 0 && max < 1) {
+            for (const [id, score] of combined) {
+                combined.set(id, score / max);
+            }
+        }
+    }
 
     // Build final result list sorted by combined score
     const entries = [...combined.entries()]
@@ -121,7 +242,12 @@ export async function crossModalSearch(query, opts = {}) {
         .slice(0, topK);
 
     if (!entries.length) {
-        return { query, results: [], modalities: activeModalities };
+        return {
+            query,
+            results: [],
+            modalities: activeModalities,
+            ...(excludedTokens.length ? { excludedTokens } : {}),
+        };
     }
 
     // Fetch file metadata for the matched download IDs
@@ -157,17 +283,34 @@ export async function crossModalSearch(query, opts = {}) {
         query,
         results,
         modalities: activeModalities,
+        ...(excludedTokens.length ? { excludedTokens } : {}),
     };
 }
 
 // ---- Tokeniser ----------------------------------------------------------
 
+/**
+ * Split a query string into include and exclude token lists.
+ * Tokens prefixed with `-` are exclusions (e.g. `beach -vacation`).
+ * Returns `{ include: string[], exclude: string[] }`.
+ */
 function _tokenise(text) {
-    return String(text || '')
+    const include = [];
+    const exclude = [];
+    String(text || '')
         .toLowerCase()
+        .replace(/_/g, ' ')
         .replace(/[^a-z0-9\s-]/g, '')
         .split(/\s+/)
-        .filter(Boolean);
+        .filter(Boolean)
+        .forEach((tok) => {
+            if (tok.startsWith('-') && tok.length > 1) {
+                exclude.push(tok.slice(1));
+            } else {
+                include.push(tok);
+            }
+        });
+    return { include, exclude };
 }
 
 // ---- Individual matchers ------------------------------------------------
@@ -220,9 +363,12 @@ function _matchSemantic(db, embedding, fileTypes) {
             row.embedding.byteLength / 4,
         );
         if (emb.length !== dim) continue;
+        let embNorm = 0;
+        for (let i = 0; i < dim; i++) embNorm += emb[i] * emb[i];
+        embNorm = Math.sqrt(embNorm) || 1;
         let dot = 0;
         for (let i = 0; i < dim; i++) dot += qn[i] * emb[i];
-        const score = Math.max(0, Math.min(1, dot));
+        const score = Math.max(0, Math.min(1, dot / embNorm));
         if (score > 0) {
             results.set(Number(row.download_id), score);
         }
@@ -231,33 +377,57 @@ function _matchSemantic(db, embedding, fileTypes) {
 }
 
 /**
- * Tag matcher — find images whose CLIP tags match any query token.
+ * LLM text-embedding semantic matcher — cosine similarity against stored
+ * LLM text embeddings (text_embeddings table). Used when the CLIP sidecar
+ * is unavailable. Returns Map<downloadId, score>.
+ */
+function _matchTextSemantic(embedding, fileTypes) {
+    const results = searchTextEmbeddings(embedding, {
+        topK: 500,
+        minScore: 0,
+        fileTypes: fileTypes || null,
+    });
+    const map = new Map();
+    for (const { id, score } of results) {
+        if (score > 0) map.set(id, score);
+    }
+    return map;
+}
+
+/**
+ * Tag matcher — find images whose CLIP or WD14 tags match any query token.
+ * Queries both `image_tags` (CLIP) and `image_tags_wd14` (WD14) and returns
+ * the highest-scoring match per download ID.
  * Returns Map<downloadId, score> where score = max matching tag score.
  */
 function _matchTags(db, tokens, fileTypes) {
     const likeClauses = tokens.map(() => `t.tag LIKE ?`);
-    let sql = `SELECT DISTINCT t.download_id, t.score
-                 FROM image_tags t
-                 JOIN downloads d ON d.id = t.download_id
-                WHERE (${likeClauses.join(' OR ')})
-                  AND t.score >= 0.1`;
-    const params = [];
-    for (const tok of tokens) params.push(`%${tok}%`);
-    if (Array.isArray(fileTypes) && fileTypes.length) {
-        const fps = fileTypes.map(() => '?').join(',');
-        sql += ` AND d.file_type IN (${fps})`;
-        params.push(...fileTypes);
-    }
-
-    const rows = db.prepare(sql).all(...params);
     const results = new Map();
-    for (const row of rows) {
-        const id = Number(row.download_id);
-        const score = Math.max(0, Math.min(1, Number(row.score) || 0));
-        if (!results.has(id) || score > results.get(id)) {
-            results.set(id, score);
+
+    for (const table of ['image_tags', 'image_tags_wd14']) {
+        let sql = `SELECT DISTINCT t.download_id, t.score
+                     FROM ${table} t
+                     JOIN downloads d ON d.id = t.download_id
+                    WHERE (${likeClauses.join(' OR ')})
+                      AND t.score >= 0.1`;
+        const params = [];
+        for (const tok of tokens) params.push(`%${tok}%`);
+        if (Array.isArray(fileTypes) && fileTypes.length) {
+            const fps = fileTypes.map(() => '?').join(',');
+            sql += ` AND d.file_type IN (${fps})`;
+            params.push(...fileTypes);
+        }
+
+        const rows = db.prepare(sql).all(...params);
+        for (const row of rows) {
+            const id = Number(row.download_id);
+            const score = Math.max(0, Math.min(1, Number(row.score) || 0));
+            if (!results.has(id) || score > results.get(id)) {
+                results.set(id, score);
+            }
         }
     }
+
     return results;
 }
 
@@ -288,6 +458,36 @@ function _matchObjects(db, tokens, fileTypes) {
         if (!results.has(id) || score > results.get(id)) {
             results.set(id, score);
         }
+    }
+    return results;
+}
+
+/**
+ * People matcher — find images whose detected faces belong to a person
+ * whose label matches any query token.
+ * Returns Map<downloadId, score> where score = 1.0 for any match.
+ */
+function _matchPeople(db, tokens, fileTypes) {
+    const likeClauses = tokens.map(() => `p.label LIKE ?`);
+    let sql = `SELECT DISTINCT f.download_id
+                 FROM faces f
+                 JOIN people p ON p.id = f.person_id
+                 JOIN downloads d ON d.id = f.download_id
+                WHERE (${likeClauses.join(' OR ')})
+                  AND p.label IS NOT NULL
+                  AND p.label != ''`;
+    const params = [];
+    for (const tok of tokens) params.push(`%${tok}%`);
+    if (Array.isArray(fileTypes) && fileTypes.length) {
+        const fps = fileTypes.map(() => '?').join(',');
+        sql += ` AND d.file_type IN (${fps})`;
+        params.push(...fileTypes);
+    }
+
+    const rows = db.prepare(sql).all(...params);
+    const results = new Map();
+    for (const row of rows) {
+        results.set(Number(row.download_id), 1.0);
     }
     return results;
 }

@@ -36,13 +36,17 @@ import {
 import {
     addImageObjects,
     countUnscannedTags,
+    countUnscannedWd14,
     getUnscannedOcrBatch,
     getUnscannedObjectBatch,
     getUnscannedTagsBatch,
+    getUnscannedWd14Batch,
+    setWd14Tags,
 } from '../db/faces.js';
 import { clusterFaces, computeFaceQualityScore, detectFaces } from './faces.js';
 import { resolveFacesValue } from './faces-config.js';
 import { detectFacesBatch, getSidecarUrl } from './faces-client.js';
+import { getVocabularyPreset } from './tag-vocabulary.js';
 import { hasFfmpeg, resolveFfmpegBin } from '../thumbs.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -76,6 +80,7 @@ function _blobToF32(blob) {
 // Per-feature state.
 const _scans = {
     faces: _emptyState(),
+    wd14: _emptyState(),
 };
 
 function _emptyState() {
@@ -727,9 +732,14 @@ export function startTagsScan(cfg, onProgress, onDone, onLog) {
                 );
             }
 
-            // Resolve custom tag labels from config. Falls back to the
-            // sidecar's default vocabulary when empty.
-            const tagLabels = Array.isArray(cfg.tagLabels) ? cfg.tagLabels.filter(Boolean) : [];
+            // Resolve tag vocabulary: explicit list > named preset > sidecar default.
+            const presetLabels = cfg.tagVocabularyPreset
+                ? (getVocabularyPreset(String(cfg.tagVocabularyPreset)) ?? [])
+                : [];
+            const tagLabels =
+                Array.isArray(cfg.tagLabels) && cfg.tagLabels.length
+                    ? cfg.tagLabels.filter(Boolean)
+                    : presetLabels;
 
             const batchSize = Math.max(1, Math.min(50, Number(cfg.batchSize) || 16));
 
@@ -1040,8 +1050,105 @@ async function _detectObjectsOne(sidecarUrl, absPath, confidence, log) {
     }
 }
 
+/**
+ * Start WD14 tagger scan. Processes unscanned images through the sidecar's
+ * `/tag-wd14` endpoint (WD14 ONNX model trained on e621/Danbooru taxonomy)
+ * and stores results in `image_tags_wd14`.
+ *
+ * Single-flight: a second call while one is running returns
+ * `{ alreadyRunning: true }`.
+ */
+export function startWd14Scan(cfg, onProgress, onDone, onLog) {
+    return _runScan(
+        'wd14',
+        cfg,
+        async (state, signal, bump, log, cfg) => {
+            const fileTypes = Array.isArray(cfg.fileTypes) ? cfg.fileTypes : ['photo'];
+
+            const total = countUnscannedWd14({ fileTypes });
+            state.total = total;
+            bump();
+            log('info', `wd14 scan: ${total} files to tag`);
+
+            if (total === 0) {
+                log('info', 'wd14 scan: nothing to tag');
+                return;
+            }
+
+            const sidecarUrl = getSidecarUrl();
+            if (!sidecarUrl) {
+                throw new Error(
+                    'Python sidecar is not available — cannot run WD14 tagger. ' +
+                        'Check the AI maintenance page for sidecar status.',
+                );
+            }
+
+            const batchSize = Math.max(1, Math.min(50, Number(cfg.batchSize) || 16));
+            const minScore = Math.max(0, Math.min(1, Number(cfg.wd14MinScore) || 0.35));
+
+            while (!signal.aborted) {
+                const batch = getUnscannedWd14Batch({ fileTypes, limit: batchSize });
+                if (!batch.length) break;
+
+                for (const row of batch) {
+                    if (signal.aborted) break;
+                    const abs = _resolveAbs(row.file_path);
+                    let tags = [];
+                    if (abs) {
+                        try {
+                            tags = await _tagWd14One(sidecarUrl, abs, minScore, log);
+                        } catch (e) {
+                            log('warn', `wd14 tagging failed for id=${row.id}: ${e?.message || e}`);
+                        }
+                    }
+                    setWd14Tags(row.id, Array.isArray(tags) ? tags : []);
+                    state.scanned += 1;
+                    bump();
+                    await new Promise((r) => setImmediate(r));
+                }
+            }
+            log('info', `wd14 scan: finished — ${state.scanned} files tagged`);
+        },
+        onProgress,
+        onDone,
+        onLog,
+    );
+}
+
+/**
+ * Call the Python sidecar's `POST /tag-wd14` for one image.
+ * Returns `[{tag, score}, …]` or an empty array on failure.
+ */
+async function _tagWd14One(sidecarUrl, absPath, minScore, log) {
+    const url = `${sidecarUrl.replace(/\/+$/, '')}/tag-wd14`;
+    const doFetch = async (body) =>
+        fetch(url, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body),
+            signal: AbortSignal.timeout(60000),
+        });
+    try {
+        let res = await doFetch({ path: absPath, min_score: minScore });
+        if (res.status === 403) {
+            const b64 = await _readAsBase64(absPath);
+            res = await doFetch({ image_b64: b64, min_score: minScore });
+        }
+        if (!res.ok) {
+            log('warn', `tag-wd14 endpoint returned ${res.status} for ${absPath}`);
+            return [];
+        }
+        const data = await res.json();
+        return Array.isArray(data?.tags) ? data.tags : [];
+    } catch (e) {
+        log('warn', `tag-wd14 request failed for ${absPath}: ${e?.message || e}`);
+        return [];
+    }
+}
+
 /** For tests — clear in-memory state so the next test starts fresh. */
 export function _resetForTests() {
     _scans.faces = _emptyState();
     _scans.tags = _emptyState();
+    _scans.wd14 = _emptyState();
 }

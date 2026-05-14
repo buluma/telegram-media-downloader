@@ -11,11 +11,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/botnick/telegram-media-downloader/seekbar-service/internal/api"
-	"github.com/botnick/telegram-media-downloader/seekbar-service/internal/config"
-	"github.com/botnick/telegram-media-downloader/seekbar-service/internal/ffmpeg"
-	"github.com/botnick/telegram-media-downloader/seekbar-service/internal/logx"
-	"github.com/botnick/telegram-media-downloader/seekbar-service/internal/worker"
+	"github.com/buluma/telegram-media-downloader/seekbar-service/internal/api"
+	"github.com/buluma/telegram-media-downloader/seekbar-service/internal/config"
+	"github.com/buluma/telegram-media-downloader/seekbar-service/internal/ffmpeg"
+	"github.com/buluma/telegram-media-downloader/seekbar-service/internal/logx"
+	"github.com/buluma/telegram-media-downloader/seekbar-service/internal/worker"
 )
 
 func main() {

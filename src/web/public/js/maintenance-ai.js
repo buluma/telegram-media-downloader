@@ -35,6 +35,7 @@ let _tagListCache = [];
 let _tagSelected = '';
 let _tagFilterQuery = '';
 let _tagSortMode = 'count_desc';
+let _ocrWordFilter = ''; // when set, only show photos whose ocr_text contains this word
 let _tagPhotosTotal = 0;
 let _tagPhotosPage = 1;
 let _tagPhotosTotalPages = 1;
@@ -233,6 +234,9 @@ async function _renderTagBrowser(forceReload = true) {
             )
             .join('');
 
+        // ---- OCR words chips ----
+        _renderOcrChips();
+
         // Wire chip clicks — load photos for the selected tag
         chips.querySelectorAll('.tag-chip').forEach((btn) => {
             btn.addEventListener('click', () => {
@@ -242,6 +246,8 @@ async function _renderTagBrowser(forceReload = true) {
                 btn.setAttribute('aria-pressed', 'true');
                 if (tag) {
                     _tagSelected = tag;
+                    _ocrWordFilter = '';
+                    _renderOcrChips();
                     _loadTagPhotos(tag);
                 }
             });
@@ -322,16 +328,30 @@ async function _loadTagPhotoPage() {
             `/api/ai/tags/photos?tag=${encodeURIComponent(tag)}&limit=${_tagPhotosLimit}&offset=${offset}`,
         );
         const files = Array.isArray(r?.files) ? r.files : [];
-        _tagCurrentRows = files;
-        _tagPhotosTotal = Number(r?.total) || files.length;
-        _tagPhotosTotalPages = Math.max(1, Math.ceil(_tagPhotosTotal / _tagPhotosLimit));
-        if (!files.length) {
-            photos.innerHTML =
-                '<p class="text-[11px] text-tg-textSecondary col-span-full text-center py-6">No photos with this tag.</p>';
+        let filtered = files;
+        if (_ocrWordFilter) {
+            const lowerWord = _ocrWordFilter.toLowerCase();
+            filtered = files.filter((f) => {
+                const txt = (f.ocr_text || '').toLowerCase();
+                return txt.includes(lowerWord);
+            });
+        }
+        _tagCurrentRows = filtered;
+        if (_ocrWordFilter) {
+            // OCR filter is client-side only; server total reflects unfiltered
+            // pages so use the filtered count to avoid phantom pages.
+            _tagPhotosTotal = filtered.length;
+            _tagPhotosTotalPages = 1;
+        } else {
+            _tagPhotosTotal = Number(r?.total) || files.length;
+            _tagPhotosTotalPages = Math.max(1, Math.ceil(_tagPhotosTotal / _tagPhotosLimit));
+        }
+        if (!filtered.length) {
+            photos.innerHTML = `<p class="text-[11px] text-tg-textSecondary col-span-full text-center py-6">${_ocrWordFilter ? `No photos with this tag containing "${escapeHtml(_ocrWordFilter)}".` : 'No photos with this tag.'}</p>`;
             _syncTagPager();
             return;
         }
-        photos.innerHTML = files.map((f, i) => _renderTagPhotoTile(f, i)).join('');
+        photos.innerHTML = filtered.map((f, i) => _renderTagPhotoTile(f, i)).join('');
         _wireTagPhotoClicks();
         _syncTagPager();
     } catch (e) {
@@ -344,6 +364,7 @@ async function _loadTagPhotoPage() {
 function _renderTagPhotoTile(file, index) {
     const thumb = `/api/thumbs/${encodeURIComponent(file.id)}?w=320`;
     const scorePct = file.tag_score ? Math.round(file.tag_score * 100) : 0;
+    const ocrSnippet = file.ocr_text ? String(file.ocr_text).slice(0, 100).trim() : '';
     return `<button type="button" data-tag-tile-index="${index}" data-id="${file.id}"
             class="nsfw-tile group relative aspect-square rounded-md overflow-hidden bg-tg-bg/40 focus:outline-none focus:ring-2 focus:ring-tg-blue">
         <img loading="lazy" decoding="async"
@@ -351,6 +372,7 @@ function _renderTagPhotoTile(file, index) {
              src="${escapeHtml(thumb)}" alt=""
              onerror="this.style.display='none'">
         <span class="hidden sm:block absolute top-1 right-1 px-1.5 py-0.5 text-[10px] font-mono rounded bg-tg-blue/85 text-white tabular-nums">${scorePct}%</span>
+        ${ocrSnippet ? `<span class="absolute bottom-1 left-1 right-1 px-1.5 py-0.5 text-[9px] leading-tight rounded bg-black/60 text-white/80 truncate">${escapeHtml(ocrSnippet)}</span>` : ''}
         <span class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 group-focus:opacity-100 transition flex items-end p-2 pointer-events-none">
             <span class="text-[11px] text-white truncate w-full text-left">${escapeHtml(file.file_name || '')}</span>
         </span>
@@ -427,6 +449,57 @@ function _moveTagChipFocus(currentBtn, dir) {
     if (next < 0) next = list.length - 1;
     if (next >= list.length) next = 0;
     list[next]?.focus();
+}
+
+// ---- OCR word chips -----------------------------------------------------
+
+let _ocrWordsCache = [];
+
+async function _renderOcrChips() {
+    const section = $('#ai-tag-ocr-section');
+    const chips = $('#ai-tag-ocr-chips');
+    const countEl = $('#ai-tag-ocr-count');
+    const clearBtn = $('#ai-tag-ocr-clear');
+    if (!chips) return;
+    try {
+        if (!_ocrWordsCache.length) {
+            const r = await api.get('/api/ai/ocr/words?minLength=3&minCount=2&limit=60');
+            _ocrWordsCache = Array.isArray(r?.words) ? r.words : [];
+        }
+        if (!_ocrWordsCache.length) {
+            section?.classList.add('hidden');
+            return;
+        }
+        section?.classList.remove('hidden');
+        if (countEl) countEl.textContent = `(${_ocrWordsCache.length})`;
+        if (clearBtn) {
+            clearBtn.classList.toggle('hidden', !_ocrWordFilter);
+            clearBtn.onclick = () => {
+                _ocrWordFilter = '';
+                _renderOcrChips();
+                if (_tagSelected) _loadTagPhotos(_tagSelected);
+            };
+        }
+        chips.innerHTML = _ocrWordsCache
+            .map(
+                (w) =>
+                    `<button type="button" class="tg-btn-input text-[10px] px-2 py-0.5 inline-flex items-center gap-1 ocr-chip${_ocrWordFilter === w.word ? ' active' : ''}" data-word="${escapeHtml(w.word)}">
+                        ${escapeHtml(w.word)}
+                        <span class="text-[9px] text-tg-textSecondary tabular-nums">${w.cnt}</span>
+                    </button>`,
+            )
+            .join('');
+        chips.querySelectorAll('.ocr-chip').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const word = btn.dataset.word;
+                _ocrWordFilter = _ocrWordFilter === word ? '' : word;
+                _renderOcrChips();
+                if (_tagSelected) _loadTagPhotos(_tagSelected);
+            });
+        });
+    } catch {
+        section?.classList.add('hidden');
+    }
 }
 
 // ---- Tag suggestions ---------------------------------------------------
@@ -1292,9 +1365,106 @@ async function _reindexEmbeddings() {
     }
 }
 
-// ---- Semantic search results (stored for lightbox navigation) -----------
-let _searchResults = [];
-let _searchQuery = '';
+// ---- Shared search service for two independent grids -------------------
+// Each grid stores its own results + query via dataset. The lightbox
+// opener reads from the parent grid, so the embedding pane and unified
+// bar never clobber each other's state.
+
+/**
+ * Shared search-result renderer. Fills a grid with thumbnail tiles and
+ * writes a meta line with result count, query, and modality breakdown.
+ * Tiles open the media viewer for browsing.
+ */
+function _renderSearchResults(results, query, modalities, grid, meta) {
+    // Store per-grid so two grids don't share state
+    grid.dataset.searchResults = JSON.stringify(results);
+    grid.dataset.searchQuery = query;
+
+    if (!results.length) {
+        grid.classList.remove('hidden');
+        grid.innerHTML = `<p class="text-[11px] text-tg-textSecondary col-span-full text-center py-6">No matches for &quot;${escapeHtml(query)}&quot;. Try a different query.</p>`;
+        if (meta) {
+            meta.classList.remove('hidden');
+            meta.textContent = `0 results for &quot;${escapeHtml(query)}&quot;`;
+        }
+        return;
+    }
+
+    grid.classList.remove('hidden');
+    grid.innerHTML = results
+        .map(
+            (res, i) =>
+                `<button type="button" data-search-idx="${i}" data-id="${res.id}"
+                        class="nsfw-tile group relative aspect-square rounded-md overflow-hidden bg-tg-bg/40 focus:outline-none focus:ring-2 focus:ring-tg-blue">
+            <img loading="lazy" decoding="async"
+                 class="absolute inset-0 w-full h-full object-cover"
+                 src="/api/thumbs/${encodeURIComponent(res.id)}?w=320" alt=""
+                 onerror="this.style.display='none'">
+            <span class="hidden sm:block absolute top-1 right-1 px-1.5 py-0.5 text-[10px] font-mono rounded bg-tg-blue/85 text-white tabular-nums">${String(Math.round(res.score * 100)).padStart(2)}%</span>
+            <span class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 group-focus:opacity-100 transition flex items-end p-2 pointer-events-none">
+                <span class="text-[11px] text-white truncate w-full text-left">${escapeHtml(res.fileName || '')}</span>
+            </span>
+        </button>`,
+        )
+        .join('');
+
+    if (meta) {
+        meta.classList.remove('hidden');
+        const mods =
+            Array.isArray(modalities) && modalities.length
+                ? ` \u2014 via ${modalities.join(', ')}`
+                : '';
+        meta.innerHTML = `${results.length} results for &quot;${escapeHtml(query)}&quot;${mods}`;
+    }
+
+    // Wire click events — open media viewer against this grid's data
+    grid.querySelectorAll('[data-search-idx]').forEach((tile) => {
+        tile.addEventListener('click', () => {
+            const idx = Number(tile.dataset.searchIdx);
+            if (Number.isFinite(idx)) _openSearchLightbox(tile, idx);
+        });
+    });
+}
+
+/**
+ * Open the media viewer for a result tile, reading the parent grid's
+ * own stored data so two grids never cross-contaminate.
+ */
+function _openSearchLightbox(tile, startIndex) {
+    const grid = tile?.closest('[data-search-results]');
+    if (!grid) return;
+    let rows;
+    try {
+        rows = JSON.parse(grid.dataset.searchResults || '[]');
+    } catch {
+        return;
+    }
+    if (!Array.isArray(rows) || !rows.length) return;
+    const query = grid.dataset.searchQuery || '';
+    const files = rows.map((row) => {
+        const sizeMb = row.fileSize ? (row.fileSize / (1024 * 1024)).toFixed(1) : '0';
+        return {
+            fullPath: row.filePath || '',
+            type: row.fileType === 'video' ? 'videos' : 'images',
+            name: row.fileName || '',
+            sizeFormatted: `${sizeMb} MB`,
+            modified: row.createdAt || Date.now(),
+            _searchRow: row,
+        };
+    });
+    openMediaViewerForReview(files, startIndex, {
+        actions: [],
+        metaRender: (file) => {
+            const row = file?._searchRow;
+            const score = row?.score ? Math.round(row.score * 100) : 0;
+            return `<span class="inline-flex items-center gap-2">
+                <span class="inline-block w-2.5 h-2.5 rounded-full bg-tg-blue"></span>
+                <span>Search: &quot;${escapeHtml(query)}&quot;</span>
+                <span class="font-mono tabular-nums">${score}%</span>
+            </span>`;
+        },
+    });
+}
 
 /**
  * Run a semantic search and render results as a thumbnail grid (same
@@ -1326,52 +1496,13 @@ async function _runEmbeddingSearch() {
             return;
         }
 
-        const results = Array.isArray(r.results) ? r.results : [];
-        _searchResults = results;
-        _searchQuery = r.query || query;
-
-        if (results.length === 0) {
-            grid.classList.remove('hidden');
-            grid.innerHTML = `<p class="text-[11px] text-tg-textSecondary col-span-full text-center py-6">No matches for &quot;${escapeHtml(_searchQuery)}&quot;. Try a different query.</p>`;
-            return;
-        }
-
-        // Render thumbnail grid
-        grid.classList.remove('hidden');
-        grid.innerHTML = results
-            .map(
-                (res, i) =>
-                    `<button type="button" data-search-idx="${i}" data-id="${res.id}"
-                            class="nsfw-tile group relative aspect-square rounded-md overflow-hidden bg-tg-bg/40 focus:outline-none focus:ring-2 focus:ring-tg-blue">
-                <img loading="lazy" decoding="async"
-                     class="absolute inset-0 w-full h-full object-cover"
-                     src="/api/thumbs/${encodeURIComponent(res.id)}?w=320" alt=""
-                     onerror="this.style.display='none'">
-                <span class="hidden sm:block absolute top-1 right-1 px-1.5 py-0.5 text-[10px] font-mono rounded bg-tg-blue/85 text-white tabular-nums">${String(Math.round(res.score * 100)).padStart(2)}%</span>
-                <span class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 group-focus:opacity-100 transition flex items-end p-2 pointer-events-none">
-                    <span class="text-[11px] text-white truncate w-full text-left">${escapeHtml(res.fileName || '')}</span>
-                </span>
-            </button>`,
-            )
-            .join('');
-
-        // Meta: result count + query + modalities
-        if (meta) {
-            meta.classList.remove('hidden');
-            const mods =
-                Array.isArray(r.modalities) && r.modalities.length
-                    ? ` — via ${r.modalities.join(', ')}`
-                    : '';
-            meta.textContent = `${results.length} results for "${_searchQuery}"${mods}`;
-        }
-
-        // Wire click events — open media viewer
-        grid.querySelectorAll('[data-search-idx]').forEach((tile) => {
-            tile.addEventListener('click', () => {
-                const idx = Number(tile.dataset.searchIdx);
-                if (Number.isFinite(idx)) _openSearchLightbox(idx);
-            });
-        });
+        _renderSearchResults(
+            Array.isArray(r.results) ? r.results : [],
+            r.query || query,
+            r.modalities,
+            grid,
+            meta,
+        );
     } catch (e) {
         grid.classList.remove('hidden');
         grid.innerHTML = `<p class="text-[11px] text-red-400 col-span-full text-center py-6">Error: ${escapeHtml(e?.message || 'unknown')}</p>`;
@@ -1380,32 +1511,107 @@ async function _runEmbeddingSearch() {
     }
 }
 
-function _openSearchLightbox(startIndex) {
-    const rows = _searchResults;
-    if (!rows.length) return;
-    const files = rows.map((row) => {
-        const sizeMb = row.fileSize ? (row.fileSize / (1024 * 1024)).toFixed(1) : '0';
-        return {
-            fullPath: row.filePath || '',
-            type: row.fileType === 'video' ? 'videos' : 'images',
-            name: row.fileName || '',
-            sizeFormatted: `${sizeMb} MB`,
-            modified: row.createdAt || Date.now(),
-            _searchRow: row,
-        };
-    });
-    openMediaViewerForReview(files, startIndex, {
-        actions: [],
-        metaRender: (file) => {
-            const row = file?._searchRow;
-            const score = row?.score ? Math.round(row.score * 100) : 0;
-            return `<span class="inline-flex items-center gap-2">
-                <span class="inline-block w-2.5 h-2.5 rounded-full bg-tg-blue"></span>
-                <span>Search: &quot;${escapeHtml(_searchQuery)}&quot;</span>
-                <span class="font-mono tabular-nums">${score}%</span>
-            </span>`;
-        },
-    });
+// ---- Unified query bar --------------------------------------------------
+
+/** Run a cross-modal search from the unified query bar. */
+async function _runUnifiedQuery() {
+    const input = $('#ai-query-input');
+    const grid = $('#ai-query-grid');
+    const meta = $('#ai-query-meta');
+    const searchBtn = $('#ai-query-search-btn');
+    const albumBtn = $('#ai-query-album-btn');
+    if (!input || !grid || !searchBtn) return;
+
+    const query = String(input.value || '').trim();
+    if (!query) return;
+
+    grid.classList.add('hidden');
+    meta?.classList.add('hidden');
+    grid.innerHTML = '';
+    if (meta) meta.textContent = '';
+    searchBtn.disabled = true;
+    if (albumBtn) {
+        albumBtn.disabled = true;
+        albumBtn.classList.add('opacity-50');
+    }
+
+    try {
+        const qs = new URLSearchParams({ q: query, topK: '50' }).toString();
+        const r = await api.get('/api/ai/search?' + qs);
+        if (!r.success) {
+            grid.classList.remove('hidden');
+            grid.innerHTML = `<p class="text-[11px] text-red-400 col-span-full text-center py-6">Error: ${escapeHtml(r.error || 'unknown')}</p>`;
+            return;
+        }
+
+        const results = Array.isArray(r.results) ? r.results : [];
+
+        // Enable the "Create album" button only when there are results
+        if (albumBtn && results.length) {
+            albumBtn.disabled = false;
+            albumBtn.classList.remove('opacity-50');
+        }
+
+        _renderSearchResults(results, r.query || query, r.modalities, grid, meta);
+    } catch (e) {
+        grid.classList.remove('hidden');
+        grid.innerHTML = `<p class="text-[11px] text-red-400 col-span-full text-center py-6">Error: ${escapeHtml(e?.message || 'unknown')}</p>`;
+    } finally {
+        searchBtn.disabled = false;
+    }
+}
+
+/** Parse the current unified query via LLM and create a smart album. */
+async function _createAlbumFromUnifiedQuery() {
+    const query = String($('#ai-query-input')?.value || '').trim();
+    if (!query) {
+        showToast('Type a query first.', 'info');
+        return;
+    }
+
+    const albumBtn = $('#ai-query-album-btn');
+    if (albumBtn) {
+        albumBtn.disabled = true;
+        albumBtn.classList.add('opacity-50');
+    }
+
+    try {
+        // 1. Parse the natural-language query into a compound rule
+        const parseRes = await api.post('/api/ai/smart-albums/parse', {
+            description: query,
+        });
+        if (!parseRes.success) {
+            throw new Error(parseRes.error || 'parse failed');
+        }
+
+        const rule = parseRes.rule;
+        if (!rule) {
+            throw new Error('LLM returned an empty rule');
+        }
+
+        // 2. Prompt for album name
+        const name = prompt('Smart album name:', query.slice(0, 60));
+        if (!name || !name.trim()) return;
+
+        // 3. Create the smart album
+        const createRes = await api.post('/api/ai/smart-albums', {
+            name: name.trim(),
+            rule,
+        });
+        if (!createRes.success) {
+            throw new Error(createRes.error || 'create failed');
+        }
+
+        showToast(`Smart album &quot;${escapeHtml(name.trim())}&quot; created`, 'success');
+        await _renderSmartAlbums();
+    } catch (e) {
+        showToast(`Album creation failed: ${e?.data?.error || e?.message || 'unknown'}`, 'error');
+    } finally {
+        if (albumBtn) {
+            albumBtn.disabled = false;
+            albumBtn.classList.remove('opacity-50');
+        }
+    }
 }
 
 export async function init() {
@@ -1770,6 +1976,13 @@ function _bindOnce() {
     $('#ai-embeddings-search-btn')?.addEventListener('click', _runEmbeddingSearch);
     $('#ai-embeddings-search-query')?.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') _runEmbeddingSearch();
+    });
+
+    // Unified query bar — one input to search + create albums
+    $('#ai-query-search-btn')?.addEventListener('click', _runUnifiedQuery);
+    $('#ai-query-album-btn')?.addEventListener('click', _createAlbumFromUnifiedQuery);
+    $('#ai-query-input')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') _runUnifiedQuery();
     });
 
     // WebSocket — scan events for all capabilities.

@@ -32,10 +32,10 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
 
-	"github.com/botnick/telegram-media-downloader/seekbar-service/internal/config"
-	"github.com/botnick/telegram-media-downloader/seekbar-service/internal/ffmpeg"
-	"github.com/botnick/telegram-media-downloader/seekbar-service/internal/logx"
-	"github.com/botnick/telegram-media-downloader/seekbar-service/internal/worker"
+	"github.com/buluma/telegram-media-downloader/seekbar-service/internal/config"
+	"github.com/buluma/telegram-media-downloader/seekbar-service/internal/ffmpeg"
+	"github.com/buluma/telegram-media-downloader/seekbar-service/internal/logx"
+	"github.com/buluma/telegram-media-downloader/seekbar-service/internal/worker"
 )
 
 type Server struct {

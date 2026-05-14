@@ -20,7 +20,7 @@ export class OpenAIProvider extends LLMProvider {
     static async probe(llmCfg) {
         const apiKey = _apiKey(llmCfg);
         if (!apiKey) {
-            return { available: false, error: 'no API key configured' };
+            return { available: false, error: 'no API key configured', code: 'LLM_AUTH_FAILED' };
         }
         const baseUrl = _baseUrl(llmCfg);
         try {
@@ -29,11 +29,15 @@ export class OpenAIProvider extends LLMProvider {
                 signal: AbortSignal.timeout(5000),
             });
             if (!res.ok) {
-                return { available: false, error: `http_${res.status}` };
+                const code =
+                    res.status === 401 || res.status === 403
+                        ? 'LLM_AUTH_FAILED'
+                        : 'LLM_PROBE_FAILED';
+                return { available: false, error: `http_${res.status}`, code };
             }
             return { available: true, version: 'api' };
         } catch (e) {
-            return { available: false, error: e?.message || String(e) };
+            return { available: false, error: e?.message || String(e), code: 'LLM_NETWORK_ERROR' };
         }
     }
 
@@ -42,6 +46,8 @@ export class OpenAIProvider extends LLMProvider {
         this._apiKey = _apiKey(llmCfg);
         this._baseUrl = _baseUrl(llmCfg);
         this._model = resolveLlmKey('openai', 'model', llmCfg) || 'gpt-4o-mini';
+        this._embedModel =
+            resolveLlmKey('openai', 'embedModel', llmCfg) || 'text-embedding-3-small';
         const defaults = llmCfg?.defaults || {};
         this._temperature = Number.isFinite(defaults.temperature) ? defaults.temperature : 0.7;
         this._maxTokens = Number.isFinite(defaults.maxTokens) ? defaults.maxTokens : 512;
@@ -83,7 +89,7 @@ export class OpenAIProvider extends LLMProvider {
 
         const url = `${this._baseUrl}/v1/embeddings`;
         const body = {
-            model: 'text-embedding-3-small',
+            model: this._embedModel,
             input: texts,
         };
 

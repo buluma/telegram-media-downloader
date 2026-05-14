@@ -27,6 +27,9 @@ const PROBE_CACHE_TTL_MS = 60_000;
 let _activeProvider = null;
 let _activeProviderId = null;
 
+// Most recent probe failure per provider id.
+const _lastProbeErrors = new Map();
+
 /**
  * Return the list of all known provider classes.
  * @returns {Array<typeof import('./provider.js').LLMProvider>}
@@ -95,6 +98,10 @@ export async function resolveProvider(llmCfg) {
 
     const Provider = PROVIDERS.find((P) => P.id === providerId);
     if (!Provider) {
+        _lastProbeErrors.set(providerId, {
+            code: 'LLM_PROVIDER_NOT_FOUND',
+            error: `unknown provider "${providerId}"`,
+        });
         _activeProvider = null;
         _activeProviderId = providerId;
         return null;
@@ -103,6 +110,10 @@ export async function resolveProvider(llmCfg) {
     // Probe first — don't construct a provider that's unreachable.
     const probeResult = await Provider.probe(llmCfg);
     if (!probeResult.available) {
+        _lastProbeErrors.set(providerId, {
+            code: probeResult.code || 'LLM_PROBE_FAILED',
+            error: probeResult.error,
+        });
         _activeProvider = null;
         _activeProviderId = providerId;
         return null;
@@ -122,6 +133,15 @@ export function resetProvider() {
     _activeProviderId = null;
     _probeCache = null;
     _probeTimestamp = 0;
+    _lastProbeErrors.clear();
+}
+
+/**
+ * Return the last probe failure for a provider id, or null if none recorded.
+ * Shape: { code: string, error: string }
+ */
+export function getLastProviderError(providerId) {
+    return _lastProbeErrors.get(providerId) || null;
 }
 
 /**
@@ -132,10 +152,11 @@ export function getActiveProviderId() {
     return _activeProviderId;
 }
 
-/** Test-only: inject a provider mock. */
+/** Test-only: reset all module state. */
 export function _resetForTests() {
     _activeProvider = null;
     _activeProviderId = null;
     _probeCache = null;
     _probeTimestamp = 0;
+    _lastProbeErrors.clear();
 }

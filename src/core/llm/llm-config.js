@@ -38,9 +38,12 @@ const ENV_MAP = Object.freeze({
     TGDL_LLM_PROVIDER: ['', 'provider'],
     TGDL_LLM_OLLAMA_BASE_URL: ['ollama', 'baseUrl'],
     TGDL_LLM_OLLAMA_MODEL: ['ollama', 'model'],
+    TGDL_LLM_OLLAMA_EMBED_MODEL: ['ollama', 'embedModel'],
+    TGDL_LLM_OLLAMA_SUPPORTS_VISION: ['ollama', 'supportsVision'],
     TGDL_LLM_OPENAI_API_KEY: ['openai', 'apiKey'],
     TGDL_LLM_OPENAI_MODEL: ['openai', 'model'],
     TGDL_LLM_OPENAI_BASE_URL: ['openai', 'baseUrl'],
+    TGDL_LLM_OPENAI_EMBED_MODEL: ['openai', 'embedModel'],
     TGDL_LLM_TEMPERATURE: ['defaults', 'temperature'],
     TGDL_LLM_MAX_TOKENS: ['defaults', 'maxTokens'],
 });
@@ -51,11 +54,13 @@ export const LLM_DEFAULTS = Object.freeze({
     ollama: {
         baseUrl: 'http://localhost:11434',
         model: 'qwen3-vl:235b-cloud',
+        embedModel: 'nomic-embed-text',
     },
     openai: {
         apiKey: '',
         model: 'gpt-4o-mini',
         baseUrl: '',
+        embedModel: 'text-embedding-3-small',
     },
     defaults: {
         temperature: 0.7,
@@ -131,8 +136,8 @@ function _parseEnv(key, raw, fallback) {
         return Number.isFinite(n) ? n : fallback;
     }
 
-    // Boolean keys (provider is a string, not bool)
-    if (key === 'enabled') {
+    // Boolean keys
+    if (key === 'enabled' || key === 'supportsVision') {
         const v = trimmed.toLowerCase();
         if (['1', 'true', 'yes', 'on', 'y'].includes(v)) return true;
         if (['0', 'false', 'no', 'off', 'n'].includes(v)) return false;
@@ -157,6 +162,20 @@ function _deepMerge(target, source) {
             target[key] = source[key];
         }
     }
+}
+
+/**
+ * Return a safe copy of an llm config block with sensitive values masked.
+ * Replaces any non-empty `openai.apiKey` with `'***'` so the value can be
+ * included in API responses or logs without leaking credentials.
+ */
+export function maskLlmConfig(config) {
+    if (!config || typeof config !== 'object') return config;
+    const out = _deepClone(config);
+    if (out.openai?.apiKey) {
+        out.openai.apiKey = '***';
+    }
+    return out;
 }
 
 /** Test-only: dump the env-name map. */
