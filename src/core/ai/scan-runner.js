@@ -1040,6 +1040,23 @@ export function startObjectDetectionScan(cfg, onProgress, onDone, onLog) {
                         // image isn't picked up on the next batch query.
                         if (Array.isArray(objects) && objects.length > 0) {
                             addImageObjects(row.id, objects);
+                            // Mirror detected objects into image_tags so they
+                            // appear in tag browser, semantic search, and smart
+                            // albums without requiring a separate tag scan.
+                            // Dedup by object class — keep highest confidence.
+                            const byClass = new Map();
+                            for (const o of objects) {
+                                if (!o.object || o.object === '_scanned_') continue;
+                                const prev = byClass.get(o.object);
+                                if (!prev || o.confidence > prev)
+                                    byClass.set(o.object, o.confidence);
+                            }
+                            if (byClass.size > 0) {
+                                setImageTags(
+                                    row.id,
+                                    [...byClass.entries()].map(([tag, score]) => ({ tag, score })),
+                                );
+                            }
                         } else {
                             addImageObjects(row.id, [
                                 { object: '_scanned_', confidence: 0, x: 0, y: 0, w: 0, h: 0 },
