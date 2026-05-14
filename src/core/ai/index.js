@@ -87,6 +87,59 @@ const _bgQueueBackfill = [];
 let _bgRunning = false;
 const _BG_QUEUE_CAP = 200;
 
+// ---- Auto-cluster state ---------------------------------------------------
+
+let _autoClusterDebounceTimer = null;
+let _autoClusterIntervalTimer = null;
+// Counts faces detected during the current drain pass; reset each drain.
+let _newFacesInDrain = 0;
+
+async function _fireCluster() {
+    try {
+        const { loadConfig } = await import('../../config/manager.js');
+        const cfg = loadConfig()?.advanced?.ai || {};
+        if (!cfg.enabled || !cfg.autoCluster || !cfg.faceClustering) return;
+        const { isScanRunning, startFacesScan } = await import('./scan-runner.js');
+        if (isScanRunning('faces')) return;
+        startFacesScan(cfg).catch(() => {});
+    } catch {
+        /* config or sidecar unavailable */
+    }
+}
+
+export function _scheduleAutoClusterForTest(cfg) {
+    if (!cfg.autoCluster || !cfg.faceClustering) return;
+    const debounceMs =
+        Number(cfg.autoClusterDebounceMs) > 0 ? Number(cfg.autoClusterDebounceMs) : 60_000;
+    if (_autoClusterDebounceTimer) clearTimeout(_autoClusterDebounceTimer);
+    _autoClusterDebounceTimer = setTimeout(async () => {
+        _autoClusterDebounceTimer = null;
+        await _fireCluster();
+    }, debounceMs);
+    _autoClusterDebounceTimer.unref?.();
+}
+
+// Alias used internally by _drainBg — same function, different name for clarity.
+const _scheduleAutoCluster = _scheduleAutoClusterForTest;
+
+export function startAutoCluster({ intervalMin = 60 } = {}) {
+    stopAutoCluster();
+    const ms = Math.max(1000, intervalMin * 60 * 1000);
+    _autoClusterIntervalTimer = setInterval(() => _fireCluster(), ms);
+    _autoClusterIntervalTimer.unref?.();
+}
+
+export function stopAutoCluster() {
+    if (_autoClusterIntervalTimer) {
+        clearInterval(_autoClusterIntervalTimer);
+        _autoClusterIntervalTimer = null;
+    }
+    if (_autoClusterDebounceTimer) {
+        clearTimeout(_autoClusterDebounceTimer);
+        _autoClusterDebounceTimer = null;
+    }
+}
+
 /**
  * Hook called by `src/core/downloader.js` after each successful download.
  * Best-effort, fire-and-forget — failure to pregenerate just means the
@@ -119,6 +172,7 @@ function _allQueuesEmpty() {
 async function _drainBg() {
     if (_bgRunning) return;
     _bgRunning = true;
+    _newFacesInDrain = 0;
     try {
         const { loadConfig } = await import('../../config/manager.js');
         let cfg;
@@ -167,6 +221,9 @@ async function _drainBg() {
             if (cfg.faceClustering === true) {
                 try {
                     detected = await detectFaces(abs, cfg);
+                    if (Array.isArray(detected) && detected.length) {
+                        _newFacesInDrain += detected.length;
+                    }
                 } catch {
                     /* swallow — clustering refresh retries */
                 }
@@ -260,6 +317,12 @@ async function _drainBg() {
             // backfill of pregenerate work.
             await new Promise((r) => setImmediate(r));
         }
+        // Queue drained — if new faces landed this pass, schedule a
+        // debounced cluster sweep so back-to-back downloads batch up
+        // before the (potentially expensive) DBSCAN runs.
+        if (_newFacesInDrain > 0) {
+            _scheduleAutoCluster(cfg);
+        }
     } finally {
         _bgRunning = false;
     }
@@ -281,6 +344,15 @@ export function _resetForTests() {
     _bgQueueRealtime.length = 0;
     _bgQueueBackfill.length = 0;
     _bgRunning = false;
+    _newFacesInDrain = 0;
+    if (_autoClusterDebounceTimer) {
+        clearTimeout(_autoClusterDebounceTimer);
+        _autoClusterDebounceTimer = null;
+    }
+    if (_autoClusterIntervalTimer) {
+        clearInterval(_autoClusterIntervalTimer);
+        _autoClusterIntervalTimer = null;
+    }
 }
 
 /** Queue-length snapshot for the AI status endpoint + tests. */

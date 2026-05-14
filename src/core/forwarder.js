@@ -29,7 +29,7 @@ export class AutoForwarder {
             console.log(
                 colorize(
                     `⏭️  [AutoForward] Skipping duplicate file: ${filePath ? path.basename(filePath) : groupName}`,
-                    'gray',
+                    'magenta',
                 ),
             );
             return;

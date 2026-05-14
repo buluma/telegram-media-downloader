@@ -1765,6 +1765,19 @@ ${tip}
             console.warn('[ai-faces-spawn] boot skipped:', e?.message || e);
         });
 
+    // Periodic auto-cluster: re-runs DBSCAN every autoClusterIntervalMin
+    // minutes when advanced.ai.autoCluster is enabled. A debounced trigger
+    // in pregenerateAi also fires after new faces land from live downloads.
+    try {
+        const { startAutoCluster } = await import('../core/ai/index.js');
+        const aiCfg = loadConfig()?.advanced?.ai || {};
+        const intervalMin =
+            Number(aiCfg.autoClusterIntervalMin) > 0 ? Number(aiCfg.autoClusterIntervalMin) : 60;
+        startAutoCluster({ intervalMin });
+    } catch (e) {
+        console.warn('[ai-auto-cluster] start failed:', e?.message || e);
+    }
+
     // Resolve group names from Telegram for any DB records still unnamed
     await resolveGroupNamesFromTelegram({
         getTelegramClient: () => telegramClient,

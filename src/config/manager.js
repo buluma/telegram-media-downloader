@@ -174,6 +174,11 @@ const DEFAULT_CONFIG = {
             enabled: false,
             faceClustering: true,
             imageTagging: true,
+            // Automatically re-cluster faces after new detections land (debounce)
+            // and on a periodic interval. Both fire only when faceClustering is on.
+            autoCluster: true,
+            autoClusterIntervalMin: 60,
+            autoClusterDebounceMs: 60000,
             // Face detector backend override (HF model id). Default empty
             // → bundled `@vladmandic/face-api` weights are used. Sticking
             // with the bundle is the recommended path; the override exists
