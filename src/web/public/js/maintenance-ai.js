@@ -3742,42 +3742,200 @@ async function _mergeSelectedPerson() {
     }
 }
 
+// Renders a face tile for the split picker (always initially unselected).
+// State changes are applied in-place via _updateSplitTileState() so images
+// don't reload on every toggle.
+function _splitPickerTile(row) {
+    const faceId = String(row.face_id || '');
+    const downloadId = row.download_id || row.id;
+    const name = escapeHtml(row.file_name || `#${downloadId}`);
+    const faceCrop = faceId ? `/api/ai/faces/${escapeHtml(faceId)}/crop?w=160` : '';
+    const thumbFallback = `/api/thumbs/${downloadId}?w=320`;
+    const q = Number(row.face_quality);
+    const qualityScore = Number.isFinite(q) ? Math.round(Math.max(0, Math.min(1, q)) * 100) : null;
+    return `<button type="button" data-split-face="${escapeHtml(faceId)}" aria-pressed="false"
+        class="relative aspect-square rounded-lg overflow-hidden bg-tg-bg/40
+               ring-1 ring-tg-border/30 hover:ring-tg-blue/50 transition-all"
+        title="${name}">
+        <img src="${faceCrop || thumbFallback}" alt="${name}" loading="lazy" decoding="async"
+            ${faceCrop ? `onerror="this.onerror=null;this.src='${thumbFallback}'"` : ''}
+            class="absolute inset-0 w-full h-full object-cover">
+        ${qualityScore != null ? `<span class="absolute top-1 left-1 text-[9px] px-1 py-0.5 rounded bg-black/70 text-white tabular-nums">Q${qualityScore}</span>` : ''}
+    </button>`;
+}
+
+// Toggle the visual ring/overlay on a split tile without re-rendering it.
+function _updateSplitTileState(btn, isSplit) {
+    btn.classList.toggle('ring-2', isSplit);
+    btn.classList.toggle('ring-tg-blue', isSplit);
+    btn.classList.toggle('scale-[0.96]', isSplit);
+    btn.classList.toggle('ring-1', !isSplit);
+    btn.classList.toggle('ring-tg-border/30', !isSplit);
+    btn.setAttribute('aria-pressed', String(isSplit));
+    let overlay = btn.querySelector('.split-indicator');
+    if (isSplit && !overlay) {
+        overlay = document.createElement('span');
+        overlay.className =
+            'split-indicator absolute bottom-0 inset-x-0 py-0.5 bg-tg-blue/75 flex items-center justify-center pointer-events-none';
+        overlay.innerHTML = '<i class="ri-arrow-right-up-line text-white text-xs"></i>';
+        btn.appendChild(overlay);
+    } else if (!isSplit && overlay) {
+        overlay.remove();
+    }
+}
+
+// Opens a click-to-mark sheet for visually selecting which faces to peel
+// into a new cluster. Resolves with { faceIds, label } or null on cancel.
+function _openSplitPickerSheet(allFaces, sourceName) {
+    return new Promise((resolve) => {
+        const splitSet = new Set(); // face_id strings marked for the new cluster
+
+        const wrap = document.createElement('div');
+        wrap.innerHTML = `
+            <p class="text-xs text-tg-textSecondary mb-3">${escapeHtml(
+                i18nTf(
+                    'maintenance.ai.split_picker_desc',
+                    { name: sourceName },
+                    `Click faces to mark them for the new cluster. Unmarked faces stay in "${sourceName}".`,
+                ),
+            )}</p>
+            <div class="mb-3">
+                <label class="text-xs text-tg-text block mb-1" for="split-label-input">
+                    ${escapeHtml(i18nT('maintenance.ai.split_label_prompt', 'New cluster name'))}
+                    <span class="text-tg-textSecondary text-[10.5px]">(${escapeHtml(i18nT('common.optional', 'optional'))})</span>
+                </label>
+                <input id="split-label-input" type="text" class="tg-input w-full text-sm"
+                    placeholder="${escapeHtml(i18nT('maintenance.ai.person_default', 'Person'))}"
+                    autocomplete="off">
+            </div>
+            <div class="flex items-center justify-between gap-2 mb-2">
+                <div class="text-xs text-tg-textSecondary">
+                    <span id="split-keep-count" class="font-medium text-tg-text">${allFaces.length}</span>
+                    ${escapeHtml(i18nT('maintenance.ai.split_keeping', 'keeping'))}
+                    &nbsp;·&nbsp;
+                    <span id="split-off-count" class="font-medium text-tg-blue">0</span>
+                    ${escapeHtml(i18nT('maintenance.ai.split_splitting_off', 'splitting off'))}
+                </div>
+                <button id="split-clear-btn" type="button"
+                    class="hidden text-[11px] text-tg-textSecondary hover:text-tg-text">
+                    ${escapeHtml(i18nT('common.clear_selection', 'Clear selection'))}
+                </button>
+            </div>
+            <div id="split-picker-grid"
+                 class="grid grid-cols-4 sm:grid-cols-6 gap-1.5 max-h-[50vh] overflow-y-auto pr-0.5 mb-1"></div>
+            <div class="mt-4 flex items-center justify-end gap-2">
+                <button id="split-picker-cancel" type="button"
+                    class="tg-btn-secondary text-sm px-4 py-2">
+                    ${escapeHtml(i18nT('common.cancel', 'Cancel'))}
+                </button>
+                <button id="split-picker-confirm" type="button" disabled
+                    class="tg-btn text-sm px-4 py-2 inline-flex items-center gap-1.5">
+                    <i class="ri-scissors-cut-line"></i>
+                    <span>${escapeHtml(i18nT('maintenance.ai.person_split', 'Split'))}</span>
+                </button>
+            </div>`;
+
+        // Render all tiles once; subsequent clicks update state in-place.
+        const grid = wrap.querySelector('#split-picker-grid');
+        if (grid) {
+            grid.innerHTML = allFaces.map(_splitPickerTile).join('');
+            grid.querySelectorAll('[data-split-face]').forEach((btn) => {
+                btn.addEventListener('click', () => {
+                    const fid = btn.dataset.splitFace;
+                    if (!fid) return;
+                    const nowSplit = !splitSet.has(fid);
+                    if (nowSplit) splitSet.add(fid);
+                    else splitSet.delete(fid);
+                    _updateSplitTileState(btn, nowSplit);
+                    updateCounts();
+                });
+            });
+        }
+
+        function updateCounts() {
+            const n = splitSet.size;
+            const keepEl = wrap.querySelector('#split-keep-count');
+            const offEl = wrap.querySelector('#split-off-count');
+            const clearBtn = wrap.querySelector('#split-clear-btn');
+            const confirmBtn = wrap.querySelector('#split-picker-confirm');
+            const confirmSpan = confirmBtn?.querySelector('span');
+            if (keepEl) keepEl.textContent = String(allFaces.length - n);
+            if (offEl) offEl.textContent = String(n);
+            if (clearBtn) clearBtn.classList.toggle('hidden', n === 0);
+            if (confirmBtn) {
+                confirmBtn.disabled = n === 0;
+                if (confirmSpan) {
+                    confirmSpan.textContent =
+                        n > 0
+                            ? i18nTf(
+                                  'maintenance.ai.split_confirm_label',
+                                  { n },
+                                  `Split off ${n} face${n === 1 ? '' : 's'}`,
+                              )
+                            : i18nT('maintenance.ai.person_split', 'Split');
+                }
+            }
+        }
+
+        const sheet = openSheet({
+            title: i18nTf(
+                'maintenance.ai.split_sheet_title',
+                { name: sourceName },
+                `Split: ${sourceName}`,
+            ),
+            content: wrap,
+            size: 'lg',
+            onClose: () => resolve(null),
+        });
+
+        wrap.querySelector('#split-clear-btn')?.addEventListener('click', () => {
+            splitSet.clear();
+            wrap.querySelectorAll('[data-split-face]').forEach((btn) =>
+                _updateSplitTileState(btn, false),
+            );
+            updateCounts();
+        });
+        wrap.querySelector('#split-picker-cancel')?.addEventListener('click', () => sheet.close());
+        wrap.querySelector('#split-picker-confirm')?.addEventListener('click', () => {
+            if (!splitSet.size) return;
+            const faceIds = [...splitSet].map(Number).filter((n) => n > 0);
+            const label = wrap.querySelector('#split-label-input')?.value?.trim() || '';
+            resolve({ faceIds, label: label || undefined });
+            sheet.close();
+        });
+    });
+}
+
 async function _splitSelectedPerson() {
     if (!_selectedPerson) return;
-    // Simple split flow: ask the operator for a comma-separated list of
-    // face ids to peel into a new cluster. The face ids are surfaced in
-    // the photo tile's `data-face-id` so power users can read them off
-    // the DOM. A future upgrade would replace this with a click-to-mark
-    // grid; today's interaction matches merge() in pattern.
-    const raw = await promptSheet({
-        title: i18nT('maintenance.ai.person_split', 'Split…'),
-        message: i18nT(
-            'maintenance.ai.split_prompt',
-            'Comma-separated face ids to move into a new cluster. Find them in the photos grid (inspect element → data-face-id).',
-        ),
-        confirmLabel: i18nT('maintenance.ai.person_split', 'Split'),
-    });
-    if (raw == null) return;
-    const faceIds = String(raw)
-        .split(/[,\s]+/)
-        .map((s) => Number(s.trim()))
-        .filter((n) => Number.isFinite(n) && n > 0);
-    if (!faceIds.length) {
-        showToast(i18nT('maintenance.ai.split_invalid', 'No valid face ids supplied.'), 'error');
+    const sourceName =
+        _selectedPersonName ||
+        `${i18nT('maintenance.ai.person_default', 'Person')} #${_selectedPerson}`;
+
+    // Fetch all faces for this cluster in one shot so the full grid is visible.
+    let allFaces;
+    try {
+        const r = await api.get(`/api/ai/people/${_selectedPerson}/photos?limit=500&offset=0`);
+        if (!r.success) throw new Error(r.error || 'load failed');
+        allFaces = Array.isArray(r.files) ? r.files : [];
+    } catch (e) {
+        showToast(e.message, 'error');
         return;
     }
-    const newLabel = await promptSheet({
-        title: i18nT('maintenance.ai.person_split', 'Split'),
-        message: i18nT(
-            'maintenance.ai.split_label_prompt',
-            'Label for the new cluster (optional):',
-        ),
-        confirmLabel: i18nT('common.save', 'Save'),
-    });
+
+    if (allFaces.length < 2) {
+        showToast(i18nT('maintenance.ai.split_too_few', 'Need at least 2 faces to split.'), 'info');
+        return;
+    }
+
+    const result = await _openSplitPickerSheet(allFaces, sourceName);
+    if (!result) return;
+    const { faceIds, label } = result;
+
     try {
         const res = await api.post(`/api/ai/people/${_selectedPerson}/split`, {
             faceIds,
-            newLabel: newLabel || undefined,
+            newLabel: label || undefined,
         });
         if (!res.success) throw new Error(res.error || 'split failed');
         showToast(
