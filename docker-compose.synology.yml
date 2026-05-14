@@ -1,6 +1,6 @@
 services:
   telegram-downloader:
-    image: ghcr.io/botnick/telegram-media-downloader:latest
+    image: ghcr.io/buluma/telegram-media-downloader:latest
     pull_policy: always
     container_name: telegram-downloader
     restart: unless-stopped
@@ -45,7 +45,7 @@ services:
         compress: "true"
 
   tgdl-faces:
-    image: ghcr.io/botnick/tgdl-faces:latest
+    image: ghcr.io/buluma/tgdl-faces:latest
     pull_policy: always
     container_name: tgdl-faces
     restart: unless-stopped

@@ -29,9 +29,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/botnick/telegram-media-downloader/seekbar-service/internal/config"
-	"github.com/botnick/telegram-media-downloader/seekbar-service/internal/logx"
-	"github.com/botnick/telegram-media-downloader/seekbar-service/internal/worker"
+	"github.com/buluma/telegram-media-downloader/seekbar-service/internal/config"
+	"github.com/buluma/telegram-media-downloader/seekbar-service/internal/logx"
+	"github.com/buluma/telegram-media-downloader/seekbar-service/internal/worker"
 )
 
 func main() {

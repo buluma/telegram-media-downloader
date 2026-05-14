@@ -7,7 +7,7 @@
 # Builds a per-platform Go binary, tar.gz-packs it, and attaches each
 # archive to the GitHub Release. `src/core/seekbar/spawn.js` resolves
 # these tarballs at runtime under
-#   https://github.com/botnick/telegram-media-downloader/releases/download/seekbar-v<VER>/<slug>.tar.gz
+#   https://github.com/buluma/telegram-media-downloader/releases/download/seekbar-v<VER>/<slug>.tar.gz
 
 name: release-seekbar-service
 

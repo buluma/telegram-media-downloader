@@ -51,7 +51,7 @@ Releases). Cached forever.
 | macOS | Apple Silicon (arm64) | Standalone | Auto-downloads `tgdl-faces-mac-arm64.tar.gz`; CoreML provider auto-picked when available |
 | Linux | x64 (bare-metal) | Standalone | Auto-downloads `tgdl-faces-linux-x64.tar.gz` |
 | Linux | arm64 (Pi 4 / NAS) | Standalone | Auto-downloads `tgdl-faces-linux-arm64.tar.gz`; set `TGDL_FACES_DET_SIZE=480` for ~3× faster scan on Pi 4 |
-| Linux | arm64 (Synology DSM) | Docker compose | `docker compose --profile faces up`; pulls `ghcr.io/botnick/tgdl-faces:latest` arm64 layer |
+| Linux | arm64 (Synology DSM) | Docker compose | `docker compose --profile faces up`; pulls `ghcr.io/buluma/tgdl-faces:latest` arm64 layer |
 | Linux | amd64 | Docker compose | Same as above, amd64 layer |
 | Offline / air-gapped | any | Standalone | Drop the binary at `data/faces-service/bin/`, set `TGDL_FACES_AUTO_DOWNLOAD=false` |
 
@@ -153,9 +153,9 @@ faces sidecar — pick the one that matches your host hardware:
 
 | Profile | Image tag | Hardware | Compose command |
 |---|---|---|---|
-| `faces` | `ghcr.io/botnick/tgdl-faces:latest` | CPU only (default; works everywhere) | `docker compose --profile faces up -d` |
-| `faces-cuda` | `ghcr.io/botnick/tgdl-faces:cuda-latest` | NVIDIA + nvidia-container-toolkit | `docker compose --profile faces-cuda up -d` |
-| `faces-openvino` | `ghcr.io/botnick/tgdl-faces:openvino-latest` | Intel iGPU/dGPU/NPU via /dev/dri | `docker compose --profile faces-openvino up -d` |
+| `faces` | `ghcr.io/buluma/tgdl-faces:latest` | CPU only (default; works everywhere) | `docker compose --profile faces up -d` |
+| `faces-cuda` | `ghcr.io/buluma/tgdl-faces:cuda-latest` | NVIDIA + nvidia-container-toolkit | `docker compose --profile faces-cuda up -d` |
+| `faces-openvino` | `ghcr.io/buluma/tgdl-faces:openvino-latest` | Intel iGPU/dGPU/NPU via /dev/dri | `docker compose --profile faces-openvino up -d` |
 
 All three bind to `container_name: tgdl-faces` and port 8011 inside
 the compose network so the main app's `FACES_SERVICE_URL=http://
@@ -175,7 +175,7 @@ refuses to start more than one at a time.
    `tgdl-faces-cuda` block).
 
 Verify with `docker run --rm --gpus all
-ghcr.io/botnick/tgdl-faces:cuda-latest nvidia-smi`.
+ghcr.io/buluma/tgdl-faces:cuda-latest nvidia-smi`.
 
 **OpenVINO path** — requires `/dev/dri` exposed to the container.
 The compose block mounts it automatically; on Synology DSM 7 grant
@@ -347,7 +347,7 @@ maintenance page when you want it.
 For air-gapped / corporate-proxy environments:
 
 1. Download the matching tarball from the
-   [GitHub release page](https://github.com/botnick/telegram-media-downloader/releases)
+   [GitHub release page](https://github.com/buluma/telegram-media-downloader/releases)
    on a machine that has internet access. The asset names match
    `tgdl-faces-<platform>-<arch>.tar.gz`.
 

@@ -85,7 +85,7 @@ describe('_computeBinaryTarget — supported matrix', () => {
             );
             // Canonical GitHub URL is always in the list.
             expect(target.tarUrl).toBe(
-                `https://github.com/botnick/telegram-media-downloader/releases/download/faces-v${SIDECAR_VERSION}/${row.slug}.tar.gz`,
+                `https://github.com/buluma/telegram-media-downloader/releases/download/faces-v${SIDECAR_VERSION}/${row.slug}.tar.gz`,
             );
             expect(target.tarUrls).toContain(target.tarUrl);
         });
@@ -158,7 +158,7 @@ describe('_computeBinaryTarget — URL precedence', () => {
             'https://mirror-a.example/tgdl-faces-linux-x64.tar.gz',
             // Full URL — taken verbatim.
             'https://mirror-b.example/full.tar.gz',
-            `https://github.com/botnick/telegram-media-downloader/releases/download/faces-v${SIDECAR_VERSION}/tgdl-faces-linux-x64.tar.gz`,
+            `https://github.com/buluma/telegram-media-downloader/releases/download/faces-v${SIDECAR_VERSION}/tgdl-faces-linux-x64.tar.gz`,
         ]);
     });
 

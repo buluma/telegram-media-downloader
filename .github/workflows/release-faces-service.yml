@@ -11,7 +11,7 @@
 #                        Consumed by src/core/ai/faces-spawn.js for the
 #                        standalone bare-metal install path.
 #   2. build-docker    — buildx multi-arch (linux/amd64 + linux/arm64)
-#                        image pushed to ghcr.io/botnick/tgdl-faces.
+#                        image pushed to ghcr.io/buluma/tgdl-faces.
 #                        Consumed by docker-compose.yml under the
 #                        `faces` profile.
 
@@ -174,7 +174,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ghcr.io/botnick/tgdl-faces:${{ github.ref_name }}
-            ghcr.io/botnick/tgdl-faces:latest
+            ghcr.io/buluma/tgdl-faces:${{ github.ref_name }}
+            ghcr.io/buluma/tgdl-faces:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max

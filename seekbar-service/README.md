@@ -3,7 +3,7 @@
 A plug-and-play Go HTTP service (+ CLI) that generates WebP sprite-sheet
 thumbnails for video timelines / seek-bar hover previews. Built to drop
 in next to an existing media system (the parent
-[telegram-media-downloader](https://github.com/botnick/telegram-media-downloader)
+[telegram-media-downloader](https://github.com/buluma/telegram-media-downloader)
 ships with the integration baked in) but works standalone with any
 backend that can speak HTTP.
 
@@ -46,7 +46,7 @@ docker run --rm -p 8089:8089 \
   -v /path/to/videos:/videos:ro \
   -v /path/to/sprites:/data/output \
   -e SEEKBAR_HWACCEL=auto \
-  ghcr.io/botnick/tgdl-seekbar:latest
+  ghcr.io/buluma/tgdl-seekbar:latest
 ```
 
 ```bash
@@ -264,7 +264,7 @@ localhost.
 ## Configuration
 
 When this service runs as a sidecar of
-[telegram-media-downloader](https://github.com/botnick/telegram-media-downloader),
+[telegram-media-downloader](https://github.com/buluma/telegram-media-downloader),
 **every knob is editable from the dashboard's *Maintenance → Seekbar*
 page** — interval, tile width, columns, quality, hardware acceleration,
 concurrency. The dashboard writes the value into its kv-backed config

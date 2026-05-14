@@ -16,7 +16,7 @@ End users never touch this directory directly. Two delivery paths cover every in
    first use and caches it under `data/faces-service/`. Each binary already bundles
    Python + onnxruntime + insightface + the buffalo_l weights.
 2. **Docker compose** — `docker-compose.yml` adds a `tgdl-faces` sidecar service from
-   the prebuilt multi-arch image `ghcr.io/botnick/tgdl-faces:<version>`.
+   the prebuilt multi-arch image `ghcr.io/buluma/tgdl-faces:<version>`.
 
 This README is for contributors who want to run the sidecar from source.
 
@@ -208,7 +208,7 @@ Track D of the rollout produces:
 * **PyInstaller one-file binaries** per platform — uploaded as GitHub Release assets
   under tags `faces-v<X>`. The Node spawn module downloads and caches the right
   binary on first use.
-* **Multi-arch container image** — `ghcr.io/botnick/tgdl-faces:<tag>` (and `:latest`),
+* **Multi-arch container image** — `ghcr.io/buluma/tgdl-faces:<tag>` (and `:latest`),
   pulled by `docker compose --profile faces up`.
 
 Neither build is produced from this README; see Track D's workflow at
