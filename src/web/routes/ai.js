@@ -614,12 +614,15 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                     .status(409)
                     .json({ error: 'Scan already running', code: 'ALREADY_RUNNING' });
             }
-            // Allow request-level parameter overrides (e.g., minConfidence from slider)
+            // Allow request-level parameter overrides (e.g., confidence sliders)
             if (feature === 'objects' && typeof req.body?.minConfidence === 'number') {
                 if (typeof cfg.objectDetection !== 'object' || !cfg.objectDetection) {
                     cfg.objectDetection = {};
                 }
                 cfg.objectDetection.minConfidence = req.body.minConfidence;
+            }
+            if (feature === 'tags' && typeof req.body?.minScore === 'number') {
+                cfg.wd14MinScore = Math.max(0, Math.min(1, req.body.minScore));
             }
             const tracker = _aiTrackerFor(feature);
             const starter = _aiStarterFor(feature);

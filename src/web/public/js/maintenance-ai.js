@@ -1774,6 +1774,40 @@ function _bindOnce() {
     });
     $('#ai-tags-scan-btn')?.addEventListener('click', () => _startScan('tags'));
     $('#ai-tags-cancel-btn')?.addEventListener('click', () => _cancelScan('tags'));
+    $('#ai-tags-confidence')?.addEventListener('input', (e) => {
+        const val = parseFloat(e.target.value) || 0.35;
+        const display = $('#ai-tags-confidence-value');
+        if (display) display.textContent = val.toFixed(2);
+    });
+
+    // "Scan everything" — fires all four scan features sequentially.
+    // Each _startScan is independent (own tracker/endpoint), but we
+    // fire them one after the other to avoid hammering the sidecar.
+    $('#ai-scan-all-btn')?.addEventListener('click', async () => {
+        const btn = $('#ai-scan-all-btn');
+        const statusEl = $('#ai-scan-all-status');
+        if (btn) btn.disabled = true;
+        const features = ['faces', 'tags', 'ocr', 'objects'];
+        let started = 0;
+        for (const f of features) {
+            try {
+                await _startScan(f);
+                started++;
+            } catch {
+                /* individual scan errors are toasted inside _startScan */
+            }
+        }
+        if (statusEl) {
+            statusEl.textContent = i18nTf(
+                'maintenance.ai.scan_all_queued',
+                { n: started },
+                `${started} scan${started !== 1 ? 's' : ''} started`,
+            );
+            statusEl.classList.remove('hidden');
+            setTimeout(() => statusEl.classList.add('hidden'), 4000);
+        }
+        if (btn) btn.disabled = false;
+    });
 
     // OCR — toggle + scan/cancel buttons.
     $('#ai-ocr-toggle')?.addEventListener('click', async () => {
@@ -2404,6 +2438,15 @@ function _renderStatus(status) {
     if (tagsLabelsEl) {
         const cur = Array.isArray(cfg.tagLabels) ? cfg.tagLabels.join(', ') : '';
         if (tagsLabelsEl.value !== cur) tagsLabelsEl.value = cur;
+    }
+    // Hydrate tag confidence threshold slider from config.
+    const tagsConfSlider = $('#ai-tags-confidence');
+    const tagsConfDisplay = $('#ai-tags-confidence-value');
+    if (tagsConfSlider) {
+        const stored = parseFloat(cfg.wd14MinScore);
+        const val = Number.isFinite(stored) ? stored : 0.35;
+        tagsConfSlider.value = String(val);
+        if (tagsConfDisplay) tagsConfDisplay.textContent = val.toFixed(2);
     }
 
     // OCR card — toggle, scan state.
@@ -3180,6 +3223,12 @@ async function _startScan(feature) {
                 payload.minConfidence = parseFloat(confidenceSlider.value) || 0.5;
             }
         }
+        if (feature === 'tags') {
+            const confSlider = $('#ai-tags-confidence');
+            if (confSlider) {
+                payload.minScore = parseFloat(confSlider.value) || 0.35;
+            }
+        }
         const r = await api.post('/api/ai/scan/start', payload);
         if (r.error) {
             showToast(r.error, 'error');
@@ -3455,6 +3504,38 @@ function _photoTile(row, index) {
     const thumbFallback = `/api/thumbs/${id}?w=320`;
     const q = Number(row.face_quality);
     const qualityScore = Number.isFinite(q) ? Math.round(Math.max(0, Math.min(1, q)) * 100) : null;
+
+    // Compute face bbox position within the crop image.
+    // The crop endpoint adds 40% padding around the face (pad=0.4) then
+    // resizes the padded region to a square with fit:'cover'. Given fw/fh
+    // we can compute exactly where the face falls in the output image.
+    let bboxHtml = '';
+    const fw = Number(row.face_w) || 0;
+    const fh = Number(row.face_h) || 0;
+    if (fw > 0 && fh > 0) {
+        const pad = 0.4;
+        const cropW = fw * (1 + 2 * pad);
+        const cropH = fh * (1 + 2 * pad);
+        let leftPct, topPct, wPct, hPct;
+        if (cropW >= cropH) {
+            // Wide/square face: cover fills height, crops width symmetrically.
+            const horzOffset = (cropW - cropH) / 2;
+            leftPct = ((fw * pad - horzOffset) / cropH) * 100;
+            topPct = ((fh * pad) / cropH) * 100;
+            wPct = (fw / cropH) * 100;
+            hPct = (fh / cropH) * 100;
+        } else {
+            // Tall face: cover fills width, crops height symmetrically.
+            const vertOffset = (cropH - cropW) / 2;
+            leftPct = ((fw * pad) / cropW) * 100;
+            topPct = ((fh * pad - vertOffset) / cropW) * 100;
+            wPct = (fw / cropW) * 100;
+            hPct = (fh / cropW) * 100;
+        }
+        bboxHtml = `<span class="absolute pointer-events-none border border-tg-blue/70 rounded-[1px] opacity-0 group-hover:opacity-100 transition-opacity"
+            style="left:${leftPct.toFixed(1)}%;top:${topPct.toFixed(1)}%;width:${wPct.toFixed(1)}%;height:${hPct.toFixed(1)}%"></span>`;
+    }
+
     return `
         <button type="button" data-people-photo-index="${index}" data-face-id="${escapeHtml(String(faceId))}"
                 class="nsfw-tile group relative aspect-square rounded-md overflow-hidden bg-tg-bg/40 focus:outline-none focus:ring-2 focus:ring-tg-blue">
@@ -3466,6 +3547,7 @@ function _photoTile(row, index) {
                     ? ''
                     : `<span class="absolute top-1 right-1 text-[10px] px-1.5 py-0.5 rounded bg-black/65 text-white tabular-nums">Q${qualityScore}</span>`
             }
+            ${bboxHtml}
             <span class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 group-focus:opacity-100 transition flex items-end p-2 pointer-events-none">
                 <span class="text-[11px] text-white truncate w-full text-left">${name}</span>
             </span>
