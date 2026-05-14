@@ -119,13 +119,14 @@ function donutChart(segments, total, { size = 120, stroke = 18 } = {}) {
     return `<div class="flex flex-col items-center">${svg}${legend}</div>`;
 }
 
-/** Simple vertical bar chart (SVG). */
+/** Simple vertical bar chart (SVG). Supports optional `subLabel` per bar. */
 function vbarChart(
     bars,
     { height = 120, barColor = 'var(--tg-theme-accent, #2ea6ff)', barWidth = 24 } = {},
 ) {
     const max = bars.reduce((m, b) => Math.max(m, b.value), 0) || 1;
-    const pad = { top: 6, bottom: 20, left: 4, right: 4 };
+    const hasSubLabels = bars.some((b) => b.subLabel);
+    const pad = { top: 6, bottom: hasSubLabels ? 30 : 20, left: 4, right: 4 };
     const count = bars.length;
     const totalW = count * (barWidth + 4) + pad.left + pad.right;
     const h = height;
@@ -135,13 +136,17 @@ function vbarChart(
         <style>.vbar{transition:height 0.5s ease}</style>`;
     for (let i = 0; i < bars.length; i++) {
         const b = bars[i];
-        if (b.value === 0) continue;
-        const barH = scale(b.value);
+        const barH = Math.max(0, scale(b.value));
         const x = pad.left + i * (barWidth + 4);
         const y = h - pad.bottom - barH;
-        svg += `<rect class="vbar" x="${x}" y="${y}" width="${barWidth}" height="${barH}" rx="2" fill="${barColor}" opacity="0.85"/>
-            <text x="${x + barWidth / 2}" y="${h - 3}" text-anchor="middle" fill="var(--tg-theme-text-secondary,#7f8c8d)" font-size="9">${escapeHtml((b.label || '').slice(0, 6))}</text>`;
-        // Value on top
+        // Always render axis labels — keeps zero-value days visible on the time axis
+        const labelY = h - pad.bottom + (hasSubLabels ? 11 : 14);
+        svg += `<text x="${x + barWidth / 2}" y="${labelY}" text-anchor="middle" fill="var(--tg-theme-text-secondary,#7f8c8d)" font-size="9">${escapeHtml((b.label || '').slice(0, 6))}</text>`;
+        if (b.subLabel) {
+            svg += `<text x="${x + barWidth / 2}" y="${labelY + 11}" text-anchor="middle" fill="var(--tg-theme-text-secondary,#7f8c8d)" font-size="8">${escapeHtml((b.subLabel || '').slice(0, 5))}</text>`;
+        }
+        if (b.value === 0) continue;
+        svg += `<rect class="vbar" x="${x}" y="${y}" width="${barWidth}" height="${barH}" rx="2" fill="${barColor}" opacity="0.85"/>`;
         if (barH > 14) {
             svg += `<text x="${x + barWidth / 2}" y="${y - 2}" text-anchor="middle" fill="var(--tg-theme-text-color,#fff)" font-size="9" font-weight="600">${fmt(b.value)}</text>`;
         }
@@ -180,7 +185,11 @@ function renderCard(title, content) {
 
 function ago(iso) {
     if (!iso) return '—';
-    const ms = Date.now() - new Date(iso + 'Z').getTime();
+    // SQLite datetime() emits 'YYYY-MM-DD HH:MM:SS' without timezone marker.
+    // Normalise to ISO 8601 and append Z only when no zone is already present.
+    const s = String(iso).trim().replace(' ', 'T');
+    const hasZone = s.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(s);
+    const ms = Date.now() - new Date(hasZone ? s : `${s}Z`).getTime();
     const min = Math.floor(ms / 60000);
     if (min < 1) return 'just now';
     if (min < 60) return `${min}m ago`;
@@ -200,6 +209,8 @@ const COLORS = [
     '#a78bfa',
 ];
 
+const DAY_ABBREVS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
 // ── Main load ────────────────────────────────────────────────────────────────
 
 async function load() {
@@ -210,10 +221,12 @@ async function load() {
         const res = await api.get('/api/db/stats');
         if (!res?.success) throw new Error('API error');
         const { tableCounts, groups, totals, dailyTrend, dbFileSizeBytes, ai } = res;
+        const loadedAt = new Date().toLocaleTimeString();
         let html = '';
 
-        // ── Refresh button ──
-        html += `<div class="flex justify-end mb-2">
+        // ── Toolbar: last-updated timestamp + refresh button ──
+        html += `<div class="flex items-center justify-between mb-2">
+            <span class="text-[10px] text-tg-textSecondary">Updated ${escapeHtml(loadedAt)}</span>
             <button id="db-stats-refresh-btn" class="tg-btn-secondary text-xs px-3 py-1.5 inline-flex items-center gap-1.5">
                 <i class="ri-refresh-line"></i><span>Refresh</span>
             </button>
@@ -244,6 +257,15 @@ async function load() {
             </div>`;
         }
         html += '</div>';
+
+        // ── Queue backlog callout ──
+        const queueCount = Number(tableCounts?.queue) || 0;
+        if (queueCount > 0) {
+            html += `<div class="flex items-center gap-2 bg-yellow-500/10 border border-yellow-500/30 rounded-xl px-3 py-2 mb-3 text-xs">
+                <i class="ri-time-line text-yellow-400 shrink-0"></i>
+                <span class="text-yellow-300 font-medium">${fmt(queueCount)} item${queueCount !== 1 ? 's' : ''} pending in download queue</span>
+            </div>`;
+        }
 
         // ── Table sizes ──
         if (tableCounts) {
@@ -276,14 +298,22 @@ async function load() {
                 hbarChart(bars, { maxLabel: `${Math.min(maxLabel, 200)}px`, height: 18 }),
             );
 
-            const rows = groups.map((g) => [
-                escapeHtml((g.group_name || g.group_id || '?').slice(0, 28)),
-                fmt(g.n),
-                fmt(g.photos),
-                fmt(g.videos),
-                formatBytes(g.bytes),
-                `<span title="${g.last_activity || ''}">${ago(g.last_activity)}</span>`,
-            ]);
+            // Name cell: group_name as primary + group_id as mono subtitle for config correlation
+            const rows = groups.map((g) => {
+                const name = escapeHtml((g.group_name || '').slice(0, 28));
+                const id = escapeHtml(String(g.group_id || ''));
+                const nameCell = g.group_name
+                    ? `${name}<br><span class="text-[10px] text-tg-textSecondary font-mono">${id}</span>`
+                    : `<span class="font-mono text-tg-textSecondary">${id}</span>`;
+                return [
+                    nameCell,
+                    fmt(g.n),
+                    fmt(g.photos),
+                    fmt(g.videos),
+                    formatBytes(g.bytes),
+                    `<span title="${escapeHtml(g.last_activity || '')}">${ago(g.last_activity)}</span>`,
+                ];
+            });
             html += renderCard(
                 'Groups by activity',
                 renderTable(
@@ -331,13 +361,16 @@ async function load() {
             );
         }
 
-        // ── 14-day download trend ──
+        // ── 14-day download trend (day-of-week + MM-DD sub-labels) ──
         if (dailyTrend?.length) {
             const total14 = dailyTrend.reduce((s, d) => s + d.n, 0);
-            const bars = dailyTrend.map((d) => ({ label: d.day.slice(5), value: d.n }));
+            const bars = dailyTrend.map((d) => {
+                const dow = DAY_ABBREVS[new Date(`${d.day}T00:00:00`).getDay()];
+                return { label: dow, subLabel: d.day.slice(5), value: d.n };
+            });
             html += renderCard(
                 `14-day download trend  ·  ${fmt(total14)} total`,
-                `<div class="overflow-x-auto">${vbarChart(bars, { height: 130, barWidth: 30 })}</div>`,
+                `<div class="overflow-x-auto">${vbarChart(bars, { height: 140, barWidth: 30 })}</div>`,
             );
         }
 
@@ -346,7 +379,10 @@ async function load() {
             const indexed = Number(ai.indexed) || 0;
             const totalAi = Number(ai.total) || 1;
             const notIndexed = Math.max(0, totalAi - indexed);
-            const pct = (n) => (totalAi ? `${Math.round((Number(n || 0) / totalAi) * 100)}%` : '—');
+            // Photo-specific features only process photos — use photo count as denominator
+            // so coverage % reflects actual photo library coverage, not all file types.
+            const photoBase = Math.max(1, Number(totals?.photos) || 0);
+            const pctPhoto = (n) => `${Math.round((Number(n || 0) / photoBase) * 100)}%`;
             html += renderCard(
                 'AI coverage',
                 `<div class="flex flex-col sm:flex-row items-center gap-4 mb-2">
@@ -362,17 +398,17 @@ async function load() {
                         [
                             { label: 'Metric' },
                             { label: 'Count', right: true },
-                            { label: '% of lib', right: true },
+                            { label: '% of photos', right: true },
                         ],
                         [
                             ['Face-indexed', `${fmt(indexed)} / ${fmt(totalAi)}`, `${ai.pct}%`],
                             ['Faces detected', fmt(ai.faces), ''],
                             ['People clusters', fmt(ai.people), ''],
-                            ['CLIP tags', fmt(ai.tags), pct(ai.tags)],
-                            ['OCR scanned', fmt(ai.ocrFiles || 0), pct(ai.ocrFiles)],
-                            ['Objects scanned', fmt(ai.objectFiles || 0), pct(ai.objectFiles)],
-                            ['WD14 tagged', fmt(ai.wd14Files || 0), pct(ai.wd14Files)],
-                            ['Embeddings', fmt(ai.embeddings || 0), pct(ai.embeddings)],
+                            ['CLIP tags', fmt(ai.tags), pctPhoto(ai.tags)],
+                            ['OCR scanned', fmt(ai.ocrFiles || 0), pctPhoto(ai.ocrFiles)],
+                            ['Objects scanned', fmt(ai.objectFiles || 0), pctPhoto(ai.objectFiles)],
+                            ['WD14 tagged', fmt(ai.wd14Files || 0), pctPhoto(ai.wd14Files)],
+                            ['Embeddings', fmt(ai.embeddings || 0), pctPhoto(ai.embeddings)],
                         ],
                     )}</div>
                 </div>`,
