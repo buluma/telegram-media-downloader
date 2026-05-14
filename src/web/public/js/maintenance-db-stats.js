@@ -256,7 +256,10 @@ async function load() {
 
         // ── Groups chart + table ──
         if (groups?.length) {
-            const topGroups = groups.slice(0, 15);
+            const topGroups = groups
+                .slice()
+                .sort((a, b) => b.n - a.n)
+                .slice(0, 15);
             const bars = topGroups.map((g, i) => ({
                 label: (g.group_name || g.group_id || '?').slice(0, 28),
                 value: g.n,
