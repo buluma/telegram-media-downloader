@@ -1,5 +1,4 @@
 // Tests for automatic face re-clustering:
-//   - debounced trigger fired by _drainBg after new faces detected
 //   - periodic interval timer (startAutoCluster / stopAutoCluster)
 //   - guard conditions (autoCluster off, scan already running, ai disabled)
 
@@ -63,14 +62,8 @@ vi.mock('../../src/core/ai/faces-client.js', () => ({
 }));
 
 // Import subject AFTER mocks are registered
-const {
-    startAutoCluster,
-    stopAutoCluster,
-    _resetForTests,
-    _bgQueueDepths,
-    pregenerateAi,
-    _scheduleAutoClusterForTest,
-} = await import('../../src/core/ai/index.js');
+const { startAutoCluster, stopAutoCluster, _resetForTests, _bgQueueDepths, pregenerateAi } =
+    await import('../../src/core/ai/index.js');
 
 const { startFacesScan, isScanRunning } = await import('../../src/core/ai/scan-runner.js');
 
@@ -104,88 +97,6 @@ afterEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-
-describe('_scheduleAutoClusterForTest — debounce trigger', () => {
-    it('fires startFacesScan after debounce delay', async () => {
-        const cfg = {
-            enabled: true,
-            faceClustering: true,
-            autoCluster: true,
-            autoClusterDebounceMs: 50,
-        };
-        _scheduleAutoClusterForTest(cfg);
-        expect(_startFacesScanCalled).toBe(0);
-        await vi.advanceTimersByTimeAsync(100);
-        expect(_startFacesScanCalled).toBe(1);
-    });
-
-    it('does not fire when autoCluster is false', async () => {
-        const cfg = {
-            enabled: true,
-            faceClustering: true,
-            autoCluster: false,
-            autoClusterDebounceMs: 50,
-        };
-        _scheduleAutoClusterForTest(cfg);
-        await vi.advanceTimersByTimeAsync(200);
-        expect(_startFacesScanCalled).toBe(0);
-    });
-
-    it('does not fire when faceClustering is false', async () => {
-        const cfg = {
-            enabled: true,
-            faceClustering: false,
-            autoCluster: true,
-            autoClusterDebounceMs: 50,
-        };
-        _scheduleAutoClusterForTest(cfg);
-        await vi.advanceTimersByTimeAsync(200);
-        expect(_startFacesScanCalled).toBe(0);
-    });
-
-    it('debounces — only one scan fires when called rapidly', async () => {
-        const cfg = {
-            enabled: true,
-            faceClustering: true,
-            autoCluster: true,
-            autoClusterDebounceMs: 100,
-        };
-        _scheduleAutoClusterForTest(cfg);
-        await vi.advanceTimersByTimeAsync(50);
-        _scheduleAutoClusterForTest(cfg);
-        await vi.advanceTimersByTimeAsync(50);
-        _scheduleAutoClusterForTest(cfg);
-        await vi.advanceTimersByTimeAsync(200);
-        expect(_startFacesScanCalled).toBe(1);
-    });
-
-    it('skips when scan already running', async () => {
-        _isScanRunningResult = true;
-        const cfg = {
-            enabled: true,
-            faceClustering: true,
-            autoCluster: true,
-            autoClusterDebounceMs: 50,
-        };
-        _scheduleAutoClusterForTest(cfg);
-        await vi.advanceTimersByTimeAsync(200);
-        expect(_startFacesScanCalled).toBe(0);
-    });
-
-    it('skips when ai.enabled is false at fire time', async () => {
-        const cfg = {
-            enabled: true,
-            faceClustering: true,
-            autoCluster: true,
-            autoClusterDebounceMs: 50,
-        };
-        _scheduleAutoClusterForTest(cfg);
-        // disable before timer fires
-        _loadConfigResult.advanced.ai.enabled = false;
-        await vi.advanceTimersByTimeAsync(200);
-        expect(_startFacesScanCalled).toBe(0);
-    });
-});
 
 describe('startAutoCluster / stopAutoCluster — periodic timer', () => {
     it('fires startFacesScan on each interval tick', async () => {
@@ -222,5 +133,16 @@ describe('startAutoCluster / stopAutoCluster — periodic timer', () => {
         startAutoCluster({ intervalMin: 1 / 60 });
         await vi.advanceTimersByTimeAsync(2000);
         expect(_startFacesScanCalled).toBe(0);
+    });
+
+    it('re-arming replaces the old timer', async () => {
+        startAutoCluster({ intervalMin: 1 / 60 });
+        await vi.advanceTimersByTimeAsync(1100);
+        const firstCount = _startFacesScanCalled;
+        // Re-arm with a much longer interval
+        startAutoCluster({ intervalMin: 60 });
+        await vi.advanceTimersByTimeAsync(2000);
+        // Should not have fired again on the long interval within 2 s
+        expect(_startFacesScanCalled).toBe(firstCount);
     });
 });

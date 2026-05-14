@@ -86,6 +86,9 @@ const _bgQueueRealtime = [];
 const _bgQueueBackfill = [];
 let _bgRunning = false;
 const _BG_QUEUE_CAP = 200;
+// Set when any enqueue call drops an item due to cap. Cleared after drain
+// triggers a full scan reconcile so no rows stay permanently unindexed.
+let _queueWasCapped = false;
 
 // ---- Auto-cluster state ---------------------------------------------------
 
@@ -107,7 +110,7 @@ async function _fireCluster() {
     }
 }
 
-export function _scheduleAutoClusterForTest(cfg) {
+function _scheduleAutoCluster(cfg) {
     if (!cfg.autoCluster || !cfg.faceClustering) return;
     const debounceMs =
         Number(cfg.autoClusterDebounceMs) > 0 ? Number(cfg.autoClusterDebounceMs) : 60_000;
@@ -118,9 +121,6 @@ export function _scheduleAutoClusterForTest(cfg) {
     }, debounceMs);
     _autoClusterDebounceTimer.unref?.();
 }
-
-// Alias used internally by _drainBg — same function, different name for clarity.
-const _scheduleAutoCluster = _scheduleAutoClusterForTest;
 
 export function startAutoCluster({ intervalMin = 60 } = {}) {
     stopAutoCluster();
@@ -153,7 +153,10 @@ export function pregenerateAi(downloadId, opts = {}) {
     const priority = opts?.priority === 'realtime' ? 'realtime' : 'backfill';
     queueMicrotask(() => {
         const queue = priority === 'realtime' ? _bgQueueRealtime : _bgQueueBackfill;
-        if (queue.length >= _BG_QUEUE_CAP) return;
+        if (queue.length >= _BG_QUEUE_CAP) {
+            _queueWasCapped = true;
+            return;
+        }
         queue.push(downloadId);
         _drainBg();
     });
@@ -323,6 +326,23 @@ async function _drainBg() {
         if (_newFacesInDrain > 0) {
             _scheduleAutoCluster(cfg);
         }
+        // The queue cap dropped items silently during this ingest burst.
+        // Kick a full faces scan so rows with ai_indexed_at = NULL get
+        // picked up — scan-runner queries the DB directly, not this queue.
+        if (_queueWasCapped) {
+            _queueWasCapped = false;
+            try {
+                const { isScanRunning, startFacesScan } = await import('./scan-runner.js');
+                if (!isScanRunning('faces')) {
+                    console.log(
+                        '[ai-pregenerate] queue cap hit — triggering full scan to reconcile missed rows',
+                    );
+                    startFacesScan(cfg).catch(() => {});
+                }
+            } catch {
+                /* scan-runner unavailable */
+            }
+        }
     } finally {
         _bgRunning = false;
     }
@@ -345,6 +365,7 @@ export function _resetForTests() {
     _bgQueueBackfill.length = 0;
     _bgRunning = false;
     _newFacesInDrain = 0;
+    _queueWasCapped = false;
     if (_autoClusterDebounceTimer) {
         clearTimeout(_autoClusterDebounceTimer);
         _autoClusterDebounceTimer = null;

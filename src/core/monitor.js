@@ -455,6 +455,46 @@ export class RealtimeMonitor extends EventEmitter {
         this.lastIds = new Map();
         console.log(colorize('🔄 Syncing state for Active Polling...', 'cyan'));
 
+        // Re-enable groups that were auto-disabled more than 24 h ago so they
+        // get a fresh probe attempt on this start. Clears _resolveFailedAt so
+        // a successful probe removes the marker; a second failure re-stamps it.
+        // This prevents permanently-dead groups when the operator adds a new
+        // account that has access — no manual Maintenance → Recovery step needed.
+        const _24h = 24 * 60 * 60 * 1000;
+        const staleFailures = (this.config.groups || []).filter(
+            (g) => !g.enabled && g._resolveFailedAt && Date.now() - g._resolveFailedAt > _24h,
+        );
+        if (staleFailures.length) {
+            try {
+                const cfg = loadConfig();
+                let dirty = false;
+                for (const g of cfg.groups || []) {
+                    if (
+                        !g.enabled &&
+                        g._resolveFailedAt &&
+                        Date.now() - g._resolveFailedAt > _24h
+                    ) {
+                        g.enabled = true;
+                        delete g._resolveFailedAt;
+                        delete g._resolveFailedReason;
+                        dirty = true;
+                    }
+                }
+                if (dirty) {
+                    saveConfig(cfg);
+                    this.config = cfg;
+                    console.log(
+                        colorize(
+                            `🔁 [Monitor] Re-enabled ${staleFailures.length} group(s) stale >24 h — re-probing now`,
+                            'cyan',
+                        ),
+                    );
+                }
+            } catch {
+                /* non-fatal — groups stay disabled this session */
+            }
+        }
+
         // Cluster: skip groups whose ownerPeerId is set to another peer.
         // The owner peer downloads them; we'll see their files via the
         // sync engine + bridge instead of duplicating Telegram traffic.

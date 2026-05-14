@@ -583,6 +583,22 @@ export function createConfigRouter({
                 }
             }
 
+            // Re-arm the auto-cluster timer when AI config changes so the new
+            // interval takes effect immediately without a server restart.
+            if (req.body.advanced?.ai) {
+                try {
+                    const { startAutoCluster } = await import('../../core/ai/index.js');
+                    const aiCfg = newConfig?.advanced?.ai || {};
+                    const intervalMin =
+                        Number(aiCfg.autoClusterIntervalMin) > 0
+                            ? Number(aiCfg.autoClusterIntervalMin)
+                            : 60;
+                    startAutoCluster({ intervalMin });
+                } catch (e) {
+                    console.warn('[ai-auto-cluster] restart failed:', e?.message || e);
+                }
+            }
+
             // Seekbar sidecar — runtime knobs (concurrency, hwaccel, format,
             // tileWidth, etc.) are forwarded as env vars when the Go process
             // spawns. So when an operator tweaks those on the Maintenance →

@@ -5,8 +5,13 @@
 
 import fs from 'fs/promises';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { Api } from 'telegram';
 import { colorize } from '../cli/colors.js';
+import { getDb } from './db.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const DOWNLOADS_DIR = path.resolve(__dirname, '../../data/downloads');
 
 export class AutoForwarder {
     constructor(client, config, accountManager = null) {
@@ -81,14 +86,45 @@ export class AutoForwarder {
                 caption += `\n\n📌 Source: **${groupName}**`;
             }
 
-            // 4. Upload & Send
-            // We use sendFile to bypass restricted content forwarding
-            const sentMsg = await fwdClient.sendFile(targetPeer, {
-                file: filePath,
-                caption: caption,
-                forceDocument: false,
-                workers: 1, // Safer for automated uploads
-            });
+            // 4. Upload & Send with retry — transient errors (FLOOD_WAIT,
+            // network hiccups) get up to 3 attempts with exponential backoff.
+            // FLOOD_WAIT carries the required wait in seconds; respect it.
+            const MAX_ATTEMPTS = 3;
+            let sentMsg;
+            for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+                try {
+                    sentMsg = await fwdClient.sendFile(targetPeer, {
+                        file: filePath,
+                        caption: caption,
+                        forceDocument: false,
+                        workers: 1,
+                    });
+                    break;
+                } catch (sendErr) {
+                    const floodMatch = String(sendErr?.message || '').match(/FLOOD_WAIT_(\d+)/);
+                    if (floodMatch) {
+                        const waitSec = Number(floodMatch[1]) + 2;
+                        console.log(
+                            colorize(
+                                `⏳ [AutoForward] Flood wait ${waitSec}s (attempt ${attempt}/${MAX_ATTEMPTS})`,
+                                'yellow',
+                            ),
+                        );
+                        await new Promise((r) => setTimeout(r, waitSec * 1000));
+                    } else if (attempt < MAX_ATTEMPTS) {
+                        const backoff = 2 ** attempt * 1000;
+                        console.log(
+                            colorize(
+                                `⚠️  [AutoForward] Send failed (attempt ${attempt}/${MAX_ATTEMPTS}), retrying in ${backoff / 1000}s: ${sendErr?.message}`,
+                                'yellow',
+                            ),
+                        );
+                        await new Promise((r) => setTimeout(r, backoff));
+                    } else {
+                        throw sendErr;
+                    }
+                }
+            }
 
             // GramJS returns the new message; surface its TG message-id in the log
             // so operators can trace the destination copy back from the dashboard.
@@ -111,13 +147,30 @@ export class AutoForwarder {
             const shouldDeleteVideo = mediaType === 'videos' ? !settings.keepVideos : true;
             if (settings.deleteAfterForward && shouldDeletePhoto && shouldDeleteVideo) {
                 try {
-                    await fs.unlink(filePath);
-                    console.log(
-                        colorize(
-                            `🗑️  [AutoForward] Deleted local file: ${path.basename(filePath)}`,
-                            'gray',
-                        ),
-                    );
+                    // Skip delete when other DB rows share this file — it is
+                    // the dedup canonical copy and removing it would corrupt
+                    // every other group that points at the same path.
+                    const relPath = path.relative(DOWNLOADS_DIR, filePath).replace(/\\/g, '/');
+                    const sharedCount =
+                        getDb()
+                            .prepare(`SELECT COUNT(*) AS n FROM downloads WHERE file_path = ?`)
+                            .get(relPath)?.n ?? 0;
+                    if (sharedCount > 1) {
+                        console.log(
+                            colorize(
+                                `⏭️  [AutoForward] Skipping delete — ${sharedCount} rows share this file`,
+                                'yellow',
+                            ),
+                        );
+                    } else {
+                        await fs.unlink(filePath);
+                        console.log(
+                            colorize(
+                                `🗑️  [AutoForward] Deleted local file: ${path.basename(filePath)}`,
+                                'gray',
+                            ),
+                        );
+                    }
                 } catch (unlinkErr) {
                     console.warn(
                         colorize(
