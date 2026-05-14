@@ -320,7 +320,8 @@ export function createGroupsRouter({
             const limit = Math.max(1, Math.min(500, parseInt(req.query.limit, 10) || 50));
             const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
             const type = typeof req.query.type === 'string' ? req.query.type : null;
-            const r = listGroupFiles({ groupId, limit, offset, type });
+            const textSearch = typeof req.query.text === 'string' ? req.query.text : null;
+            const r = listGroupFiles({ groupId, limit, offset, type, textSearch });
             res.json({ success: true, ...r });
         } catch (e) {
             console.error('groups/:id/files:', e);

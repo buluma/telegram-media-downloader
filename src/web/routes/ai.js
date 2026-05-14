@@ -274,6 +274,47 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                             vocabularySize,
                         };
                     })(),
+                    ocr: await (async () => {
+                        const enabled = cfg.imageOcr === true;
+                        let ready = false;
+                        let error = null;
+                        try {
+                            const facesClient = await import('../../core/ai/faces-client.js');
+                            const url = facesClient.getSidecarUrl();
+                            if (url) {
+                                const info = await _fetchSidecarInfo(url);
+                                if (info) {
+                                    ready = info.ocr_ready === true;
+                                    error = info.ocr_error || null;
+                                }
+                            }
+                        } catch {
+                            /* probe failed */
+                        }
+                        return { enabled, ready, error };
+                    })(),
+                    objects: await (async () => {
+                        const enabled =
+                            cfg.objectDetection === true ||
+                            (typeof cfg.objectDetection === 'object' &&
+                                cfg.objectDetection !== null);
+                        let ready = false;
+                        let error = null;
+                        try {
+                            const facesClient = await import('../../core/ai/faces-client.js');
+                            const url = facesClient.getSidecarUrl();
+                            if (url) {
+                                const info = await _fetchSidecarInfo(url);
+                                if (info) {
+                                    ready = info.detection_ready === true;
+                                    error = info.detection_error || null;
+                                }
+                            }
+                        } catch {
+                            /* probe failed */
+                        }
+                        return { enabled, ready, error };
+                    })(),
                 },
                 bgQueue: (() => {
                     try {
@@ -395,6 +436,16 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             const { getImageObjects } = await import('../../core/db/faces.js');
             const objects = getImageObjects(Number(req.params.downloadId));
             res.json({ success: true, objects });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    router.post('/ai/objects/backfill-tags', async (_req, res) => {
+        try {
+            const { backfillObjectsToImageTags } = await import('../../core/db/faces.js');
+            const written = backfillObjectsToImageTags();
+            res.json({ success: true, written });
         } catch (e) {
             res.status(500).json({ error: e.message });
         }
@@ -637,6 +688,9 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             }
             if (feature === 'tags' && typeof req.body?.minScore === 'number') {
                 cfg.wd14MinScore = Math.max(0, Math.min(1, req.body.minScore));
+            }
+            if (feature === 'ocr' && typeof req.body?.language === 'string') {
+                cfg.ocrLanguage = req.body.language.trim() || 'eng';
             }
             const tracker = _aiTrackerFor(feature);
             const starter = _aiStarterFor(feature);

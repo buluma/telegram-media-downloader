@@ -265,6 +265,10 @@ class HealthOk(BaseModel):
     clip_ready: bool = False
     clip_model: str = ""
     clip_vocabulary_size: int = 0
+    ocr_ready: bool = False
+    ocr_error: str | None = None
+    detection_ready: bool = False
+    detection_error: str | None = None
 
 
 class HealthErr(BaseModel):
@@ -276,6 +280,10 @@ class HealthErr(BaseModel):
     clip_ready: bool = False
     clip_model: str = ""
     clip_vocabulary_size: int = 0
+    ocr_ready: bool = False
+    ocr_error: str | None = None
+    detection_ready: bool = False
+    detection_error: str | None = None
 
 
 class InfoResponse(BaseModel):
@@ -388,6 +396,11 @@ def health() -> JSONResponse:
     elif clip_last_error() is not None:
         clip_model = "error"
 
+    _ocr_ready = ocr_is_ready()
+    _ocr_error = ocr_last_error() if not _ocr_ready else None
+    _det_ready = detection_is_ready()
+    _det_error = detection_last_error() if not _det_ready else None
+
     if err is not None:
         return JSONResponse(
             status_code=status.HTTP_200_OK,
@@ -398,6 +411,10 @@ def health() -> JSONResponse:
                 clip_ready=clip_ready,
                 clip_model=clip_model,
                 clip_vocabulary_size=clip_vocabulary_size,
+                ocr_ready=_ocr_ready,
+                ocr_error=str(_ocr_error) if _ocr_error else None,
+                detection_ready=_det_ready,
+                detection_error=str(_det_error) if _det_error else None,
             ).model_dump(),
         )
     return JSONResponse(
@@ -412,6 +429,10 @@ def health() -> JSONResponse:
             clip_ready=clip_ready,
             clip_model=clip_model,
             clip_vocabulary_size=clip_vocabulary_size,
+            ocr_ready=_ocr_ready,
+            ocr_error=str(_ocr_error) if _ocr_error else None,
+            detection_ready=_det_ready,
+            detection_error=str(_det_error) if _det_error else None,
         ).model_dump(),
     )
 
@@ -896,6 +917,10 @@ class OCRRequest(BaseModel):
         default=None,
         description="Base64-encoded image bytes.",
     )
+    language: str = Field(
+        default="eng",
+        description="Tesseract language code(s), e.g. 'eng', 'tha', 'eng+tha'.",
+    )
 
     @model_validator(mode="after")
     def _validate_source(self) -> OCRRequest:
@@ -948,7 +973,7 @@ def ocr_image(body: Annotated[OCRRequest, ...]) -> JSONResponse:
                       status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
 
     try:
-        result = ocr_extract_text(img, lang="eng")
+        result = ocr_extract_text(img, lang=body.language or "eng")
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content=OCRResponse(

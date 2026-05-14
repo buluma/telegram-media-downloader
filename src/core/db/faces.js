@@ -890,13 +890,21 @@ export function buildMetadataText(downloadId) {
         }
     };
 
-    // Top tags (threshold 0.2 keeps only meaningful CLIP labels)
+    // Top CLIP tags (threshold 0.2 keeps only meaningful labels)
     const tags = db
         .prepare(
             `SELECT tag FROM image_tags WHERE download_id = ? AND score >= 0.2 ORDER BY score DESC LIMIT 30`,
         )
         .all(id);
     for (const r of tags) add(r.tag);
+
+    // WD14 tags (separate table; sentinel rows excluded by tag filter)
+    const wd14Tags = db
+        .prepare(
+            `SELECT tag FROM image_tags_wd14 WHERE download_id = ? AND score >= 0.2 AND tag != '_wd14_scanned_' ORDER BY score DESC LIMIT 30`,
+        )
+        .all(id);
+    for (const r of wd14Tags) add(r.tag);
 
     // Detected objects (threshold 0.3 filters weak detections)
     const objects = db
@@ -1722,6 +1730,39 @@ export function getImagesWithObject(object, { limit = 50, offset = 0 } = {}) {
         .get(String(object)).n;
 
     return { files: rows, total };
+}
+
+/**
+ * One-time backfill: read all existing image_objects rows and upsert the
+ * best-confidence detection per object class into image_tags. Idempotent —
+ * safe to call repeatedly; ON CONFLICT updates score if new value is higher.
+ * Returns the number of (downloadId, tag) pairs written.
+ */
+export function backfillObjectsToImageTags() {
+    const db = getDb();
+    const rows = db
+        .prepare(
+            `SELECT download_id, object, MAX(confidence) AS best_conf
+               FROM image_objects
+              WHERE object != '_scanned_' AND confidence > 0
+              GROUP BY download_id, object`,
+        )
+        .all();
+    if (!rows.length) return 0;
+    const ins = db.prepare(`
+        INSERT INTO image_tags (download_id, tag, score)
+        VALUES (?, ?, ?)
+        ON CONFLICT(download_id, tag) DO UPDATE SET score = MAX(excluded.score, score)
+    `);
+    const tx = db.transaction(() => {
+        let n = 0;
+        for (const r of rows) {
+            ins.run(Number(r.download_id), String(r.object).slice(0, 80), Number(r.best_conf) || 0);
+            n += 1;
+        }
+        return n;
+    });
+    return tx();
 }
 
 // ---- Smart Albums --------------------------------------------------------

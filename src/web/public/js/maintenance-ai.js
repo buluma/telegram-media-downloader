@@ -2104,7 +2104,26 @@ function _bindOnce() {
     });
     $('#ai-people-refresh-btn')?.addEventListener('click', () => _loadPeople());
 
-    // Objects browser — refresh + pagination.
+    // Objects browser — backfill + refresh + pagination.
+    $('#ai-objects-backfill-btn')?.addEventListener('click', async () => {
+        const btn = $('#ai-objects-backfill-btn');
+        if (btn) {
+            btn.disabled = true;
+            btn.classList.add('opacity-50');
+        }
+        try {
+            const r = await api.post('/api/ai/objects/backfill-tags', {});
+            showToast(`Synced ${r.written ?? 0} object→tag entries`, 'success');
+            _renderTagBrowser().catch(() => {});
+        } catch (e) {
+            showToast(`Backfill failed: ${e?.message || 'unknown'}`, 'error');
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.classList.remove('opacity-50');
+            }
+        }
+    });
     $('#ai-objects-browser-refresh')?.addEventListener('click', () => _renderObjectsBrowser());
     $('#ai-objects-prev-btn')?.addEventListener('click', () => {
         if (!_objectSelected || _objectPhotosPage <= 1) return;
@@ -2683,7 +2702,7 @@ function _renderStatus(status) {
         if (tagsConfDisplay) tagsConfDisplay.textContent = val.toFixed(2);
     }
 
-    // OCR card — toggle, scan state.
+    // OCR card — toggle, scan state, sidecar readiness hint.
     const ocrToggle = $('#ai-ocr-toggle');
     if (ocrToggle) {
         const on = cfg.imageOcr === true;
@@ -2696,8 +2715,21 @@ function _renderStatus(status) {
     const ocrCancelBtn = $('#ai-ocr-cancel-btn');
     if (ocrScanBtn) ocrScanBtn.disabled = ocrRunning;
     if (ocrCancelBtn) ocrCancelBtn.disabled = !ocrRunning;
+    const ocrModel = models.ocr || {};
+    const ocrStatusEl = $('#ai-ocr-status-line');
+    if (ocrStatusEl) {
+        if (ocrModel.ready) {
+            ocrStatusEl.textContent = 'Tesseract ready';
+            ocrStatusEl.className = 'text-[10px] text-tg-green mt-1';
+        } else if (ocrModel.error) {
+            ocrStatusEl.textContent = `Tesseract: ${ocrModel.error}`;
+            ocrStatusEl.className = 'text-[10px] text-red-400 mt-1';
+        } else {
+            ocrStatusEl.textContent = '';
+        }
+    }
 
-    // Object detection card — toggle, scan state.
+    // Object detection card — toggle, scan state, sidecar readiness hint.
     const objectsToggle = $('#ai-objects-toggle');
     if (objectsToggle) {
         const on = cfg.objectDetection === true;
@@ -2710,6 +2742,19 @@ function _renderStatus(status) {
     const objectsCancelBtn = $('#ai-objects-cancel-btn');
     if (objectsScanBtn) objectsScanBtn.disabled = objectsRunning;
     if (objectsCancelBtn) objectsCancelBtn.disabled = !objectsRunning;
+    const detModel = models.objects || {};
+    const detStatusEl = $('#ai-objects-status-line');
+    if (detStatusEl) {
+        if (detModel.ready) {
+            detStatusEl.textContent = 'YOLOv8n ready';
+            detStatusEl.className = 'text-[10px] text-tg-green mt-1';
+        } else if (detModel.error) {
+            detStatusEl.textContent = `YOLO: ${detModel.error}`;
+            detStatusEl.className = 'text-[10px] text-red-400 mt-1';
+        } else {
+            detStatusEl.textContent = '';
+        }
+    }
 }
 
 function _renderSidecarBadge(status) {
@@ -3462,6 +3507,10 @@ async function _startScan(feature) {
             if (confSlider) {
                 payload.minScore = parseFloat(confSlider.value) || 0.35;
             }
+        }
+        if (feature === 'ocr') {
+            const langSelect = $('#ai-ocr-language');
+            if (langSelect?.value) payload.language = langSelect.value;
         }
         const r = await api.post('/api/ai/scan/start', payload);
         if (r.error) {

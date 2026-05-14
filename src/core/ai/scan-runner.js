@@ -913,7 +913,11 @@ export function startOcrScan(cfg, onProgress, onDone, onLog) {
                     }
 
                     try {
-                        const result = await _extractTextOne(sidecarUrl, absPath, log);
+                        const lang =
+                            typeof cfg.ocrLanguage === 'string' && cfg.ocrLanguage.trim()
+                                ? cfg.ocrLanguage.trim()
+                                : 'eng';
+                        const result = await _extractTextOne(sidecarUrl, absPath, lang, log);
                         // Always write a row (even empty) so the same image
                         // isn't picked up on the next batch query.
                         setImageText(
@@ -949,7 +953,7 @@ async function _readAsBase64(absPath) {
  * Tries path mode first; falls back to base64 if sidecar's allow-list rejects.
  * Returns ``{text, language, confidence}`` or null on failure.
  */
-async function _extractTextOne(sidecarUrl, absPath, log) {
+async function _extractTextOne(sidecarUrl, absPath, lang, log) {
     const url = `${sidecarUrl.replace(/\/+$/, '')}/ocr`;
     const doFetch = async (body) =>
         fetch(url, {
@@ -959,10 +963,10 @@ async function _extractTextOne(sidecarUrl, absPath, log) {
             signal: AbortSignal.timeout(30000),
         });
     try {
-        let res = await doFetch({ path: absPath });
+        let res = await doFetch({ path: absPath, language: lang });
         if (res.status === 403) {
             const b64 = await _readAsBase64(absPath);
-            res = await doFetch({ image_b64: b64 });
+            res = await doFetch({ image_b64: b64, language: lang });
         }
         if (!res.ok) {
             log('warn', `ocr endpoint returned ${res.status} for ${absPath}`);

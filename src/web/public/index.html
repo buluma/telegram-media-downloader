@@ -546,13 +546,14 @@
 
                         <!-- 2. Recent files -->
                         <div class="bg-tg-panel rounded-lg p-3 border border-tg-border/40">
-                            <div class="flex items-center justify-between mb-1.5">
+                            <div class="flex items-center justify-between mb-1.5 gap-2 flex-wrap">
                                 <h4 class="text-tg-text text-sm font-medium flex items-center gap-1.5">
                                     <i class="ri-file-list-3-line text-tg-blue"></i>
                                     <span data-i18n="group.data.recent">Recent files</span>
                                 </h4>
                                 <span id="group-data-files-count" class="text-[10px] text-tg-blue tabular-nums"></span>
                             </div>
+                            <input id="group-data-text-search" type="search" class="tg-input text-xs w-full mb-2" placeholder="Search by text in image (OCR)…" autocomplete="off">
                             <div id="group-data-files" class="space-y-1 max-h-64 overflow-y-auto pr-1"></div>
                             <button id="group-data-loadmore" type="button" class="text-[11px] text-tg-blue hover:underline mt-1.5 hidden" data-i18n="group.data.loadmore">Load more</button>
                         </div>
@@ -3713,6 +3714,27 @@
                                 <div id="ai-ocr-toggle" class="tg-toggle shrink-0 mt-0.5" role="switch" aria-checked="false" tabindex="0"></div>
                             </div>
 
+                            <!-- Language selector. -->
+                            <div>
+                                <label for="ai-ocr-language" class="text-tg-text text-xs block mb-1">Language</label>
+                                <select id="ai-ocr-language" class="tg-input text-xs w-full sm:w-48">
+                                    <option value="eng">English (eng)</option>
+                                    <option value="tha">Thai (tha)</option>
+                                    <option value="chi_sim">Chinese Simplified (chi_sim)</option>
+                                    <option value="chi_tra">Chinese Traditional (chi_tra)</option>
+                                    <option value="jpn">Japanese (jpn)</option>
+                                    <option value="kor">Korean (kor)</option>
+                                    <option value="ara">Arabic (ara)</option>
+                                    <option value="rus">Russian (rus)</option>
+                                    <option value="spa">Spanish (spa)</option>
+                                    <option value="fra">French (fra)</option>
+                                    <option value="deu">German (deu)</option>
+                                    <option value="por">Portuguese (por)</option>
+                                    <option value="eng+tha">English + Thai</option>
+                                </select>
+                                <p class="text-[10px] text-tg-textSecondary mt-1">Tesseract must have the selected language pack installed.</p>
+                            </div>
+
                             <!-- Scan + Cancel buttons row. -->
                             <div class="flex items-center gap-2 pt-2">
                                 <button id="ai-ocr-scan-btn" type="button" class="tg-btn text-xs px-3 py-1.5 inline-flex items-center gap-1.5">
@@ -3723,6 +3745,7 @@
                                     <span data-i18n="common.cancel">Cancel</span>
                                 </button>
                             </div>
+                            <p id="ai-ocr-status-line" class="text-[10px] text-tg-textSecondary mt-1"></p>
                         </div>
                     </details>
 
@@ -3768,6 +3791,7 @@
                                     <span data-i18n="common.cancel">Cancel</span>
                                 </button>
                             </div>
+                            <p id="ai-objects-status-line" class="text-[10px] text-tg-textSecondary mt-1"></p>
                         </div>
                     </details>
 
@@ -3783,9 +3807,14 @@
                         </summary>
                         <div class="flex items-start justify-between gap-3 flex-wrap mb-3">
                             <p class="text-[11px] text-tg-textSecondary min-w-0">Browse photos by detected object (YOLOv8). Run an object detection scan to populate.</p>
-                            <button id="ai-objects-browser-refresh" type="button" class="tg-btn-secondary text-xs px-2.5 py-1 inline-flex items-center gap-1">
-                                <i class="ri-refresh-line"></i><span>Refresh</span>
-                            </button>
+                            <div class="flex items-center gap-1.5">
+                                <button id="ai-objects-backfill-btn" type="button" class="tg-btn text-xs px-2.5 py-1 inline-flex items-center gap-1" title="Copy all existing detections into the tag browser">
+                                    <i class="ri-arrow-up-down-line"></i><span>Sync to tags</span>
+                                </button>
+                                <button id="ai-objects-browser-refresh" type="button" class="tg-btn-secondary text-xs px-2.5 py-1 inline-flex items-center gap-1">
+                                    <i class="ri-refresh-line"></i><span>Refresh</span>
+                                </button>
+                            </div>
                         </div>
                         <div id="ai-objects-chips" class="flex flex-wrap gap-1.5 mb-3"></div>
                         <section class="bg-tg-panel rounded-xl p-3">

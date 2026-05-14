@@ -48,10 +48,46 @@ export function getGroupStats(groupId) {
  * for the WHERE filter + the index's natural ordering for the LIMIT/OFFSET
  * scan, so a 100k-row group still opens the modal in <500 ms.
  */
-export function listGroupFiles({ groupId, limit = 50, offset = 0, type = null } = {}) {
+export function listGroupFiles({
+    groupId,
+    limit = 50,
+    offset = 0,
+    type = null,
+    textSearch = null,
+} = {}) {
     const db = getDb();
     const lim = Math.max(1, Math.min(500, Number(limit) || 50));
     const off = Math.max(0, Number(offset) || 0);
+
+    const textTerm = typeof textSearch === 'string' && textSearch.trim() ? textSearch.trim() : null;
+
+    if (textTerm) {
+        // Text-search path: JOIN image_text so we can filter by OCR content.
+        const typeClause = type ? `AND d.file_type = ?` : '';
+        const baseSql = `
+            FROM downloads d
+            JOIN image_text it ON it.download_id = d.id
+           WHERE d.group_id = ?
+             AND it.text LIKE ?
+             ${typeClause}
+        `;
+        const baseArgs = [String(groupId), `%${textTerm}%`];
+        if (type) baseArgs.push(type);
+
+        const total = db.prepare(`SELECT COUNT(*) AS n ${baseSql}`).get(...baseArgs).n || 0;
+        const rows = db
+            .prepare(`
+                SELECT d.id, d.message_id, d.file_name, d.file_path, d.file_type,
+                       d.file_size, d.created_at, d.nsfw_score,
+                       SUBSTR(it.text, 1, 200) AS ocr_snippet
+                  ${baseSql}
+                 ORDER BY d.created_at DESC, d.id DESC
+                 LIMIT ? OFFSET ?
+            `)
+            .all(...baseArgs, lim, off);
+        return { rows, total, limit: lim, offset: off, hasMore: off + rows.length < total };
+    }
+
     const where = ['group_id = ?'];
     const args = [String(groupId)];
     if (type && typeof type === 'string') {

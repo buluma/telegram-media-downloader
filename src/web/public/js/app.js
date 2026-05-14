@@ -3161,8 +3161,11 @@ function _wireGroupDataActions(groupId) {
             if (!_groupDataState.hasMore || _groupDataState.groupId !== groupId) return;
             const { api } = await import('./api.js');
             try {
+                const textQ = _groupDataState.textSearch
+                    ? `&text=${encodeURIComponent(_groupDataState.textSearch)}`
+                    : '';
                 const r = await api.get(
-                    `/api/groups/${encodeURIComponent(groupId)}/files?limit=20&offset=${_groupDataState.offset}`,
+                    `/api/groups/${encodeURIComponent(groupId)}/files?limit=20&offset=${_groupDataState.offset}${textQ}`,
                 );
                 const filesHost = document.getElementById('group-data-files');
                 if (filesHost && r.rows && r.rows.length) {
@@ -3175,6 +3178,47 @@ function _wireGroupDataActions(groupId) {
                 const { showToast } = await import('./utils.js');
                 showToast(e?.data?.error || e.message || 'Failed', 'error');
             }
+        };
+    }
+
+    const textSearchInput = document.getElementById('group-data-text-search');
+    if (textSearchInput) {
+        textSearchInput.value = '';
+        _groupDataState.textSearch = '';
+        let _textSearchTimer = null;
+        textSearchInput.oninput = () => {
+            clearTimeout(_textSearchTimer);
+            _textSearchTimer = setTimeout(async () => {
+                const term = textSearchInput.value.trim();
+                _groupDataState.textSearch = term;
+                _groupDataState.offset = 0;
+                _groupDataState.hasMore = false;
+                const filesHost = document.getElementById('group-data-files');
+                const counter = document.getElementById('group-data-files-count');
+                const moreBtn = document.getElementById('group-data-loadmore');
+                if (filesHost)
+                    filesHost.innerHTML =
+                        '<div class="text-xs text-tg-textSecondary py-2 text-center"><i class="ri-loader-4-line animate-spin"></i></div>';
+                try {
+                    const { api } = await import('./api.js');
+                    const textQ = term ? `&text=${encodeURIComponent(term)}` : '';
+                    const r = await api.get(
+                        `/api/groups/${encodeURIComponent(groupId)}/files?limit=20${textQ}`,
+                    );
+                    if (filesHost) filesHost.innerHTML = _renderGroupFiles(r.rows || []);
+                    _groupDataState.offset = (r.rows || []).length;
+                    _groupDataState.hasMore = !!r.hasMore;
+                    if (moreBtn) moreBtn.classList.toggle('hidden', !r.hasMore);
+                    if (counter) {
+                        const shown = (r.rows || []).length;
+                        const total = Number(r.total) || shown;
+                        counter.textContent = `${shown.toLocaleString()} / ${total.toLocaleString()}`;
+                    }
+                } catch (e) {
+                    if (filesHost)
+                        filesHost.innerHTML = `<div class="text-xs text-red-400 py-2">${_escape(e?.message || 'Failed')}</div>`;
+                }
+            }, 350);
         };
     }
 }
@@ -3338,7 +3382,7 @@ function switchSettingsTab(tab) {
 let _groupDataState = { groupId: null, offset: 0, hasMore: false };
 async function _loadGroupDataTab(groupId) {
     if (!groupId) return;
-    _groupDataState = { groupId, offset: 0, hasMore: false };
+    _groupDataState = { groupId, offset: 0, hasMore: false, textSearch: '' };
     const { api } = await import('./api.js');
     const statsHost = document.getElementById('group-data-stats');
     const filesHost = document.getElementById('group-data-files');
