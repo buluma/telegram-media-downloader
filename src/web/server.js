@@ -685,13 +685,22 @@ async function getAccountManager() {
 // have explicit Content-Type headers (some hosts mis-detect .webmanifest)
 // and the SW gets `Service-Worker-Allowed: /` so it can claim the whole
 // origin even though the script itself lives at a different path.
+// sw.js is served with the VERSION constant rewritten to match the running
+// app version so cache keys rotate on every deploy — no manual bump needed.
+const _swSrc = (() => {
+    try {
+        return fsSync.readFileSync(path.join(__dirname, 'public', 'sw.js'), 'utf8');
+    } catch {
+        return null;
+    }
+})();
 app.get('/sw.js', (req, res) => {
     res.set('Content-Type', 'application/javascript; charset=utf-8');
     res.set('Service-Worker-Allowed', '/');
-    // Don't let intermediaries cache an old SW — the SW is the thing that
-    // controls cache behaviour for everything else, so it must update fast.
     res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
-    res.sendFile(path.join(__dirname, 'public', 'sw.js'));
+    if (!_swSrc) return res.status(500).send('// sw.js unavailable');
+    const versioned = _swSrc.replace(/^const VERSION = .*$/m, `const VERSION = 'v${appVersion}';`);
+    res.type('application/javascript').send(versioned);
 });
 
 app.get('/manifest.webmanifest', (req, res) => {

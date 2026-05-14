@@ -218,18 +218,55 @@ export function initStatusBar() {
     ws.on('__ws_open', () => refreshStats());
 
     // Live cues from the WebSocket
+    let _offlineTimer = null;
+    const _showOfflineBanner = (giveUp = false) => {
+        const banner = document.getElementById('offline-banner');
+        const text = document.getElementById('offline-banner-text');
+        if (!banner) return;
+        if (text) {
+            text.textContent = giveUp
+                ? i18nT('offline.giveup', 'Server unreachable.')
+                : i18nT('offline.reconnecting', 'Server unreachable — reconnecting…');
+            text.dataset.i18n = giveUp ? 'offline.giveup' : 'offline.reconnecting';
+        }
+        banner.classList.remove('hidden');
+    };
+    const _hideOfflineBanner = () => {
+        clearTimeout(_offlineTimer);
+        _offlineTimer = null;
+        document.getElementById('offline-banner')?.classList.add('hidden');
+    };
+    document.getElementById('offline-banner-retry')?.addEventListener('click', () => {
+        _hideOfflineBanner();
+        ws.retry();
+    });
+
     ws.on('__ws_open', () => {
         const dot = $('status-ws');
-        if (dot) dot.className = 'inline-block w-2 h-2 rounded-full bg-tg-green mr-1';
+        if (dot) {
+            dot.className = 'inline-block w-2 h-2 rounded-full bg-tg-green mr-1';
+            dot.title = '';
+            dot.onclick = null;
+        }
+        _hideOfflineBanner();
     });
     ws.on('__ws_close', () => {
         const dot = $('status-ws');
         if (dot) dot.className = 'inline-block w-2 h-2 rounded-full bg-tg-red mr-1';
+        // Show banner after 5 s so brief server restarts don't flash it.
+        if (!_offlineTimer) {
+            _offlineTimer = setTimeout(() => {
+                _offlineTimer = null;
+                _showOfflineBanner(false);
+            }, 5000);
+        }
     });
-    // Surface a one-time toast + offer manual retry when ws.js gives up
-    // after MAX_ATTEMPTS_BEFORE_PAUSE so the user isn't left looking at a
-    // dead red dot with no way to recover other than F5.
+    // After MAX_ATTEMPTS_BEFORE_PAUSE reconnect attempts (~6 min of retries),
+    // upgrade the banner and the WS dot to the persistent give-up state.
     ws.on('__ws_giveup', () => {
+        clearTimeout(_offlineTimer);
+        _offlineTimer = null;
+        _showOfflineBanner(true);
         const dot = $('status-ws');
         if (dot) {
             dot.className = 'inline-block w-2 h-2 rounded-full bg-tg-orange mr-1 cursor-pointer';
@@ -240,11 +277,6 @@ export function initStatusBar() {
                 ws.retry();
             };
         }
-        showToast(
-            i18nT('ws.giveup', 'Lost connection to server — click WS dot to retry.'),
-            'warning',
-            8000,
-        );
     });
     ws.on('monitor_state', (m) => applyState(m.state));
     ws.on('*', (m) => {

@@ -169,6 +169,16 @@
 
 <body class="h-screen overflow-hidden" data-role="">
 
+    <!-- Offline / server-unreachable banner. Hidden by default; shown by
+         statusbar.js when the WS stays disconnected for >5 s. -->
+    <div id="offline-banner" class="hidden fixed top-0 inset-x-0 z-[200] flex items-center justify-between gap-3 px-4 py-2 bg-amber-500/90 backdrop-blur-sm text-white text-xs font-medium shadow-lg" role="alert" aria-live="assertive">
+        <span class="flex items-center gap-2">
+            <i class="ri-wifi-off-line text-sm"></i>
+            <span id="offline-banner-text" data-i18n="offline.reconnecting">Server unreachable — reconnecting…</span>
+        </span>
+        <button id="offline-banner-retry" type="button" class="shrink-0 px-2.5 py-1 rounded bg-white/20 hover:bg-white/30 transition-colors" data-i18n="offline.retry">Retry</button>
+    </div>
+
     <div class="flex h-full">
         <!-- Mobile Overlay -->
         <div id="sidebar-overlay" class="fixed inset-0 bg-black/50 z-40 hidden md:hidden" onclick="closeSidebar()">
