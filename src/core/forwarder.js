@@ -67,7 +67,8 @@ export class AutoForwarder {
             }
 
             // 3. Prepare Caption with Message Link
-            let caption = message?.message || message?.text || '';
+            const TG_CAPTION_LIMIT = 1024;
+            let body = message?.message || message?.text || '';
 
             // Generate message link
             // Format: t.me/c/CHANNEL_ID/MESSAGE_ID (private) or t.me/USERNAME/MESSAGE_ID (public)
@@ -79,12 +80,17 @@ export class AutoForwarder {
                 messageLink = `https://t.me/c/${cleanId}/${msgId}`;
             }
 
-            // Add source attribution with clickable link
-            if (messageLink) {
-                caption += `\n\n📌 Source: [${groupName}](${messageLink})`;
-            } else {
-                caption += `\n\n📌 Source: **${groupName}**`;
+            const suffix = messageLink
+                ? `\n\n📌 Source: [${groupName}](${messageLink})`
+                : `\n\n📌 Source: **${groupName}**`;
+
+            // Truncate body so body + suffix fits within Telegram's 1024-char limit.
+            const maxBody = TG_CAPTION_LIMIT - suffix.length;
+            if (body.length > maxBody) {
+                body = `${body.slice(0, Math.max(0, maxBody - 1))}…`;
             }
+
+            const caption = body + suffix;
 
             // 4. Upload & Send with retry — transient errors (FLOOD_WAIT,
             // network hiccups) get up to 3 attempts with exponential backoff.
