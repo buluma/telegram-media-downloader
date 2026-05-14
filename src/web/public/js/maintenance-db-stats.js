@@ -140,10 +140,10 @@ function vbarChart(
         const x = pad.left + i * (barWidth + 4);
         const y = h - pad.bottom - barH;
         svg += `<rect class="vbar" x="${x}" y="${y}" width="${barWidth}" height="${barH}" rx="2" fill="${barColor}" opacity="0.85"/>
-            <text x="${x + barWidth / 2}" y="${h - 4}" text-anchor="middle" fill="var(--tg-theme-text-secondary,#7f8c8d)" font-size="7">${escapeHtml((b.label || '').slice(0, 6))}</text>`;
+            <text x="${x + barWidth / 2}" y="${h - 3}" text-anchor="middle" fill="var(--tg-theme-text-secondary,#7f8c8d)" font-size="9">${escapeHtml((b.label || '').slice(0, 6))}</text>`;
         // Value on top
         if (barH > 14) {
-            svg += `<text x="${x + barWidth / 2}" y="${y - 2}" text-anchor="middle" fill="var(--tg-theme-text-color,#fff)" font-size="7" font-weight="600">${fmt(b.value)}</text>`;
+            svg += `<text x="${x + barWidth / 2}" y="${y - 2}" text-anchor="middle" fill="var(--tg-theme-text-color,#fff)" font-size="9" font-weight="600">${fmt(b.value)}</text>`;
         }
     }
     svg += '</svg>';
@@ -209,8 +209,15 @@ async function load() {
     try {
         const res = await api.get('/api/db/stats');
         if (!res?.success) throw new Error('API error');
-        const { tableCounts, groups, totals, recent, ai } = res;
+        const { tableCounts, groups, totals, dailyTrend, dbFileSizeBytes, ai } = res;
         let html = '';
+
+        // ── Refresh button ──
+        html += `<div class="flex justify-end mb-2">
+            <button id="db-stats-refresh-btn" class="tg-btn-secondary text-xs px-3 py-1.5 inline-flex items-center gap-1.5">
+                <i class="ri-refresh-line"></i><span>Refresh</span>
+            </button>
+        </div>`;
 
         // ── Summary cards ──
         html += '<div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">';
@@ -220,17 +227,19 @@ async function load() {
             { label: 'People', value: fmt(ai?.people || 0), color: 'text-tg-accent' },
             { label: 'Tags', value: fmt(ai?.tags || 0), color: 'text-tg-accent' },
             { label: 'Total size', value: formatBytes(totals?.bytes || 0), color: '' },
+            { label: 'DB on disk', value: formatBytes(dbFileSizeBytes || 0), color: '' },
             {
-                label: 'Indexed',
-                value: `${fmt(ai?.indexed || 0)} / ${fmt(ai?.total || 0)} (${ai?.pct || 0}%)`,
+                label: 'AI indexed',
+                value: `${ai?.pct || 0}%`,
+                sub: `${fmt(ai?.indexed || 0)} / ${fmt(ai?.total || 0)}`,
                 color: '',
             },
-            { label: 'Photos', value: fmt(totals?.photos || 0), color: '' },
             { label: 'Videos', value: fmt(totals?.videos || 0), color: '' },
         ];
         for (const item of summaryItems) {
             html += `<div class="bg-tg-panel rounded-xl p-2 sm:p-3 text-center truncate">
                 <div class="text-sm sm:text-lg font-bold ${item.color} truncate">${item.value}</div>
+                ${item.sub ? `<div class="text-[9px] text-tg-textSecondary tabular-nums leading-tight truncate">${item.sub}</div>` : ''}
                 <div class="text-[9px] sm:text-[10px] text-tg-textSecondary mt-0.5 truncate">${escapeHtml(item.label)}</div>
             </div>`;
         }
@@ -247,15 +256,16 @@ async function load() {
 
         // ── Groups chart + table ──
         if (groups?.length) {
-            // Horizontal bar chart for top groups
             const topGroups = groups.slice(0, 15);
             const bars = topGroups.map((g, i) => ({
-                label: (g.group_name || '?').slice(0, 28),
+                label: (g.group_name || g.group_id || '?').slice(0, 28),
                 value: g.n,
                 color: COLORS[i % COLORS.length],
             }));
             const maxLabel = Math.min(
-                Math.max(...topGroups.map((g) => (g.group_name || '?').length)) * 6.5 + 8,
+                Math.max(...topGroups.map((g) => (g.group_name || g.group_id || '?').length)) *
+                    6.5 +
+                    8,
                 160,
             );
             html += renderCard(
@@ -263,9 +273,8 @@ async function load() {
                 hbarChart(bars, { maxLabel: `${Math.min(maxLabel, 200)}px`, height: 18 }),
             );
 
-            // Table
             const rows = groups.map((g) => [
-                escapeHtml((g.group_name || '?').slice(0, 28)),
+                escapeHtml((g.group_name || g.group_id || '?').slice(0, 28)),
                 fmt(g.n),
                 fmt(g.photos),
                 fmt(g.videos),
@@ -288,7 +297,7 @@ async function load() {
             );
         }
 
-        // ── File type donut chart + table ──
+        // ── File type donut + table (includes stickers) ──
         if (totals) {
             const totalFiles = Number(totals.total) || 1;
             const segs = [
@@ -297,6 +306,7 @@ async function load() {
                 { label: 'Audio', value: Number(totals.audio || 0), color: '#34d399' },
                 { label: 'Documents', value: Number(totals.documents || 0), color: '#fbbf24' },
                 { label: 'Voice', value: Number(totals.voice || 0), color: '#f87171' },
+                { label: 'Stickers', value: Number(totals.stickers || 0), color: '#fb923c' },
             ];
             html += renderCard(
                 'File type distribution',
@@ -318,44 +328,25 @@ async function load() {
             );
         }
 
-        // ── Recent activity chart ──
-        if (recent?.length) {
-            const topRecent = recent.slice(0, 10);
-            const rb = topRecent.map((r) => ({
-                label: (r.group_name || '?').slice(0, 10),
-                value: r.n,
-            }));
+        // ── 14-day download trend ──
+        if (dailyTrend?.length) {
+            const total14 = dailyTrend.reduce((s, d) => s + d.n, 0);
+            const bars = dailyTrend.map((d) => ({ label: d.day.slice(5), value: d.n }));
             html += renderCard(
-                'Recent activity (last 30 min)',
-                `<div class="overflow-x-auto">${vbarChart(rb, { height: 120, barWidth: 28 })}</div>` +
-                    renderTable(
-                        [
-                            { label: 'Group' },
-                            { label: 'Files', right: true },
-                            { label: 'Size', right: true },
-                        ],
-                        recent.map((r) => [
-                            escapeHtml((r.group_name || '?').slice(0, 28)),
-                            fmt(r.n),
-                            formatBytes(r.bytes),
-                        ]),
-                    ),
-            );
-        } else {
-            html += renderCard(
-                'Recent activity (last 30 min)',
-                '<p class="text-xs text-tg-textSecondary">No activity in the last 30 minutes.</p>',
+                `14-day download trend  ·  ${fmt(total14)} total`,
+                `<div class="overflow-x-auto">${vbarChart(bars, { height: 130, barWidth: 30 })}</div>`,
             );
         }
 
-        // ── AI Indexing chart + table ──
+        // ── AI coverage ──
         if (ai) {
             const indexed = Number(ai.indexed) || 0;
             const totalAi = Number(ai.total) || 1;
             const notIndexed = Math.max(0, totalAi - indexed);
+            const pct = (n) => (totalAi ? `${Math.round((Number(n || 0) / totalAi) * 100)}%` : '—');
             html += renderCard(
-                'AI Indexing',
-                `<div class="flex flex-col sm:flex-row items-center gap-4 mb-4">
+                'AI coverage',
+                `<div class="flex flex-col sm:flex-row items-center gap-4 mb-2">
                     <div class="flex-shrink-0">${donutChart(
                         [
                             { label: 'Indexed', value: indexed, color: '#34d399' },
@@ -365,12 +356,20 @@ async function load() {
                         { size: 100, stroke: 14 },
                     )}</div>
                     <div class="flex-1 w-full">${renderTable(
-                        [{ label: 'Metric' }, { label: 'Value', right: true }],
                         [
-                            ['Indexed', `${fmt(indexed)} / ${fmt(totalAi)} (${ai.pct}%)`],
-                            ['Faces detected', fmt(ai.faces)],
-                            ['People clusters', fmt(ai.people)],
-                            ['Image tags', fmt(ai.tags)],
+                            { label: 'Metric' },
+                            { label: 'Count', right: true },
+                            { label: '% of lib', right: true },
+                        ],
+                        [
+                            ['Face-indexed', `${fmt(indexed)} / ${fmt(totalAi)}`, `${ai.pct}%`],
+                            ['Faces detected', fmt(ai.faces), ''],
+                            ['People clusters', fmt(ai.people), ''],
+                            ['CLIP tags', fmt(ai.tags), pct(ai.tags)],
+                            ['OCR scanned', fmt(ai.ocrFiles || 0), pct(ai.ocrFiles)],
+                            ['Objects scanned', fmt(ai.objectFiles || 0), pct(ai.objectFiles)],
+                            ['WD14 tagged', fmt(ai.wd14Files || 0), pct(ai.wd14Files)],
+                            ['Embeddings', fmt(ai.embeddings || 0), pct(ai.embeddings)],
                         ],
                     )}</div>
                 </div>`,
@@ -378,7 +377,11 @@ async function load() {
         }
 
         const root = $('db-stats-root');
-        if (root) root.innerHTML = html;
+        if (root) {
+            root.innerHTML = html;
+            const btn = root.querySelector('#db-stats-refresh-btn');
+            if (btn) btn.addEventListener('click', () => load());
+        }
     } catch (e) {
         const root = $('db-stats-root');
         if (root)

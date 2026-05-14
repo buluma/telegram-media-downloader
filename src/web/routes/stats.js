@@ -179,66 +179,106 @@ export function createStatsRouter({ broadcast, getAccountManager, getIsConnected
         try {
             const db = getDb();
 
+            // Table row counts — includes all AI subsidiary tables
             const tables = [
                 'downloads',
+                'queue',
                 'faces',
                 'people',
                 'image_embeddings',
                 'image_tags',
-                'queue',
+                'image_tags_wd14',
+                'image_text',
+                'image_objects',
             ];
             const tableCounts = {};
             for (const t of tables) {
                 try {
-                    const r = db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get();
-                    tableCounts[t] = r?.n || 0;
+                    tableCounts[t] = db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get()?.n || 0;
                 } catch {
                     tableCounts[t] = 0;
                 }
             }
 
+            // Groups — group by group_id so null-named groups don't collapse into one row
             const groups = db
                 .prepare(
                     `
-            SELECT group_name, COUNT(*) AS n,
+            SELECT group_id, group_name,
+                   COUNT(*) AS n,
                    SUM(CASE WHEN file_type = 'photo' THEN 1 ELSE 0 END) AS photos,
                    SUM(CASE WHEN file_type = 'video' THEN 1 ELSE 0 END) AS videos,
-                   SUM(file_size) AS bytes,
+                   COALESCE(SUM(file_size), 0) AS bytes,
                    MAX(created_at) AS last_activity
               FROM downloads
-             GROUP BY group_name
+             GROUP BY group_id
              ORDER BY last_activity DESC
         `,
                 )
                 .all();
 
+            // File type totals — includes sticker
             const totals = db
                 .prepare(
                     `
             SELECT COUNT(*) AS total,
-                   SUM(CASE WHEN file_type = 'photo' THEN 1 ELSE 0 END) AS photos,
-                   SUM(CASE WHEN file_type = 'video' THEN 1 ELSE 0 END) AS videos,
-                   SUM(CASE WHEN file_type = 'audio' THEN 1 ELSE 0 END) AS audio,
+                   SUM(CASE WHEN file_type = 'photo'    THEN 1 ELSE 0 END) AS photos,
+                   SUM(CASE WHEN file_type = 'video'    THEN 1 ELSE 0 END) AS videos,
+                   SUM(CASE WHEN file_type = 'audio'    THEN 1 ELSE 0 END) AS audio,
                    SUM(CASE WHEN file_type = 'document' THEN 1 ELSE 0 END) AS documents,
-                   SUM(CASE WHEN file_type = 'voice' THEN 1 ELSE 0 END) AS voice,
-                   SUM(file_size) AS bytes
+                   SUM(CASE WHEN file_type = 'voice'    THEN 1 ELSE 0 END) AS voice,
+                   SUM(CASE WHEN file_type = 'sticker'  THEN 1 ELSE 0 END) AS stickers,
+                   COALESCE(SUM(file_size), 0) AS bytes
               FROM downloads
         `,
                 )
                 .get();
 
-            const recent = db
+            // 14-day daily download trend
+            const trendRows = db
                 .prepare(
                     `
-            SELECT group_name, COUNT(*) AS n, SUM(file_size) AS bytes
+            SELECT date(created_at) AS day,
+                   COUNT(*) AS n,
+                   COALESCE(SUM(file_size), 0) AS bytes
               FROM downloads
-             WHERE created_at >= datetime('now', '-30 minutes')
-             GROUP BY group_name
-             ORDER BY n DESC
+             WHERE created_at >= date('now', '-13 days')
+             GROUP BY day
+             ORDER BY day ASC
         `,
                 )
                 .all();
+            const trendMap = new Map(trendRows.map((r) => [r.day, r]));
+            const dailyTrend = [];
+            for (let i = 13; i >= 0; i--) {
+                const d = new Date(Date.now() - i * 86400000);
+                const key = d.toISOString().slice(0, 10);
+                dailyTrend.push({
+                    day: key,
+                    n: trendMap.get(key)?.n || 0,
+                    bytes: trendMap.get(key)?.bytes || 0,
+                });
+            }
 
+            // DB file size on disk (main file + WAL if present)
+            let dbFileSizeBytes = 0;
+            try {
+                const dbPath = db.name;
+                if (dbPath && dbPath !== ':memory:') {
+                    const stat = await fs.stat(dbPath);
+                    dbFileSizeBytes = stat.size || 0;
+                    try {
+                        const walStat = await fs.stat(`${dbPath}-wal`);
+                        dbFileSizeBytes += walStat.size || 0;
+                    } catch {
+                        /* WAL may not exist */
+                    }
+                }
+            } catch {
+                /* best effort */
+            }
+
+            // AI coverage stats
             const indexed =
                 db
                     .prepare(`SELECT COUNT(*) AS n FROM downloads WHERE ai_indexed_at IS NOT NULL`)
@@ -246,7 +286,11 @@ export function createStatsRouter({ broadcast, getAccountManager, getIsConnected
             const total = db.prepare(`SELECT COUNT(*) AS n FROM downloads`).get()?.n || 0;
             let aiFaces = 0,
                 aiPeople = 0,
-                aiTags = 0;
+                aiTags = 0,
+                aiOcrFiles = 0,
+                aiObjectFiles = 0,
+                aiWd14Files = 0,
+                aiEmbeddings = 0;
             try {
                 aiFaces = db.prepare('SELECT COUNT(*) AS n FROM faces').get()?.n || 0;
             } catch {}
@@ -254,7 +298,27 @@ export function createStatsRouter({ broadcast, getAccountManager, getIsConnected
                 aiPeople = db.prepare('SELECT COUNT(*) AS n FROM people').get()?.n || 0;
             } catch {}
             try {
-                aiTags = db.prepare('SELECT COUNT(*) AS n FROM image_tags').get()?.n || 0;
+                aiTags =
+                    db
+                        .prepare("SELECT COUNT(*) AS n FROM image_tags WHERE tag != '_scanned_'")
+                        .get()?.n || 0;
+            } catch {}
+            try {
+                aiOcrFiles = db.prepare('SELECT COUNT(*) AS n FROM image_text').get()?.n || 0;
+            } catch {}
+            try {
+                aiObjectFiles =
+                    db.prepare('SELECT COUNT(DISTINCT download_id) AS n FROM image_objects').get()
+                        ?.n || 0;
+            } catch {}
+            try {
+                aiWd14Files =
+                    db.prepare('SELECT COUNT(DISTINCT download_id) AS n FROM image_tags_wd14').get()
+                        ?.n || 0;
+            } catch {}
+            try {
+                aiEmbeddings =
+                    db.prepare('SELECT COUNT(*) AS n FROM image_embeddings').get()?.n || 0;
             } catch {}
 
             res.json({
@@ -262,7 +326,8 @@ export function createStatsRouter({ broadcast, getAccountManager, getIsConnected
                 tableCounts,
                 groups,
                 totals,
-                recent,
+                dailyTrend,
+                dbFileSizeBytes,
                 ai: {
                     indexed,
                     total,
@@ -270,6 +335,10 @@ export function createStatsRouter({ broadcast, getAccountManager, getIsConnected
                     faces: aiFaces,
                     people: aiPeople,
                     tags: aiTags,
+                    ocrFiles: aiOcrFiles,
+                    objectFiles: aiObjectFiles,
+                    wd14Files: aiWd14Files,
+                    embeddings: aiEmbeddings,
                 },
             });
         } catch (e) {
