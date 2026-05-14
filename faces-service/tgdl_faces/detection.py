@@ -49,13 +49,20 @@ def _init_model():
         model_path = Path.home() / ".cache" / "yolov8n.onnx"
 
         if not model_path.exists():
-            _LOG.info(f"YOLOv8n model not found at {model_path}")
-            _LOG.info(
-                "Download from: https://github.com/ultralytics/assets/releases/download/v8.1.0/yolov8n.onnx"
-            )
-            _MODEL_ERROR = f"Model not found at {model_path}. Download YOLOv8n.onnx manually."
-            _MODEL_AVAILABLE = False
-            return False
+            _LOG.info(f"YOLOv8n model not found at {model_path} — downloading…")
+            url = "https://github.com/ultralytics/assets/releases/download/v8.1.0/yolov8n.onnx"
+            try:
+                import urllib.request
+                model_path.parent.mkdir(parents=True, exist_ok=True)
+                tmp = model_path.with_suffix(".onnx.tmp")
+                urllib.request.urlretrieve(url, tmp)
+                tmp.rename(model_path)
+                _LOG.info(f"YOLOv8n model downloaded to {model_path}")
+            except Exception as dl_err:
+                _LOG.warning(f"Failed to download YOLOv8n model: {dl_err}")
+                _MODEL_ERROR = f"Model not found at {model_path} and auto-download failed: {dl_err}"
+                _MODEL_AVAILABLE = False
+                return False
 
         _SESSION = ort.InferenceSession(str(model_path), providers=["CoreMLExecutionProvider", "CPUExecutionProvider"])
         _LABELS = COCO_LABELS

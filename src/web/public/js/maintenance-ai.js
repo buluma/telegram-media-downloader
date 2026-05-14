@@ -42,6 +42,13 @@ let _tagPhotosTotalPages = 1;
 const _tagPhotosLimit = 50;
 let _tagCurrentRows = [];
 let _lastTagsChangedAt = 0;
+let _objectListCache = [];
+let _objectSelected = '';
+let _objectPhotosTotal = 0;
+let _objectPhotosPage = 1;
+let _objectPhotosTotalPages = 1;
+const _objectPhotosLimit = 50;
+let _objectCurrentRows = [];
 let _smartAlbumSelected = null;
 let _smartAlbumSelectedName = '';
 let _smartAlbumItemsPage = 1;
@@ -53,6 +60,7 @@ const LS_FACES_COLLAPSED = 'tgdl.ai.faces.collapsed';
 const LS_TAGS_COLLAPSED = 'tgdl.ai.tags.collapsed';
 const LS_PEOPLE_COLLAPSED = 'tgdl.ai.people.collapsed';
 const LS_TAG_BROWSER_COLLAPSED = 'tgdl.ai.tagBrowser.collapsed';
+const LS_OBJECTS_BROWSER_COLLAPSED = 'tgdl.ai.objectsBrowser.collapsed';
 const LS_TAG_SUGGESTIONS_COLLAPSED = 'tgdl.ai.tagSuggestions.collapsed';
 const LS_SMART_ALBUMS_COLLAPSED = 'tgdl.ai.smartAlbums.collapsed';
 const LS_LLM_COLLAPSED = 'tgdl.ai.llm.collapsed';
@@ -449,6 +457,200 @@ function _moveTagChipFocus(currentBtn, dir) {
     if (next < 0) next = list.length - 1;
     if (next >= list.length) next = 0;
     list[next]?.focus();
+}
+
+// ---- Objects browser ----------------------------------------------------
+
+async function _renderObjectsBrowser(forceReload = true) {
+    const section = $('#ai-objects-browser');
+    const chips = $('#ai-objects-chips');
+    const empty = $('#ai-objects-empty');
+    if (!section || !chips) return;
+
+    try {
+        if (forceReload || !_objectListCache.length) {
+            const r = await api.get('/api/ai/objects/list?minConfidence=0.3&limit=100');
+            _objectListCache = Array.isArray(r?.objects) ? r.objects : [];
+        }
+        const countEl = $('#ai-objects-browser-count');
+        if (countEl)
+            countEl.textContent = _objectListCache.length ? `(${_objectListCache.length})` : '';
+
+        section.classList.remove('hidden');
+        if (!_objectListCache.length) {
+            chips.innerHTML = '';
+            const photos = $('#ai-objects-photos');
+            if (photos) {
+                photos.innerHTML =
+                    '<p class="text-[11px] text-tg-textSecondary col-span-full text-center py-6">No objects yet — run an object detection scan to populate.</p>';
+            }
+            if (empty) empty.classList.remove('hidden');
+            _objectSelected = '';
+            _syncObjectPager();
+            return;
+        }
+        if (empty) empty.classList.add('hidden');
+        chips.innerHTML = _objectListCache
+            .map(
+                (o) =>
+                    `<button type="button" class="tg-btn-input text-[11px] px-2.5 py-1 inline-flex items-center gap-1 obj-chip" data-object="${escapeHtml(o.object)}" aria-pressed="false">
+                        ${escapeHtml(o.object)}
+                        <span class="text-[10px] text-tg-textSecondary tabular-nums">${o.count}</span>
+                    </button>`,
+            )
+            .join('');
+
+        chips.querySelectorAll('.obj-chip').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                chips.querySelectorAll('.obj-chip').forEach((b) => {
+                    b.classList.remove('active');
+                    b.setAttribute('aria-pressed', 'false');
+                });
+                btn.classList.add('active');
+                btn.setAttribute('aria-pressed', 'true');
+                const obj = btn.dataset.object;
+                if (obj) {
+                    _objectSelected = obj;
+                    _loadObjectPhotos(obj);
+                }
+            });
+        });
+
+        const selectedBtn = _objectSelected
+            ? Array.from(chips.querySelectorAll('.obj-chip')).find(
+                  (el) => el.dataset.object === _objectSelected,
+              )
+            : null;
+        const pick = selectedBtn || chips.querySelector('.obj-chip');
+        if (pick) {
+            pick.classList.add('active');
+            pick.setAttribute('aria-pressed', 'true');
+            const obj = pick.dataset.object || '';
+            if (obj) {
+                if (_objectSelected !== obj) _objectSelected = obj;
+                _loadObjectPhotos(obj);
+            }
+        }
+    } catch (e) {
+        console.warn('objects browser:', e);
+        section.classList.add('hidden');
+    }
+}
+
+async function _loadObjectPhotos(object) {
+    const photos = $('#ai-objects-photos');
+    if (!photos) return;
+    _objectSelected = String(object || '');
+    _objectPhotosPage = 1;
+    _objectPhotosTotal = 0;
+    _objectPhotosTotalPages = 1;
+    _objectCurrentRows = [];
+    _syncObjectPager();
+    await _loadObjectPhotoPage();
+}
+
+async function _loadObjectPhotoPage() {
+    const photos = $('#ai-objects-photos');
+    const obj = _objectSelected;
+    if (!photos || !obj) return;
+    photos.innerHTML =
+        '<p class="text-[11px] text-tg-textSecondary col-span-full text-center py-6"><i class="ri-loader-4-line animate-spin mr-1"></i>Loading…</p>';
+    try {
+        const offset = Math.max(0, (_objectPhotosPage - 1) * _objectPhotosLimit);
+        const r = await api.get(
+            `/api/ai/objects/photos?object=${encodeURIComponent(obj)}&limit=${_objectPhotosLimit}&offset=${offset}`,
+        );
+        const files = Array.isArray(r?.files) ? r.files : [];
+        _objectCurrentRows = files;
+        _objectPhotosTotal = Number(r?.total) || files.length;
+        _objectPhotosTotalPages = Math.max(1, Math.ceil(_objectPhotosTotal / _objectPhotosLimit));
+        if (!files.length) {
+            photos.innerHTML =
+                '<p class="text-[11px] text-tg-textSecondary col-span-full text-center py-6">No photos with this object.</p>';
+            _syncObjectPager();
+            return;
+        }
+        photos.innerHTML = files.map((f, i) => _renderObjectPhotoTile(f, i)).join('');
+        _wireObjectPhotoClicks();
+        _syncObjectPager();
+    } catch (e) {
+        _objectCurrentRows = [];
+        _syncObjectPager();
+        photos.innerHTML = `<p class="text-[11px] text-red-400 col-span-full text-center py-6">Failed: ${escapeHtml(e?.message || 'unknown')}</p>`;
+    }
+}
+
+function _renderObjectPhotoTile(file, index) {
+    const thumb = `/api/thumbs/${encodeURIComponent(file.id)}?w=320`;
+    const confPct = file.confidence ? Math.round(file.confidence * 100) : 0;
+    return `<button type="button" data-obj-tile-index="${index}" data-id="${file.id}"
+            class="nsfw-tile group relative aspect-square rounded-md overflow-hidden bg-tg-bg/40 focus:outline-none focus:ring-2 focus:ring-tg-blue">
+        <img loading="lazy" decoding="async"
+             class="absolute inset-0 w-full h-full object-cover"
+             src="${escapeHtml(thumb)}" alt=""
+             onerror="this.style.display='none'">
+        <span class="hidden sm:block absolute top-1 right-1 px-1.5 py-0.5 text-[10px] font-mono rounded bg-tg-blue/85 text-white tabular-nums">${confPct}%</span>
+        <span class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 group-focus:opacity-100 transition flex items-end p-2 pointer-events-none">
+            <span class="text-[11px] text-white truncate w-full text-left">${escapeHtml(file.file_name || '')}</span>
+        </span>
+    </button>`;
+}
+
+function _wireObjectPhotoClicks() {
+    const photos = $('#ai-objects-photos');
+    if (!photos) return;
+    photos.querySelectorAll('[data-obj-tile-index]').forEach((tile) => {
+        if (tile.dataset.wired) return;
+        tile.dataset.wired = '1';
+        tile.addEventListener('click', () => {
+            const idx = Number(tile.dataset.objTileIndex);
+            if (Number.isFinite(idx)) _openObjectLightbox(idx);
+        });
+    });
+}
+
+function _objectRowToViewerFile(row) {
+    const sizeMb = row.file_size ? (row.file_size / (1024 * 1024)).toFixed(1) : '0';
+    return {
+        fullPath: row.file_path || '',
+        type: row.file_type === 'video' ? 'videos' : 'images',
+        name: row.file_name || '',
+        sizeFormatted: `${sizeMb} MB`,
+        modified: row.created_at || Date.now(),
+        _objRow: row,
+    };
+}
+
+function _objectReviewMetaFor(file) {
+    const row = file?._objRow;
+    const conf = Math.round((Number(row?.confidence) || 0) * 100);
+    return `<span class="inline-flex items-center gap-2">
+        <span class="inline-block w-2.5 h-2.5 rounded-full bg-tg-blue"></span>
+        <span>${escapeHtml(_objectSelected || '')}</span>
+        <span class="font-mono tabular-nums">${conf}%</span>
+    </span>`;
+}
+
+function _openObjectLightbox(startIndex) {
+    if (!_objectCurrentRows.length) return;
+    openMediaViewerForReview(_objectCurrentRows.map(_objectRowToViewerFile), startIndex, {
+        actions: [],
+        metaRender: _objectReviewMetaFor,
+    });
+}
+
+function _syncObjectPager() {
+    const pageInfo = $('#ai-objects-page-info');
+    const prevBtn = $('#ai-objects-prev-btn');
+    const nextBtn = $('#ai-objects-next-btn');
+    const hasObj = !!_objectSelected;
+    if (pageInfo) {
+        pageInfo.textContent = hasObj
+            ? `Page ${_objectPhotosPage} / ${_objectPhotosTotalPages} · ${_objectPhotosTotal.toLocaleString()} photos`
+            : '';
+    }
+    if (prevBtn) prevBtn.disabled = !hasObj || _objectPhotosPage <= 1;
+    if (nextBtn) nextBtn.disabled = !hasObj || _objectPhotosPage >= _objectPhotosTotalPages;
 }
 
 // ---- OCR word chips -----------------------------------------------------
@@ -1633,6 +1835,7 @@ export async function refreshStatus() {
         _lastStatus = r;
         _renderStatus(r);
         _renderTagBrowser().catch(() => {});
+        _renderObjectsBrowser().catch(() => {});
         _renderTagSuggestions().catch(() => {});
         _renderSmartAlbums().catch(() => {});
         _renderLlmStatus().catch(() => {});
@@ -1901,6 +2104,19 @@ function _bindOnce() {
     });
     $('#ai-people-refresh-btn')?.addEventListener('click', () => _loadPeople());
 
+    // Objects browser — refresh + pagination.
+    $('#ai-objects-browser-refresh')?.addEventListener('click', () => _renderObjectsBrowser());
+    $('#ai-objects-prev-btn')?.addEventListener('click', () => {
+        if (!_objectSelected || _objectPhotosPage <= 1) return;
+        _objectPhotosPage -= 1;
+        _loadObjectPhotoPage();
+    });
+    $('#ai-objects-next-btn')?.addEventListener('click', () => {
+        if (!_objectSelected || _objectPhotosPage >= _objectPhotosTotalPages) return;
+        _objectPhotosPage += 1;
+        _loadObjectPhotoPage();
+    });
+
     // Tag browser — refresh + chip clicks.
     $('#ai-tag-browser-refresh')?.addEventListener('click', () => _renderTagBrowser());
     $('#ai-tag-filter')?.addEventListener('input', (e) => {
@@ -1956,6 +2172,11 @@ function _bindOnce() {
     _initDetailsCollapsedState({
         detailsId: 'ai-tag-browser',
         storageKey: LS_TAG_BROWSER_COLLAPSED,
+        defaultOpen: false,
+    });
+    _initDetailsCollapsedState({
+        detailsId: 'ai-objects-browser',
+        storageKey: LS_OBJECTS_BROWSER_COLLAPSED,
         defaultOpen: false,
     });
     _initDetailsCollapsedState({
@@ -3340,6 +3561,7 @@ function _onScanDone(feature, msg) {
     refreshStatus();
     if (feature === 'faces') _loadPeople();
     if (feature === 'tags') _renderTagBrowser();
+    if (feature === 'objects') _renderObjectsBrowser();
 }
 
 // ---- People (face clusters) ----------------------------------------------

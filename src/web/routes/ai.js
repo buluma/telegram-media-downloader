@@ -359,16 +359,6 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         }
     });
 
-    router.get('/ai/objects/:downloadId', async (req, res) => {
-        try {
-            const { getImageObjects } = await import('../../core/db/faces.js');
-            const objects = getImageObjects(Number(req.params.downloadId));
-            res.json({ success: true, objects });
-        } catch (e) {
-            res.status(500).json({ error: e.message });
-        }
-    });
-
     router.get('/ai/objects/list', async (req, res) => {
         try {
             const minConf = Math.max(0, Math.min(1, Number(req.query.minConfidence) || 0.5));
@@ -380,6 +370,30 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                 limit,
                 offset,
             });
+            res.json({ success: true, objects });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    router.get('/ai/objects/photos', async (req, res) => {
+        try {
+            const object = String(req.query.object || '').trim();
+            if (!object) return res.status(400).json({ error: 'object required' });
+            const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
+            const offset = Math.max(0, Number(req.query.offset) || 0);
+            const { getImagesWithObject } = await import('../../core/db/faces.js');
+            const result = getImagesWithObject(object, { limit, offset });
+            res.json({ success: true, files: result.files, total: result.total });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    router.get('/ai/objects/:downloadId', async (req, res) => {
+        try {
+            const { getImageObjects } = await import('../../core/db/faces.js');
+            const objects = getImageObjects(Number(req.params.downloadId));
             res.json({ success: true, objects });
         } catch (e) {
             res.status(500).json({ error: e.message });
