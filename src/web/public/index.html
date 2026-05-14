@@ -3090,6 +3090,11 @@
                                 <div id="ai-stat-last" class="text-xs text-tg-text tabular-nums leading-tight pt-1">—</div>
                             </div>
                         </div>
+                        <!-- Auto-cluster cadence hint — populated by JS when
+                             autoCluster is enabled; hidden otherwise. -->
+                        <div id="ai-auto-cluster-info" class="hidden text-[10.5px] text-tg-textSecondary mt-2 flex items-center gap-1">
+                            <i class="ri-time-line"></i><span id="ai-auto-cluster-info-text"></span>
+                        </div>
                     </section>
 
                     <!-- System health — collapsed by default. Summary

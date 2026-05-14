@@ -2235,13 +2235,17 @@ function _renderStatus(status) {
     if (indexedEl) {
         const indexed = Number(counts.indexed) || 0;
         const total = Number(counts.totalEligible) || 0;
-        indexedEl.textContent = `${indexed.toLocaleString()} / ${total.toLocaleString()}`;
+        const pctIndexed = total > 0 ? Math.round((indexed / total) * 100) : 0;
+        indexedEl.innerHTML = `<span>${pctIndexed}%</span><div class="text-[10px] text-tg-textSecondary font-normal mt-0.5 tabular-nums">${indexed.toLocaleString()} / ${total.toLocaleString()}</div>`;
     }
     const peopleEl = $('#ai-stat-people');
     if (peopleEl) peopleEl.textContent = String(counts.peopleCount ?? counts.withFaces ?? 0);
     const taggedEl = $('#ai-stat-tagged');
     if (taggedEl) {
-        taggedEl.textContent = String(counts.withTags ?? 0);
+        const tagged = Number(counts.withTags ?? 0);
+        const indexed = Number(counts.indexed) || 0;
+        const pctTagged = indexed > 0 ? Math.round((tagged / indexed) * 100) : 0;
+        taggedEl.innerHTML = `<span>${pctTagged}%</span><div class="text-[10px] text-tg-textSecondary font-normal mt-0.5 tabular-nums">${tagged.toLocaleString()} tagged</div>`;
     }
     const ocrCount = $('#ai-ocr-count');
     if (ocrCount) {
@@ -2259,6 +2263,24 @@ function _renderStatus(status) {
         const finishedAt = Number(scans?.faces?.finishedAt) || 0;
         lastEl.textContent =
             finishedAt > 0 ? new Date(finishedAt).toLocaleString() : i18nT('common.never', 'Never');
+    }
+
+    // Auto-cluster cadence hint — only shown when the feature is active.
+    const autoClusterInfoEl = $('#ai-auto-cluster-info');
+    const autoClusterTextEl = $('#ai-auto-cluster-info-text');
+    if (autoClusterInfoEl && autoClusterTextEl) {
+        const active = !!cfg.enabled && !!cfg.faceClustering && !!cfg.autoCluster;
+        if (active) {
+            const mins = Number(cfg.autoClusterIntervalMin) || 60;
+            autoClusterTextEl.textContent = i18nTf(
+                'maintenance.ai.auto_cluster_info',
+                { mins },
+                `Auto-clustering every ${mins} min`,
+            );
+            autoClusterInfoEl.classList.remove('hidden');
+        } else {
+            autoClusterInfoEl.classList.add('hidden');
+        }
     }
 
     // Toggles. Click handlers in `_bindOnce` flip the underlying flag
@@ -2363,7 +2385,19 @@ function _renderStatus(status) {
     const tagsRunning = !!scans?.tags?.running;
     const tagsScanBtn = $('#ai-tags-scan-btn');
     const tagsCancelBtn = $('#ai-tags-cancel-btn');
-    if (tagsScanBtn) tagsScanBtn.disabled = tagsRunning;
+    if (tagsScanBtn) {
+        tagsScanBtn.disabled = tagsRunning;
+        const tagScanIcon = tagsScanBtn.querySelector('i');
+        if (tagScanIcon)
+            tagScanIcon.className = tagsRunning
+                ? 'ri-loader-4-line animate-spin'
+                : 'ri-price-tag-3-line';
+        const tagScanSpan = tagsScanBtn.querySelector('span[data-i18n]');
+        if (tagScanSpan)
+            tagScanSpan.textContent = tagsRunning
+                ? i18nT('maintenance.ai.scanning_tags', 'Tagging…')
+                : i18nT('maintenance.ai.tags.scan', 'Tag all');
+    }
     if (tagsCancelBtn) tagsCancelBtn.disabled = !tagsRunning;
     // Hydrate tag labels textarea from config.
     const tagsLabelsEl = $('#ai-tags-labels');
@@ -3180,7 +3214,17 @@ function _onScanProgress(feature, msg) {
     } else if (feature === 'tags') {
         const scanBtn = $('#ai-tags-scan-btn');
         const cancelBtn = $('#ai-tags-cancel-btn');
-        if (scanBtn) scanBtn.disabled = running;
+        if (scanBtn) {
+            scanBtn.disabled = running;
+            const icon = scanBtn.querySelector('i');
+            if (icon)
+                icon.className = running ? 'ri-loader-4-line animate-spin' : 'ri-price-tag-3-line';
+            const span = scanBtn.querySelector('span[data-i18n]');
+            if (span)
+                span.textContent = running
+                    ? i18nT('maintenance.ai.scanning_tags', 'Tagging…')
+                    : i18nT('maintenance.ai.tags.scan', 'Tag all');
+        }
         if (cancelBtn) cancelBtn.disabled = !running;
     } else if (feature === 'ocr') {
         const scanBtn = $('#ai-ocr-scan-btn');
@@ -3662,6 +3706,8 @@ async function _refreshDoctor() {
         // Summary chip — colour reflects the worst-state check.
         const fails = checks.filter((c) => c.status === 'fail').length;
         const warns = checks.filter((c) => c.status === 'warn').length;
+        // Auto-expand when checks are failing so the operator sees diagnostics immediately.
+        if (fails > 0) document.getElementById('ai-doctor-card')?.setAttribute('open', '');
         if (sumEl) {
             let text;
             if (fails) {
