@@ -96,7 +96,12 @@ describe('handleRelay (transit-side)', () => {
     it('refuses if target not paired', async () => {
         await expect(
             relay.handleRelay({
-                envelope: { to_peer_id: PEER_C, method: 'GET', path: '/x', ts: Date.now() },
+                envelope: {
+                    to_peer_id: PEER_C,
+                    method: 'GET',
+                    path: '/api/cluster/health',
+                    ts: Date.now(),
+                },
                 sourcePeerId: 'A',
                 fetcher: async () => ({}),
             }),
@@ -110,7 +115,7 @@ describe('handleRelay (transit-side)', () => {
                 envelope: {
                     to_peer_id: getSelfPeerId(),
                     method: 'GET',
-                    path: '/x',
+                    path: '/api/cluster/health',
                     ts: Date.now(),
                 },
                 sourcePeerId: 'A',
