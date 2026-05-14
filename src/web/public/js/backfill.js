@@ -438,7 +438,7 @@ function setupGroupPicker() {
     if (!input || !results) return;
 
     const renderResults = (q) => {
-        const groups = state.groups || [];
+        const groups = (state.groups || []).filter((g) => !g.trackComments);
         const needle = q.toLowerCase().trim();
         const matched = needle
             ? groups.filter((g) => {
