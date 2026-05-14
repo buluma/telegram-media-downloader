@@ -122,11 +122,13 @@ export function initEngine() {
 
     $('engine-start')?.addEventListener('click', async () => {
         $('engine-start').disabled = true;
+        applyStatus({ state: 'starting' });
         try {
             const r = await api.post('/api/monitor/start');
             applyStatus(r.status);
             showToast(i18nT('toast.monitor_started', 'Monitor started'), 'success');
         } catch (e) {
+            applyStatus({ state: 'stopped' });
             showToast(
                 i18nTf(
                     'toast.monitor_start_failed',
@@ -141,11 +143,13 @@ export function initEngine() {
     });
     $('engine-stop')?.addEventListener('click', async () => {
         $('engine-stop').disabled = true;
+        applyStatus({ state: 'stopping' });
         try {
             const r = await api.post('/api/monitor/stop');
             applyStatus(r.status);
             showToast(i18nT('toast.monitor_stopped', 'Monitor stopped'), 'info');
         } catch (e) {
+            applyStatus({ state: 'running' });
             showToast(
                 i18nTf(
                     'toast.monitor_stop_failed',

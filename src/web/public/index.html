@@ -1340,6 +1340,7 @@
                                     <span>10</span>
                                     <span data-i18n="settings.download.concurrent_max">20 (Max)</span>
                                 </div>
+                                <p class="text-xs text-tg-textSecondary mt-1" data-i18n="settings.download.concurrent_help">Higher values download faster but increase the risk of Telegram rate limiting.</p>
                             </div>
                             <div>
                                 <div class="flex items-center justify-between mb-1">
@@ -1349,6 +1350,7 @@
                                 <input type="range" id="setting-retries" class="w-full accent-tg-blue" min="1" max="10"
                                     value="5"
                                     oninput="document.getElementById('retries-value').textContent = this.value">
+                                <p class="text-xs text-tg-textSecondary mt-1" data-i18n="settings.download.retries_help">How many times to retry a failed download before giving up.</p>
                             </div>
                             <!-- Download folder field retired in v2.9: it
                                  was read-only and changing it required CLI
@@ -1406,6 +1408,7 @@
                                     <span>30</span>
                                     <span data-i18n="settings.rate.rpm_fast">60 (Fast)</span>
                                 </div>
+                                <p class="text-xs text-tg-textSecondary mt-1" data-i18n="settings.rate.rpm_help">Lower values reduce ban risk when downloading from large or restricted channels.</p>
                             </div>
                             <div>
                                 <div class="flex items-center justify-between mb-1">

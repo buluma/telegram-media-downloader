@@ -195,6 +195,11 @@ function _renderCard(tool) {
                 <span class="w-1.5 h-1.5 rounded-full bg-tg-blue animate-pulse"></span>
                 ${escapeHtml(i18nT('maintenance.hub.state.running', 'Running'))}
             </span>`;
+    } else if (!live) {
+        // Status not yet fetched — suppress pill to avoid stale "Idle" flash.
+        pill = `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] bg-tg-bg/20 text-tg-textSecondary/40">
+                &nbsp;
+            </span>`;
     } else {
         pill = `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] bg-tg-bg/40 text-tg-textSecondary">
                 ${escapeHtml(i18nT('maintenance.hub.state.idle', 'Idle'))}

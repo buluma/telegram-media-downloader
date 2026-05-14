@@ -196,6 +196,16 @@ function _renderSelectionState() {
 async function _refresh() {
     if (_refreshing) return;
     _refreshing = true;
+    // Show skeleton rows while waiting so the list doesn't appear broken.
+    const list = $('recovery-list');
+    if (list && !_items.length) {
+        list.innerHTML = [1, 2, 3]
+            .map(
+                () =>
+                    `<div class="bg-tg-panel rounded-xl p-4 animate-pulse h-16 border border-tg-border/20"></div>`,
+            )
+            .join('');
+    }
     try {
         const r = await api.get('/api/maintenance/recovery/list');
         _items = Array.isArray(r?.items) ? r.items : [];
@@ -205,6 +215,7 @@ async function _refresh() {
         _renderList();
     } catch (e) {
         showToast(e?.data?.error || e.message || 'Failed', 'error');
+        if (list && !_items.length) list.innerHTML = '';
     } finally {
         _refreshing = false;
     }

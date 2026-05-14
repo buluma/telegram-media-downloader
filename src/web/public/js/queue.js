@@ -1374,6 +1374,7 @@ function bindThrottleSlider() {
         syncThrottleLabel(slider.value);
         clearTimeout(saveTimer);
         saveTimer = setTimeout(async () => {
+            slider.disabled = true;
             try {
                 const bytes = parseInt(slider.value, 10) || 0;
                 await api.post('/api/config', { download: { maxSpeed: bytes || null } });
@@ -1388,6 +1389,8 @@ function bindThrottleSlider() {
                     ),
                     'error',
                 );
+            } finally {
+                slider.disabled = false;
             }
         }, 400);
     });

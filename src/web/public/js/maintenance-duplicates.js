@@ -318,9 +318,10 @@ function _renderSets(sets) {
         const pend = $('dup-list-pending');
         if (pend) {
             pend.insertAdjacentHTML('beforebegin', html);
-            const remaining = _sets.length - (offset + slice.length);
+            const rendered = offset + slice.length;
+            const remaining = _sets.length - rendered;
             if (remaining > 0) {
-                pend.innerHTML = `<i class="ri-loader-4-line animate-spin mr-1"></i>${escapeHtml(i18nTf('maintenance.dedup.loading_remaining', { n: remaining }, `Rendering ${remaining} more sets…`))}`;
+                pend.innerHTML = `<i class="ri-loader-4-line animate-spin mr-1"></i>${escapeHtml(i18nTf('maintenance.dedup.loading_remaining', { n: remaining }, `Rendering ${remaining} more sets…`))} <span class="opacity-50">(${rendered}/${_sets.length})</span>`;
             } else {
                 pend.remove();
             }
@@ -364,9 +365,9 @@ function _setScanUi(running) {
     const bar = $('dup-progress-bar');
     const pct = $('dup-progress-pct');
     if (btn) {
-        // Preserve the icon — only swap the label span. textContent on
-        // the whole button blew away the <i class="ri-search-line">.
         btn.disabled = !!running;
+        const icon = btn.querySelector('i');
+        if (icon) icon.className = running ? 'ri-loader-4-line animate-spin' : 'ri-search-line';
         const labelSpan = btn.querySelector('span[data-i18n]');
         if (labelSpan) {
             labelSpan.textContent = running
@@ -499,7 +500,20 @@ async function _runVerify() {
 
 function _setDeleteUi(running) {
     const btn = $('dup-delete-btn');
-    if (btn) btn.disabled = !!running;
+    if (btn) {
+        btn.disabled = !!running;
+        const icon = btn.querySelector('i');
+        if (icon)
+            icon.className = running
+                ? 'ri-loader-4-line animate-spin mr-1'
+                : 'ri-delete-bin-line mr-1';
+        const labelSpan = btn.querySelector('span[data-i18n]');
+        if (labelSpan) {
+            labelSpan.textContent = running
+                ? i18nT('maintenance.dedup.deleting', 'Deleting…')
+                : i18nT('maintenance.duplicates.delete_selected', 'Delete selected');
+        }
+    }
 }
 
 async function _deleteSelected() {
