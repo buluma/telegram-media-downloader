@@ -6,11 +6,8 @@ import http from 'http';
 import path from 'path';
 import { spawn as _spawn, spawnSync } from 'child_process';
 
-// TODO: Check why is this different from '0.3.1' in spawn.js
-export const SIDECAR_VERSION = '0.1.0';
-
-// TODO: replace this with our own release
-export const GH_RELEASE_BASE = `https://github.com/botnick/telegram-media-downloader/releases/download/faces-v${SIDECAR_VERSION}`;
+export const SIDECAR_VERSION = '0.3.1';
+export const GH_RELEASE_BASE = `https://github.com/buluma/telegram-media-downloader/releases/download/faces-v${SIDECAR_VERSION}`;
 
 const DOWNLOAD_CONNECT_TIMEOUT_MS = 30_000;
 const DOWNLOAD_REDIRECT_LIMIT_DEFAULT = 5;

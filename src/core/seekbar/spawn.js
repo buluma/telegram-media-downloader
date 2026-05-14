@@ -48,8 +48,6 @@ const DATA_DIR = process.env.TGDL_DATA_DIR
  * with `tgdl-seekbar-<platform>-<arch>.tar.gz` assets attached.
  */
 export const SIDECAR_VERSION = '0.3.1';
-
-// TODO: replace this with our own release
 const GH_RELEASE_BASE = `https://github.com/botnick/telegram-media-downloader/releases/download/seekbar-v${SIDECAR_VERSION}`;
 const DOWNLOAD_CONNECT_TIMEOUT_MS = 30_000;
 const DOWNLOAD_REDIRECT_LIMIT = 5;
