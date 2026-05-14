@@ -150,10 +150,12 @@ export async function findDuplicates(opts = {}) {
 
     // Second pass: group by hash, return the duplicate sets ordered by the
     // amount of disk those duplicates are wasting (size × extra copies).
+    // Paginated in 5K-hash chunks so the event loop isn't blocked on a
+    // library with hundreds of thousands of distinct hashes.
     if (onProgress) onProgress({ stage: 'grouping', processed: total, total, hashed, errored });
 
-    const duplicates = db
-        .prepare(`
+    const GROUP_PAGE = 5000;
+    const groupStmt = db.prepare(`
         SELECT file_hash AS hash,
                COUNT(*)  AS cnt,
                MAX(file_size) AS max_size
@@ -163,9 +165,19 @@ export async function findDuplicates(opts = {}) {
         HAVING COUNT(*) > 1
          ORDER BY (MAX(file_size) * (COUNT(*) - 1)) DESC,
                   COUNT(*) DESC
-         LIMIT 500
-    `)
-        .all();
+         LIMIT ? OFFSET ?
+    `);
+    const duplicates = [];
+    let groupOff = 0;
+    while (true) {
+        const page = groupStmt.all(GROUP_PAGE, groupOff);
+        if (!page.length) break;
+        duplicates.push(...page);
+        groupOff += page.length;
+        if (page.length < GROUP_PAGE) break;
+        await new Promise((r) => setImmediate(r));
+        if (signal?.aborted) break;
+    }
 
     const sets = [];
     const filesQ = db.prepare(`

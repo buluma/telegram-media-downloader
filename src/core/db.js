@@ -55,6 +55,11 @@ export function getDb() {
     // share_links (and any future FK we add). Set BEFORE initSchema so the
     // first row insert / migration honors it.
     db.pragma('foreign_keys = ON');
+    // 64 MB page cache (negative = KiB) — cuts I/O on hot gallery + AI queries.
+    db.pragma('cache_size = -65536');
+    // Temp tables/indexes in RAM — avoids write amplification from temp B-trees
+    // during complex ORDER BY / GROUP BY scans.
+    db.pragma('temp_store = MEMORY');
 
     initSchema();
 
@@ -316,6 +321,19 @@ function initSchema() {
     } catch {
         /* index already present */
     }
+    // Composite indexes for the main gallery query — covers the group filter +
+    // date sort (most common path) and the pinned-first sort (used when
+    // pinned rows exist in a group).
+    try {
+        db.exec(
+            'CREATE INDEX IF NOT EXISTS idx_gallery_group_date ON downloads(group_id, created_at DESC)',
+        );
+    } catch {}
+    try {
+        db.exec(
+            'CREATE INDEX IF NOT EXISTS idx_gallery_pinned_date ON downloads(pinned, created_at DESC)',
+        );
+    } catch {}
     // v2.16 — faces.quality_score (Phase 2). Quality filter persists the
     // raw detection score so the UI can show "low confidence" warnings
     // and the operator can sort/filter by face quality if a cluster

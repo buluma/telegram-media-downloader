@@ -1126,6 +1126,26 @@ html.theme-light .tile-peer-badge {
     display: none;
 }
 
+/* Video duration badge — YouTube-style bottom-right corner */
+.tile-duration-badge {
+    position: absolute;
+    bottom: 5px;
+    right: 5px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: rgba(0, 0, 0, 0.78);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.4;
+    pointer-events: none;
+    white-space: nowrap;
+    letter-spacing: 0.02em;
+}
+.media-grid.view-list .tile-duration-badge {
+    display: none;
+}
+
 /* Gallery-scope chip popover — opens below the chip at the right edge of
    the media-tabs row, anchors to the parent `flex` so positioning is
    relative to the row. Click-outside dismiss is wired in app.js. */

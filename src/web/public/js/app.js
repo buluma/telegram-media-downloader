@@ -1877,6 +1877,19 @@ function renderMediaGrid(opts = {}) {
                     // Inner thumb content — the visual changes per file type (img,
                     // video w/ play overlay, doc icon). Wrapped in `.tile-thumb`
                     // so list-mode CSS can size it as a 56 px square cell.
+                    const durationBadge =
+                        file.type === 'videos' && file.duration_sec != null
+                            ? (() => {
+                                  const s = Math.round(file.duration_sec);
+                                  const m = Math.floor(s / 60);
+                                  const sec = String(s % 60).padStart(2, '0');
+                                  const label =
+                                      m >= 60
+                                          ? `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}:${sec}`
+                                          : `${m}:${sec}`;
+                                  return `<span class="tile-duration-badge">${label}</span>`;
+                              })()
+                            : '';
                     const thumbInner =
                         file.type === 'images'
                             ? imgFallback
@@ -1888,6 +1901,7 @@ function renderMediaGrid(opts = {}) {
                                 <i class="ri-play-fill text-white text-xl ml-0.5"></i>
                             </div>
                         </div>
+                        ${durationBadge}
                        </div>`
                               : docFallback;
                     // Filename-under-tile fallback for non-image-non-video types

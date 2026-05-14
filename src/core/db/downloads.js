@@ -153,6 +153,15 @@ export function countShareLinks({ downloadId = null, includeRevoked = true, sear
 // ---- Downloads ------------------------------------------------------------
 
 export function insertDownload(data) {
+    const db = getDb();
+    // Reject content whose hash appears in the NSFW blocklist — prevents
+    // re-downloading a file that was permanently deleted via the NSFW review.
+    if (data.fileHash) {
+        const blocked = db
+            .prepare('SELECT 1 FROM nsfw_hash_blocklist WHERE file_hash = ?')
+            .get(data.fileHash);
+        if (blocked) return { changes: 0, lastInsertRowid: null, blocked: true };
+    }
     const row = {
         groupId: data.groupId,
         groupName: data.groupName ?? null,
@@ -167,7 +176,7 @@ export function insertDownload(data) {
         // after the timestamp unless the source is deleted first.
         pendingUntil: data.pendingUntil ?? null,
     };
-    const stmt = getDb().prepare(`
+    const stmt = db.prepare(`
         INSERT OR IGNORE INTO downloads (
             group_id, group_name, message_id, file_name, file_size, file_type, file_path, ttl_seconds, file_hash, pending_until
         ) VALUES (
@@ -326,10 +335,15 @@ export function getAllDownloads(limit = 50, offset = 0, type = 'all', opts = {})
     // chronological order within each group. The default sort is unchanged
     // so existing callers behave identically.
     const orderBy = opts.pinnedFirst
-        ? 'COALESCE(pinned, 0) DESC, datetime(created_at) DESC, id DESC'
-        : 'datetime(created_at) DESC, id DESC';
+        ? 'COALESCE(pinned, 0) DESC, created_at DESC, id DESC'
+        : 'created_at DESC, id DESC';
     const rows = getDb()
-        .prepare(`SELECT * FROM downloads${where} ORDER BY ${orderBy} LIMIT ? OFFSET ?`)
+        .prepare(
+            `SELECT d.*, ss.duration_sec
+               FROM downloads d
+               LEFT JOIN seekbar_sprites ss ON ss.download_id = d.id${where}
+              ORDER BY ${orderBy} LIMIT ? OFFSET ?`,
+        )
         .all(...params, lim, off);
     const total = getDb()
         .prepare(`SELECT COUNT(*) AS c FROM downloads${where}`)
@@ -338,7 +352,8 @@ export function getAllDownloads(limit = 50, offset = 0, type = 'all', opts = {})
 }
 
 export function getDownloads(groupId, limit = 50, offset = 0, type = 'all', opts = {}) {
-    let query = 'SELECT * FROM downloads WHERE group_id = ?';
+    const db = getDb();
+    const whereParts = ['group_id = ?'];
     const params = [groupId];
 
     if (type !== 'all') {
@@ -348,38 +363,32 @@ export function getDownloads(groupId, limit = 50, offset = 0, type = 'all', opts
             documents: 'document',
             audio: 'audio',
         };
-        // Use LIKE for flexibility or map precisely
         if (typeMap[type]) {
-            query += ' AND file_type = ?';
+            whereParts.push('file_type = ?');
             params.push(typeMap[type]);
         }
     }
 
-    if (opts.pinnedOnly) query += ' AND COALESCE(pinned, 0) = 1';
+    if (opts.pinnedOnly) whereParts.push('COALESCE(pinned, 0) = 1');
 
-    query += opts.pinnedFirst
-        ? ' ORDER BY COALESCE(pinned, 0) DESC, created_at DESC LIMIT ? OFFSET ?'
-        : ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
-    params.push(limit, offset);
+    const where = whereParts.join(' AND ');
+    const orderBy = opts.pinnedFirst
+        ? 'COALESCE(pinned, 0) DESC, created_at DESC'
+        : 'created_at DESC';
 
-    const stmt = getDb().prepare(query);
-    const rows = stmt.all(...params);
+    const rows = db
+        .prepare(
+            `SELECT d.*, ss.duration_sec
+               FROM downloads d
+               LEFT JOIN seekbar_sprites ss ON ss.download_id = d.id
+              WHERE ${where}
+              ORDER BY ${orderBy} LIMIT ? OFFSET ?`,
+        )
+        .all(...params, limit, offset);
 
-    // Count total for pagination
-    let countQuery = 'SELECT COUNT(*) as total FROM downloads WHERE group_id = ?';
-    const countParams = [groupId];
-
-    // We reuse the type filter logic for count but it's cleaner to separate or build dynamically
-    // For simplicity here:
-    if (params.length > 3) {
-        // If type filter was added
-        countQuery += ' AND file_type = ?';
-        countParams.push(params[1]); // existing type param
-    }
-
-    const total = getDb()
-        .prepare(countQuery)
-        .get(...countParams).total;
+    const total = db
+        .prepare(`SELECT COUNT(*) AS total FROM downloads WHERE ${where}`)
+        .get(...params).total;
 
     return { files: rows, total };
 }
@@ -761,7 +770,7 @@ export function getOldestDownloads(count = 50) {
             SELECT id, group_id, group_name, file_name, file_size, file_type, file_path, created_at, pinned
             FROM downloads
             WHERE COALESCE(pinned, 0) = 0
-            ORDER BY datetime(created_at) ASC, id ASC
+            ORDER BY created_at ASC, id ASC
             LIMIT ?
         `)
         .all(limit);

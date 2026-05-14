@@ -34,7 +34,11 @@ import {
 } from '../../core/seekbar/spawn.js';
 import { probeHwaccel as probeSeekbarHwaccel } from '../../core/seekbar/client.js';
 import { getSeekbarSprite } from '../../core/db/seekbar.js';
-import { clearNsfwBlocklist, getNsfwBlocklistCount } from '../../core/db/nsfw.js';
+import {
+    clearNsfwBlocklist,
+    getNsfwBlocklistCount,
+    addNsfwBlocklistHash,
+} from '../../core/db/nsfw.js';
 import {
     NSFW_DEFAULTS,
     startScan as nsfwStartScan,
@@ -1331,6 +1335,33 @@ export function createMaintenanceRouter({
     // candidate listing is read-only and cheap; scan + delete + whitelist
     // guard against concurrent calls / missing config.
 
+    // Fetch file_hash for each id and add non-null hashes to the blocklist.
+    // No-ops when blocklistEnabled is false.
+    function _addHashesToBlocklist(ids) {
+        try {
+            if (!loadConfig().advanced?.nsfw?.blocklistEnabled) return;
+        } catch {
+            return;
+        }
+        if (!ids?.length) return;
+        const db = getDb();
+        const SQL_CHUNK = 200;
+        for (let i = 0; i < ids.length; i += SQL_CHUNK) {
+            const slice = ids.slice(i, i + SQL_CHUNK);
+            const ph = slice.map(() => '?').join(',');
+            try {
+                const rows = db
+                    .prepare(
+                        `SELECT file_hash, file_name FROM downloads WHERE id IN (${ph}) AND file_hash IS NOT NULL`,
+                    )
+                    .all(...slice);
+                for (const r of rows) {
+                    addNsfwBlocklistHash(r.file_hash, r.file_name, 'review');
+                }
+            } catch {}
+        }
+    }
+
     function _nsfwCfg() {
         try {
             const cfg = loadConfig().advanced?.nsfw || {};
@@ -1584,6 +1615,7 @@ export function createMaintenanceRouter({
             if (!cleanIds.length) {
                 return res.status(400).json({ error: 'No valid ids supplied' });
             }
+            _addHashesToBlocklist(cleanIds);
             const r = dedupDeleteByIds(cleanIds);
             for (const id of cleanIds) {
                 try {
@@ -1770,6 +1802,7 @@ export function createMaintenanceRouter({
             onProgress({ stage: 'deleting', op: 'delete', processed: 0, total });
             for (let off = 0; off < ids.length; off += BATCH) {
                 const slice = ids.slice(off, off + BATCH);
+                _addHashesToBlocklist(slice);
                 // Batch the sync fs.unlinkSync inside dedupDeleteByIds — without
                 // this a 47 k-row delete blocks the event loop for minutes and
                 // every WS progress event queues behind it (UI freezes at 0/N

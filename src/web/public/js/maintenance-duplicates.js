@@ -856,6 +856,61 @@ function _bulkClearSelection() {
     _refreshSummary();
 }
 
+// One-click "delete all extras" — collects IDs from the in-memory model
+// (covers chunk-rendered tails that aren't yet in the DOM), confirms,
+// then fires the delete request with a live progress bar.
+async function _deleteAllExtras(keep) {
+    if (!_sets.length) {
+        showToast(i18nT('maintenance.dedup.nothing', 'Nothing selected'), 'info');
+        return;
+    }
+    const ids = [];
+    for (const set of _sets) {
+        const sortedAsc = [...set.files].sort((a, b) => _createdAtMs(a) - _createdAtMs(b));
+        const keepId = (keep === 'newest' ? sortedAsc[sortedAsc.length - 1] : sortedAsc[0])?.id;
+        for (const f of set.files) {
+            if (f.id !== keepId) ids.push(f.id);
+        }
+    }
+    if (!ids.length) {
+        showToast(i18nT('maintenance.dedup.nothing', 'Nothing selected'), 'info');
+        return;
+    }
+    const ok = await confirmSheet({
+        title: i18nTf(
+            'maintenance.dedup.delete_all_extras_title',
+            { keep },
+            `Delete all extras (keep ${keep})?`,
+        ),
+        message: i18nTf(
+            'maintenance.dedup.confirm_body',
+            { n: ids.length },
+            `Permanently delete ${ids.length} file(s) from disk and database?`,
+        ),
+        confirmLabel: i18nT('maintenance.dedup.confirm_btn', 'Delete'),
+        danger: true,
+    });
+    if (!ok) return;
+    _setDeleteUi(true);
+    try {
+        const r = await api.post('/api/maintenance/dedup/delete', { ids });
+        if (!r?.started && !r?.success) throw new Error('Failed to start');
+    } catch (e) {
+        if (e?.data?.code === 'ALREADY_RUNNING') {
+            showToast(
+                i18nT(
+                    'jobs.already_running',
+                    'Already running on another tab — waiting for it to finish.',
+                ),
+                'info',
+            );
+            return;
+        }
+        showToast(e?.data?.error || e.message || 'Failed', 'error');
+        _setDeleteUi(false);
+    }
+}
+
 export function init() {
     _wireWs();
 
@@ -868,6 +923,8 @@ export function init() {
         $('dup-bulk-oldest')?.addEventListener('click', () => _bulkKeep('oldest'));
         $('dup-bulk-newest')?.addEventListener('click', () => _bulkKeep('newest'));
         $('dup-bulk-clear')?.addEventListener('click', _bulkClearSelection);
+        $('dup-delete-all-oldest')?.addEventListener('click', () => _deleteAllExtras('oldest'));
+        $('dup-delete-all-newest')?.addEventListener('click', () => _deleteAllExtras('newest'));
 
         // Event delegation on the list root — attaches ONE listener
         // instead of N×M (per-row + per-set-keep), so a 1000-set library

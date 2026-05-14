@@ -232,6 +232,7 @@ export function createDownloadsRouter({
                     pendingUntil: row.pending_until || null,
                     rescuedAt: row.rescued_at || null,
                     pinned: !!row.pinned,
+                    duration_sec: row.duration_sec ?? null,
                     // Federation surface — peer_id is 'self' for own rows,
                     // peer's id otherwise. peer_name is null for own; for
                     // peer rows it carries the human-readable display name
@@ -352,6 +353,7 @@ export function createDownloadsRouter({
                     pendingUntil: row.pending_until || null,
                     rescuedAt: row.rescued_at || null,
                     pinned: !!row.pinned,
+                    duration_sec: row.duration_sec ?? null,
                     peer_id: row.peer_id || 'self',
                     peer_name: isPeerRow ? peerNameMap.get(String(row.peer_id)) || null : null,
                 };
