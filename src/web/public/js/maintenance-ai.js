@@ -2298,7 +2298,16 @@ function _renderStatus(status) {
     _lastTagsChangedAt = Number(scans?.tags?.finishedAt) || _lastTagsChangedAt || 0;
     const lastEl = $('#ai-stat-last');
     if (lastEl) {
-        const finishedAt = Number(scans?.faces?.finishedAt) || 0;
+        // Prefer DB-persisted MAX(ai_indexed_at) — survives restarts.
+        // Fall back to the most recent in-memory scan finishedAt.
+        const dbLast = Number(counts?.lastScanAt) || 0;
+        const memLast = Math.max(
+            Number(scans?.faces?.finishedAt) || 0,
+            Number(scans?.tags?.finishedAt) || 0,
+            Number(scans?.ocr?.finishedAt) || 0,
+            Number(scans?.objects?.finishedAt) || 0,
+        );
+        const finishedAt = dbLast || memLast;
         lastEl.textContent =
             finishedAt > 0 ? new Date(finishedAt).toLocaleString() : i18nT('common.never', 'Never');
     }

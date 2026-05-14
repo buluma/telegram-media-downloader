@@ -580,6 +580,7 @@ export function getAiCounts({ fileTypes = ['photo'] } = {}) {
         )
         .get().n;
     const peopleCount = db.prepare(`SELECT COUNT(*) AS n FROM people`).get().n;
+    const lastScanAt = db.prepare(`SELECT MAX(ai_indexed_at) AS t FROM downloads`).get().t || null;
     return {
         totalEligible: total,
         indexed,
@@ -592,6 +593,7 @@ export function getAiCounts({ fileTypes = ['photo'] } = {}) {
         withObjects,
         withFaces,
         peopleCount,
+        lastScanAt,
     };
 }
 
