@@ -3561,9 +3561,138 @@ async function _renameSelectedPerson() {
     }
 }
 
+// Renders a single person tile for the merge picker sheet.
+// Separate from _personTile so it doesn't read module-level _selectedPerson.
+function _mergePickerTile(p, selectedId) {
+    const isUnclassified = p.id === -1 || p.noise === true;
+    const name = isUnclassified
+        ? i18nT('maintenance.ai.person_unclassified', 'Unclassified')
+        : p.label || `${i18nT('maintenance.ai.person_default', 'Person')} #${p.id}`;
+    const faceCover = !isUnclassified && p.id > 0 ? `/api/ai/person/${p.id}/face?w=160` : '';
+    const fallbackCover = p.cover_download_id ? `/api/thumbs/${p.cover_download_id}?w=160` : '';
+    const faceCount = Number(p.face_count) || 0;
+    const safeName = escapeHtml(name);
+    const sel = Number(p.id) === Number(selectedId);
+    const selCls = sel ? 'bg-tg-blue/10 ring-2 ring-tg-blue/60' : 'hover:bg-tg-bg/50';
+    let imgHtml;
+    if (faceCover) {
+        const fb = fallbackCover
+            ? `this.onerror=null;this.src='${fallbackCover}'`
+            : `this.onerror=null;this.parentElement.innerHTML='<i class=\\'ri-user-line text-xl text-tg-textSecondary/40\\'></i>'`;
+        imgHtml = `<img src="${faceCover}" alt="${safeName}" loading="lazy" class="w-full h-full object-cover" onerror="${fb}">`;
+    } else if (fallbackCover) {
+        imgHtml = `<img src="${fallbackCover}" alt="${safeName}" loading="lazy" class="w-full h-full object-cover">`;
+    } else {
+        imgHtml = `<i class="ri-user-line text-xl text-tg-textSecondary/40"></i>`;
+    }
+    return `<button type="button" data-candidate="${p.id}" aria-pressed="${sel}"
+        class="flex flex-col items-center gap-1 px-1 py-2 rounded-xl active:scale-95 transition-all text-center select-none ${selCls}"
+        title="${safeName} · ${faceCount} ${escapeHtml(i18nT('maintenance.ai.faces_short', 'faces'))}">
+        <div class="w-[52px] h-[52px] rounded-full overflow-hidden flex items-center justify-center bg-tg-bg/40 flex-shrink-0">
+            ${imgHtml}
+        </div>
+        <div class="text-[10.5px] font-medium text-tg-text leading-tight line-clamp-2 break-words px-0.5 w-full">${safeName}</div>
+        <div class="text-[10px] text-tg-textSecondary tabular-nums">${faceCount}</div>
+    </button>`;
+}
+
+// Opens a grid-picker sheet for selecting a merge target.
+// Resolves with the chosen person id, or null if cancelled.
+function _openMergePickerSheet(candidates) {
+    return new Promise((resolve) => {
+        let pickedId = null;
+        const sourceName =
+            _selectedPersonName ||
+            `${i18nT('maintenance.ai.person_default', 'Person')} #${_selectedPerson}`;
+
+        const wrap = document.createElement('div');
+        wrap.innerHTML = `
+            <p class="text-xs text-tg-textSecondary mb-3">${escapeHtml(
+                i18nTf(
+                    'maintenance.ai.merge_picker_desc',
+                    { name: sourceName },
+                    `All faces from "${sourceName}" will move to the selected cluster. This cluster is then deleted.`,
+                ),
+            )}</p>
+            <input id="merge-picker-search" type="search"
+                class="tg-input w-full text-xs mb-3"
+                placeholder="${escapeHtml(i18nT('maintenance.ai.people.search_placeholder', 'Search names or IDs…'))}"
+                autocomplete="off" spellcheck="false">
+            <div id="merge-picker-grid"
+                 class="grid grid-cols-3 sm:grid-cols-4 gap-1.5 max-h-[50vh] overflow-y-auto pr-0.5"></div>
+            <div class="mt-4 flex items-center justify-end gap-2">
+                <button id="merge-picker-cancel" type="button"
+                    class="tg-btn-secondary text-sm px-4 py-2">
+                    ${escapeHtml(i18nT('common.cancel', 'Cancel'))}
+                </button>
+                <button id="merge-picker-confirm" type="button" disabled
+                    class="tg-btn text-sm px-4 py-2 inline-flex items-center gap-1.5">
+                    <i class="ri-git-merge-line"></i>
+                    <span>${escapeHtml(i18nT('maintenance.ai.person_merge', 'Merge'))}</span>
+                </button>
+            </div>`;
+
+        function renderGrid(filter) {
+            const grid = wrap.querySelector('#merge-picker-grid');
+            if (!grid) return;
+            const q = (filter || '').trim().toLowerCase();
+            const visible = q
+                ? candidates.filter((p) => `${p.label || ''} ${p.id}`.toLowerCase().includes(q))
+                : candidates;
+            grid.innerHTML = visible.length
+                ? visible.map((p) => _mergePickerTile(p, pickedId)).join('')
+                : `<p class="col-span-full text-xs text-tg-textSecondary text-center py-6">${escapeHtml(i18nT('common.no_results', 'No results'))}</p>`;
+            grid.querySelectorAll('[data-candidate]').forEach((btn) => {
+                btn.addEventListener('click', () => {
+                    pickedId = Number(btn.dataset.candidate);
+                    // Re-render so selected ring moves to the new pick.
+                    renderGrid(wrap.querySelector('#merge-picker-search')?.value);
+                    const confirmBtn = wrap.querySelector('#merge-picker-confirm');
+                    const picked = candidates.find((c) => c.id === pickedId);
+                    const targetName =
+                        picked?.label ||
+                        `${i18nT('maintenance.ai.person_default', 'Person')} #${pickedId}`;
+                    if (confirmBtn) {
+                        confirmBtn.disabled = false;
+                        const span = confirmBtn.querySelector('span');
+                        if (span)
+                            span.textContent = i18nTf(
+                                'maintenance.ai.merge_into',
+                                { name: targetName },
+                                `Merge into ${targetName}`,
+                            );
+                    }
+                });
+            });
+        }
+
+        renderGrid('');
+
+        const sheet = openSheet({
+            title: i18nT('maintenance.ai.person_merge', 'Merge into…'),
+            content: wrap,
+            size: 'lg',
+            onClose: () => resolve(null),
+        });
+
+        wrap.querySelector('#merge-picker-search')?.addEventListener('input', (e) =>
+            renderGrid(e.target.value),
+        );
+        wrap.querySelector('#merge-picker-cancel')?.addEventListener('click', () => sheet.close());
+        wrap.querySelector('#merge-picker-confirm')?.addEventListener('click', () => {
+            if (pickedId == null) return;
+            resolve(pickedId);
+            sheet.close();
+        });
+    });
+}
+
 async function _mergeSelectedPerson() {
     if (!_selectedPerson) return;
-    const candidates = _peopleCache.filter((p) => p.id !== _selectedPerson);
+    // Exclude the current cluster and noise/unclassified from the picker.
+    const candidates = _peopleCache.filter(
+        (p) => p.id !== _selectedPerson && p.id !== -1 && !p.noise,
+    );
     if (!candidates.length) {
         showToast(
             i18nT('maintenance.ai.merge_no_other', 'No other clusters to merge with.'),
@@ -3571,30 +3700,28 @@ async function _mergeSelectedPerson() {
         );
         return;
     }
-    const lines = candidates
-        .map((p) => `  ${p.id}: ${p.label || `Person #${p.id}`} (${p.face_count} faces)`)
-        .join('\n');
-    const targetIdRaw = await promptSheet({
-        title: i18nT('maintenance.ai.person_merge', 'Merge…'),
-        message: `${i18nT('maintenance.ai.merge_prompt', 'Type the cluster id of the target — every face in this cluster moves there.')}\n\n${lines}`,
-        confirmLabel: i18nT('maintenance.ai.person_merge', 'Merge'),
-    });
-    if (targetIdRaw == null) return;
-    const targetId = Number(String(targetIdRaw).trim());
-    if (!Number.isFinite(targetId) || !candidates.some((p) => p.id === targetId)) {
-        showToast(i18nT('maintenance.ai.merge_invalid', 'Invalid cluster id.'), 'error');
-        return;
-    }
+
+    const targetId = await _openMergePickerSheet(candidates);
+    if (targetId == null) return;
+
+    const targetPerson = candidates.find((p) => p.id === targetId);
+    const sourceName =
+        _selectedPersonName ||
+        `${i18nT('maintenance.ai.person_default', 'Person')} #${_selectedPerson}`;
+    const targetName =
+        targetPerson?.label || `${i18nT('maintenance.ai.person_default', 'Person')} #${targetId}`;
     const ok = await confirmSheet({
         title: i18nT('maintenance.ai.person_merge', 'Merge'),
-        message: i18nT(
-            'maintenance.ai.merge_confirm',
-            'This cluster will be deleted and its faces will move to the target cluster. Cannot be undone.',
+        message: i18nTf(
+            'maintenance.ai.merge_confirm_named',
+            { source: sourceName, target: targetName },
+            `Move all faces from "${sourceName}" into "${targetName}". This cluster is deleted. Cannot be undone.`,
         ),
         destructive: true,
         confirmText: i18nT('maintenance.ai.person_merge', 'Merge'),
     });
     if (!ok) return;
+
     try {
         const res = await api.post(`/api/ai/people/${targetId}/merge`, {
             otherId: _selectedPerson,
