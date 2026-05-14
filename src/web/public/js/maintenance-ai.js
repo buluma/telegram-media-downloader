@@ -1984,6 +1984,10 @@ function _bindOnce() {
     $('#ai-person-merge-btn')?.addEventListener('click', _mergeSelectedPerson);
     $('#ai-person-split-btn')?.addEventListener('click', _splitSelectedPerson);
     $('#ai-person-delete-btn')?.addEventListener('click', _deleteSelectedPerson);
+
+    // Keyboard nav in the people grid. Event delegation on the stable
+    // grid container so it survives re-renders.
+    _wirePeopleGridKeyboard();
     $('#ai-people-photos-prev-btn')?.addEventListener('click', () => {
         if (!_selectedPerson || _peoplePhotosPage <= 1) return;
         _peoplePhotosPage -= 1;
@@ -3621,15 +3625,79 @@ function _resetPeoplePhotosState() {
     _syncPeoplePhotosPager();
 }
 
+function _wirePeopleGridKeyboard() {
+    const grid = document.getElementById('ai-people-grid');
+    if (!grid || grid.dataset.kbWired) return;
+    grid.dataset.kbWired = '1';
+
+    grid.addEventListener('keydown', async (e) => {
+        const tiles = Array.from(grid.querySelectorAll('[data-person]'));
+        if (!tiles.length) return;
+
+        const focused = document.activeElement;
+        const idx = tiles.indexOf(focused);
+
+        if (['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
+            if (idx === -1) return;
+            e.preventDefault();
+            // Compute column count from tile y-positions.
+            const firstY = tiles[0].getBoundingClientRect().top;
+            const cols = Math.max(
+                1,
+                tiles.filter((t) => t.getBoundingClientRect().top === firstY).length,
+            );
+            let next = idx;
+            if (e.key === 'ArrowRight') next = Math.min(idx + 1, tiles.length - 1);
+            else if (e.key === 'ArrowLeft') next = Math.max(idx - 1, 0);
+            else if (e.key === 'ArrowDown') next = Math.min(idx + cols, tiles.length - 1);
+            else next = Math.max(idx - cols, 0);
+            tiles[next]?.focus();
+            return;
+        }
+
+        // Enter or N → rename focused person, then advance to next unlabeled.
+        if ((e.key === 'Enter' || e.key === 'n' || e.key === 'N') && idx !== -1) {
+            e.preventDefault();
+            const pid = Number(focused.dataset.person);
+            if (!pid || pid === -1) return;
+            _selectedPerson = pid;
+            _selectedPersonName = focused.dataset.name || '';
+            _syncSelectedPersonTile();
+            const saved = await _renameSelectedPerson();
+            if (saved) _focusNextUnlabeled(pid);
+        }
+    });
+}
+
+function _focusNextUnlabeled(afterPersonId) {
+    const grid = document.getElementById('ai-people-grid');
+    if (!grid) return;
+    const tiles = Array.from(grid.querySelectorAll('[data-person]'));
+    const startIdx = tiles.findIndex((t) => Number(t.dataset.person) === afterPersonId);
+    const search = (from, to) => {
+        for (let i = from; i < to; i++) {
+            const pid = Number(tiles[i].dataset.person);
+            const person = _peopleCache.find((p) => p.id === pid);
+            if (person && !person.label && pid > 0) {
+                tiles[i].focus();
+                return true;
+            }
+        }
+        return false;
+    };
+    // Forward from the tile after the one just labeled, then wrap.
+    if (!search(startIdx + 1, tiles.length)) search(0, startIdx);
+}
+
 async function _renameSelectedPerson() {
-    if (!_selectedPerson) return;
+    if (!_selectedPerson) return false;
     const label = await promptSheet({
         title: i18nT('maintenance.ai.person_rename', 'Rename'),
         message: i18nT('maintenance.ai.rename_prompt', 'Name this person:'),
         defaultValue: _selectedPersonName || '',
         confirmLabel: i18nT('common.save', 'Save'),
     });
-    if (label == null) return;
+    if (label == null) return false;
     try {
         const r = await api.patch(`/api/ai/people/${_selectedPerson}`, { label });
         if (!r.success) throw new Error(r.error || 'rename failed');
@@ -3637,9 +3705,11 @@ async function _renameSelectedPerson() {
         showToast(i18nT('common.saved', 'Saved'), 'success');
         const nameEl = $('#ai-people-photos-name');
         if (nameEl) nameEl.textContent = label;
-        _loadPeople();
+        await _loadPeople();
+        return true;
     } catch (e) {
         showToast(e.message, 'error');
+        return false;
     }
 }
 
