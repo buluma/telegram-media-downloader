@@ -192,7 +192,7 @@ async function _probeVideoDurationSec(absPath) {
     }
 }
 
-async function _extractVideoFrames(absPath, { intervalSec = 8, maxFrames = 24 } = {}) {
+async function _extractVideoFrames(absPath, { intervalSec = 8, maxFrames = 24 } = {}, log) {
     const duration = await _probeVideoDurationSec(absPath);
     if (!duration) return [];
     const interval = Math.max(1, Number(intervalSec) || 8);
@@ -219,11 +219,23 @@ async function _extractVideoFrames(absPath, { intervalSec = 8, maxFrames = 24 } 
             outPattern,
         ]);
         const names = (await fs.readdir(root)).filter((n) => n.endsWith('.jpg')).sort();
-        const frames = names.map((n) => path.join(root, n));
-        return frames;
-    } finally {
-        // caller deletes extracted frame files after detection;
-        // this finally just guarantees directory exists for cleanup path.
+        return names.map((n) => path.join(root, n));
+    } catch (e) {
+        // Corrupt/undecodable video (e.g. invalid NAL units) — log, clean up
+        // the empty temp dir, and return [] so the caller stamps ai_indexed_at
+        // and moves on without crashing the scan.
+        try {
+            if (typeof log === 'function')
+                log('warn', `faces scan: skipping corrupt video ${absPath}: ${e?.message || e}`);
+        } catch {
+            /* swallow */
+        }
+        try {
+            await fs.rmdir(root);
+        } catch {
+            /* best effort */
+        }
+        return [];
     }
 }
 
@@ -456,10 +468,11 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                     if (signal.aborted) break;
                     let detectedTotal = 0;
                     if (canSampleVideos) {
-                        const framePaths = await _extractVideoFrames(abs, {
-                            intervalSec: videoFrameIntervalSec,
-                            maxFrames: videoMaxFrames,
-                        });
+                        const framePaths = await _extractVideoFrames(
+                            abs,
+                            { intervalSec: videoFrameIntervalSec, maxFrames: videoMaxFrames },
+                            log,
+                        );
                         deleteFacesForDownload(row.id);
                         try {
                             for (const frameAbs of framePaths) {
