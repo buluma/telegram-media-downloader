@@ -1056,8 +1056,9 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                     message: 'A face scan is already in progress.',
                 });
             }
+            const cfg = _aiCfg();
             try {
-                if (aiStartFacesScan) aiStartFacesScan().catch(() => {});
+                if (aiStartFacesScan) aiStartFacesScan(cfg).catch(() => {});
             } catch {}
             res.json({ success: true });
         } catch (e) {
@@ -1090,7 +1091,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             // right away. Fire-and-forget — the scan owns its own state
             // machine + WS events.
             try {
-                if (aiStartFacesScan) aiStartFacesScan().catch(() => {});
+                if (aiStartFacesScan) aiStartFacesScan(cfg).catch(() => {});
             } catch {}
             res.json({ success: true });
         } catch (e) {

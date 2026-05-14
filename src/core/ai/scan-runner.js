@@ -502,7 +502,7 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                         batchResults = await detectFacesBatch(
                             imageItems.map((i) => i.abs),
                             cfg,
-                            log,
+                            logEntry,
                         );
                     } catch (e) {
                         log('warn', `detectFacesBatch threw: ${e?.message || e}`);

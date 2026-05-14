@@ -10,6 +10,8 @@ Endpoints (see ``docs/AI.md`` on the Node side for the full contract):
   this name because it advertises "single combined call" semantics
   to the rest of the codebase; keeping both names lets either side be
   refactored without breaking the other.
+* ``POST /detect/batch`` — batch version of ``/detect``; one round-trip
+  for multiple files. Returns ``{results: [{file, faces?, error?}]}``.
 
 Error payload shape (used by every non-2xx response):
 
@@ -151,6 +153,31 @@ class DetectResponse(BaseModel):
     faces: list[Face]
     image_w: int
     image_h: int
+
+
+class BatchDetectRequest(BaseModel):
+    """Body for ``POST /detect/batch``.
+
+    ``files`` is a list of absolute paths. All other knobs mirror
+    ``DetectRequest`` and apply uniformly to every file in the batch.
+    """
+
+    files: list[str] = Field(..., description="Absolute paths to images on disk.")
+    min_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    min_box_px: int | None = Field(default=None, ge=1)
+    ar_range: tuple[float, float] | None = Field(default=None)
+
+
+class BatchDetectItem(BaseModel):
+    """Per-file result inside a ``BatchDetectResponse``."""
+
+    file: str
+    faces: list[Face] | None = None
+    error: str | None = None
+
+
+class BatchDetectResponse(BaseModel):
+    results: list[BatchDetectItem]
 
 
 class TagRequest(BaseModel):
@@ -620,6 +647,56 @@ def detect_embed(body: Annotated[DetectRequest, ...]) -> JSONResponse:
     lets either side be refactored without breaking the other.
     """
     return _do_detect(body)
+
+
+@app.post("/detect/batch")
+def detect_batch(body: Annotated[BatchDetectRequest, ...]) -> JSONResponse:
+    """Detect & embed faces for multiple images in one round-trip.
+
+    Returns ``{results: [{file, faces?, error?}]}``. Each item carries the
+    original path in ``file``. On success ``faces`` is populated. On per-file
+    error ``error`` is set to a stable code (``path_not_allowed``,
+    ``file_not_found``, ``decode_failed``, ``detect_failed``) and ``faces``
+    is omitted. The overall response is always 200 — per-file errors do not
+    fail the batch.
+    """
+    allow_roots = _allow_roots()
+    kwargs: dict[str, Any] = {}
+    if body.min_score is not None:
+        kwargs["min_score"] = float(body.min_score)
+    if body.min_box_px is not None:
+        kwargs["min_box_px"] = int(body.min_box_px)
+    if body.ar_range is not None:
+        lo, hi = float(body.ar_range[0]), float(body.ar_range[1])
+        kwargs["ar_range"] = (lo, hi)
+
+    results: list[BatchDetectItem] = []
+    for file_path in body.files:
+        try:
+            img = load_image_from_path(file_path, allow_roots)
+        except PathNotAllowedError:
+            results.append(BatchDetectItem(file=file_path, error="path_not_allowed"))
+            continue
+        except FileNotFoundError:
+            results.append(BatchDetectItem(file=file_path, error="file_not_found"))
+            continue
+        except ImageDecodeError:
+            results.append(BatchDetectItem(file=file_path, error="decode_failed"))
+            continue
+
+        try:
+            faces = detect_and_embed(img, **kwargs)
+        except Exception:
+            _LOG.exception("detect_and_embed failed for %s", file_path)
+            results.append(BatchDetectItem(file=file_path, error="detect_failed"))
+            continue
+
+        results.append(BatchDetectItem(file=file_path, faces=[Face(**f) for f in faces]))
+
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content=BatchDetectResponse(results=results).model_dump(),
+    )
 
 
 @app.post("/tag")
