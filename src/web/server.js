@@ -1866,6 +1866,13 @@ async function gracefulShutdown(signal) {
         }
     } catch {}
 
+    // Let SQLite update its internal query-planner statistics before close.
+    // Cheap (microseconds on small DBs, <1 s on large ones); improves
+    // index selection accuracy on the next boot.
+    try {
+        getDb().pragma('optimize');
+    } catch {}
+
     // Stop accepting new HTTP connections; let the in-flight ones drain.
     try {
         server.close(() => process.exit(0));

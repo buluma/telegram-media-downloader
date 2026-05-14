@@ -334,6 +334,18 @@ function initSchema() {
             'CREATE INDEX IF NOT EXISTS idx_gallery_pinned_date ON downloads(pinned, created_at DESC)',
         );
     } catch {}
+    // Dedup GROUP BY + blocklist INSERT check both scan file_hash. Without
+    // this index both queries do full table scans + temp B-trees for GROUP BY.
+    try {
+        db.exec(
+            'CREATE INDEX IF NOT EXISTS idx_file_hash ON downloads(file_hash) WHERE file_hash IS NOT NULL',
+        );
+    } catch {}
+    // idx_created_at (single-column) is now covered by idx_gallery_group_date
+    // and idx_gallery_pinned_date. Drop it to reduce write overhead on inserts.
+    try {
+        db.exec('DROP INDEX IF EXISTS idx_created_at');
+    } catch {}
     // v2.16 — faces.quality_score (Phase 2). Quality filter persists the
     // raw detection score so the UI can show "low confidence" warnings
     // and the operator can sort/filter by face quality if a cluster

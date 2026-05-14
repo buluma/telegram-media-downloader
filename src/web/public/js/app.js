@@ -1943,6 +1943,12 @@ function renderMediaGrid(opts = {}) {
                     const sizeLine =
                         file.sizeFormatted || (file.size ? formatBytes(file.size) : '');
                     const dateLine = file.modified ? formatRelativeTime(file.modified) : '';
+                    // NSFW score overlay — top-left red badge when score ≥ 0.7.
+                    // Only renders when nsfw_score is present (admin-only feature).
+                    const nsfwBadge =
+                        file.nsfw_score != null && Number(file.nsfw_score) >= 0.7
+                            ? `<span class="tile-nsfw-badge" title="NSFW ${Math.round(Number(file.nsfw_score) * 100)}%">18+</span>`
+                            : '';
                     // Pin chip — appears on hover, golden when pinned. data-tile-pin
                     // is what the gallery delegation handler keys off below.
                     const pinnedCls = file.pinned ? 'is-pinned' : '';
@@ -1960,6 +1966,7 @@ function renderMediaGrid(opts = {}) {
                 <div class="tile-thumb relative w-full h-full overflow-hidden">
                     ${thumbInner}
                     ${gridDocLabel}
+                    ${nsfwBadge}
                     ${peerBadgeOverlay}
                 </div>
                 ${pinChip}
@@ -4470,6 +4477,23 @@ async function purgeAll() {
         );
     }
 }
+
+// Scroll-to-top FAB — shows after 400 px scroll in #content-area.
+(function _initScrollTopFab() {
+    const fab = document.getElementById('scroll-top-fab');
+    const scroller = document.getElementById('content-area');
+    if (!fab || !scroller) return;
+    scroller.addEventListener(
+        'scroll',
+        () => {
+            fab.classList.toggle('visible', scroller.scrollTop > 400);
+        },
+        { passive: true },
+    );
+    fab.addEventListener('click', () => {
+        scroller.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+})();
 
 // Start
 init();

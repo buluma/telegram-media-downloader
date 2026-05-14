@@ -455,20 +455,34 @@ const _FEDERATED_TYPE_MAP = {
 
 // Column lists shared by every federated SELECT. Kept in module scope so
 // the four helpers below stay small and readable.
+//
+// Local side LEFT JOINs seekbar_sprites for duration_sec and includes
+// pending_until + rescued_at so Rescue Mode badges render on federated tiles.
+// Peer side has no seekbar data — duration_sec aliased to NULL for column
+// symmetry. pending_until/rescued_at also NULL for peer rows (not locally
+// tracked).
 const _FED_COLS_LOCAL = `
     'self' AS peer_id,
-    id, group_id, group_name, message_id, file_name, file_size, file_type,
-    file_path, file_hash, status, created_at, nsfw_score,
-    COALESCE(pinned, 0) AS pinned,
-    CAST(strftime('%s', created_at) AS INTEGER) * 1000 AS sort_ts
+    d.id, d.group_id, d.group_name, d.message_id, d.file_name, d.file_size, d.file_type,
+    d.file_path, d.file_hash, d.status, d.created_at, d.nsfw_score,
+    COALESCE(d.pinned, 0) AS pinned,
+    d.pending_until, d.rescued_at,
+    ss.duration_sec,
+    CAST(strftime('%s', d.created_at) AS INTEGER) * 1000 AS sort_ts
 `;
 const _FED_COLS_PEER = `
     peer_id,
     remote_id AS id, group_id, group_name, message_id, file_name, file_size, file_type,
     file_path, file_hash, status, created_at, nsfw_score,
     0 AS pinned,
+    NULL AS pending_until, NULL AS rescued_at,
+    NULL AS duration_sec,
     CAST(created_at AS INTEGER) AS sort_ts
 `;
+
+// Substituted into the FROM clause for the local side of every UNION.
+// The LEFT JOIN is factored here so all four federated helpers stay small.
+const _FED_FROM_LOCAL = 'downloads d LEFT JOIN seekbar_sprites ss ON ss.download_id = d.id';
 
 function _stripSortTs(rows) {
     // Drop the sort_ts column we used only for the cross-side ORDER BY.
@@ -502,23 +516,29 @@ export function getAllDownloadsFederated(limit = 50, offset = 0, type = 'all', o
 
     // Build the WHERE clause for both sides. Pinned filter only applies
     // to the local side because peer rows are always pinned=0.
+    // localWhereD: for the join SELECT (uses `d.` alias).
+    // localWhere:  for the COUNT subquery (no alias — plain downloads table).
     const localWhereParts = [];
+    const localWherePartsD = [];
     const peerWhereParts = [];
     const localParams = [];
     const peerParams = [];
     if (typeFilter) {
         localWhereParts.push('file_type = ?');
+        localWherePartsD.push('d.file_type = ?');
         peerWhereParts.push('file_type = ?');
         localParams.push(typeFilter);
         peerParams.push(typeFilter);
     }
     if (opts.pinnedOnly) {
         localWhereParts.push('COALESCE(pinned, 0) = 1');
+        localWherePartsD.push('COALESCE(d.pinned, 0) = 1');
         // Peer side excluded entirely under pinnedOnly — peer files can't
         // be locally pinned. Drop a never-true predicate to short-circuit.
         peerWhereParts.push('0 = 1');
     }
     const localWhere = localWhereParts.length ? ' WHERE ' + localWhereParts.join(' AND ') : '';
+    const localWhereD = localWherePartsD.length ? ' WHERE ' + localWherePartsD.join(' AND ') : '';
     const peerWhere = peerWhereParts.length ? ' WHERE ' + peerWhereParts.join(' AND ') : '';
 
     // pinnedFirst: COALESCE on the local side, peer side always 0 — net
@@ -529,7 +549,7 @@ export function getAllDownloadsFederated(limit = 50, offset = 0, type = 'all', o
 
     const sql = `
         SELECT * FROM (
-            SELECT ${_FED_COLS_LOCAL} FROM downloads${localWhere}
+            SELECT ${_FED_COLS_LOCAL} FROM ${_FED_FROM_LOCAL}${localWhereD}
             UNION ALL
             SELECT ${_FED_COLS_PEER} FROM peer_downloads${peerWhere}
         ) ORDER BY ${orderBy} LIMIT ? OFFSET ?
@@ -569,17 +589,20 @@ export function getDownloadsForGroupFederated(
     const gid = String(groupId);
 
     const localWhereParts = ['group_id = ?'];
+    const localWherePartsD = ['d.group_id = ?'];
     const peerWhereParts = ['group_id = ?'];
     const localParams = [gid];
     const peerParams = [gid];
     if (typeFilter) {
         localWhereParts.push('file_type = ?');
+        localWherePartsD.push('d.file_type = ?');
         peerWhereParts.push('file_type = ?');
         localParams.push(typeFilter);
         peerParams.push(typeFilter);
     }
     if (opts.pinnedOnly) {
         localWhereParts.push('COALESCE(pinned, 0) = 1');
+        localWherePartsD.push('COALESCE(d.pinned, 0) = 1');
         peerWhereParts.push('0 = 1');
     }
     // Optional peerId filter — when caller wants only one peer's files for
@@ -589,8 +612,10 @@ export function getDownloadsForGroupFederated(
         peerParams.push(String(opts.peerId));
         // Also drop the local side entirely — caller wants only that peer.
         localWhereParts.push('0 = 1');
+        localWherePartsD.push('0 = 1');
     }
     const localWhere = ' WHERE ' + localWhereParts.join(' AND ');
+    const localWhereD = ' WHERE ' + localWherePartsD.join(' AND ');
     const peerWhere = ' WHERE ' + peerWhereParts.join(' AND ');
     const orderBy = opts.pinnedFirst
         ? 'pinned DESC, sort_ts DESC, id DESC'
@@ -598,7 +623,7 @@ export function getDownloadsForGroupFederated(
 
     const sql = `
         SELECT * FROM (
-            SELECT ${_FED_COLS_LOCAL} FROM downloads${localWhere}
+            SELECT ${_FED_COLS_LOCAL} FROM ${_FED_FROM_LOCAL}${localWhereD}
             UNION ALL
             SELECT ${_FED_COLS_PEER} FROM peer_downloads${peerWhere}
         ) ORDER BY ${orderBy} LIMIT ? OFFSET ?
@@ -631,22 +656,25 @@ export function searchDownloadsFederated(query, opts = {}) {
     const q = `%${String(query || '').trim()}%`;
 
     const localWhereParts = ['(file_name LIKE ? OR group_name LIKE ?)'];
+    const localWherePartsD = ['(d.file_name LIKE ? OR d.group_name LIKE ?)'];
     const peerWhereParts = ['(file_name LIKE ? OR group_name LIKE ?)'];
     const localParams = [q, q];
     const peerParams = [q, q];
     if (opts.groupId) {
         const gid = String(opts.groupId);
         localWhereParts.push('group_id = ?');
+        localWherePartsD.push('d.group_id = ?');
         peerWhereParts.push('group_id = ?');
         localParams.push(gid);
         peerParams.push(gid);
     }
     const localWhere = ' WHERE ' + localWhereParts.join(' AND ');
+    const localWhereD = ' WHERE ' + localWherePartsD.join(' AND ');
     const peerWhere = ' WHERE ' + peerWhereParts.join(' AND ');
 
     const sql = `
         SELECT * FROM (
-            SELECT ${_FED_COLS_LOCAL} FROM downloads${localWhere}
+            SELECT ${_FED_COLS_LOCAL} FROM ${_FED_FROM_LOCAL}${localWhereD}
             UNION ALL
             SELECT ${_FED_COLS_PEER} FROM peer_downloads${peerWhere}
         ) ORDER BY sort_ts DESC, id DESC LIMIT ? OFFSET ?

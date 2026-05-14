@@ -1146,6 +1146,26 @@ html.theme-light .tile-peer-badge {
     display: none;
 }
 
+/* NSFW score badge — top-left corner, only shown when score ≥ 0.7 */
+.tile-nsfw-badge {
+    position: absolute;
+    top: 5px;
+    left: 5px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: rgba(239, 68, 68, 0.82);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.4;
+    pointer-events: none;
+    white-space: nowrap;
+    letter-spacing: 0.04em;
+}
+.media-grid.view-list .tile-nsfw-badge {
+    display: none;
+}
+
 /* Gallery-scope chip popover — opens below the chip at the right edge of
    the media-tabs row, anchors to the parent `flex` so positioning is
    relative to the row. Click-outside dismiss is wired in app.js. */
@@ -4207,4 +4227,38 @@ html[data-contrast="more"] .media-item {
  * tile entirely so the operator just sees the time-only tooltip. */
 #video-sprite-preview[data-state="disabled"] {
     display: none !important;
+}
+
+/* Scroll-to-top FAB */
+#scroll-top-fab {
+    position: fixed;
+    bottom: 1.5rem;
+    right: 1.5rem;
+    z-index: 50;
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 50%;
+    background: var(--tg-blue, #2aabee);
+    color: #fff;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.125rem;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+    opacity: 0;
+    pointer-events: none;
+    transition:
+        opacity 0.2s ease,
+        transform 0.2s ease;
+    transform: translateY(0.5rem);
+}
+#scroll-top-fab.visible {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0);
+}
+#scroll-top-fab:hover {
+    background: var(--tg-blue-hover, #1a9bd6);
 }
