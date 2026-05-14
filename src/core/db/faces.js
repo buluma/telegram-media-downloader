@@ -1972,8 +1972,8 @@ export async function rebuildSmartAlbum(id) {
         let downloadIds;
 
         if (rule.type === 'tags_contains') {
-            // v1 simple rule — existing path
-            downloadIds = _matchTagsContains(rule.tag, rule.minScore);
+            // v1 simple rule — existing path; spread Set → Array so .length works below
+            downloadIds = [..._matchTagsContains(rule.tag, rule.minScore)];
         } else if (rule.type === 'compound') {
             downloadIds = _matchCompound(rule, embCache);
         } else {
@@ -2216,8 +2216,9 @@ function _matchEmbedding(queryEmbedding, minScore) {
             row.embedding.byteLength / 4,
         );
         if (emb.length !== dim) continue;
+        const embNorm = Math.sqrt(emb.reduce((a, b) => a + b * b, 0)) || 1;
         let dot = 0;
-        for (let i = 0; i < dim; i++) dot += qn[i] * emb[i];
+        for (let i = 0; i < dim; i++) dot += qn[i] * (emb[i] / embNorm);
         const score = Math.min(1, Math.max(-1, dot));
         if (score >= minScore) {
             matches.add(Number(row.download_id));

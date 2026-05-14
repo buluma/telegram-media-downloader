@@ -447,6 +447,45 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             }
 
             const llm = await import('../../core/llm/index.js');
+            const facesMod = await import('../../core/db/faces.js');
+
+            // Fetch actual tags so the LLM uses real vocabulary
+            let availableTags = [];
+            let scoreMin = 0;
+            let scoreMax = 1;
+            try {
+                const rows = facesMod.listAllTags({ minCount: 1 });
+                if (rows.length) {
+                    availableTags = rows.slice(0, 60).map((r) => ({
+                        tag: r.tag,
+                        count: r.count,
+                        avgScore: Number(r.avg_score.toFixed(3)),
+                    }));
+                    const allAvg = availableTags.map((t) => t.avgScore);
+                    scoreMin = Math.min(...allAvg);
+                    scoreMax = Math.max(...allAvg);
+                }
+            } catch {}
+
+            const tagVocabSection =
+                availableTags.length > 0
+                    ? [
+                          '',
+                          'AVAILABLE TAGS (from this library — use ONLY these for tags_contains):',
+                          availableTags
+                              .map((t) => `  "${t.tag}" (n=${t.count}, avg_score=${t.avgScore})`)
+                              .join('\n'),
+                          '',
+                          `Tag score range in this library: ${scoreMin.toFixed(3)} – ${scoreMax.toFixed(3)}.`,
+                          'Set tags_contains minScore to 0 unless the user asks for high confidence.',
+                          'NEVER invent tags not in this list for tags_contains sub-rules.',
+                          'For concepts with no matching tag (e.g. person names, locations, moods),',
+                          'use "semantic" sub-rules instead.',
+                      ].join('\n')
+                    : [
+                          '',
+                          'No tags scanned yet. Prefer "semantic" sub-rules over "tags_contains".',
+                      ].join('\n');
 
             const systemPrompt = [
                 'You are a media album builder. Given a natural-language',
@@ -457,7 +496,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                     {
                         type: 'compound',
                         all: [
-                            { type: 'tags_contains', tag: 'beach', minScore: 0.55 },
+                            { type: 'tags_contains', tag: 'nsfw', minScore: 0 },
                             { type: 'people_count', min: 2 },
                             { type: 'semantic', query: 'smiling at sunset', minScore: 0.7 },
                             { type: 'objects', names: ['person', 'dog'] },
@@ -477,18 +516,16 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                 '- "all" = every sub-rule must match (AND).',
                 '- "any" = at least one must match (OR).',
                 '- Combine all/any for complex logic.',
-                '- "tags_contains" for CLIP tag matches.',
+                '- "tags_contains" for CLIP tag matches — ONLY use tags from AVAILABLE TAGS list.',
                 '- "people_count" for minimum people in photo.',
-                '- "semantic" for natural-language similarity.',
+                '- "semantic" for natural-language similarity (person names, moods, scenes).',
                 '- "objects" for YOLO detected objects.',
                 '- "text_contains" for OCR text search.',
                 '- "date" with ISO date strings.',
                 '- "file_type": photo/video/audio/file/voice.',
                 '- Omit empty arrays (all/any).',
                 '- sort: "score_desc" or "date_desc" or "date_asc".',
-                '',
-                'Example: "beach photos with 2+ people from last summer"',
-                'should produce the schema above.',
+                tagVocabSection,
                 '',
                 'Return ONLY the JSON object, no markdown, no explanation.',
             ].join('\n');
@@ -522,7 +559,6 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                 });
             }
 
-            const facesMod = await import('../../core/db/faces.js');
             const normalized = facesMod._normalizeSmartAlbumRule(parsed);
 
             res.json({ success: true, description, rule: normalized });

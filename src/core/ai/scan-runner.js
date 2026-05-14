@@ -791,17 +791,31 @@ export function startTagsScan(cfg, onProgress, onDone, onLog) {
  */
 async function _tagOne(sidecarUrl, absPath, tagLabels, log) {
     const url = `${sidecarUrl.replace(/\/+$/, '')}/tag`;
-    const body = { path: absPath };
+    const baseBody = {};
     if (Array.isArray(tagLabels) && tagLabels.length) {
-        body.vocabulary = tagLabels;
+        baseBody.vocabulary = tagLabels;
     }
-    try {
-        const res = await fetch(url, {
+
+    const _post = async (body) =>
+        fetch(url, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify(body),
-            signal: AbortSignal.timeout(30000), // 30 s per file
+            signal: AbortSignal.timeout(30000),
         });
+
+    try {
+        // Prefer path mode; fall back to b64 on 403 path_not_allowed.
+        let res = await _post({ ...baseBody, path: absPath });
+        if (res.status === 403) {
+            const errBody = await res.json().catch(() => ({}));
+            if (errBody?.code === 'path_not_allowed') {
+                const { readFile } = await import('node:fs/promises');
+                const bytes = await readFile(absPath);
+                const b64 = bytes.toString('base64');
+                res = await _post({ ...baseBody, image_b64: b64 });
+            }
+        }
         if (!res.ok) {
             log('warn', `tag endpoint returned ${res.status} for ${absPath}`);
             return [];
