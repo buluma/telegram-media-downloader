@@ -50,7 +50,7 @@ def _init_model():
 
         if not model_path.exists():
             _LOG.info(f"YOLOv8n model not found at {model_path} — downloading…")
-            url = "https://github.com/ultralytics/assets/releases/download/v8.1.0/yolov8n.onnx"
+            url = "https://github.com/ultralytics/assets/releases/latest/download/yolov8n.onnx"
             try:
                 import urllib.request
                 model_path.parent.mkdir(parents=True, exist_ok=True)

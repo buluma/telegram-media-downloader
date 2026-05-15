@@ -85,6 +85,8 @@ RUN apt-get update \
         ca-certificates \
         tini \
         wget \
+        tesseract-ocr \
+        tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the resolved Python user-site + model cache from the builder.
@@ -93,6 +95,18 @@ COPY --from=builder /root/.cache/tgdl-faces/models /root/.cache/tgdl-faces/model
 
 WORKDIR /app
 COPY tgdl_faces /app/tgdl_faces
+
+# Pre-bake YOLOv8n ONNX model so object detection works offline on first boot.
+RUN python3 -c "
+import urllib.request, pathlib, shutil
+dest = pathlib.Path.home() / '.cache' / 'yolov8n.onnx'
+dest.parent.mkdir(parents=True, exist_ok=True)
+tmp = dest.with_suffix('.onnx.tmp')
+print('downloading yolov8n.onnx …')
+urllib.request.urlretrieve('https://github.com/ultralytics/assets/releases/latest/download/yolov8n.onnx', tmp)
+shutil.move(tmp, dest)
+print(f'saved {dest.stat().st_size // 1024} KB')
+" || echo "yolov8n pre-download failed — will retry at runtime"
 
 ENV PATH="/root/.local/bin:${PATH}" \
     PYTHONUNBUFFERED=1 \
