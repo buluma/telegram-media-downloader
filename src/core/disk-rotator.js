@@ -21,6 +21,7 @@ import path from 'path';
 import fs from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { getTotalSizeBytes, getOldestDownloads, deleteDownloadsBy } from './db.js';
+import { deferDelete } from './delete-queue.js';
 import { purgeThumbsForDownload } from './thumbs.js';
 import { purgeSeekbarForDownload } from './seekbar/index.js';
 
@@ -67,14 +68,7 @@ async function tryUnlink(row) {
     const normalized = path.normalize(String(row.file_path));
     if (path.isAbsolute(normalized) || normalized.includes('..')) return; // refuse to escape
     const target = path.join(DOWNLOADS_DIR, normalized);
-    try {
-        await fs.unlink(target);
-    } catch (e) {
-        if (e && e.code !== 'ENOENT') {
-            // Log but don't throw — the rotator is best-effort.
-            console.warn(`[disk-rotator] unlink failed for ${normalized}: ${e.message}`);
-        }
-    }
+    await deferDelete(target);
 }
 
 export class DiskRotator {

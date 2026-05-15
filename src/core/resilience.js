@@ -3,7 +3,7 @@
  * Proactively traps errors, decides on recovery, and keeps the process alive.
  */
 
-import { colorize } from '../cli/colors.js';
+import { logger } from './logger.js';
 
 export class Resilience {
     constructor() {
@@ -21,7 +21,7 @@ export class Resilience {
         process.on('unhandledRejection', (reason) =>
             this.handleFatal('Unhandled Rejection', reason),
         );
-        console.log(colorize('🛡️  Resilience System Active', 'cyan', 'dim'));
+        logger.info('🛡️  Resilience System Active');
     }
 
     /**
@@ -36,8 +36,7 @@ export class Resilience {
     }
 
     handleFatal(type, error) {
-        console.error(colorize(`\n💀 FATAL: ${type}`, 'red', 'bold'));
-        console.error(colorize(error.stack || error, 'red'));
+        logger.fatal({ err: error.stack || String(error), type }, `💀 FATAL: ${type}`);
 
         // Decide: Can we stay alive?
         // For production long-running, we might log and restart specific modules.
@@ -48,7 +47,7 @@ export class Resilience {
 
         // Specific recovery for common fatal-looking but recoverable errors
         if (error.code === 'ECONNRESET' || error.message.includes('Connection')) {
-            console.log(colorize('🔄 Attempting Emergency Reconnect...', 'yellow'));
+            logger.info('🔄 Attempting Emergency Reconnect...');
             // Trigger external reconnect logic if possible
             return;
         }
@@ -63,7 +62,7 @@ export class Resilience {
         const isFlood = error.seconds || error.message.includes('FLOOD_WAIT');
 
         // 2. Log
-        console.log(colorize(`⚠️ [${context}] ${error.message}`, 'yellow'));
+        logger.warn({ context, err: error.message }, `⚠️ [${context}] ${error.message}`);
         this.logError(error, context);
 
         // 3. Decide Action
@@ -74,7 +73,7 @@ export class Resilience {
             return { action: 'RETRY', delay: 5000 };
         }
         if (isAuth) {
-            console.log(colorize('❌ Session Invalid. Login required.', 'red'));
+            logger.error('❌ Session Invalid. Login required.');
             process.exit(1);
             // Tests stub process.exit; without an explicit return the throw
             // below would fire and turn a controlled shutdown into a rejection.

@@ -3,6 +3,7 @@
  * Features: Groups, Settings, Viewer, Real Telegram Profile Photos
  */
 
+import '../core/telemetry.js';
 import express from 'express';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
@@ -48,6 +49,7 @@ import { preloadClassifier as nsfwPreloadClassifier } from '../core/nsfw.js';
 // aiStartTagsScan, aiEmbedText, aiTopK, aiLoadVecOnce, AI_EMBED_DEFAULTS,
 // …) were deleted along with the routes that called them.
 import { getRescueSweeper } from '../core/rescue.js';
+import { startDrain, stopDrain } from '../core/delete-queue.js';
 import * as backup from '../core/backup/index.js';
 import { metrics } from '../core/metrics.js';
 import { isAuthConfigured, validateSession, startSessionGc } from '../core/web-auth.js';
@@ -140,8 +142,8 @@ const _consoleTee = (level) => (args, joined) => {
     try {
         _pushLogEntry(level, 'console', joined);
         // Also pipe to pino
-        if (level === 'error') logger.error({ args }, joined);
-        else logger.info({ args }, joined);
+        if (level === 'error') logger.error(joined);
+        else logger.info(joined);
     } catch {
         /* never throw out of a console hook */
     }
@@ -593,7 +595,7 @@ app.use(apiLimiter);
 // whitespace and break the signature.
 app.use(
     express.json({
-        limit: '256kb',
+        limit: '2mb',
         verify: (req, _res, buf) => {
             req.rawBody = buf;
         },
@@ -1620,11 +1622,7 @@ server.listen(PORT, async () => {
             : cfgState === 'needs-password'
               ? `   Open ${url} and run \`npm run auth\` to set the dashboard password.`
               : `   Sign in at ${url}`;
-    console.log(`
-🌐  Telegram Downloader   v${appVersion}
-    Dashboard: ${url}
-${tip}
-`);
+    logger.info(`\n🌐  Telegram Downloader   v${appVersion}\n    Dashboard: ${url}\n${tip}`);
     // Try to bring up the legacy client in the background — if there are no
     // credentials yet, this is a silent no-op (see connectTelegram). The
     // AccountManager-driven path covers everything else lazily.
@@ -1678,6 +1676,12 @@ ${tip}
     // a slow large download would unlink the .part out from under it,
     // producing the "Downloaded file is empty (0 bytes)" failures we kept
     // seeing in the wild.
+    try {
+        startDrain();
+    } catch (e) {
+        console.warn('[delete-queue] drain start failed:', e.message);
+    }
+
     try {
         const rotator = getDiskRotator({
             loadConfig,
@@ -1840,6 +1844,11 @@ async function gracefulShutdown(signal) {
 
     // Stop background sweepers first so their setInterval callbacks
     // don't try to write to a closing DB / broadcast to dead clients.
+    try {
+        stopDrain();
+    } catch (e) {
+        console.warn('[shutdown] delete-queue.stop:', e.message);
+    }
     try {
         integrity.stop?.();
     } catch (e) {

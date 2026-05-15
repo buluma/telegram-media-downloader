@@ -1,5 +1,6 @@
 import express from 'express';
 import fs from 'fs/promises';
+import { deferDelete } from '../../core/delete-queue.js';
 import WebSocketLib from 'ws';
 import { getDb } from '../../core/db.js';
 import {
@@ -703,12 +704,8 @@ export function createClusterRouter({ broadcast, log }) {
             const r = await safeResolveDownload(row.file_path);
             let freedBytes = 0;
             if (r.ok) {
-                try {
-                    await fs.unlink(r.real);
-                    freedBytes = Number(row.file_size) || 0;
-                } catch {
-                    /* best effort */
-                }
+                await deferDelete(r.real);
+                freedBytes = Number(row.file_size) || 0;
             }
             getDb().prepare('DELETE FROM downloads WHERE id = ?').run(Number(row.id));
             recordClusterAudit({

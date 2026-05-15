@@ -7,8 +7,9 @@ import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { Api } from 'telegram';
-import { colorize } from '../cli/colors.js';
 import { getDb } from './db.js';
+import { logger } from './logger.js';
+import { deferDelete } from './delete-queue.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DOWNLOADS_DIR = path.resolve(__dirname, '../../data/downloads');
@@ -31,11 +32,9 @@ export class AutoForwarder {
         // Skip forwarding for deduplicated files — the original was already forwarded
         // when first downloaded; re-sending creates identical copies in the destination.
         if (deduped) {
-            console.log(
-                colorize(
-                    `⏭️  [AutoForward] Skipping duplicate file: ${filePath ? path.basename(filePath) : groupName}`,
-                    'magenta',
-                ),
+            logger.info(
+                { group: groupName, file: filePath ? path.basename(filePath) : groupName },
+                '⏭️  [AutoForward] Skipping duplicate file',
             );
             return;
         }
@@ -54,14 +53,15 @@ export class AutoForwarder {
                 ? this.accountManager.getClient(groupConfig.forwardAccount)
                 : this.client;
 
-        console.log(colorize(`➡️  [AutoForward] Processing for ${groupName}...`, 'cyan'));
+        logger.info({ group: groupName }, '➡️  [AutoForward] Processing');
 
         try {
             // 2. Resolve Destination
             let targetPeer = await this.resolveDestination(settings.destination, fwdClient);
             if (!targetPeer) {
-                console.log(
-                    colorize(`⚠️  [AutoForward] Could not resolve destination. Skipping.`, 'yellow'),
+                logger.warn(
+                    { group: groupName, destination: settings.destination },
+                    '⚠️  [AutoForward] Could not resolve destination. Skipping.',
                 );
                 return;
             }
@@ -110,20 +110,21 @@ export class AutoForwarder {
                     const floodMatch = String(sendErr?.message || '').match(/FLOOD_WAIT_(\d+)/);
                     if (floodMatch) {
                         const waitSec = Number(floodMatch[1]) + 2;
-                        console.log(
-                            colorize(
-                                `⏳ [AutoForward] Flood wait ${waitSec}s (attempt ${attempt}/${MAX_ATTEMPTS})`,
-                                'yellow',
-                            ),
+                        logger.warn(
+                            { waitSec, attempt, maxAttempts: MAX_ATTEMPTS },
+                            '⏳ [AutoForward] Flood wait',
                         );
                         await new Promise((r) => setTimeout(r, waitSec * 1000));
                     } else if (attempt < MAX_ATTEMPTS) {
                         const backoff = 2 ** attempt * 1000;
-                        console.log(
-                            colorize(
-                                `⚠️  [AutoForward] Send failed (attempt ${attempt}/${MAX_ATTEMPTS}), retrying in ${backoff / 1000}s: ${sendErr?.message}`,
-                                'yellow',
-                            ),
+                        logger.warn(
+                            {
+                                attempt,
+                                maxAttempts: MAX_ATTEMPTS,
+                                retrySec: backoff / 1000,
+                                err: sendErr?.message,
+                            },
+                            '⚠️  [AutoForward] Send failed, retrying',
                         );
                         await new Promise((r) => setTimeout(r, backoff));
                     } else {
@@ -137,7 +138,10 @@ export class AutoForwarder {
             const sentMsgId = sentMsg?.id ?? sentMsg?.message?.id ?? null;
             const dest = settings.destination || 'Storage Channel';
             const tail = sentMsgId ? ` (msg #${sentMsgId})` : '';
-            console.log(colorize(`✅ [AutoForward] Sent to ${dest}${tail}`, 'green'));
+            logger.info(
+                { destination: dest, msgId: sentMsgId },
+                `✅ [AutoForward] Sent to ${dest}${tail}`,
+            );
 
             // 5. Cleanup (if enabled). Isolate the unlink in its own
             // try/catch so a successful upload isn't reported as failed
@@ -162,32 +166,26 @@ export class AutoForwarder {
                             .prepare(`SELECT COUNT(*) AS n FROM downloads WHERE file_path = ?`)
                             .get(relPath)?.n ?? 0;
                     if (sharedCount > 1) {
-                        console.log(
-                            colorize(
-                                `⏭️  [AutoForward] Skipping delete — ${sharedCount} rows share this file`,
-                                'yellow',
-                            ),
+                        logger.info(
+                            { file: path.basename(filePath), sharedCount },
+                            '⏭️  [AutoForward] Skipping delete — file shared by multiple rows',
                         );
                     } else {
-                        await fs.unlink(filePath);
-                        console.log(
-                            colorize(
-                                `🗑️  [AutoForward] Deleted local file: ${path.basename(filePath)}`,
-                                'gray',
-                            ),
+                        await deferDelete(filePath);
+                        logger.info(
+                            { file: path.basename(filePath) },
+                            '🗑️  [AutoForward] Deleted local file',
                         );
                     }
                 } catch (unlinkErr) {
-                    console.warn(
-                        colorize(
-                            `⚠️  [AutoForward] Forwarded but local delete failed for ${path.basename(filePath)}: ${unlinkErr.message}`,
-                            'yellow',
-                        ),
+                    logger.warn(
+                        { file: path.basename(filePath), err: unlinkErr.message },
+                        '⚠️  [AutoForward] Forwarded but local delete failed',
                     );
                 }
             }
         } catch (error) {
-            console.log(colorize(`❌ [AutoForward] Error: ${error.message}`, 'red'));
+            logger.error({ err: error.message, group: groupName }, '❌ [AutoForward] Error');
         }
     }
 
@@ -229,11 +227,9 @@ export class AutoForwarder {
                     // mysterious resolve hang. Logging the fallback so operators can spot it.
                     const raw = String(destination);
                     if (raw.startsWith('-100')) {
-                        console.warn(
-                            colorize(
-                                `⚠️  [AutoForward] Falling back to manual InputPeerChannel for ${raw} — peer is not in dialog cache. If sends fail, open the channel once from the configured account.`,
-                                'yellow',
-                            ),
+                        logger.warn(
+                            { destination: raw },
+                            '⚠️  [AutoForward] Falling back to manual InputPeerChannel — peer not in dialog cache. If sends fail, open the channel once from the configured account.',
                         );
                         return new Api.InputPeerChannel({
                             channelId: BigInt(raw.replace(/^-100/, '')),
@@ -241,11 +237,9 @@ export class AutoForwarder {
                         });
                     }
                     if (raw.startsWith('-')) {
-                        console.warn(
-                            colorize(
-                                `⚠️  [AutoForward] Falling back to manual InputPeerChat for ${raw}.`,
-                                'yellow',
-                            ),
+                        logger.warn(
+                            { destination: raw },
+                            '⚠️  [AutoForward] Falling back to manual InputPeerChat',
                         );
                         return new Api.InputPeerChat({ chatId: BigInt(raw.replace(/^-/, '')) });
                     }
@@ -273,7 +267,7 @@ export class AutoForwarder {
             }
 
             // Create new if not found
-            console.log(colorize(`🛠️  [AutoForward] Creating storage channel...`, 'cyan'));
+            logger.info('🛠️  [AutoForward] Creating storage channel');
             const result = await client.invoke(
                 new Api.channels.CreateChannel({
                     title: 'Telegram Downloader Storage',
@@ -286,20 +280,13 @@ export class AutoForwarder {
             // Access the created channel
             if (result.chats && result.chats[0]) {
                 this.storageChannelId = result.chats[0];
-                console.log(
-                    colorize(
-                        `✅ [AutoForward] Created channel: Telegram Downloader Storage`,
-                        'green',
-                    ),
-                );
+                logger.info('✅ [AutoForward] Created channel: Telegram Downloader Storage');
                 return this.storageChannelId;
             }
         } catch (e) {
-            console.log(
-                colorize(
-                    `❌ [AutoForward] Failed to create/find storage channel: ${e.message}`,
-                    'red',
-                ),
+            logger.error(
+                { err: e.message },
+                '❌ [AutoForward] Failed to create/find storage channel',
             );
         }
 

@@ -635,11 +635,7 @@ export function createMaintenanceRouter({
         }
         const tracker = jobTrackers.dedupDelete;
         const r = tracker.tryStart(async ({ onProgress }) => {
-            // Batch the work so a 10k-row delete doesn't block the event loop
-            // for minutes (every fs.unlinkSync inside `dedupDeleteByIds` runs
-            // on the main thread). Each batch is small enough that progress
-            // events flush between iterations and the WS dashboard sees a
-            // live bar instead of a frozen UI followed by a timeout.
+            // Batch so progress events flush between iterations.
             const total = cleanIds.length;
             const BATCH = 50;
             const aggregate = { removed: 0, freedBytes: 0, missingFiles: 0 };
@@ -647,7 +643,7 @@ export function createMaintenanceRouter({
             onProgress({ processed: 0, total, stage: 'deleting' });
             for (let off = 0; off < cleanIds.length; off += BATCH) {
                 const slice = cleanIds.slice(off, off + BATCH);
-                const part = dedupDeleteByIds(slice);
+                const part = await dedupDeleteByIds(slice);
                 aggregate.removed += part.removed || 0;
                 aggregate.freedBytes += part.freedBytes || 0;
                 aggregate.missingFiles += part.missingFiles || 0;
@@ -663,7 +659,7 @@ export function createMaintenanceRouter({
                 await new Promise((r) => setImmediate(r));
             }
             try {
-                broadcast({ type: 'bulk_delete', ids: cleanIds });
+                broadcast({ type: 'bulk_delete', count: cleanIds.length });
             } catch {}
             return { ...aggregate, requested: cleanIds.length, ids: cleanIds };
         });
@@ -1616,14 +1612,14 @@ export function createMaintenanceRouter({
                 return res.status(400).json({ error: 'No valid ids supplied' });
             }
             _addHashesToBlocklist(cleanIds);
-            const r = dedupDeleteByIds(cleanIds);
+            const r = await dedupDeleteByIds(cleanIds);
             for (const id of cleanIds) {
                 try {
                     await purgeThumbsForDownload(id);
                 } catch {}
             }
             try {
-                broadcast({ type: 'bulk_delete', ids: cleanIds });
+                broadcast({ type: 'bulk_delete', count: cleanIds.length });
             } catch {}
             try {
                 broadcast({ type: 'nsfw_progress', ..._nsfwStateLight() });
@@ -1803,11 +1799,8 @@ export function createMaintenanceRouter({
             for (let off = 0; off < ids.length; off += BATCH) {
                 const slice = ids.slice(off, off + BATCH);
                 _addHashesToBlocklist(slice);
-                // Batch the sync fs.unlinkSync inside dedupDeleteByIds — without
-                // this a 47 k-row delete blocks the event loop for minutes and
-                // every WS progress event queues behind it (UI freezes at 0/N
-                // until the whole job finishes; users perceive it as a hang).
-                const part = dedupDeleteByIds(slice);
+                // Batch deferred deletes so progress events flush between iterations.
+                const part = await dedupDeleteByIds(slice);
                 aggregate.removed += part.removed || 0;
                 aggregate.freedBytes += part.freedBytes || 0;
                 aggregate.missingFiles += part.missingFiles || 0;
@@ -1821,7 +1814,7 @@ export function createMaintenanceRouter({
                 await new Promise((r) => setImmediate(r));
             }
             try {
-                broadcast({ type: 'bulk_delete', ids });
+                broadcast({ type: 'bulk_delete', count: ids.length });
             } catch {}
             try {
                 broadcast({ type: 'nsfw_progress', ..._nsfwStateLight() });

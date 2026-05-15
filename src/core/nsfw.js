@@ -21,6 +21,7 @@
 
 import path from 'path';
 import { existsSync, promises as fs } from 'fs';
+import { deferDelete } from './delete-queue.js';
 import { fileURLToPath } from 'url';
 import {
     getDb,
@@ -638,9 +639,7 @@ async function _drainBg() {
                     const blocked = checkNsfwBlocklistHashes([hash]);
                     if (blocked.has(hash)) {
                         if (abs) {
-                            try {
-                                await fs.unlink(abs);
-                            } catch {}
+                            await deferDelete(abs);
                         }
                         try {
                             db.prepare('DELETE FROM downloads WHERE id = ?').run(Number(id));

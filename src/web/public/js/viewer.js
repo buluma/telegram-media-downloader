@@ -1,5 +1,5 @@
 import { state } from './store.js';
-import { formatDate, showToast } from './utils.js';
+import { formatDate, showToast, escapeHtml } from './utils.js';
 import { attachSwipe, attachDragDismiss } from './gestures.js';
 import { tf as i18nTf, t as i18nT } from './i18n.js';
 import { getMediaUrl, getDownloadUrl } from './media-url.js';
@@ -577,8 +577,12 @@ export function openMediaViewer(index) {
     }
 
     document.getElementById('modal-filename').textContent = file.name;
-    document.getElementById('modal-meta').textContent =
-        `${file.sizeFormatted} • ${formatDate(file.modified)}`;
+    const _groupLabel = file.groupName || '';
+    const _groupChip = _groupLabel
+        ? `<button class="hover:text-white underline underline-offset-2 transition-colors" data-group-id="${escapeHtml(String(file.groupId || ''))}" data-group-name="${escapeHtml(_groupLabel)}">${escapeHtml(_groupLabel)}</button> · `
+        : '';
+    document.getElementById('modal-meta').innerHTML =
+        `${_groupChip}${escapeHtml(file.sizeFormatted)} • ${escapeHtml(formatDate(file.modified))}`;
     document.getElementById('modal-counter').textContent = `${index + 1} / ${state.files.length}`;
     document.getElementById('modal-download').href = downloadUrl;
     _setTypeChip(file);
@@ -1743,6 +1747,16 @@ export function setupViewerEvents() {
     document.getElementById('modal-close')?.addEventListener('click', closeMediaViewer);
     document.getElementById('modal-prev')?.addEventListener('click', () => navigateMedia(-1));
     document.getElementById('modal-next')?.addEventListener('click', () => navigateMedia(1));
+
+    document.getElementById('modal-meta')?.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-group-id]');
+        if (!btn) return;
+        const groupId = btn.dataset.groupId;
+        const groupName = btn.dataset.groupName;
+        if (!groupId) return;
+        closeMediaViewer();
+        window.openGroup?.(groupId, groupName);
+    });
 
     // Share button — opens the share-link sheet for the current file.
     // Lazy-import keeps the module out of the cold-load path; it only

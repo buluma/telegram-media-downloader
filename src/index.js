@@ -3,6 +3,7 @@
  * Multi-Account Support
  */
 
+import './core/telemetry.js';
 import { TelegramClient } from 'telegram';
 import { StringSession } from 'telegram/sessions/index.js';
 import readline from 'readline';

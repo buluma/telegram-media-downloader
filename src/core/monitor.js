@@ -6,7 +6,7 @@
 import { NewMessage, Raw } from 'telegram/events/index.js';
 import { Api } from 'telegram';
 import { EventEmitter } from 'events';
-import { colorize } from '../cli/colors.js';
+import { logger } from './logger.js';
 import { sanitizeName } from './downloader.js';
 import { markRescued } from './db.js';
 import { effectiveRescueMs } from './rescue.js';
@@ -299,11 +299,9 @@ export class RealtimeMonitor extends EventEmitter {
             return null;
         }
 
-        console.log(
-            colorize(
-                `🔁 Resolved "${folder}" → ${hit.numericId} (was synthetic, rewriting config)`,
-                'cyan',
-            ),
+        logger.info(
+            { folder, numericId: hit.numericId },
+            `🔁 Resolved "${folder}" → ${hit.numericId} (was synthetic, rewriting config)`,
         );
         // Rewrite in memory so the rest of `start()` uses the numeric
         // id from this point on.
@@ -321,11 +319,9 @@ export class RealtimeMonitor extends EventEmitter {
                 }
             }
         } catch (e) {
-            console.log(
-                colorize(
-                    `⚠️ Could not persist unknown→${hit.numericId} rewrite: ${e?.message || e}`,
-                    'yellow',
-                ),
+            logger.warn(
+                { numericId: hit.numericId, err: e?.message || e },
+                `⚠️ Could not persist unknown→${hit.numericId} rewrite`,
             );
         }
         // Backfill downloads.group_id so the gallery doesn't show two
@@ -341,11 +337,9 @@ export class RealtimeMonitor extends EventEmitter {
                 .prepare('UPDATE downloads SET group_name = ? WHERE group_id = ?')
                 .run(hit.title, hit.numericId);
         } catch (e) {
-            console.log(
-                colorize(
-                    `⚠️ Could not backfill downloads.group_id for unknown:${folder}: ${e?.message || e}`,
-                    'yellow',
-                ),
+            logger.warn(
+                { folder, err: e?.message || e },
+                `⚠️ Could not backfill downloads.group_id for unknown:${folder}`,
             );
         }
         return { numericId: hit.numericId, client: hit.client };
@@ -396,22 +390,18 @@ export class RealtimeMonitor extends EventEmitter {
                         if (r) resolvedNow += 1;
                     }
                     if (resolvedNow) {
-                        console.log(
-                            colorize(
-                                `🔁 Resolver: rewrote ${resolvedNow}/${unknownAdded.length} synthetic id(s) on config reload`,
-                                'cyan',
-                            ),
+                        logger.info(
+                            { resolved: resolvedNow, total: unknownAdded.length },
+                            `🔁 Resolver: rewrote ${resolvedNow}/${unknownAdded.length} synthetic id(s) on config reload`,
                         );
                     } else {
-                        console.log(
-                            colorize(
-                                `🔁 Resolver: 0/${unknownAdded.length} synthetic id(s) matched on config reload (Maintenance → Recovery cleanup)`,
-                                'yellow',
-                            ),
+                        logger.warn(
+                            { total: unknownAdded.length },
+                            `🔁 Resolver: 0/${unknownAdded.length} synthetic id(s) matched on config reload (Maintenance → Recovery cleanup)`,
                         );
                     }
                 } catch (e) {
-                    console.log(colorize(`⚠️ Resolver re-run failed: ${e?.message || e}`, 'yellow'));
+                    logger.warn({ err: e?.message || e }, '⚠️ Resolver re-run failed');
                 }
             }
 
@@ -419,14 +409,18 @@ export class RealtimeMonitor extends EventEmitter {
 
             // Log changes
             if (added.length)
-                console.log(colorize(`📋 Config: ${added.length} group(s) added`, 'green'));
+                logger.info({ count: added.length }, `📋 Config: ${added.length} group(s) added`);
             if (removed.length)
-                console.log(colorize(`📋 Config: ${removed.length} group(s) removed`, 'yellow'));
+                logger.info(
+                    { count: removed.length },
+                    `📋 Config: ${removed.length} group(s) removed`,
+                );
             if (changed.length) {
                 changed.forEach((g) => {
                     const status = g.enabled ? '✓ enabled' : '✗ disabled';
-                    console.log(
-                        colorize(`📋 Config: ${g.name} ${status}`, g.enabled ? 'green' : 'dim'),
+                    logger.info(
+                        { group: g.name, enabled: g.enabled },
+                        `📋 Config: ${g.name} ${status}`,
                     );
                 });
             }
@@ -453,7 +447,7 @@ export class RealtimeMonitor extends EventEmitter {
 
         // Initialize Last Message IDs for Polling
         this.lastIds = new Map();
-        console.log(colorize('🔄 Syncing state for Active Polling...', 'cyan'));
+        logger.info('🔄 Syncing state for Active Polling...');
 
         // Re-enable groups that were auto-disabled more than 24 h ago so they
         // get a fresh probe attempt on this start. Clears _resolveFailedAt so
@@ -483,11 +477,9 @@ export class RealtimeMonitor extends EventEmitter {
                 if (dirty) {
                     saveConfig(cfg);
                     this.config = cfg;
-                    console.log(
-                        colorize(
-                            `🔁 [Monitor] Re-enabled ${staleFailures.length} group(s) stale >24 h — re-probing now`,
-                            'cyan',
-                        ),
+                    logger.info(
+                        { count: staleFailures.length },
+                        `🔁 [Monitor] Re-enabled ${staleFailures.length} group(s) stale >24 h — re-probing now`,
                     );
                 }
             } catch {
@@ -504,18 +496,16 @@ export class RealtimeMonitor extends EventEmitter {
         const enabledGroups = this.config.groups.filter((g) => {
             if (!g.enabled) return false;
             if (!isLocalGroup(g)) {
-                console.log(
-                    colorize(
-                        `⏭  Skipping "${g.name}" — owned by another peer in the cluster`,
-                        'cyan',
-                    ),
+                logger.info(
+                    { group: g.name },
+                    `⏭  Skipping "${g.name}" — owned by another peer in the cluster`,
                 );
                 return false;
             }
             return true;
         });
         if (enabledGroups.length === 0) {
-            console.log('⚠️  Warning: No groups enabled in config. Monitor will be idle.');
+            logger.warn('⚠️  No groups enabled in config. Monitor will be idle.');
         }
 
         // Suppress Telegram library's internal RPCError logging for invalid channels
@@ -538,11 +528,9 @@ export class RealtimeMonitor extends EventEmitter {
             (g) => typeof g.id === 'string' && g.id.startsWith('unknown:'),
         );
         if (hasUnknown) {
-            console.log(
-                colorize(
-                    `🔁 Resolver index built — ${dialogsIdx.size} dialogs across ${this.accountManager?.clients?.size || 1} account(s)`,
-                    'cyan',
-                ),
+            logger.info(
+                { dialogs: dialogsIdx.size, accounts: this.accountManager?.clients?.size || 1 },
+                `🔁 Resolver index built — ${dialogsIdx.size} dialogs across ${this.accountManager?.clients?.size || 1} account(s)`,
             );
         }
 
@@ -592,11 +580,9 @@ export class RealtimeMonitor extends EventEmitter {
         if (_resolveFailures.length || _resolvedCount) {
             const accountLabel = this._describeLoadedAccounts();
             if (_resolvedCount) {
-                console.log(
-                    colorize(
-                        `🔁 Resolver: rewrote ${_resolvedCount} synthetic id(s) → numeric (active account: ${accountLabel})`,
-                        'cyan',
-                    ),
+                logger.info(
+                    { resolved: _resolvedCount, account: accountLabel },
+                    `🔁 Resolver: rewrote ${_resolvedCount} synthetic id(s) → numeric (active account: ${accountLabel})`,
                 );
             }
             if (_resolveFailures.length) {
@@ -608,17 +594,12 @@ export class RealtimeMonitor extends EventEmitter {
                     tally.set(head, (tally.get(head) || 0) + 1);
                 }
                 const tallyStr = [...tally.entries()].map(([k, v]) => `${k}=${v}`).join(', ');
-                console.log(
-                    colorize(
-                        `⚠️ Auto-disabled ${_resolveFailures.length} group(s) — none of the loaded account(s) (${accountLabel}) can access them. Reasons: ${tallyStr}`,
-                        'yellow',
-                    ),
+                logger.warn(
+                    { disabled: _resolveFailures.length, account: accountLabel, reasons: tallyStr },
+                    `⚠️ Auto-disabled ${_resolveFailures.length} group(s) — none of the loaded account(s) (${accountLabel}) can access them. Reasons: ${tallyStr}`,
                 );
-                console.log(
-                    colorize(
-                        '   Open Maintenance → Recovery cleanup to add the matching account, re-resolve, or remove these entries.',
-                        'dim',
-                    ),
+                logger.warn(
+                    '   Open Maintenance → Recovery cleanup to add the matching account, re-resolve, or remove these entries.',
                 );
                 // Persist the auto-disable so subsequent restarts are silent.
                 try {
@@ -641,9 +622,7 @@ export class RealtimeMonitor extends EventEmitter {
                         if (dirty) saveConfig(cfg);
                     }
                 } catch (e) {
-                    console.log(
-                        colorize(`⚠️ Could not persist auto-disable: ${e?.message || e}`, 'yellow'),
-                    );
+                    logger.warn({ err: e?.message || e }, '⚠️ Could not persist auto-disable');
                 }
             }
         }
@@ -677,11 +656,9 @@ export class RealtimeMonitor extends EventEmitter {
                     } catch {
                         /* non-fatal */
                     }
-                    console.log(
-                        colorize(
-                            `${new Date().toLocaleString()} 💬 Comment tracking active for "${group.name}" (linked chat: ${linkedId})`,
-                            'cyan',
-                        ),
+                    logger.info(
+                        { group: group.name, linkedId },
+                        `💬 Comment tracking active for "${group.name}" (linked chat: ${linkedId})`,
                     );
                 }
             } catch (e) {
@@ -797,7 +774,7 @@ export class RealtimeMonitor extends EventEmitter {
             groups: enabledGroups.map((g) => g.name),
         });
 
-        console.log(colorize('✅ Monitor Engine Active', 'green', 'bold'));
+        logger.info('✅ Monitor Engine Active');
     }
 
     async startPollingLoop() {
@@ -1361,7 +1338,8 @@ class SpamGuard {
             } else {
                 entry.count++;
                 if (entry.count > 20) {
-                    if (entry.count === 21) console.log(`🛡️  SpamGuard: Temp Ban User ${userId}`);
+                    if (entry.count === 21)
+                        logger.warn({ userId }, `🛡️  SpamGuard: Temp Ban User ${userId}`);
                     return true;
                 }
             }

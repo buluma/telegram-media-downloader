@@ -21,6 +21,7 @@ import { purgeThumbsForDownload } from '../../core/thumbs.js';
 import { listPeers } from '../../core/cluster/peers.js';
 import { writeConfigAtomic } from '../lib/config-writer.js';
 import { deleteAllDownloads } from '../../core/db/groups.js';
+import { deferDelete } from '../../core/delete-queue.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -507,12 +508,8 @@ export function createDownloadsRouter({
             for (const p of pathList) {
                 const sr = await safeResolveDownload(p);
                 if (sr.ok) {
-                    try {
-                        await fs.unlink(sr.real);
-                        unlinked++;
-                    } catch (e) {
-                        if (e.code !== 'ENOENT') throw e;
-                    }
+                    await deferDelete(sr.real);
+                    unlinked++;
                 }
                 processed += 1;
                 if (processed % 50 === 0 || processed === total) {
@@ -564,12 +561,8 @@ export function createDownloadsRouter({
                     }
                     const sr = await safeResolveDownload(candidate);
                     if (sr.ok) {
-                        try {
-                            await fs.unlink(sr.real);
-                            unlinked++;
-                        } catch (e) {
-                            if (e.code !== 'ENOENT') throw e;
-                        }
+                        await deferDelete(sr.real);
+                        unlinked++;
                     }
                     processed += 1;
                     if (processed % 50 === 0 || processed === total) {
@@ -588,7 +581,7 @@ export function createDownloadsRouter({
                     await purgeThumbsForDownload(id);
                 } catch {}
             }
-            broadcast({ type: 'bulk_delete', unlinked, dbDeleted, ids: allIds });
+            broadcast({ type: 'bulk_delete', unlinked, dbDeleted, count: allIds.length });
             return { unlinked, dbDeleted, requested: total };
         });
         if (!r.started) {
@@ -795,7 +788,7 @@ export function createDownloadsRouter({
                     .json({ error: r.reason === 'missing' ? 'File not found' : 'Access denied' });
             }
 
-            await fs.unlink(r.real);
+            await deferDelete(r.real);
             console.log(`🗑️ Deleted: ${sanitizeForLog(r.real)}`);
 
             // Remove from DB (by basename — the DB stores filenames, not paths).

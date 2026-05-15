@@ -3,7 +3,7 @@
  * Keeps the connection alive and reconnects if dropped
  */
 
-import { colorize } from '../cli/colors.js';
+import { logger } from './logger.js';
 
 export class ConnectionManager {
     constructor(client, options = {}) {
@@ -21,7 +21,7 @@ export class ConnectionManager {
         this.timer = setInterval(() => this.check(), this.interval);
         // Don't keep the process alive just for the health-check timer.
         if (this.timer && typeof this.timer.unref === 'function') this.timer.unref();
-        console.log(colorize('💓 Connection health check started', 'dim'));
+        logger.info('💓 Connection health check started');
     }
 
     stop() {
@@ -53,18 +53,16 @@ export class ConnectionManager {
             this.failures = 0;
         } catch (error) {
             this.failures++;
-            console.log(
-                colorize(`⚠️ Connection lost (Att ${this.failures}): ${error.message}`, 'yellow'),
-            );
+            logger.warn({ attempt: this.failures, err: error.message }, '⚠️ Connection lost');
 
             try {
                 // Force reconnect
                 await this.client.disconnect();
                 await this.client.connect();
-                console.log(colorize('✅ Reconnected successfully', 'green'));
+                logger.info('✅ Reconnected successfully');
                 this.failures = 0;
             } catch (reconnectError) {
-                console.log(colorize(`❌ Reconnect failed: ${reconnectError.message}`, 'red'));
+                logger.error({ err: reconnectError.message }, '❌ Reconnect failed');
                 // Will try again next interval
             }
         }

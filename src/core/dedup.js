@@ -21,6 +21,7 @@
 import fs from 'fs';
 import path from 'path';
 import { getDb } from './db.js';
+import { deferDelete } from './delete-queue.js';
 import { sha256OfFile, sha256OfFileViaPool } from './checksum.js';
 
 // Where the downloader writes by default (relative to the project root).
@@ -236,7 +237,7 @@ export async function findDuplicates(opts = {}) {
 // 500 stays well clear of both and keeps each prepared statement small.
 const SQL_IN_CHUNK = 500;
 
-export function deleteByIds(ids) {
+export async function deleteByIds(ids) {
     if (!Array.isArray(ids) || ids.length === 0) {
         return { removed: 0, freedBytes: 0, missingFiles: 0 };
     }
@@ -256,18 +257,8 @@ export function deleteByIds(ids) {
     for (const r of rows) {
         const abs = resolveStoredPath(r.file_path);
         if (abs) {
-            try {
-                fs.unlinkSync(abs);
-                freed += Number(r.file_size) || 0;
-            } catch (e) {
-                if (e?.code === 'ENOENT') {
-                    missing++;
-                    freed += Number(r.file_size) || 0;
-                }
-                // Other errors (EPERM etc.) — skip the row, don't drop from DB
-                // so the user can retry / inspect.
-                else continue;
-            }
+            await deferDelete(abs);
+            freed += Number(r.file_size) || 0;
         } else {
             missing++;
             freed += Number(r.file_size) || 0;

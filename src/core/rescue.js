@@ -15,6 +15,8 @@ import path from 'path';
 import fs from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { getExpiredPending, deleteDownloadsBy, setRescueLastSweep } from './db.js';
+import { logger } from './logger.js';
+import { deferDelete } from './delete-queue.js';
 import { purgeThumbsForDownload } from './thumbs.js';
 import { purgeSeekbarForDownload } from './seekbar/index.js';
 
@@ -35,13 +37,7 @@ async function tryUnlink(row) {
     const normalized = path.normalize(String(row.file_path));
     if (path.isAbsolute(normalized) || normalized.split(path.sep).includes('..')) return;
     const target = path.join(DOWNLOADS_DIR, normalized);
-    try {
-        await fs.unlink(target);
-    } catch (e) {
-        if (e && e.code !== 'ENOENT') {
-            console.warn(`[rescue] unlink failed for ${normalized}: ${e.message}`);
-        }
-    }
+    await deferDelete(target);
 }
 
 export class RescueSweeper {
@@ -87,15 +83,17 @@ export class RescueSweeper {
         // First sweep shortly after start so a freshly-restarted sweeper
         // catches anything that expired while we were down.
         const initial = setTimeout(() => {
-            this.sweep().catch((e) => console.warn('[rescue] initial sweep failed:', e.message));
+            this.sweep().catch((e) =>
+                logger.warn({ err: e.message }, '[rescue] initial sweep failed'),
+            );
         }, 5_000);
         initial.unref?.();
 
         this._timer = setInterval(() => {
-            this.sweep().catch((e) => console.warn('[rescue] sweep failed:', e.message));
+            this.sweep().catch((e) => logger.warn({ err: e.message }, '[rescue] sweep failed'));
         }, this._intervalMs);
         this._timer.unref?.();
-        console.log(`[rescue] sweeper started (every ${minutes} min)`);
+        logger.info({ intervalMin: minutes }, `[rescue] sweeper started (every ${minutes} min)`);
         return true;
     }
 
@@ -103,7 +101,7 @@ export class RescueSweeper {
         if (this._timer) {
             clearInterval(this._timer);
             this._timer = null;
-            console.log('[rescue] sweeper stopped');
+            logger.info('[rescue] sweeper stopped');
         }
     }
 
@@ -158,7 +156,7 @@ export class RescueSweeper {
             setRescueLastSweep(swept);
             // One structured log line per sweep — matches the disk-rotator
             // shape so the two side-by-side modules feel consistent.
-            console.log(`[rescue] sweep ${JSON.stringify({ swept, scanned: rows.length })}`);
+            logger.info({ swept, scanned: rows.length }, '[rescue] sweep');
             // Aggregate broadcast so the SPA can refresh stats once instead of
             // per-row. Per-row events still fire (above) for granular UI.
             try {

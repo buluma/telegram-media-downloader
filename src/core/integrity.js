@@ -16,6 +16,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { getDb, insertDownload } from './db.js';
+import { logger } from './logger.js';
 import { sanitizeName } from './downloader.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -185,19 +186,21 @@ export function start({ broadcast, intervalMin = 60, batchSize = 64 } = {}) {
         sweep()
             .then(({ scanned, pruned }) => {
                 if (pruned > 0) {
-                    console.log(
+                    logger.info(
+                        { pruned, scanned },
                         `[integrity] boot sweep — pruned ${pruned} dead rows out of ${scanned}`,
                     );
                 }
             })
-            .catch((e) => console.warn('[integrity] boot sweep failed:', e.message));
+            .catch((e) => logger.warn({ err: e.message }, '[integrity] boot sweep failed'));
     }, 30 * 1000);
     _timer = setInterval(
         () => {
             sweep()
                 .then(({ scanned, pruned }) => {
                     if (pruned > 0) {
-                        console.log(
+                        logger.info(
+                            { pruned, scanned },
                             `[integrity] periodic sweep — pruned ${pruned} dead rows out of ${scanned}`,
                         );
                     }
@@ -353,7 +356,7 @@ export async function reindexFromDisk(configGroups, onProgress) {
             // No downloads dir → nothing to do, succeed quietly.
             return { ...result, finishedAt: Date.now() };
         }
-        const groupDirs = topEntries.filter((e) => e.isDirectory());
+        const groupDirs = topEntries.filter((e) => e.isDirectory() && e.name !== '.deleted');
         result.groups = groupDirs.length;
         for (const gd of groupDirs) {
             const folderName = gd.name;
@@ -458,7 +461,7 @@ async function _ingestOne({ result, fullAbs, relPath, fileName, groupId, groupNa
     } catch (e) {
         result.errors += 1;
         if (process.env.TGDL_DEBUG)
-            console.warn('[reindex] ingest failed:', relPath, e?.message || e);
+            logger.warn({ file: relPath, err: e?.message || e }, '[reindex] ingest failed');
     }
 }
 

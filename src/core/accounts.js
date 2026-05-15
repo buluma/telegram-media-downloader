@@ -106,8 +106,9 @@ export class AccountManager {
 
                 const isAuthorized = await client.checkAuthorization();
                 if (!isAuthorized) {
-                    console.log(
-                        colorize(`⚠️  Account "${accountId}" session expired, skipping`, 'yellow'),
+                    logger.warn(
+                        { accountId },
+                        `⚠️  Account "${accountId}" session expired, skipping`,
                     );
                     await client.disconnect().catch(() => {});
                     continue;
@@ -124,14 +125,12 @@ export class AccountManager {
                 });
 
                 loaded++;
-                console.log(
-                    colorize(
-                        `  ✅ ${accountId}: ${me.firstName || 'Unknown'} (@${me.username || 'N/A'})`,
-                        'green',
-                    ),
+                logger.info(
+                    { accountId, name: me.firstName || 'Unknown', username: me.username || 'N/A' },
+                    `  ✅ ${accountId}: ${me.firstName || 'Unknown'} (@${me.username || 'N/A'})`,
                 );
             } catch (e) {
-                console.log(colorize(`  ❌ Failed to load "${accountId}": ${e.message}`, 'red'));
+                logger.error({ accountId, err: e.message }, `  ❌ Failed to load "${accountId}"`);
             }
         }
 
@@ -251,9 +250,9 @@ export class AccountManager {
                 JSON.stringify(newEncrypted, null, 2),
             );
 
-            console.log(colorize(`🔄 Migrated legacy session → "${accountId}"`, 'cyan'));
+            logger.info({ accountId }, `🔄 Migrated legacy session → "${accountId}"`);
         } catch (e) {
-            console.log(colorize(`⚠️  Could not migrate legacy session: ${e.message}`, 'yellow'));
+            logger.warn({ err: e.message }, '⚠️  Could not migrate legacy session');
         }
     }
 
@@ -276,9 +275,7 @@ export class AccountManager {
             const proxy = buildProxy(this.config);
             if (proxy) opts.proxy = proxy;
         } catch (e) {
-            console.log(
-                colorize(`⚠️  Proxy config invalid (${e.message}) — connecting direct`, 'yellow'),
-            );
+            logger.warn({ err: e.message }, '⚠️  Proxy config invalid — connecting direct');
         }
         return new TelegramClient(
             new StringSession(sessionString),
