@@ -565,6 +565,71 @@ async function init() {
         });
     }
 
+    // Sort order picker
+    const sortBtn = document.getElementById('sort-btn');
+    const sortMenu = document.getElementById('sort-menu');
+    if (sortBtn && sortMenu) {
+        const VALID_SORTS = ['date_desc', 'date_asc', 'size_desc', 'name_asc'];
+        const storedSort = (() => {
+            try {
+                return localStorage.getItem('tgdl-sort-by');
+            } catch {
+                return null;
+            }
+        })();
+        state.sortBy = VALID_SORTS.includes(storedSort) ? storedSort : 'date_desc';
+        const _applySortActive = () => {
+            sortMenu.querySelectorAll('[data-sort]').forEach((b) => {
+                b.setAttribute('aria-checked', b.dataset.sort === state.sortBy ? 'true' : 'false');
+            });
+        };
+        _applySortActive();
+        let _sortDocListener = null;
+        const _closeSortMenu = () => {
+            sortMenu.classList.add('hidden');
+            sortBtn.setAttribute('aria-expanded', 'false');
+            if (_sortDocListener) {
+                document.removeEventListener('click', _sortDocListener);
+                _sortDocListener = null;
+            }
+        };
+        sortBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const open = sortMenu.classList.toggle('hidden');
+            sortBtn.setAttribute('aria-expanded', open ? 'false' : 'true');
+            if (!open) {
+                if (_sortDocListener) document.removeEventListener('click', _sortDocListener);
+                _sortDocListener = (ev) => {
+                    if (!sortMenu.contains(ev.target) && !sortBtn.contains(ev.target))
+                        _closeSortMenu();
+                };
+                setTimeout(() => document.addEventListener('click', _sortDocListener), 0);
+            } else {
+                _closeSortMenu();
+            }
+        });
+        sortMenu.querySelectorAll('[data-sort]').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const next = btn.dataset.sort;
+                if (!VALID_SORTS.includes(next)) return;
+                state.sortBy = next;
+                try {
+                    localStorage.setItem('tgdl-sort-by', next);
+                } catch {}
+                _applySortActive();
+                _closeSortMenu();
+                state.page = 1;
+                state.hasMore = true;
+                state.files = [];
+                if (state.currentPage === 'viewer') {
+                    if (state.currentGroupId) loadGroupFiles(state.currentGroupId);
+                    else loadAllFiles();
+                }
+            });
+        });
+    }
+
     // Settings globals
     window.applyPreset = Settings.applyPreset;
     // Manual Save button removed in v2.6 — auto-save handles every edit
@@ -1330,6 +1395,9 @@ function openGroup(groupId, groupName) {
     state.page = 1;
     state.hasMore = true;
     state.files = [];
+    // Selection paths are group-specific — clear when entering a new group
+    // so selection bar doesn't linger with stale paths from the previous view.
+    exitSelectMode();
     // Reset the type filter when entering a new gallery view — user
     // was reporting "media not complete" because a previous Photos /
     // Videos tab choice survived the navigation and silently filtered
@@ -1434,6 +1502,7 @@ function showAllMedia() {
     // foreign-group click. Without this, "All Media" after viewing a
     // peer-owned group would still be filtered to that peer.
     state.viewerPeerScope = null;
+    exitSelectMode();
     resetGalleryFilter();
 
     document.getElementById('page-title').textContent = i18nT(
@@ -1534,27 +1603,33 @@ async function initGalleryScope() {
     chip.classList.remove('hidden');
     state.galleryScope = localStorage.getItem('tgdl-gallery-scope') || 'local';
     _renderGalleryScopeLabel();
+    let _scopeMenuDocListener = null;
+    const _closeScopeMenu = () => {
+        menu.classList.add('hidden');
+        chip.setAttribute('aria-expanded', 'false');
+        if (_scopeMenuDocListener) {
+            document.removeEventListener('click', _scopeMenuDocListener);
+            _scopeMenuDocListener = null;
+        }
+    };
     chip.addEventListener('click', () => {
-        const expanded = chip.getAttribute('aria-expanded') === 'true';
-        if (expanded) {
-            menu.classList.add('hidden');
-            chip.setAttribute('aria-expanded', 'false');
+        if (chip.getAttribute('aria-expanded') === 'true') {
+            _closeScopeMenu();
             return;
         }
         _renderGalleryScopeMenu();
         menu.classList.remove('hidden');
         chip.setAttribute('aria-expanded', 'true');
-        // Click-outside dismisses. Use `once` so the listener auto-cleans.
-        setTimeout(() => {
-            const onDocClick = (e) => {
-                if (!menu.contains(e.target) && !chip.contains(e.target)) {
-                    menu.classList.add('hidden');
-                    chip.setAttribute('aria-expanded', 'false');
-                    document.removeEventListener('click', onDocClick);
-                }
-            };
-            document.addEventListener('click', onDocClick);
-        }, 0);
+        // Remove any stale listener before registering a fresh one.
+        if (_scopeMenuDocListener) {
+            document.removeEventListener('click', _scopeMenuDocListener);
+        }
+        _scopeMenuDocListener = (e) => {
+            if (!menu.contains(e.target) && !chip.contains(e.target)) {
+                _closeScopeMenu();
+            }
+        };
+        setTimeout(() => document.addEventListener('click', _scopeMenuDocListener), 0);
     });
 }
 
@@ -1665,9 +1740,13 @@ async function loadAllFiles() {
         const pinQs = state.pinnedFilter ? '&pinned=1' : '';
         const pinFirstQs =
             localStorage.getItem('tgdl-pinned-first') === '1' ? '&pinnedFirst=1' : '';
+        const sortQs =
+            state.sortBy && state.sortBy !== 'date_desc'
+                ? `&sort=${encodeURIComponent(state.sortBy)}`
+                : '';
         const scopeQs = _galleryScopeQs();
         const res = await api.get(
-            `/api/downloads/all?page=${state.page}&limit=${FILES_PER_PAGE}&type=${encodeURIComponent(type)}${pinQs}${pinFirstQs}${scopeQs}`,
+            `/api/downloads/all?page=${state.page}&limit=${FILES_PER_PAGE}&type=${encodeURIComponent(type)}${pinQs}${pinFirstQs}${sortQs}${scopeQs}`,
         );
         const newFiles = res?.files || [];
 
@@ -1724,9 +1803,13 @@ async function loadGroupFiles(groupId) {
         const pinQs = state.pinnedFilter ? '&pinned=1' : '';
         const pinFirstQs =
             localStorage.getItem('tgdl-pinned-first') === '1' ? '&pinnedFirst=1' : '';
+        const sortQs =
+            state.sortBy && state.sortBy !== 'date_desc'
+                ? `&sort=${encodeURIComponent(state.sortBy)}`
+                : '';
         const scopeQs = _galleryScopeQs();
         const res = await api.get(
-            `/api/downloads/${encodeURIComponent(groupId)}?page=${state.page}&limit=${FILES_PER_PAGE}&type=${encodeURIComponent(type)}${pinQs}${pinFirstQs}${scopeQs}`,
+            `/api/downloads/${encodeURIComponent(groupId)}?page=${state.page}&limit=${FILES_PER_PAGE}&type=${encodeURIComponent(type)}${pinQs}${pinFirstQs}${sortQs}${scopeQs}`,
         );
         const newFiles = res.files || [];
 
@@ -1819,6 +1902,11 @@ function renderMediaGrid(opts = {}) {
     const fromIndex = append ? (opts.fromIndex ?? _renderedFileCount) : 0;
 
     if (state.files.length === 0) {
+        // Release all observer refs before clearing DOM to avoid stale handles.
+        if (!append) {
+            state.imageObserver?.disconnect();
+            _tileWindowObserver?.disconnect();
+        }
         grid.innerHTML = '';
         _renderedFileCount = 0;
         renderGalleryEmptyState();
@@ -2034,6 +2122,11 @@ function renderMediaGrid(opts = {}) {
         // a 1000-tile gallery.
         grid.insertAdjacentHTML('beforeend', html);
     } else {
+        // Release observer refs before tearing out DOM nodes so the browser
+        // can GC the old tile elements immediately rather than waiting for
+        // the IntersectionObserver to release its internal strong references.
+        state.imageObserver?.disconnect();
+        _tileWindowObserver?.disconnect();
         grid.innerHTML = html;
     }
     _renderedFileCount = state.files.length;
@@ -3234,10 +3327,9 @@ function _wireGroupDataActions(groupId) {
     if (textSearchInput) {
         textSearchInput.value = '';
         _groupDataState.textSearch = '';
-        let _textSearchTimer = null;
         textSearchInput.oninput = () => {
-            clearTimeout(_textSearchTimer);
-            _textSearchTimer = setTimeout(async () => {
+            clearTimeout(_dataTabSearchTimer);
+            _dataTabSearchTimer = setTimeout(async () => {
                 const term = textSearchInput.value.trim();
                 _groupDataState.textSearch = term;
                 _groupDataState.offset = 0;
@@ -3276,6 +3368,8 @@ function closeGroupSettings() {
     const modal = document.getElementById('group-modal');
     if (modal) modal.classList.add('hidden');
     currentEditGroup = null;
+    clearTimeout(_dataTabSearchTimer);
+    _dataTabSearchTimer = null;
 }
 
 async function saveGroupSettings() {
@@ -3429,6 +3523,7 @@ function switchSettingsTab(tab) {
 
 // State for the Data tab — limited per-modal-open scope.
 let _groupDataState = { groupId: null, offset: 0, hasMore: false };
+let _dataTabSearchTimer = null;
 async function _loadGroupDataTab(groupId) {
     if (!groupId) return;
     _groupDataState = { groupId, offset: 0, hasMore: false, textSearch: '' };

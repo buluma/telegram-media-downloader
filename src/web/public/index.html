@@ -715,6 +715,37 @@
                         <i class="ri-camera-line text-xl text-tg-textSecondary" aria-hidden="true"></i>
                     </button>
                     <div class="relative hidden sm:block">
+                        <!-- Sort order picker — sits beside the view-mode button -->
+                        <div class="relative hidden sm:block" id="sort-btn-wrap" data-viewer-only>
+                            <button id="sort-btn" type="button"
+                                class="w-10 h-10 min-w-[44px] min-h-[44px] rounded-full hover:bg-tg-hover flex items-center justify-center"
+                                aria-haspopup="menu" aria-expanded="false"
+                                aria-label="Sort order" title="Sort order">
+                                <i class="ri-sort-desc text-xl text-tg-textSecondary" aria-hidden="true"></i>
+                            </button>
+                            <div id="sort-menu" class="view-mode-menu hidden" role="menu">
+                                <button type="button" data-sort="date_desc" role="menuitemradio" aria-checked="true">
+                                    <i class="ri-calendar-line"></i>
+                                    <span data-i18n="header.sort.date_desc">Newest first</span>
+                                    <i class="ri-check-line vm-check"></i>
+                                </button>
+                                <button type="button" data-sort="date_asc" role="menuitemradio">
+                                    <i class="ri-calendar-line"></i>
+                                    <span data-i18n="header.sort.date_asc">Oldest first</span>
+                                    <i class="ri-check-line vm-check"></i>
+                                </button>
+                                <button type="button" data-sort="size_desc" role="menuitemradio">
+                                    <i class="ri-hard-drive-line"></i>
+                                    <span data-i18n="header.sort.size_desc">Largest first</span>
+                                    <i class="ri-check-line vm-check"></i>
+                                </button>
+                                <button type="button" data-sort="name_asc" role="menuitemradio">
+                                    <i class="ri-sort-alphabet-asc"></i>
+                                    <span data-i18n="header.sort.name_asc">Name A→Z</span>
+                                    <i class="ri-check-line vm-check"></i>
+                                </button>
+                            </div>
+                        </div>
                         <button id="view-mode-btn" type="button"
                             class="w-10 h-10 min-w-[44px] min-h-[44px] rounded-full hover:bg-tg-hover flex items-center justify-center"
                             aria-haspopup="menu" aria-expanded="false"

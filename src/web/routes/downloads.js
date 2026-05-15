@@ -148,6 +148,8 @@ export function createDownloadsRouter({
             // existing callers behave identically.
             const pinnedOnly = req.query.pinned === '1' || req.query.pinned === 'true';
             const pinnedFirst = req.query.pinnedFirst === '1' || req.query.pinnedFirst === 'true';
+            const VALID_SORTS = new Set(['date_desc', 'date_asc', 'size_desc', 'name_asc']);
+            const sortBy = VALID_SORTS.has(req.query.sort) ? req.query.sort : 'date_desc';
             // Federation scope (Layer 1, v2.12+):
             //   ?include=local  — own files only (default; backward-compatible)
             //   ?include=peers  — own + every paired peer
@@ -170,6 +172,7 @@ export function createDownloadsRouter({
             const result = getAllDownloadsFederated(limit, offset, type, {
                 pinnedOnly,
                 pinnedFirst,
+                sortBy,
                 include,
                 ...(peerIdFilter ? { peerId: peerIdFilter } : {}),
             });
@@ -266,8 +269,8 @@ export function createDownloadsRouter({
         if (req.params.groupId === 'search') return next();
         try {
             const { groupId } = req.params;
-            const page = parseInt(req.query.page) || 1;
-            const limit = parseInt(req.query.limit) || 50;
+            const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+            const limit = Math.max(1, Math.min(500, parseInt(req.query.limit, 10) || 50));
             const type = req.query.type || 'all';
             const offset = (page - 1) * limit;
 
@@ -283,6 +286,8 @@ export function createDownloadsRouter({
 
             const pinnedOnly = req.query.pinned === '1' || req.query.pinned === 'true';
             const pinnedFirst = req.query.pinnedFirst === '1' || req.query.pinnedFirst === 'true';
+            const VALID_SORTS = new Set(['date_desc', 'date_asc', 'size_desc', 'name_asc']);
+            const sortBy = VALID_SORTS.has(req.query.sort) ? req.query.sort : 'date_desc';
             // Federation scope — same contract as /api/downloads/all. Guest
             // sessions are forced back to `local` so cluster-only data stays
             // admin-gated.
@@ -296,6 +301,7 @@ export function createDownloadsRouter({
             const result = getDownloadsForGroupFederated(groupId, limit, offset, type, {
                 pinnedOnly,
                 pinnedFirst,
+                sortBy,
                 include,
                 ...(peerIdFilter ? { peerId: peerIdFilter } : {}),
             });

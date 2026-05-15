@@ -334,9 +334,14 @@ export function getAllDownloads(limit = 50, offset = 0, type = 'all', opts = {})
     // `pinnedFirst` surfaces pinned rows above the rest while keeping
     // chronological order within each group. The default sort is unchanged
     // so existing callers behave identically.
-    const orderBy = opts.pinnedFirst
-        ? 'COALESCE(pinned, 0) DESC, created_at DESC, id DESC'
-        : 'created_at DESC, id DESC';
+    const sortMap = {
+        date_desc: 'created_at DESC, id DESC',
+        date_asc: 'created_at ASC, id ASC',
+        size_desc: 'COALESCE(file_size, 0) DESC, id DESC',
+        name_asc: 'LOWER(COALESCE(file_name, "")) ASC, id ASC',
+    };
+    const baseSort = sortMap[opts.sortBy] || 'created_at DESC, id DESC';
+    const orderBy = opts.pinnedFirst ? `COALESCE(pinned, 0) DESC, ${baseSort}` : baseSort;
     const rows = getDb()
         .prepare(
             `SELECT d.*, ss.duration_sec
@@ -372,9 +377,14 @@ export function getDownloads(groupId, limit = 50, offset = 0, type = 'all', opts
     if (opts.pinnedOnly) whereParts.push('COALESCE(pinned, 0) = 1');
 
     const where = whereParts.join(' AND ');
-    const orderBy = opts.pinnedFirst
-        ? 'COALESCE(pinned, 0) DESC, created_at DESC'
-        : 'created_at DESC';
+    const sortMap = {
+        date_desc: 'created_at DESC, id DESC',
+        date_asc: 'created_at ASC, id ASC',
+        size_desc: 'COALESCE(file_size, 0) DESC, id DESC',
+        name_asc: 'LOWER(COALESCE(file_name, "")) ASC, id ASC',
+    };
+    const baseSort = sortMap[opts.sortBy] || 'created_at DESC, id DESC';
+    const orderBy = opts.pinnedFirst ? `COALESCE(pinned, 0) DESC, ${baseSort}` : baseSort;
 
     const rows = db
         .prepare(

@@ -1869,11 +1869,11 @@ export function setupViewerEvents() {
             .getElementById('video-container')
             .classList.contains('hidden');
         if (!videoActive) {
-            if (e.key === 'ArrowLeft') {
+            if (e.key === 'ArrowLeft' || e.key === 'k') {
                 navigateMedia(-1);
                 return;
             }
-            if (e.key === 'ArrowRight') {
+            if (e.key === 'ArrowRight' || e.key === 'j') {
                 navigateMedia(1);
                 return;
             }

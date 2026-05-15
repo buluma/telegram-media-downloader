@@ -61,7 +61,7 @@ const SHORTCUTS = [
     },
     {
         id: 'prev_next',
-        keys: '← / →',
+        keys: '← / → or k / j',
         k: 'shortcuts.prev_next',
         def: '(in viewer) previous / next item',
     },
@@ -250,6 +250,11 @@ export function initShortcuts() {
         if (e.key === '?' || (e.key === '/' && e.shiftKey)) {
             e.preventDefault();
             show();
+            return;
+        }
+        if (e.key === '/') {
+            e.preventDefault();
+            document.getElementById('search-input')?.focus();
             return;
         }
         if (e.key === 'l' || e.key === 'L') {
