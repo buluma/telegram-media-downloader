@@ -638,6 +638,11 @@ async function init() {
         });
     }
 
+    // Date-range filter chip
+    _initDateChip();
+    // Saved filters chip
+    _initSavedFiltersChip();
+
     // Settings globals
     window.applyPreset = Settings.applyPreset;
     // Manual Save button removed in v2.6 — auto-save handles every edit
@@ -776,6 +781,9 @@ function renderPage(page, params = {}) {
 
     const mediaTabs = document.getElementById('media-tabs');
     if (mediaTabs) mediaTabs.style.display = page === 'viewer' ? '' : 'none';
+
+    const viewModeBtn = document.getElementById('view-mode-btn');
+    if (viewModeBtn) viewModeBtn.style.display = page === 'viewer' ? '' : 'none';
 
     closeSidebar();
 
@@ -1732,6 +1740,248 @@ function _renderGalleryScopeMenu() {
     });
 }
 
+// ── Date-range filter chip ───────────────────────────────────────────────────
+
+function _dateChipLabel() {
+    const { dateFrom, dateTo } = state;
+    if (!dateFrom && !dateTo) return i18nT('filter.date.label', 'Date');
+    const fmt = (s) => {
+        const d = new Date(s + 'T00:00:00');
+        return d.toLocaleDateString(undefined, { month: 'short', year: '2-digit' });
+    };
+    if (dateFrom && dateTo) return `${fmt(dateFrom)} – ${fmt(dateTo)}`;
+    if (dateFrom) return `From ${fmt(dateFrom)}`;
+    return `Until ${fmt(dateTo)}`;
+}
+
+function _applyDateFilter(from, to) {
+    state.dateFrom = from || null;
+    state.dateTo = to || null;
+    state.page = 1;
+    state.hasMore = true;
+    state.files = [];
+    const labelEl = document.getElementById('date-chip-label');
+    if (labelEl) labelEl.textContent = _dateChipLabel();
+    const chip = document.getElementById('date-filter-chip');
+    chip?.classList.toggle('tab-item--active', !!(state.dateFrom || state.dateTo));
+    if (state.currentPage === 'viewer') {
+        if (state.currentGroupId) loadGroupFiles(state.currentGroupId);
+        else loadAllFiles();
+    }
+}
+
+function _initDateChip() {
+    const chip = document.getElementById('date-filter-chip');
+    const popover = document.getElementById('date-filter-popover');
+    const fromInput = document.getElementById('date-filter-from');
+    const toInput = document.getElementById('date-filter-to');
+    const applyBtn = document.getElementById('date-filter-apply');
+    const clearBtn = document.getElementById('date-filter-clear');
+    if (!chip || !popover) return;
+
+    let _docListener = null;
+    const _close = () => {
+        popover.classList.add('hidden');
+        chip.setAttribute('aria-expanded', 'false');
+        if (_docListener) {
+            document.removeEventListener('click', _docListener);
+            _docListener = null;
+        }
+    };
+
+    chip.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const open = popover.classList.toggle('hidden');
+        chip.setAttribute('aria-expanded', open ? 'false' : 'true');
+        if (!open) {
+            if (fromInput) fromInput.value = state.dateFrom || '';
+            if (toInput) toInput.value = state.dateTo || '';
+            if (_docListener) document.removeEventListener('click', _docListener);
+            _docListener = (ev) => {
+                if (!popover.contains(ev.target) && !chip.contains(ev.target)) _close();
+            };
+            setTimeout(() => document.addEventListener('click', _docListener), 0);
+        } else {
+            _close();
+        }
+    });
+
+    applyBtn?.addEventListener('click', () => {
+        _applyDateFilter(fromInput?.value || null, toInput?.value || null);
+        _close();
+    });
+
+    clearBtn?.addEventListener('click', () => {
+        if (fromInput) fromInput.value = '';
+        if (toInput) toInput.value = '';
+        _applyDateFilter(null, null);
+        _close();
+    });
+}
+
+// ── Saved filters chip ───────────────────────────────────────────────────────
+
+const SAVED_FILTERS_KEY = 'tgdl-saved-filters';
+
+function _getSavedFilters() {
+    try {
+        return JSON.parse(localStorage.getItem(SAVED_FILTERS_KEY) || '[]');
+    } catch {
+        return [];
+    }
+}
+
+function _setSavedFilters(filters) {
+    try {
+        localStorage.setItem(SAVED_FILTERS_KEY, JSON.stringify(filters));
+    } catch {}
+}
+
+function _currentFilterIsNonDefault() {
+    return !!(
+        state.dateFrom ||
+        state.dateTo ||
+        (state.sortBy && state.sortBy !== 'date_desc') ||
+        (state.currentFilter && state.currentFilter !== 'all') ||
+        state.pinnedFilter
+    );
+}
+
+function _renderSavedFiltersMenu() {
+    const menu = document.getElementById('saved-filters-menu');
+    if (!menu) return;
+    const filters = _getSavedFilters();
+    const canSave = _currentFilterIsNonDefault();
+    let html = '';
+    if (canSave) {
+        html += `<button type="button" id="save-filter-btn"
+            class="w-full text-left px-3 py-2 text-sm hover:bg-tg-hover flex items-center gap-2 border-b border-tg-border/30">
+            <i class="ri-save-line text-tg-blue" aria-hidden="true"></i>
+            <span>${escapeHtml(i18nT('filter.save.label', 'Save current filter'))}</span>
+        </button>`;
+    }
+    if (filters.length === 0 && !canSave) {
+        html += `<div class="px-3 py-2 text-xs text-tg-textSecondary">${escapeHtml(i18nT('filter.saved.empty', 'No saved filters'))}</div>`;
+    }
+    filters.forEach((f, i) => {
+        const parts = [];
+        if (f.type && f.type !== 'all') parts.push(f.type);
+        if (f.sortBy && f.sortBy !== 'date_desc') parts.push(f.sortBy.replace('_', ' '));
+        if (f.dateFrom || f.dateTo) {
+            parts.push([f.dateFrom, f.dateTo].filter(Boolean).join(' – '));
+        }
+        html += `<div class="flex items-center px-3 py-1.5 hover:bg-tg-hover group">
+            <button type="button" data-apply-filter="${i}"
+                class="flex-1 text-left text-sm text-tg-text truncate">${escapeHtml(f.name)}</button>
+            <span class="text-xs text-tg-textSecondary mr-2 hidden group-hover:inline truncate max-w-[80px]">${escapeHtml(parts.join(', '))}</span>
+            <button type="button" data-delete-filter="${i}"
+                class="opacity-0 group-hover:opacity-100 text-tg-textSecondary hover:text-red-400 ml-1 text-xs">
+                <i class="ri-delete-bin-line" aria-hidden="true"></i>
+            </button>
+        </div>`;
+    });
+    menu.innerHTML = html;
+
+    menu.querySelector('#save-filter-btn')?.addEventListener('click', () => {
+        const name = prompt(i18nT('filter.save.prompt', 'Filter name:'));
+        if (!name?.trim()) return;
+        const filters2 = _getSavedFilters();
+        filters2.push({
+            name: name.trim(),
+            type: state.currentFilter || 'all',
+            sortBy: state.sortBy || 'date_desc',
+            dateFrom: state.dateFrom || null,
+            dateTo: state.dateTo || null,
+            pinnedFilter: state.pinnedFilter || false,
+        });
+        _setSavedFilters(filters2);
+        _renderSavedFiltersMenu();
+    });
+
+    menu.querySelectorAll('[data-apply-filter]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const f = _getSavedFilters()[Number(btn.dataset.applyFilter)];
+            if (!f) return;
+            // Apply type
+            if (f.type) {
+                state.currentFilter = f.type;
+                document.querySelectorAll('#media-tabs .tab-item[data-type]').forEach((t) => {
+                    t.classList.toggle('active', t.dataset.type === f.type);
+                });
+            }
+            // Apply sort
+            if (f.sortBy) {
+                state.sortBy = f.sortBy;
+                try {
+                    localStorage.setItem('tgdl-sort-by', f.sortBy);
+                } catch {}
+                document.querySelectorAll('#sort-menu [data-sort]').forEach((b) => {
+                    b.setAttribute('aria-checked', b.dataset.sort === f.sortBy ? 'true' : 'false');
+                });
+                const sortLabel = document.getElementById('sort-chip-label');
+                const SORT_LABELS = {
+                    date_desc: 'Newest',
+                    date_asc: 'Oldest',
+                    size_desc: 'Largest',
+                    name_asc: 'Name A→Z',
+                };
+                if (sortLabel) sortLabel.textContent = SORT_LABELS[f.sortBy] ?? 'Sort';
+            }
+            // Apply date range
+            _applyDateFilter(f.dateFrom || null, f.dateTo || null);
+            const fromInput = document.getElementById('date-filter-from');
+            const toInput = document.getElementById('date-filter-to');
+            if (fromInput) fromInput.value = f.dateFrom || '';
+            if (toInput) toInput.value = f.dateTo || '';
+            document.getElementById('saved-filters-menu')?.classList.add('hidden');
+            document.getElementById('saved-filters-chip')?.setAttribute('aria-expanded', 'false');
+        });
+    });
+
+    menu.querySelectorAll('[data-delete-filter]').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const idx = Number(btn.dataset.deleteFilter);
+            const filters2 = _getSavedFilters();
+            filters2.splice(idx, 1);
+            _setSavedFilters(filters2);
+            _renderSavedFiltersMenu();
+        });
+    });
+}
+
+function _initSavedFiltersChip() {
+    const chip = document.getElementById('saved-filters-chip');
+    const menu = document.getElementById('saved-filters-menu');
+    if (!chip || !menu) return;
+
+    let _docListener = null;
+    const _close = () => {
+        menu.classList.add('hidden');
+        chip.setAttribute('aria-expanded', 'false');
+        if (_docListener) {
+            document.removeEventListener('click', _docListener);
+            _docListener = null;
+        }
+    };
+
+    chip.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const open = menu.classList.toggle('hidden');
+        chip.setAttribute('aria-expanded', open ? 'false' : 'true');
+        if (!open) {
+            _renderSavedFiltersMenu();
+            if (_docListener) document.removeEventListener('click', _docListener);
+            _docListener = (ev) => {
+                if (!menu.contains(ev.target) && !chip.contains(ev.target)) _close();
+            };
+            setTimeout(() => document.addEventListener('click', _docListener), 0);
+        } else {
+            _close();
+        }
+    });
+}
+
 function _setLoadMoreIndicator(visible) {
     document.getElementById('load-more-indicator')?.classList.toggle('hidden', !visible);
 }
@@ -1752,9 +2002,13 @@ async function loadAllFiles() {
             state.sortBy && state.sortBy !== 'date_desc'
                 ? `&sort=${encodeURIComponent(state.sortBy)}`
                 : '';
+        const dateQs = [
+            state.dateFrom ? `&from=${encodeURIComponent(state.dateFrom)}` : '',
+            state.dateTo ? `&to=${encodeURIComponent(state.dateTo)}` : '',
+        ].join('');
         const scopeQs = _galleryScopeQs();
         const res = await api.get(
-            `/api/downloads/all?page=${state.page}&limit=${FILES_PER_PAGE}&type=${encodeURIComponent(type)}${pinQs}${pinFirstQs}${sortQs}${scopeQs}`,
+            `/api/downloads/all?page=${state.page}&limit=${FILES_PER_PAGE}&type=${encodeURIComponent(type)}${pinQs}${pinFirstQs}${sortQs}${dateQs}${scopeQs}`,
         );
         const newFiles = res?.files || [];
 
@@ -1815,9 +2069,13 @@ async function loadGroupFiles(groupId) {
             state.sortBy && state.sortBy !== 'date_desc'
                 ? `&sort=${encodeURIComponent(state.sortBy)}`
                 : '';
+        const dateQs = [
+            state.dateFrom ? `&from=${encodeURIComponent(state.dateFrom)}` : '',
+            state.dateTo ? `&to=${encodeURIComponent(state.dateTo)}` : '',
+        ].join('');
         const scopeQs = _galleryScopeQs();
         const res = await api.get(
-            `/api/downloads/${encodeURIComponent(groupId)}?page=${state.page}&limit=${FILES_PER_PAGE}&type=${encodeURIComponent(type)}${pinQs}${pinFirstQs}${sortQs}${scopeQs}`,
+            `/api/downloads/${encodeURIComponent(groupId)}?page=${state.page}&limit=${FILES_PER_PAGE}&type=${encodeURIComponent(type)}${pinQs}${pinFirstQs}${sortQs}${dateQs}${scopeQs}`,
         );
         const newFiles = res.files || [];
 
@@ -3243,6 +3501,12 @@ async function openGroupSettings(groupId, groupName) {
     const rescueHoursEl = document.getElementById('setting-rescue-hours');
     if (rescueHoursEl) rescueHoursEl.value = group?.rescueRetentionHours || '';
 
+    // Auto-backfill schedule
+    const scheduleEl = document.getElementById('setting-backfill-schedule');
+    if (scheduleEl) scheduleEl.value = group?.backfillSchedule || 'off';
+    const limitEl = document.getElementById('setting-backfill-limit');
+    if (limitEl) limitEl.value = group?.backfillLimit || 100;
+
     // Show media tab by default
     switchSettingsTab('media');
     // Wire the Data tab's action buttons once per modal open. The buttons
@@ -3447,6 +3711,13 @@ async function saveGroupSettings() {
     const rescueRetentionHours =
         Number.isFinite(rescueHoursParsed) && rescueHoursParsed > 0 ? rescueHoursParsed : null;
 
+    // Auto-backfill schedule read-back.
+    const backfillSchedule = document.getElementById('setting-backfill-schedule')?.value || 'off';
+    const backfillLimitRaw = document.getElementById('setting-backfill-limit')?.value;
+    const backfillLimitParsed = parseInt(backfillLimitRaw, 10);
+    const backfillLimit =
+        Number.isFinite(backfillLimitParsed) && backfillLimitParsed > 0 ? backfillLimitParsed : 100;
+
     const data = {
         name: currentEditGroup.name,
         enabled,
@@ -3472,6 +3743,8 @@ async function saveGroupSettings() {
         forwardAccount: forwardAccount || null,
         rescueMode,
         rescueRetentionHours,
+        backfillSchedule,
+        backfillLimit,
     };
 
     // Cluster routing fields are only included in the payload when the
@@ -3841,9 +4114,18 @@ async function confirmDeleteFile() {
 // the previous view doesn't silently filter the new content.
 function resetGalleryFilter() {
     state.currentFilter = 'all';
+    state.dateFrom = null;
+    state.dateTo = null;
     document.querySelectorAll('#media-tabs .tab-item').forEach((t) => {
         t.classList.toggle('active', (t.dataset.type || 'all') === 'all');
     });
+    const labelEl = document.getElementById('date-chip-label');
+    if (labelEl) labelEl.textContent = i18nT('filter.date.label', 'Date');
+    document.getElementById('date-filter-chip')?.classList.remove('tab-item--active');
+    const fromInput = document.getElementById('date-filter-from');
+    const toInput = document.getElementById('date-filter-to');
+    if (fromInput) fromInput.value = '';
+    if (toInput) toInput.value = '';
 }
 
 // ============ Media Tabs ============

@@ -70,6 +70,9 @@ export const state = {
     // Drives both router.js (admin-only routes redirect guests) and the
     // body[data-role] CSS gate that hides admin-only UI elements.
     role: null,
+    // Date-range filter for the viewer gallery (YYYY-MM-DD strings or null).
+    dateFrom: null,
+    dateTo: null,
 };
 
 /** True for "missing / placeholder / numeric-id-as-name" inputs. */

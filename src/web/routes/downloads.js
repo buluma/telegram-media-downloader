@@ -151,6 +151,9 @@ export function createDownloadsRouter({
             const pinnedFirst = req.query.pinnedFirst === '1' || req.query.pinnedFirst === 'true';
             const VALID_SORTS = new Set(['date_desc', 'date_asc', 'size_desc', 'name_asc']);
             const sortBy = VALID_SORTS.has(req.query.sort) ? req.query.sort : 'date_desc';
+            const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+            const dateFrom = DATE_RE.test(req.query.from) ? req.query.from : null;
+            const dateTo = DATE_RE.test(req.query.to) ? req.query.to : null;
             // Federation scope (Layer 1, v2.12+):
             //   ?include=local  — own files only (default; backward-compatible)
             //   ?include=peers  — own + every paired peer
@@ -174,6 +177,8 @@ export function createDownloadsRouter({
                 pinnedOnly,
                 pinnedFirst,
                 sortBy,
+                dateFrom,
+                dateTo,
                 include,
                 ...(peerIdFilter ? { peerId: peerIdFilter } : {}),
             });
@@ -289,6 +294,9 @@ export function createDownloadsRouter({
             const pinnedFirst = req.query.pinnedFirst === '1' || req.query.pinnedFirst === 'true';
             const VALID_SORTS = new Set(['date_desc', 'date_asc', 'size_desc', 'name_asc']);
             const sortBy = VALID_SORTS.has(req.query.sort) ? req.query.sort : 'date_desc';
+            const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+            const dateFrom = DATE_RE.test(req.query.from) ? req.query.from : null;
+            const dateTo = DATE_RE.test(req.query.to) ? req.query.to : null;
             // Federation scope — same contract as /api/downloads/all. Guest
             // sessions are forced back to `local` so cluster-only data stays
             // admin-gated.
@@ -303,6 +311,8 @@ export function createDownloadsRouter({
                 pinnedOnly,
                 pinnedFirst,
                 sortBy,
+                dateFrom,
+                dateTo,
                 include,
                 ...(peerIdFilter ? { peerId: peerIdFilter } : {}),
             });

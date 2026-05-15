@@ -50,6 +50,7 @@ import { preloadClassifier as nsfwPreloadClassifier } from '../core/nsfw.js';
 // …) were deleted along with the routes that called them.
 import { getRescueSweeper } from '../core/rescue.js';
 import { startDrain, stopDrain } from '../core/delete-queue.js';
+import { getAutoBackfillScheduler } from '../core/auto-backfill.js';
 import * as backup from '../core/backup/index.js';
 import { metrics } from '../core/metrics.js';
 import { isAuthConfigured, validateSession, startSessionGc } from '../core/web-auth.js';
@@ -1731,6 +1732,21 @@ server.listen(PORT, async () => {
         sweeper.start();
     } catch (e) {
         console.warn('[rescue] start failed:', e.message);
+    }
+
+    // Auto-backfill scheduler — runs groups whose backfillSchedule is due.
+    try {
+        const { activeBackfillsByGroup } = await import('./lib/history-state.js');
+        const autoBackfill = getAutoBackfillScheduler({
+            loadConfig,
+            getAccountManager,
+            broadcast,
+            log,
+            activeBackfillsByGroup,
+        });
+        autoBackfill.start();
+    } catch (e) {
+        console.warn('[auto-backfill] start failed:', e.message);
     }
 
     // Backup subsystem — multi-provider mirror + snapshot worker. The

@@ -527,6 +527,20 @@ export function createGroupsRouter({
                     delete group.rescueRetentionHours;
                 }
             }
+            if (req.body.backfillSchedule !== undefined) {
+                const v = req.body.backfillSchedule;
+                const VALID = new Set(['off', '6h', '12h', 'daily', 'weekly']);
+                if (VALID.has(v) && v !== 'off') group.backfillSchedule = v;
+                else delete group.backfillSchedule;
+            }
+            if (req.body.backfillLimit !== undefined) {
+                const n = parseInt(req.body.backfillLimit, 10);
+                if (Number.isFinite(n) && n > 0) {
+                    group.backfillLimit = Math.max(1, Math.min(10000, n));
+                } else {
+                    delete group.backfillLimit;
+                }
+            }
 
             await writeConfigAtomic(config);
             // Drop the dialogs response cache so the picker filter re-derives

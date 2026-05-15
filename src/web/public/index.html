@@ -592,7 +592,30 @@
                             </div>
                         </div>
 
-                        <!-- 5. Danger zone -->
+                        <!-- 5. Auto-backfill schedule -->
+                        <div class="bg-tg-panel rounded-lg p-3">
+                            <h4 class="text-tg-text text-sm font-medium mb-1.5 flex items-center gap-1.5">
+                                <i class="ri-history-line text-tg-blue"></i>
+                                <span data-i18n="group.backfill.title">Auto-backfill</span>
+                            </h4>
+                            <div class="flex items-center gap-2 mb-2">
+                                <label for="setting-backfill-schedule" class="text-[11px] text-tg-textSecondary shrink-0" data-i18n="group.backfill.schedule_label">Schedule</label>
+                                <select id="setting-backfill-schedule" class="tg-input flex-1 text-sm py-1.5">
+                                    <option value="off" data-i18n="group.backfill.off">Off</option>
+                                    <option value="6h" data-i18n="group.backfill.6h">Every 6 hours</option>
+                                    <option value="12h" data-i18n="group.backfill.12h">Every 12 hours</option>
+                                    <option value="daily" data-i18n="group.backfill.daily">Daily</option>
+                                    <option value="weekly" data-i18n="group.backfill.weekly">Weekly</option>
+                                </select>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <label for="setting-backfill-limit" class="text-[11px] text-tg-textSecondary shrink-0" data-i18n="group.backfill.limit_label">Limit</label>
+                                <input id="setting-backfill-limit" type="number" min="1" max="10000" placeholder="100"
+                                    class="tg-input flex-1 text-sm py-1.5" />
+                            </div>
+                        </div>
+
+                        <!-- 6. Danger zone -->
                         <div class="bg-tg-panel rounded-lg p-3 border border-red-500/30">
                             <h4 class="text-red-300 text-sm font-medium mb-1.5 flex items-center gap-1.5">
                                 <i class="ri-alert-line"></i>
@@ -789,73 +812,127 @@
                 </div>
             </header>
 
-            <!-- Media Tabs -->
-            <div id="media-tabs" class="flex border-b border-tg-border bg-tg-bg px-2 overflow-x-auto">
-                <div class="tab-item active" data-type="all" data-i18n="viewer.tab.all">All</div>
-                <div class="tab-item" data-type="images" data-i18n="viewer.tab.images">Photos</div>
-                <div class="tab-item" data-type="videos" data-i18n="viewer.tab.videos">Videos</div>
-                <div class="tab-item" data-type="documents" data-i18n="viewer.tab.documents">Files</div>
-                <div class="tab-item" data-type="audio" data-i18n="viewer.tab.audio">Audio</div>
-                <!-- Pinned: independent toggle (sits next to the type tabs but
-                     reads as a chip, since it stacks with the type filter
-                     instead of replacing it). -->
-                <div class="tab-item tab-item--toggle" data-pinned-toggle
-                     data-i18n-title="favorites.filter_title" title="Show only pinned"
-                     role="button" aria-pressed="false">
-                    <i class="ri-pushpin-2-line mr-1" aria-hidden="true"></i><span data-i18n="favorites.filter">Pinned</span>
-                </div>
-                <!-- Sort order chip — sits in the tab bar so it's near the type tabs
-                     it affects. Popover menu rendered below via absolute positioning. -->
-                <div class="relative ml-auto flex items-center">
-                    <div id="sort-chip" class="tab-item tab-item--toggle"
-                         role="button" aria-haspopup="menu" aria-expanded="false"
-                         title="Sort order" data-i18n-title="header.sort.label">
-                        <i class="ri-sort-desc mr-1 text-[13px]" aria-hidden="true"></i>
-                        <span id="sort-chip-label" class="text-xs" data-i18n="header.sort.date_desc">Newest</span>
-                        <i class="ri-arrow-down-s-line ml-0.5 text-tg-textSecondary text-[11px]" aria-hidden="true"></i>
-                    </div>
-                    <div id="sort-menu" class="hidden absolute right-0 top-full mt-1 z-30 bg-tg-panel border border-tg-border/40 rounded-lg shadow-lg min-w-[10rem] py-1" role="menu">
-                        <button type="button" data-sort="date_desc" role="menuitemradio" aria-checked="true"
-                            class="w-full text-left px-3 py-1.5 text-sm hover:bg-tg-hover flex items-center gap-2">
-                            <i class="ri-calendar-line text-tg-textSecondary" aria-hidden="true"></i>
-                            <span class="flex-1" data-i18n="header.sort.date_desc">Newest first</span>
-                            <i class="ri-check-line text-tg-blue sort-check" aria-hidden="true"></i>
-                        </button>
-                        <button type="button" data-sort="date_asc" role="menuitemradio" aria-checked="false"
-                            class="w-full text-left px-3 py-1.5 text-sm hover:bg-tg-hover flex items-center gap-2">
-                            <i class="ri-calendar-line text-tg-textSecondary" aria-hidden="true"></i>
-                            <span class="flex-1" data-i18n="header.sort.date_asc">Oldest first</span>
-                            <i class="ri-check-line text-tg-blue sort-check" aria-hidden="true"></i>
-                        </button>
-                        <button type="button" data-sort="size_desc" role="menuitemradio" aria-checked="false"
-                            class="w-full text-left px-3 py-1.5 text-sm hover:bg-tg-hover flex items-center gap-2">
-                            <i class="ri-hard-drive-line text-tg-textSecondary" aria-hidden="true"></i>
-                            <span class="flex-1" data-i18n="header.sort.size_desc">Largest first</span>
-                            <i class="ri-check-line text-tg-blue sort-check" aria-hidden="true"></i>
-                        </button>
-                        <button type="button" data-sort="name_asc" role="menuitemradio" aria-checked="false"
-                            class="w-full text-left px-3 py-1.5 text-sm hover:bg-tg-hover flex items-center gap-2">
-                            <i class="ri-sort-alphabet-asc text-tg-textSecondary" aria-hidden="true"></i>
-                            <span class="flex-1" data-i18n="header.sort.name_asc">Name A→Z</span>
-                            <i class="ri-check-line text-tg-blue sort-check" aria-hidden="true"></i>
-                        </button>
+            <!-- Media Tabs — outer wrapper keeps chips outside the scrollable region
+                 so their absolute dropdown menus aren't clipped by overflow-x-auto. -->
+            <div id="media-tabs" class="flex items-center border-b border-tg-border bg-tg-bg">
+                <!-- Scrollable type + pinned tabs -->
+                <div class="flex flex-1 min-w-0 px-2 overflow-x-auto">
+                    <div class="tab-item active" data-type="all" data-i18n="viewer.tab.all">All</div>
+                    <div class="tab-item" data-type="images" data-i18n="viewer.tab.images">Photos</div>
+                    <div class="tab-item" data-type="videos" data-i18n="viewer.tab.videos">Videos</div>
+                    <div class="tab-item" data-type="documents" data-i18n="viewer.tab.documents">Files</div>
+                    <div class="tab-item" data-type="audio" data-i18n="viewer.tab.audio">Audio</div>
+                    <!-- Pinned: independent toggle (sits next to the type tabs but
+                         reads as a chip, since it stacks with the type filter
+                         instead of replacing it). -->
+                    <div class="tab-item tab-item--toggle" data-pinned-toggle
+                         data-i18n-title="favorites.filter_title" title="Show only pinned"
+                         role="button" aria-pressed="false">
+                        <i class="ri-pushpin-2-line mr-1" aria-hidden="true"></i><span data-i18n="favorites.filter">Pinned</span>
                     </div>
                 </div>
+                <!-- Sort chip + gallery scope chip live outside the scrollable inner div
+                     so their absolute dropdown menus are not clipped. -->
+                <div class="shrink-0 flex items-center px-1 gap-1">
+                    <!-- Sort order chip -->
+                    <div class="relative flex items-center">
+                        <div id="sort-chip" class="tab-item tab-item--toggle"
+                             role="button" aria-haspopup="menu" aria-expanded="false"
+                             title="Sort order" data-i18n-title="header.sort.label">
+                            <i class="ri-sort-desc mr-1 text-[13px]" aria-hidden="true"></i>
+                            <span id="sort-chip-label" class="text-xs" data-i18n="header.sort.date_desc">Newest</span>
+                            <i class="ri-arrow-down-s-line ml-0.5 text-tg-textSecondary text-[11px]" aria-hidden="true"></i>
+                        </div>
+                        <div id="sort-menu" class="hidden absolute right-0 top-full mt-1 z-30 bg-tg-panel border border-tg-border/40 rounded-lg shadow-lg min-w-[10rem] py-1" role="menu">
+                            <button type="button" data-sort="date_desc" role="menuitemradio" aria-checked="true"
+                                class="w-full text-left px-3 py-1.5 text-sm hover:bg-tg-hover flex items-center gap-2">
+                                <i class="ri-calendar-line text-tg-textSecondary" aria-hidden="true"></i>
+                                <span class="flex-1" data-i18n="header.sort.date_desc">Newest first</span>
+                                <i class="ri-check-line text-tg-blue sort-check" aria-hidden="true"></i>
+                            </button>
+                            <button type="button" data-sort="date_asc" role="menuitemradio" aria-checked="false"
+                                class="w-full text-left px-3 py-1.5 text-sm hover:bg-tg-hover flex items-center gap-2">
+                                <i class="ri-calendar-line text-tg-textSecondary" aria-hidden="true"></i>
+                                <span class="flex-1" data-i18n="header.sort.date_asc">Oldest first</span>
+                                <i class="ri-check-line text-tg-blue sort-check" aria-hidden="true"></i>
+                            </button>
+                            <button type="button" data-sort="size_desc" role="menuitemradio" aria-checked="false"
+                                class="w-full text-left px-3 py-1.5 text-sm hover:bg-tg-hover flex items-center gap-2">
+                                <i class="ri-hard-drive-line text-tg-textSecondary" aria-hidden="true"></i>
+                                <span class="flex-1" data-i18n="header.sort.size_desc">Largest first</span>
+                                <i class="ri-check-line text-tg-blue sort-check" aria-hidden="true"></i>
+                            </button>
+                            <button type="button" data-sort="name_asc" role="menuitemradio" aria-checked="false"
+                                class="w-full text-left px-3 py-1.5 text-sm hover:bg-tg-hover flex items-center gap-2">
+                                <i class="ri-sort-alphabet-asc text-tg-textSecondary" aria-hidden="true"></i>
+                                <span class="flex-1" data-i18n="header.sort.name_asc">Name A→Z</span>
+                                <i class="ri-check-line text-tg-blue sort-check" aria-hidden="true"></i>
+                            </button>
+                        </div>
+                    </div>
 
-                <!-- Gallery scope chip — federated gallery toggle (Layer 1).
-                     Hidden by default; app.js reveals it once it knows the
-                     cluster has at least one paired peer. The popover menu
-                     is rendered into #gallery-scope-menu lazily on click. -->
-                <div id="gallery-scope-chip" class="tab-item tab-item--toggle hidden"
-                     data-admin-only role="button" aria-haspopup="menu" aria-expanded="false"
-                     data-i18n-title="gallery.scope.label" title="Scope">
-                    <i class="ri-broadcast-line mr-1" aria-hidden="true"></i>
-                    <span id="gallery-scope-label" data-i18n="gallery.scope.this_peer">This peer</span>
-                    <i class="ri-arrow-down-s-line ml-1 text-tg-textSecondary" aria-hidden="true"></i>
+                    <!-- Date-range filter chip -->
+                    <div class="relative flex items-center">
+                        <div id="date-filter-chip" class="tab-item tab-item--toggle"
+                             role="button" aria-haspopup="dialog" aria-expanded="false"
+                             title="Filter by date" data-i18n-title="filter.date.label">
+                            <i class="ri-calendar-event-line mr-1 text-[13px]" aria-hidden="true"></i>
+                            <span id="date-chip-label" class="text-xs" data-i18n="filter.date.label">Date</span>
+                            <i class="ri-arrow-down-s-line ml-0.5 text-tg-textSecondary text-[11px]" aria-hidden="true"></i>
+                        </div>
+                        <div id="date-filter-popover" class="hidden absolute right-0 top-full mt-1 z-30 bg-tg-panel border border-tg-border/40 rounded-lg shadow-lg p-3 min-w-[13rem]"
+                             role="dialog" aria-label="Date range filter">
+                            <div class="space-y-2">
+                                <div>
+                                    <label class="block text-xs text-tg-textSecondary mb-0.5" for="date-filter-from" data-i18n="filter.date.from">From</label>
+                                    <input id="date-filter-from" type="date"
+                                        class="w-full bg-tg-bg border border-tg-border/60 rounded px-2 py-1 text-xs text-tg-text focus:outline-none focus:border-tg-blue">
+                                </div>
+                                <div>
+                                    <label class="block text-xs text-tg-textSecondary mb-0.5" for="date-filter-to" data-i18n="filter.date.to">To</label>
+                                    <input id="date-filter-to" type="date"
+                                        class="w-full bg-tg-bg border border-tg-border/60 rounded px-2 py-1 text-xs text-tg-text focus:outline-none focus:border-tg-blue">
+                                </div>
+                                <div class="flex gap-2 pt-1">
+                                    <button id="date-filter-apply" type="button"
+                                        class="flex-1 bg-tg-blue text-white text-xs rounded px-2 py-1 hover:opacity-90"
+                                        data-i18n="filter.date.apply">Apply</button>
+                                    <button id="date-filter-clear" type="button"
+                                        class="text-xs text-tg-textSecondary hover:text-tg-text px-2 py-1"
+                                        data-i18n="filter.date.clear">Clear</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Saved filters chip -->
+                    <div class="relative flex items-center">
+                        <div id="saved-filters-chip" class="tab-item tab-item--toggle"
+                             role="button" aria-haspopup="menu" aria-expanded="false"
+                             title="Saved filters" data-i18n-title="filter.saved.label">
+                            <i class="ri-bookmark-line text-[13px]" aria-hidden="true"></i>
+                        </div>
+                        <div id="saved-filters-menu" class="hidden absolute right-0 top-full mt-1 z-30 bg-tg-panel border border-tg-border/40 rounded-lg shadow-lg min-w-[11rem] py-1 max-h-64 overflow-y-auto"
+                             role="menu"></div>
+                    </div>
+
+                    <!-- Gallery scope chip — federated gallery toggle (Layer 1).
+                         Hidden by default; app.js reveals it once it knows the
+                         cluster has at least one paired peer. The popover menu
+                         is rendered into #gallery-scope-menu lazily on click. -->
+                    <div class="relative flex items-center">
+                        <div id="gallery-scope-chip" class="tab-item tab-item--toggle hidden"
+                             data-admin-only role="button" aria-haspopup="menu" aria-expanded="false"
+                             data-i18n-title="gallery.scope.label" title="Scope">
+                            <i class="ri-broadcast-line mr-1" aria-hidden="true"></i>
+                            <span id="gallery-scope-label" data-i18n="gallery.scope.this_peer">This peer</span>
+                            <i class="ri-arrow-down-s-line ml-1 text-tg-textSecondary" aria-hidden="true"></i>
+                        </div>
+                        <!-- Popover menu, positioned absolutely under the chip. -->
+                        <div id="gallery-scope-menu" class="hidden absolute right-0 top-full mt-1 z-30 bg-tg-panel border border-tg-border/40 rounded-lg shadow-lg min-w-[12rem] py-1"
+                             role="menu" aria-labelledby="gallery-scope-chip"></div>
+                    </div>
                 </div>
-                <!-- Popover menu, positioned absolutely under the chip. -->
-                <div id="gallery-scope-menu" class="hidden absolute right-2 mt-9 z-30 bg-tg-panel border border-tg-border/40 rounded-lg shadow-lg min-w-[12rem] py-1"
-                     role="menu" aria-labelledby="gallery-scope-chip"></div>
             </div>
 
             <!-- Content Area -->

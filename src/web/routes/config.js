@@ -3,6 +3,7 @@ import { loadConfig } from '../../config/manager.js';
 import { writeConfigAtomic } from '../lib/config-writer.js';
 import { getRescueStats } from '../../core/db/downloads.js';
 import { getRescueSweeper } from '../../core/rescue.js';
+import { getAutoBackfillScheduler } from '../../core/auto-backfill.js';
 import { applyShareLimits } from '../../core/share.js';
 import { getDiskRotator } from '../../core/disk-rotator.js';
 import { refreshSidecar as refreshSeekbarSidecar } from '../../core/seekbar/spawn.js';
@@ -565,6 +566,15 @@ export function createConfigRouter({
                     getRescueSweeper()?.restart();
                 } catch (e) {
                     console.warn('[rescue] restart failed:', e.message);
+                }
+            }
+            // Restart auto-backfill scheduler whenever groups change so new
+            // schedule settings take effect without a server restart.
+            if (req.body.groups) {
+                try {
+                    getAutoBackfillScheduler()?.restart();
+                } catch (e) {
+                    console.warn('[auto-backfill] restart failed:', e.message);
                 }
             }
             // Re-arm the integrity sweeper when its cadence/batch changes so the

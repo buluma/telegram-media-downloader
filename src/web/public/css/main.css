@@ -3445,12 +3445,14 @@ body[data-page="maintenance-recovery"] {
 #media-tabs .tab-item--toggle:hover i {
     color: var(--tg-blue, #2aabee);
 }
-#media-tabs .tab-item--toggle[aria-pressed="true"] {
+#media-tabs .tab-item--toggle[aria-pressed="true"],
+#media-tabs .tab-item--toggle.tab-item--active {
     background: var(--tg-blue, #2aabee);
     color: #ffffff;
     border-color: var(--tg-blue, #2aabee);
 }
-#media-tabs .tab-item--toggle[aria-pressed="true"] i {
+#media-tabs .tab-item--toggle[aria-pressed="true"] i,
+#media-tabs .tab-item--toggle.tab-item--active i {
     color: #ffffff;
     transform: rotate(-12deg);
 }

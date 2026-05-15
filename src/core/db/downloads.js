@@ -330,6 +330,14 @@ export function getAllDownloads(limit = 50, offset = 0, type = 'all', opts = {})
     if (opts.pinnedOnly) {
         clauses.push('COALESCE(pinned, 0) = 1');
     }
+    if (opts.dateFrom) {
+        clauses.push('date(created_at) >= ?');
+        params.push(opts.dateFrom);
+    }
+    if (opts.dateTo) {
+        clauses.push('date(created_at) <= ?');
+        params.push(opts.dateTo);
+    }
     const where = clauses.length ? ' WHERE ' + clauses.join(' AND ') : '';
     // `pinnedFirst` surfaces pinned rows above the rest while keeping
     // chronological order within each group. The default sort is unchanged
@@ -338,7 +346,7 @@ export function getAllDownloads(limit = 50, offset = 0, type = 'all', opts = {})
         date_desc: 'created_at DESC, id DESC',
         date_asc: 'created_at ASC, id ASC',
         size_desc: 'COALESCE(file_size, 0) DESC, id DESC',
-        name_asc: 'LOWER(COALESCE(file_name, "")) ASC, id ASC',
+        name_asc: "LOWER(COALESCE(file_name, '')) ASC, id ASC",
     };
     const baseSort = sortMap[opts.sortBy] || 'created_at DESC, id DESC';
     const orderBy = opts.pinnedFirst ? `COALESCE(pinned, 0) DESC, ${baseSort}` : baseSort;
@@ -375,13 +383,21 @@ export function getDownloads(groupId, limit = 50, offset = 0, type = 'all', opts
     }
 
     if (opts.pinnedOnly) whereParts.push('COALESCE(pinned, 0) = 1');
+    if (opts.dateFrom) {
+        whereParts.push('date(created_at) >= ?');
+        params.push(opts.dateFrom);
+    }
+    if (opts.dateTo) {
+        whereParts.push('date(created_at) <= ?');
+        params.push(opts.dateTo);
+    }
 
     const where = whereParts.join(' AND ');
     const sortMap = {
         date_desc: 'created_at DESC, id DESC',
         date_asc: 'created_at ASC, id ASC',
         size_desc: 'COALESCE(file_size, 0) DESC, id DESC',
-        name_asc: 'LOWER(COALESCE(file_name, "")) ASC, id ASC',
+        name_asc: "LOWER(COALESCE(file_name, '')) ASC, id ASC",
     };
     const baseSort = sortMap[opts.sortBy] || 'created_at DESC, id DESC';
     const orderBy = opts.pinnedFirst ? `COALESCE(pinned, 0) DESC, ${baseSort}` : baseSort;
@@ -547,15 +563,33 @@ export function getAllDownloadsFederated(limit = 50, offset = 0, type = 'all', o
         // be locally pinned. Drop a never-true predicate to short-circuit.
         peerWhereParts.push('0 = 1');
     }
+    if (opts.dateFrom) {
+        localWhereParts.push('date(created_at) >= ?');
+        localWherePartsD.push('date(d.created_at) >= ?');
+        peerWhereParts.push("date(datetime(created_at/1000, 'unixepoch')) >= ?");
+        localParams.push(opts.dateFrom);
+        peerParams.push(opts.dateFrom);
+    }
+    if (opts.dateTo) {
+        localWhereParts.push('date(created_at) <= ?');
+        localWherePartsD.push('date(d.created_at) <= ?');
+        peerWhereParts.push("date(datetime(created_at/1000, 'unixepoch')) <= ?");
+        localParams.push(opts.dateTo);
+        peerParams.push(opts.dateTo);
+    }
     const localWhere = localWhereParts.length ? ' WHERE ' + localWhereParts.join(' AND ') : '';
     const localWhereD = localWherePartsD.length ? ' WHERE ' + localWherePartsD.join(' AND ') : '';
     const peerWhere = peerWhereParts.length ? ' WHERE ' + peerWhereParts.join(' AND ') : '';
 
     // pinnedFirst: COALESCE on the local side, peer side always 0 — net
     // effect is that local pinned float to the top of the merged page.
-    const orderBy = opts.pinnedFirst
-        ? 'pinned DESC, sort_ts DESC, id DESC'
-        : 'sort_ts DESC, id DESC';
+    const _fedSortMap = {
+        date_asc: 'sort_ts ASC, id ASC',
+        size_desc: 'COALESCE(file_size, 0) DESC, id DESC',
+        name_asc: "LOWER(COALESCE(file_name, '')) ASC, id ASC",
+    };
+    const baseSort = _fedSortMap[opts.sortBy] || 'sort_ts DESC, id DESC';
+    const orderBy = opts.pinnedFirst ? `pinned DESC, ${baseSort}` : baseSort;
 
     const sql = `
         SELECT * FROM (
@@ -615,6 +649,20 @@ export function getDownloadsForGroupFederated(
         localWherePartsD.push('COALESCE(d.pinned, 0) = 1');
         peerWhereParts.push('0 = 1');
     }
+    if (opts.dateFrom) {
+        localWhereParts.push('date(created_at) >= ?');
+        localWherePartsD.push('date(d.created_at) >= ?');
+        peerWhereParts.push("date(datetime(created_at/1000, 'unixepoch')) >= ?");
+        localParams.push(opts.dateFrom);
+        peerParams.push(opts.dateFrom);
+    }
+    if (opts.dateTo) {
+        localWhereParts.push('date(created_at) <= ?');
+        localWherePartsD.push('date(d.created_at) <= ?');
+        peerWhereParts.push("date(datetime(created_at/1000, 'unixepoch')) <= ?");
+        localParams.push(opts.dateTo);
+        peerParams.push(opts.dateTo);
+    }
     // Optional peerId filter — when caller wants only one peer's files for
     // the group (sidebar foreign-group click).
     if (opts.peerId) {
@@ -627,9 +675,13 @@ export function getDownloadsForGroupFederated(
     const localWhere = ' WHERE ' + localWhereParts.join(' AND ');
     const localWhereD = ' WHERE ' + localWherePartsD.join(' AND ');
     const peerWhere = ' WHERE ' + peerWhereParts.join(' AND ');
-    const orderBy = opts.pinnedFirst
-        ? 'pinned DESC, sort_ts DESC, id DESC'
-        : 'sort_ts DESC, id DESC';
+    const _fedSortMap = {
+        date_asc: 'sort_ts ASC, id ASC',
+        size_desc: 'COALESCE(file_size, 0) DESC, id DESC',
+        name_asc: "LOWER(COALESCE(file_name, '')) ASC, id ASC",
+    };
+    const baseSort = _fedSortMap[opts.sortBy] || 'sort_ts DESC, id DESC';
+    const orderBy = opts.pinnedFirst ? `pinned DESC, ${baseSort}` : baseSort;
 
     const sql = `
         SELECT * FROM (
