@@ -11,6 +11,9 @@
 
 FROM node:24.15.0-bookworm-slim AS deps
 WORKDIR /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 make g++ \
+    && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
 
@@ -48,10 +51,14 @@ ENV NODE_ENV=production \
 # classifier) ships glibc-only prebuilt .so files; loading them on musl
 # crashes the whole process at boot with "ld-linux-x86-64.so.2: No such
 # file or directory". libstdc++ is part of the base image, no install needed.
+ARG TARGETARCH
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        tini gosu ffmpeg procps \
-        intel-media-va-driver i965-va-driver vainfo \
+        tini gosu ffmpeg procps vainfo \
+    && if [ "$TARGETARCH" = "amd64" ]; then \
+        apt-get install -y --no-install-recommends \
+            intel-media-va-driver i965-va-driver; \
+    fi \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
