@@ -566,10 +566,16 @@ async function init() {
     }
 
     // Sort order picker
-    const sortBtn = document.getElementById('sort-btn');
+    const sortChip = document.getElementById('sort-chip');
     const sortMenu = document.getElementById('sort-menu');
-    if (sortBtn && sortMenu) {
+    if (sortChip && sortMenu) {
         const VALID_SORTS = ['date_desc', 'date_asc', 'size_desc', 'name_asc'];
+        const SORT_LABELS = {
+            date_desc: 'Newest',
+            date_asc: 'Oldest',
+            size_desc: 'Largest',
+            name_asc: 'Name A→Z',
+        };
         const storedSort = (() => {
             try {
                 return localStorage.getItem('tgdl-sort-by');
@@ -578,29 +584,31 @@ async function init() {
             }
         })();
         state.sortBy = VALID_SORTS.includes(storedSort) ? storedSort : 'date_desc';
+        const sortChipLabel = document.getElementById('sort-chip-label');
         const _applySortActive = () => {
             sortMenu.querySelectorAll('[data-sort]').forEach((b) => {
                 b.setAttribute('aria-checked', b.dataset.sort === state.sortBy ? 'true' : 'false');
             });
+            if (sortChipLabel) sortChipLabel.textContent = SORT_LABELS[state.sortBy] ?? 'Sort';
         };
         _applySortActive();
         let _sortDocListener = null;
         const _closeSortMenu = () => {
             sortMenu.classList.add('hidden');
-            sortBtn.setAttribute('aria-expanded', 'false');
+            sortChip.setAttribute('aria-expanded', 'false');
             if (_sortDocListener) {
                 document.removeEventListener('click', _sortDocListener);
                 _sortDocListener = null;
             }
         };
-        sortBtn.addEventListener('click', (e) => {
+        sortChip.addEventListener('click', (e) => {
             e.stopPropagation();
             const open = sortMenu.classList.toggle('hidden');
-            sortBtn.setAttribute('aria-expanded', open ? 'false' : 'true');
+            sortChip.setAttribute('aria-expanded', open ? 'false' : 'true');
             if (!open) {
                 if (_sortDocListener) document.removeEventListener('click', _sortDocListener);
                 _sortDocListener = (ev) => {
-                    if (!sortMenu.contains(ev.target) && !sortBtn.contains(ev.target))
+                    if (!sortMenu.contains(ev.target) && !sortChip.contains(ev.target))
                         _closeSortMenu();
                 };
                 setTimeout(() => document.addEventListener('click', _sortDocListener), 0);

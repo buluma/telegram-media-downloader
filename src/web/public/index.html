@@ -715,37 +715,6 @@
                         <i class="ri-camera-line text-xl text-tg-textSecondary" aria-hidden="true"></i>
                     </button>
                     <div class="relative hidden sm:block">
-                        <!-- Sort order picker — sits beside the view-mode button -->
-                        <div class="relative hidden sm:block" id="sort-btn-wrap" data-viewer-only>
-                            <button id="sort-btn" type="button"
-                                class="w-10 h-10 min-w-[44px] min-h-[44px] rounded-full hover:bg-tg-hover flex items-center justify-center"
-                                aria-haspopup="menu" aria-expanded="false"
-                                aria-label="Sort order" title="Sort order">
-                                <i class="ri-sort-desc text-xl text-tg-textSecondary" aria-hidden="true"></i>
-                            </button>
-                            <div id="sort-menu" class="view-mode-menu hidden" role="menu">
-                                <button type="button" data-sort="date_desc" role="menuitemradio" aria-checked="true">
-                                    <i class="ri-calendar-line"></i>
-                                    <span data-i18n="header.sort.date_desc">Newest first</span>
-                                    <i class="ri-check-line vm-check"></i>
-                                </button>
-                                <button type="button" data-sort="date_asc" role="menuitemradio">
-                                    <i class="ri-calendar-line"></i>
-                                    <span data-i18n="header.sort.date_asc">Oldest first</span>
-                                    <i class="ri-check-line vm-check"></i>
-                                </button>
-                                <button type="button" data-sort="size_desc" role="menuitemradio">
-                                    <i class="ri-hard-drive-line"></i>
-                                    <span data-i18n="header.sort.size_desc">Largest first</span>
-                                    <i class="ri-check-line vm-check"></i>
-                                </button>
-                                <button type="button" data-sort="name_asc" role="menuitemradio">
-                                    <i class="ri-sort-alphabet-asc"></i>
-                                    <span data-i18n="header.sort.name_asc">Name A→Z</span>
-                                    <i class="ri-check-line vm-check"></i>
-                                </button>
-                            </div>
-                        </div>
                         <button id="view-mode-btn" type="button"
                             class="w-10 h-10 min-w-[44px] min-h-[44px] rounded-full hover:bg-tg-hover flex items-center justify-center"
                             aria-haspopup="menu" aria-expanded="false"
@@ -835,11 +804,49 @@
                      role="button" aria-pressed="false">
                     <i class="ri-pushpin-2-line mr-1" aria-hidden="true"></i><span data-i18n="favorites.filter">Pinned</span>
                 </div>
+                <!-- Sort order chip — sits in the tab bar so it's near the type tabs
+                     it affects. Popover menu rendered below via absolute positioning. -->
+                <div class="relative ml-auto flex items-center">
+                    <div id="sort-chip" class="tab-item tab-item--toggle"
+                         role="button" aria-haspopup="menu" aria-expanded="false"
+                         title="Sort order" data-i18n-title="header.sort.label">
+                        <i class="ri-sort-desc mr-1 text-[13px]" aria-hidden="true"></i>
+                        <span id="sort-chip-label" class="text-xs" data-i18n="header.sort.date_desc">Newest</span>
+                        <i class="ri-arrow-down-s-line ml-0.5 text-tg-textSecondary text-[11px]" aria-hidden="true"></i>
+                    </div>
+                    <div id="sort-menu" class="hidden absolute right-0 top-full mt-1 z-30 bg-tg-panel border border-tg-border/40 rounded-lg shadow-lg min-w-[10rem] py-1" role="menu">
+                        <button type="button" data-sort="date_desc" role="menuitemradio" aria-checked="true"
+                            class="w-full text-left px-3 py-1.5 text-sm hover:bg-tg-hover flex items-center gap-2">
+                            <i class="ri-calendar-line text-tg-textSecondary" aria-hidden="true"></i>
+                            <span class="flex-1" data-i18n="header.sort.date_desc">Newest first</span>
+                            <i class="ri-check-line text-tg-blue sort-check" aria-hidden="true"></i>
+                        </button>
+                        <button type="button" data-sort="date_asc" role="menuitemradio" aria-checked="false"
+                            class="w-full text-left px-3 py-1.5 text-sm hover:bg-tg-hover flex items-center gap-2">
+                            <i class="ri-calendar-line text-tg-textSecondary" aria-hidden="true"></i>
+                            <span class="flex-1" data-i18n="header.sort.date_asc">Oldest first</span>
+                            <i class="ri-check-line text-tg-blue sort-check" aria-hidden="true"></i>
+                        </button>
+                        <button type="button" data-sort="size_desc" role="menuitemradio" aria-checked="false"
+                            class="w-full text-left px-3 py-1.5 text-sm hover:bg-tg-hover flex items-center gap-2">
+                            <i class="ri-hard-drive-line text-tg-textSecondary" aria-hidden="true"></i>
+                            <span class="flex-1" data-i18n="header.sort.size_desc">Largest first</span>
+                            <i class="ri-check-line text-tg-blue sort-check" aria-hidden="true"></i>
+                        </button>
+                        <button type="button" data-sort="name_asc" role="menuitemradio" aria-checked="false"
+                            class="w-full text-left px-3 py-1.5 text-sm hover:bg-tg-hover flex items-center gap-2">
+                            <i class="ri-sort-alphabet-asc text-tg-textSecondary" aria-hidden="true"></i>
+                            <span class="flex-1" data-i18n="header.sort.name_asc">Name A→Z</span>
+                            <i class="ri-check-line text-tg-blue sort-check" aria-hidden="true"></i>
+                        </button>
+                    </div>
+                </div>
+
                 <!-- Gallery scope chip — federated gallery toggle (Layer 1).
                      Hidden by default; app.js reveals it once it knows the
                      cluster has at least one paired peer. The popover menu
                      is rendered into #gallery-scope-menu lazily on click. -->
-                <div id="gallery-scope-chip" class="tab-item tab-item--toggle hidden ml-auto"
+                <div id="gallery-scope-chip" class="tab-item tab-item--toggle hidden"
                      data-admin-only role="button" aria-haspopup="menu" aria-expanded="false"
                      data-i18n-title="gallery.scope.label" title="Scope">
                     <i class="ri-broadcast-line mr-1" aria-hidden="true"></i>

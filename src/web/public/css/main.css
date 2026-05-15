@@ -1352,6 +1352,13 @@ html.theme-light .gallery-scope-option[data-active="1"] {
 .view-mode-menu button[data-active="1"] .vm-check {
     opacity: 1;
 }
+#sort-menu button .sort-check {
+    font-size: 13px;
+    opacity: 0;
+}
+#sort-menu button[aria-checked="true"] .sort-check {
+    opacity: 1;
+}
 html.theme-light .view-mode-menu {
     background: #ffffff;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
