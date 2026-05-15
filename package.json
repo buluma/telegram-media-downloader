@@ -29,7 +29,7 @@
         "auth": "node src/index.js auth",
         "doctor": "node src/index.js doctor",
         "prod": "node runner.js",
-        "dev": "node --watch src/web/server.js",
+        "dev": "node --env-file=.env --watch src/web/server.js",
         "migrate": "node scripts/migrate_json_to_sqlite.js",
         "recover": "node scripts/recover_groups.js",
         "lint": "biome lint .",

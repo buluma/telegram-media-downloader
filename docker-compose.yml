@@ -167,7 +167,7 @@ services:
   # and tagged `:latest` (CPU), `:cuda-latest`, `:openvino-latest`.
   # Watchtower picks them up via the label below.
   tgdl-faces:
-    image: ghcr.io/buluma/tgdl-faces:latest
+    image: buluma/tgdl-faces:latest
     pull_policy: always
     container_name: tgdl-faces
     restart: unless-stopped
@@ -233,14 +233,14 @@ services:
   # Requires NVIDIA Container Toolkit on the host (install via
   # `apt-get install nvidia-container-toolkit` then `nvidia-ctk runtime
   # configure --runtime=docker && systemctl restart docker`). The image
-  # is `ghcr.io/buluma/tgdl-faces:cuda-latest` — linux/amd64 only.
+  # is `buluma/tgdl-faces:cuda-latest` — linux/amd64 only.
   #
   # Mutually exclusive with the `faces` and `faces-openvino` profiles —
   # they all bind container_name=tgdl-faces and port 8011 so Node's
   # FACES_SERVICE_URL=http://tgdl-faces:8011 resolves to whichever
   # variant is running. Compose refuses to bring up more than one.
   tgdl-faces-cuda:
-    image: ghcr.io/buluma/tgdl-faces:cuda-latest
+    image: buluma/tgdl-faces:cuda-latest
     pull_policy: always
     container_name: tgdl-faces
     restart: unless-stopped
@@ -298,10 +298,10 @@ services:
   # passthrough that ffmpeg vaapi uses) AND the operator's user inside
   # the container holding the render group GID. The default permission
   # set works on Synology DSM 7, recent Debian/Ubuntu, and Intel NUC
-  # hosts. The image is `ghcr.io/buluma/tgdl-faces:openvino-latest`
+  # hosts. The image is `buluma/tgdl-faces:openvino-latest`
   # — linux/amd64 only (OpenVINO doesn't ship arm64 wheels).
   tgdl-faces-openvino:
-    image: ghcr.io/buluma/tgdl-faces:openvino-latest
+    image: buluma/tgdl-faces:openvino-latest
     pull_policy: always
     container_name: tgdl-faces
     restart: unless-stopped

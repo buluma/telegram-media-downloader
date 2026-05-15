@@ -11,7 +11,7 @@
 #                        Consumed by src/core/ai/faces-spawn.js for the
 #                        standalone bare-metal install path.
 #   2. build-docker    — buildx multi-arch (linux/amd64 + linux/arm64)
-#                        image pushed to ghcr.io/buluma/tgdl-faces.
+#                        image pushed to docker.io/buluma/tgdl-faces.
 #                        Consumed by docker-compose.yml under the
 #                        `faces` profile.
 
@@ -159,12 +159,11 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GHCR
+      - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build + push multi-arch image
         uses: docker/build-push-action@v6
@@ -174,7 +173,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ghcr.io/buluma/tgdl-faces:${{ github.ref_name }}
-            ghcr.io/buluma/tgdl-faces:latest
+            buluma/tgdl-faces:${{ github.ref_name }}
+            buluma/tgdl-faces:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max

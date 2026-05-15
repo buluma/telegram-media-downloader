@@ -83,6 +83,11 @@ RUN mkdir -p /app/data /app/data/downloads /app/data/logs /app/data/sessions /ap
 # isn't installed (minimal builds without the optional dep).
 RUN node scripts/pre-download-models.js || true
 
+# Bake the seekbar Go binary into the image so the first container boot
+# doesn't trigger a runtime download race. The `|| true` lets offline/CI
+# builds succeed — spawn.js auto-downloads on first use as a fallback.
+RUN node scripts/pre-download-seekbar.js || true
+
 # We deliberately run the entrypoint as root so it can chown the bind-mounted
 # /app/data volume on first boot — gosu drops to `node` before exec'ing
 # CMD, so the actual app process is still non-root.
