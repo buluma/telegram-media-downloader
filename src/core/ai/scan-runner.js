@@ -838,7 +838,7 @@ async function _tagOne(sidecarUrl, absPath, tagLabels, log, skipPathMode = false
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify(body),
-            signal: AbortSignal.timeout(30000),
+            signal: AbortSignal.timeout(60000),
         });
 
     const _b64Body = async () => {
