@@ -651,7 +651,8 @@ export class DownloadManager extends EventEmitter {
     }
 
     async reportFailure(job, reason) {
-        DebugLogger.error(new Error(reason), `Download Failed: ${job.key}`);
+        const dl = DebugLogger();
+        dl.error(new Error(reason), `Download Failed: ${job.key}`);
         // ALSO print to stdout so the user can see it in `docker logs`
         // without SSHing into the container to tail data/logs/errors.log.
         // Use process.stderr.write directly so the global console.error

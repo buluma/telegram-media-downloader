@@ -234,10 +234,34 @@ const ADULT_VOCABULARY = [
     'adult content',
 ];
 
+const TRIMMED_VOCABULARY = [
+    'nude woman',
+    'nude man',
+    'fully clothed',
+    'lingerie',
+    'bikini',
+    'cleavage',
+    'athletic body',
+    'standing pose',
+    'lying down',
+    'smiling',
+    'kissing',
+    'sexual intercourse',
+    'bondage',
+    'latex outfit',
+    'leather outfit',
+    'woman',
+    'man',
+    'outdoors',
+    'bedroom',
+    'explicit sexual content',
+];
+
 // ---- Registry ---------------------------------------------------------------
 
 const _PRESETS = {
     adult: ADULT_VOCABULARY,
+    trimmed: TRIMMED_VOCABULARY,
 };
 
 /**

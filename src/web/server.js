@@ -51,6 +51,7 @@ import { getRescueSweeper } from '../core/rescue.js';
 import * as backup from '../core/backup/index.js';
 import { metrics } from '../core/metrics.js';
 import { isAuthConfigured, validateSession, startSessionGc } from '../core/web-auth.js';
+import { logger } from '../core/logger.js';
 import { suppressNoise, wrapConsoleMethod, NATIVE_LOAD_FAIL } from '../core/logger.js';
 import { createJobTracker } from '../core/job-tracker.js';
 import { getSelfPeerId, getClusterToken } from '../core/cluster/identity.js';
@@ -138,10 +139,14 @@ function _pushLogEntry(level, source, msg) {
 const _consoleTee = (level) => (args, joined) => {
     try {
         _pushLogEntry(level, 'console', joined);
+        // Also pipe to pino
+        if (level === 'error') logger.error({ args }, joined);
+        else logger.info({ args }, joined);
     } catch {
         /* never throw out of a console hook */
     }
 };
+// Re-enable console overrides with pino integration
 console.log = wrapConsoleMethod(console.log, 'gramjs', _consoleTee('info'));
 console.error = wrapConsoleMethod(console.error, 'gramjs', _consoleTee('error'));
 const _origConsoleWarn = console.warn;

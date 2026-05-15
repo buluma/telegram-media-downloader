@@ -15,7 +15,7 @@ import { fileURLToPath } from 'url';
 import { loadConfig, saveConfig } from './config/manager.js';
 import { resolveFfmpegBin, resolveFfprobeBin } from './core/thumbs.js';
 import { hashPassword } from './core/web-auth.js';
-import { suppressNoise, wrapConsoleMethod, NATIVE_LOAD_FAIL } from './core/logger.js';
+import { logger, NATIVE_LOAD_FAIL, isNoise } from './core/logger.js';
 import { RateLimiter, SecureSession } from './core/security.js';
 import { ConnectionManager } from './core/connection.js';
 import { AccountManager } from './core/accounts.js';
@@ -34,26 +34,28 @@ import { sanitizeName, migrateFolders } from './core/downloader.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // gramJS surfaces a steady trickle of recoverable internal errors during
-// reconnects (TIMEOUT, "Not connected", "Connection closed", etc). The
-// noise classifier in core/logger.js sends those to data/logs/network.log
-// at debug level instead of dropping them silently — a previous version
-// of this file used a regex-string-includes filter that swallowed real
-// errors that happened to contain the same words.
+// reconnects (TIMEOUT, "Not connected", "Connection closed", etc).
+// We use our new structured `logger` to capture these without breaking the
+// operational flow.
 // Same native-binary-load guard the web server uses — keeps a CLI run
 // from dying on `Error loading shared library ld-linux-…` when an
 // optional dep (most often `onnxruntime-node`, transitively from the
 // optional NSFW classifier) ships glibc-only prebuilds on a musl image.
 process.on('unhandledRejection', (reason) => {
     const msg = reason?.message || String(reason);
-    if (suppressNoise(msg, 'unhandledRejection')) return;
-    if (NATIVE_LOAD_FAIL.test(msg)) {
-        console.warn('[startup] An optional native module failed to load:', msg.slice(0, 200));
+    if (isNoise(msg)) {
+        logger.debug({ reason }, 'GramJS noise suppressed');
         return;
     }
-    console.error('Unhandled rejection:', reason);
+    if (NATIVE_LOAD_FAIL.test(msg)) {
+        logger.warn(
+            { msg: msg.slice(0, 200) },
+            '[startup] An optional native module failed to load',
+        );
+        return;
+    }
+    logger.error(reason, 'Unhandled rejection');
 });
-
-console.error = wrapConsoleMethod(console.error, 'console.error');
 
 // Transient Readline Interface
 function question(query) {

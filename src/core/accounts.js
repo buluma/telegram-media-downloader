@@ -12,7 +12,7 @@ import crypto from 'crypto';
 import { SecureSession } from './security.js';
 import { getOrGenerateSecret } from './secret.js';
 import { colorize } from '../cli/colors.js';
-import { suppressNoise } from './logger.js';
+import { logger, suppressNoise } from './logger.js';
 import { buildProxy } from './proxy.js';
 import { loadConfig, saveConfig } from '../config/manager.js';
 
@@ -42,17 +42,18 @@ function createLogger(label) {
         canSend: () => true,
         warn: (msg) => {
             if (suppressNoise(msg, label)) return;
-            console.log(colorize(`⚠️  [${label}] ${msg}`, 'yellow'));
+            logger.warn({ label, msg }, 'GramJS warning');
         },
         info: (msg) => {
             // Info-level gramJS chatter is always demoted; nothing user-actionable.
-            suppressNoise(msg, label);
+            if (suppressNoise(msg, label)) return;
+            logger.debug({ label, msg }, 'GramJS info');
         },
         debug: () => {},
         error: (msg) => {
             const str = typeof msg === 'object' ? msg.message || String(msg) : String(msg);
             if (suppressNoise(str, label)) return;
-            console.error(colorize(`❌ [${label}] ${str}`, 'red'));
+            logger.error({ label, err: str }, 'GramJS error');
         },
         setLevel: () => {},
     };
