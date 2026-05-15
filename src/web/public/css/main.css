@@ -4262,3 +4262,25 @@ html[data-contrast="more"] .media-item {
 #scroll-top-fab:hover {
     background: var(--tg-blue-hover, #1a9bd6);
 }
+
+/* Global reduced-motion: stop all remaining pulse/shimmer/spin animations
+ * and collapse transitions to instant for users who prefer it.
+ * Targeted overrides elsewhere in this file cover interactive transitions
+ * (settings pill, modal open, etc.) — this catches the rest. */
+@media (prefers-reduced-motion: reduce) {
+    .shimmer,
+    [class*="animate-"] {
+        animation: none !important;
+    }
+    #scroll-top-fab {
+        transition: none !important;
+    }
+    #video-sprite-preview {
+        transition: none !important;
+    }
+    .engine-status-dot,
+    [class*="engine-pulse"],
+    [class*="ai-doctor"] {
+        animation: none !important;
+    }
+}

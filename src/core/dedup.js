@@ -99,6 +99,11 @@ export async function findDuplicates(opts = {}) {
         .get().n;
 
     const update = db.prepare('UPDATE downloads SET file_hash = ? WHERE id = ?');
+    // Empty-string sentinel: marks a row as "hashing attempted but failed"
+    // so the next scan skips it rather than retrying a file that no longer
+    // exists on disk. '' is NOT NULL so the GROUP BY pass filters it out
+    // via `AND file_hash != ''` below.
+    const markFailed = db.prepare("UPDATE downloads SET file_hash = '' WHERE id = ?");
     let processed = 0,
         hashed = 0,
         errored = 0;
@@ -130,6 +135,7 @@ export async function findDuplicates(opts = {}) {
             const abs = resolveStoredPath(row.file_path);
             if (!abs) {
                 errored++;
+                markFailed.run(row.id);
                 continue;
             }
             try {
@@ -138,6 +144,7 @@ export async function findDuplicates(opts = {}) {
                 hashed++;
             } catch {
                 errored++;
+                markFailed.run(row.id);
             }
             if (onProgress && (processed % 25 === 0 || processed === total)) {
                 onProgress({ stage: 'hashing', processed, total, hashed, errored });
@@ -160,7 +167,7 @@ export async function findDuplicates(opts = {}) {
                COUNT(*)  AS cnt,
                MAX(file_size) AS max_size
           FROM downloads
-         WHERE file_hash IS NOT NULL
+         WHERE file_hash IS NOT NULL AND file_hash != ''
          GROUP BY file_hash
         HAVING COUNT(*) > 1
          ORDER BY (MAX(file_size) * (COUNT(*) - 1)) DESC,

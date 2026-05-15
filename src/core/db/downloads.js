@@ -742,6 +742,23 @@ export function setDownloadPinned(id, pinned) {
     return r.changes > 0;
 }
 
+export function bulkSetDownloadPinned(ids, pinned) {
+    if (!Array.isArray(ids) || ids.length === 0) return 0;
+    const db = getDb();
+    const val = pinned ? 1 : 0;
+    const stmt = db.prepare('UPDATE downloads SET pinned = ? WHERE id = ?');
+    let changed = 0;
+    db.transaction(() => {
+        for (const id of ids) {
+            const numId = Number(id);
+            if (!Number.isFinite(numId) || numId <= 0) continue;
+            const r = stmt.run(val, numId);
+            changed += r.changes;
+        }
+    })();
+    return changed;
+}
+
 /**
  * Lookup helper for the bulk-zip endpoint and other id-based admin tools.
  * Returns the row or null. Cheap (PK lookup); safe to call N times in a row.

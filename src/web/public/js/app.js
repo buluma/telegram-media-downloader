@@ -71,7 +71,7 @@ import * as WakeLock from './wake-lock.js';
 // guaranteed to fire no more than once per ~150 ms window. The Map keys
 // each render function so distinct renders don't shadow each other.
 const _scheduledRenders = new Map(); // fn → { timer, frame }
-const RENDER_COALESCE_MS = 150;
+const RENDER_COALESCE_MS = 300;
 
 function scheduleRender(fn) {
     if (_scheduledRenders.has(fn)) return;
@@ -950,10 +950,31 @@ function renderPage(page, params = {}) {
 
 // Register hash routes. Patterns documented in router.js.
 function registerRoutes() {
-    router.route('/viewer', () => renderPage('viewer'));
-    router.route('/viewer/:groupId', ({ params }) => {
+    router.route('/viewer', ({ query }) => {
+        // Restore type filter from deep-link or back-navigation.
+        const qt = query?.type;
+        const validTypes = ['all', 'images', 'videos', 'documents', 'audio'];
+        if (qt && validTypes.includes(qt) && qt !== state.currentFilter) {
+            state.currentFilter = qt;
+            document.querySelectorAll('#media-tabs .tab-item').forEach((t) => {
+                if (t.dataset.pinnedToggle !== undefined) return;
+                t.classList.toggle('active', (t.dataset.type || 'all') === qt);
+            });
+        }
+        renderPage('viewer');
+    });
+    router.route('/viewer/:groupId', ({ params, query }) => {
         // Open a specific group's gallery — match the existing openGroup()
         // behaviour so the sidebar selection stays consistent.
+        const qt = query?.type;
+        const validTypes = ['all', 'images', 'videos', 'documents', 'audio'];
+        if (qt && validTypes.includes(qt) && qt !== state.currentFilter) {
+            state.currentFilter = qt;
+            document.querySelectorAll('#media-tabs .tab-item').forEach((t) => {
+                if (t.dataset.pinnedToggle !== undefined) return;
+                t.classList.toggle('active', (t.dataset.type || 'all') === qt);
+            });
+        }
         renderPage('viewer');
         // Always resolve through the canonical lookup so deep-linking to a
         // group whose name was only just refreshed still picks it up.
@@ -1628,10 +1649,15 @@ function _renderGalleryScopeMenu() {
     });
 }
 
+function _setLoadMoreIndicator(visible) {
+    document.getElementById('load-more-indicator')?.classList.toggle('hidden', !visible);
+}
+
 async function loadAllFiles() {
     state.loading = true;
     const grid = document.getElementById('media-grid');
     if (state.page === 1 && grid) grid.innerHTML = renderGallerySkeletons(12);
+    if (state.page > 1) _setLoadMoreIndicator(true);
 
     try {
         const type =
@@ -1673,6 +1699,7 @@ async function loadAllFiles() {
         showToast(i18nT('viewer.error.load', 'Error loading files'), 'error');
     } finally {
         state.loading = false;
+        _setLoadMoreIndicator(false);
     }
 }
 
@@ -1687,6 +1714,8 @@ async function loadGroupFiles(groupId) {
         const grid = document.getElementById('media-grid');
         if (grid) grid.innerHTML = renderGallerySkeletons(12);
         document.getElementById('empty-state')?.classList.add('hidden');
+    } else {
+        _setLoadMoreIndicator(true);
     }
 
     try {
@@ -1724,6 +1753,7 @@ async function loadGroupFiles(groupId) {
         showToast(i18nT('viewer.error.load', 'Error loading files'), 'error');
     } finally {
         state.loading = false;
+        _setLoadMoreIndicator(false);
     }
 }
 
@@ -2589,9 +2619,8 @@ async function setupMediaSearch() {
         }
     });
 
-    // Selection-bar: Pin / Unpin. Toggles every selected tile's pinned
-    // flag in one go. Empty selection = no-op. Mixed-state selection
-    // (some pinned, some not) flips them ALL to pinned for clarity.
+    // Selection-bar: Pin / Unpin. Sends all selected ids in one batch request.
+    // Mixed-state selection (some pinned, some not) flips them ALL to pinned.
     const selPin = document.getElementById('selection-pin');
     selPin?.addEventListener('click', async () => {
         if (!state.selected || !state.selected.size) return;
@@ -2603,27 +2632,26 @@ async function setupMediaSearch() {
         if (!items.length) return;
         const allPinned = items.every((f) => f.pinned);
         const next = !allPinned;
-        let ok = 0,
-            failed = 0;
-        for (const f of items) {
-            try {
-                await api.post(`/api/downloads/${encodeURIComponent(f.id)}/pin`, { pinned: next });
+        try {
+            const ids = items.map((f) => f.id);
+            const r = await api.post('/api/downloads/bulk-pin', { ids, pinned: next });
+            const ok = r?.changed ?? ids.length;
+            for (const f of items) {
                 f.pinned = next;
                 const tile = document.querySelector(
                     `.media-item[data-id="${CSS.escape(String(f.id))}"]`,
                 );
                 tile?.classList.toggle('is-pinned', next);
-                ok++;
-            } catch {
-                failed++;
             }
+            showToast(
+                next
+                    ? i18nTf('favorites.bulk_pinned', { count: ok }, `Pinned ${ok} item(s)`)
+                    : i18nTf('favorites.bulk_unpinned', { count: ok }, `Unpinned ${ok} item(s)`),
+                'success',
+            );
+        } catch {
+            showToast(i18nT('viewer.error.pin', 'Pin update failed'), 'error');
         }
-        showToast(
-            next
-                ? i18nTf('favorites.bulk_pinned', { count: ok }, `Pinned ${ok} item(s)`)
-                : i18nTf('favorites.bulk_unpinned', { count: ok }, `Unpinned ${ok} item(s)`),
-            failed === 0 ? 'success' : 'info',
-        );
     });
 
     // Listen for the shared dedup_delete tracker's done event so a
@@ -3414,9 +3442,11 @@ async function _loadGroupDataTab(groupId) {
     if (filesHost) filesHost.innerHTML = '';
     if (more) more.classList.add('hidden');
     try {
-        const stats = await api.get(`/api/groups/${encodeURIComponent(groupId)}/stats`);
+        const [stats, files] = await Promise.all([
+            api.get(`/api/groups/${encodeURIComponent(groupId)}/stats`),
+            api.get(`/api/groups/${encodeURIComponent(groupId)}/files?limit=20`),
+        ]);
         if (statsHost) statsHost.innerHTML = _renderGroupStats(stats);
-        const files = await api.get(`/api/groups/${encodeURIComponent(groupId)}/files?limit=20`);
         if (filesHost) filesHost.innerHTML = _renderGroupFiles(files.rows || []);
         _groupDataState.offset = (files.rows || []).length;
         _groupDataState.hasMore = !!files.hasMore;
@@ -3740,6 +3770,13 @@ function setupMediaTabs() {
             });
             tab.classList.add('active');
             state.currentFilter = tab.dataset.type || 'all';
+            // Mirror filter state into the URL so back-navigation and
+            // shared/refreshed URLs restore the correct tab.
+            const typeParam = state.currentFilter === 'all' ? '' : `?type=${state.currentFilter}`;
+            const baseHash = state.currentGroupId
+                ? `#/viewer/${encodeURIComponent(state.currentGroupId)}`
+                : '#/viewer';
+            history.replaceState(null, '', `${baseHash}${typeParam}`);
             // Server-side filter: reset pagination + re-fetch with the new
             // ?type=. Without this, switching tabs would only filter what
             // we've already paginated client-side, hiding everything past

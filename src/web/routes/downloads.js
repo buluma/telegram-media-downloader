@@ -11,6 +11,7 @@ import {
     searchDownloadsFederated,
     getDownloadById,
     setDownloadPinned,
+    bulkSetDownloadPinned,
     deleteDownloadsBy,
 } from '../../core/db/downloads.js';
 import { safeResolveDownload } from '../lib/resolve-download.js';
@@ -609,6 +610,26 @@ export function createDownloadsRouter({
         if (!ok) return res.status(500).json({ error: 'Update failed' });
         broadcast({ type: 'download_pinned', id, pinned });
         res.json({ success: true, id, pinned });
+    });
+
+    // Bulk pin/unpin. Body: `{ ids: [1,2,3], pinned: true|false }`.
+    // Runs in a single transaction — O(1) round-trips regardless of selection size.
+    router.post('/downloads/bulk-pin', async (req, res) => {
+        const { ids, pinned } = req.body || {};
+        if (!Array.isArray(ids) || ids.length === 0)
+            return res.status(400).json({ error: 'ids must be a non-empty array' });
+        if (typeof pinned !== 'boolean')
+            return res.status(400).json({ error: 'pinned must be a boolean' });
+        if (ids.length > 10000)
+            return res.status(400).json({ error: 'ids exceeds max batch size (10000)' });
+        try {
+            const changed = bulkSetDownloadPinned(ids, pinned);
+            broadcast({ type: 'bulk_pinned', ids, pinned, changed });
+            res.json({ success: true, changed, pinned });
+        } catch (e) {
+            console.error('POST /api/downloads/bulk-pin:', e);
+            res.status(500).json({ error: 'Bulk pin failed' });
+        }
     });
 
     // Streaming bulk download as a ZIP. Body: `{ ids: [1,2,3] }`. Server walks

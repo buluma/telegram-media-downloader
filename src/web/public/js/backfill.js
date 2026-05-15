@@ -693,15 +693,16 @@ function renderRecent() {
     // "× N attempts" badge so the user can still see they retried.
     // Different limits (Last 100 vs All) stay separate because they're
     // genuinely different actions.
-    const grouped = new Map(); // key → { newest, count }
+    const grouped = new Map(); // key → { newest, all: [], count }
     for (const j of recentJobs) {
         const key = `${String(j.groupId)}|${j.limit ?? 0}`;
         const tsOf = (x) => x.finishedAt || x.startedAt || 0;
         const cur = grouped.get(key);
         if (!cur) {
-            grouped.set(key, { newest: j, count: 1 });
+            grouped.set(key, { newest: j, all: [j], count: 1 });
         } else {
             cur.count += 1;
+            cur.all.push(j);
             if (tsOf(j) > tsOf(cur.newest)) cur.newest = j;
         }
     }
@@ -709,7 +710,16 @@ function renderRecent() {
         const ts = (x) => x.newest.finishedAt || x.newest.startedAt || 0;
         return ts(b) - ts(a);
     });
-    list.innerHTML = display.map(({ newest, count }) => renderRecentRow(newest, count)).join('');
+    // Sort each group's history newest-first so the expanded list reads top-down.
+    for (const g of display) {
+        g.all.sort((a, b) => {
+            const ts = (x) => x.finishedAt || x.startedAt || 0;
+            return ts(b) - ts(a);
+        });
+    }
+    list.innerHTML = display
+        .map(({ newest, all, count }) => renderRecentRow(newest, count, all))
+        .join('');
 
     list.querySelectorAll('[data-rerun]').forEach((btn) => {
         btn.addEventListener('click', () => rerunFromRecent(btn.dataset.rerun));
@@ -717,9 +727,21 @@ function renderRecent() {
     list.querySelectorAll('[data-delete-recent]').forEach((btn) => {
         btn.addEventListener('click', () => deleteRecent(btn.dataset.deleteRecent, btn));
     });
+    list.querySelectorAll('[data-expand-history]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const drawer = document.getElementById(btn.dataset.expandHistory);
+            if (!drawer) return;
+            const open = !drawer.classList.contains('hidden');
+            drawer.classList.toggle('hidden', open);
+            const icon = btn.querySelector('i');
+            if (icon) {
+                icon.className = open ? 'ri-arrow-down-s-line' : 'ri-arrow-up-s-line';
+            }
+        });
+    });
 }
 
-function renderRecentRow(job, attempts = 1) {
+function renderRecentRow(job, attempts = 1, allJobs = []) {
     const id = String(job.id);
     const name = getGroupName(job.groupId, { fallback: job.group || job.groupId });
     const target =
@@ -746,14 +768,46 @@ function renderRecentRow(job, attempts = 1) {
     }
 
     // Surface the dedupe count when the same (group, limit) pair was
-    // attempted more than once. Tooltip tells the user this row is the
-    // newest attempt; older attempts are folded in.
+    // attempted more than once. Clicking the badge expands the full history.
+    const historyId = `history-${escapeHtml(String(job.id))}`;
+    const historyHtml =
+        attempts > 1
+            ? allJobs
+                  .slice(1) // skip newest (already shown as the main row)
+                  .map((hj) => {
+                      const hWhen = hj.finishedAt
+                          ? new Date(hj.finishedAt).toLocaleString()
+                          : hj.startedAt
+                            ? new Date(hj.startedAt).toLocaleString()
+                            : '—';
+                      let hPill = '';
+                      if (hj.state === 'done')
+                          hPill = `<span class="text-tg-green text-[10px]">${escapeHtml(i18nT('backfill.row.done', 'Done'))}</span>`;
+                      else if (hj.state === 'cancelled')
+                          hPill = `<span class="text-tg-warning text-[10px]">${escapeHtml(i18nT('backfill.row.cancelled', 'Cancelled'))}</span>`;
+                      else if (hj.state === 'error')
+                          hPill = `<span class="text-red-400 text-[10px]" title="${escapeHtml(hj.error || '')}">${escapeHtml(i18nT('backfill.row.failed', 'Failed'))}</span>`;
+                      return `<div class="flex items-center justify-between gap-2 text-xs text-tg-textSecondary py-1 border-t border-tg-border/30">
+                          <span class="flex items-center gap-2">
+                              ${hPill}
+                              <span>${escapeHtml(hWhen)}</span>
+                              <span>${escapeHtml(i18nTf('backfill.row.processed', { n: hj.processed || 0 }, `${hj.processed || 0} processed`))}</span>
+                          </span>
+                          <button type="button" data-rerun="${escapeHtml(String(hj.id))}"
+                              class="px-1.5 py-0.5 rounded border border-tg-border text-[10px] hover:text-tg-blue hover:border-tg-blue transition-colors">
+                              <i class="ri-refresh-line"></i>
+                          </button>
+                      </div>`;
+                  })
+                  .join('')
+            : '';
     const attemptsBadge =
         attempts > 1
-            ? `<span class="text-[10px] px-1.5 py-0.5 rounded bg-tg-bg/60 text-tg-textSecondary"
-                 title="${escapeHtml(i18nT('backfill.row.attempts_help', 'Newest attempt shown — older attempts collapsed'))}">
-              ${escapeHtml(i18nTf('backfill.row.attempts', { n: attempts }, `× ${attempts} attempts`))}
-           </span>`
+            ? `<button type="button" data-expand-history="${escapeHtml(historyId)}"
+                 class="text-[10px] px-1.5 py-0.5 rounded bg-tg-bg/60 text-tg-textSecondary hover:text-tg-blue transition-colors"
+                 title="${escapeHtml(i18nT('backfill.row.attempts_help', 'Click to show all attempts'))}">
+                 ${escapeHtml(i18nTf('backfill.row.attempts', { n: attempts }, `× ${attempts} attempts`))} <i class="ri-arrow-down-s-line"></i>
+               </button>`
             : '';
 
     return `
@@ -788,6 +842,7 @@ function renderRecentRow(job, attempts = 1) {
                     </div>
                 </div>
             </div>
+            ${historyHtml ? `<div id="${historyId}" class="hidden mt-2 px-1">${historyHtml}</div>` : ''}
         </div>`;
 }
 
