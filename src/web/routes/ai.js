@@ -1226,6 +1226,12 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                       .map((s) => s.trim())
                       .filter(Boolean)
                 : undefined;
+            const sources = req.query.sources
+                ? String(req.query.sources)
+                      .split(',')
+                      .map((s) => s.trim().toLowerCase())
+                      .filter(Boolean)
+                : undefined;
 
             // Run cross-modal search — wire LLM text embedding as fallback
             // for when the CLIP sidecar is unavailable.
@@ -1240,6 +1246,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                 topK,
                 minScore,
                 fileTypes,
+                sources,
                 llmEmbed,
             });
 

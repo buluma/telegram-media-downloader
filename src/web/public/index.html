@@ -3369,6 +3369,28 @@
                                 <span data-i18n="maintenance.ai.unified.create_album">Create album</span>
                             </button>
                         </div>
+                        <!-- Source toggle chips — let the user filter which
+                             modalities the search queries. All enabled by
+                             default. Each is a data-source-* button that
+                             _runUnifiedQuery reads. -->
+                        <div id="ai-query-sources" class="flex items-center gap-1.5 flex-wrap mt-1.5">
+                            <span class="text-[10px] text-tg-textSecondary mr-0.5">Sources:</span>
+                            <button type="button" class="ai-source-chip tg-btn-secondary text-[10px] px-2 py-0.5 inline-flex items-center gap-1 rounded-full" data-source="semantic" data-active="1">
+                                <i class="ri-brain-line"></i><span>Semantic</span>
+                            </button>
+                            <button type="button" class="ai-source-chip tg-btn-secondary text-[10px] px-2 py-0.5 inline-flex items-center gap-1 rounded-full" data-source="tags" data-active="1">
+                                <i class="ri-price-tag-3-line"></i><span>Tags</span>
+                            </button>
+                            <button type="button" class="ai-source-chip tg-btn-secondary text-[10px] px-2 py-0.5 inline-flex items-center gap-1 rounded-full" data-source="people" data-active="1">
+                                <i class="ri-group-line"></i><span>People</span>
+                            </button>
+                            <button type="button" class="ai-source-chip tg-btn-secondary text-[10px] px-2 py-0.5 inline-flex items-center gap-1 rounded-full" data-source="text" data-active="1">
+                                <i class="ri-file-text-line"></i><span>OCR</span>
+                            </button>
+                            <button type="button" class="ai-source-chip tg-btn-secondary text-[10px] px-2 py-0.5 inline-flex items-center gap-1 rounded-full" data-source="filename" data-active="1">
+                                <i class="ri-file-search-line"></i><span>Filename</span>
+                            </button>
+                        </div>
                         <div id="ai-query-meta" class="text-[10.5px] text-tg-textSecondary mt-1 hidden"></div>
                         <div id="ai-query-grid"
                              class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-1.5 mt-1.5 hidden"></div>

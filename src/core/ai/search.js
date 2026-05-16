@@ -39,6 +39,8 @@ const DEFAULT_WEIGHTS = {
  * @param {number} [opts.minScore=0] - Minimum combined score (0-1)
  * @param {object} [opts.weights] - Per-modality weight overrides
  * @param {string[]} [opts.fileTypes] - Filter by file type(s)
+ * @param {string[]} [opts.sources] - Only use these modalities (e.g. ['tags','people','filename']).
+ *   Omit or pass empty/undefined to use all available modalities.
  * @param {boolean} [opts.skipSemantic=false] - Skip embedding search
  * @param {Function} [opts.llmEmbed] - Optional async (texts: string[]) => number[][] | null.
  *   Used as fallback text embedding source when the CLIP sidecar is unavailable. Results are
@@ -51,6 +53,10 @@ export async function crossModalSearch(query, opts = {}) {
     const weights = { ...DEFAULT_WEIGHTS, ...opts.weights };
     const skipSemantic = opts.skipSemantic === true;
     const llmEmbed = typeof opts.llmEmbed === 'function' ? opts.llmEmbed : null;
+
+    // Filter to requested sources (if provided)
+    const requestedSources =
+        Array.isArray(opts.sources) && opts.sources.length ? new Set(opts.sources) : null;
 
     // Tokenise the query into include / exclude lists
     const { include: tokens, exclude: excludedTokens } = _tokenise(query);
@@ -69,8 +75,11 @@ export async function crossModalSearch(query, opts = {}) {
     // Run matchers in parallel where possible
     const tasks = [];
 
+    // Helper: skip modality when sources filter is active and this source is excluded
+    const _sourceEnabled = (name) => !requestedSources || requestedSources.has(name);
+
     // 1. Semantic (async — try CLIP sidecar first, fall back to LLM text embeddings)
-    if (!skipSemantic) {
+    if (!skipSemantic && _sourceEnabled('semantic')) {
         tasks.push(
             (async () => {
                 // Primary path: CLIP sidecar embeds the include tokens into CLIP space,
@@ -114,31 +123,41 @@ export async function crossModalSearch(query, opts = {}) {
     }
 
     // 2-6. Local DB matchers (fast, run in parallel)
-    tasks.push(
-        Promise.resolve().then(() => {
-            resultsByModality.tags = _matchTags(db, tokens, opts.fileTypes);
-        }),
-    );
-    tasks.push(
-        Promise.resolve().then(() => {
-            resultsByModality.objects = _matchObjects(db, tokens, opts.fileTypes);
-        }),
-    );
-    tasks.push(
-        Promise.resolve().then(() => {
-            resultsByModality.people = _matchPeople(db, tokens, opts.fileTypes);
-        }),
-    );
-    tasks.push(
-        Promise.resolve().then(() => {
-            resultsByModality.text = _matchText(db, tokens, opts.fileTypes);
-        }),
-    );
-    tasks.push(
-        Promise.resolve().then(() => {
-            resultsByModality.filename = _matchFilename(db, tokens, opts.fileTypes);
-        }),
-    );
+    if (_sourceEnabled('tags')) {
+        tasks.push(
+            Promise.resolve().then(() => {
+                resultsByModality.tags = _matchTags(db, tokens, opts.fileTypes);
+            }),
+        );
+    }
+    if (_sourceEnabled('objects')) {
+        tasks.push(
+            Promise.resolve().then(() => {
+                resultsByModality.objects = _matchObjects(db, tokens, opts.fileTypes);
+            }),
+        );
+    }
+    if (_sourceEnabled('people')) {
+        tasks.push(
+            Promise.resolve().then(() => {
+                resultsByModality.people = _matchPeople(db, tokens, opts.fileTypes);
+            }),
+        );
+    }
+    if (_sourceEnabled('text')) {
+        tasks.push(
+            Promise.resolve().then(() => {
+                resultsByModality.text = _matchText(db, tokens, opts.fileTypes);
+            }),
+        );
+    }
+    if (_sourceEnabled('filename')) {
+        tasks.push(
+            Promise.resolve().then(() => {
+                resultsByModality.filename = _matchFilename(db, tokens, opts.fileTypes);
+            }),
+        );
+    }
 
     await Promise.allSettled(tasks);
 
@@ -220,8 +239,10 @@ export async function crossModalSearch(query, opts = {}) {
         };
     }
 
-    // Combine scores across all active modalities
+    // Combine scores across all active modalities.
+    // Also build per-result modality breakdown for match explanations.
     const combined = _combineScores(resultsByModality, weights, activeModalities);
+    const perResultModalities = _buildPerResultModalities(resultsByModality, activeModalities);
 
     // Normalise so the highest-scoring result = 1.0. Preserves relative
     // ranking while preventing scores from feeling arbitrarily low when
@@ -266,6 +287,15 @@ export async function crossModalSearch(query, opts = {}) {
 
     const results = entries.map(([id, score]) => {
         const f = fileMap.get(id) || {};
+        const modData = perResultModalities.get(id) || {};
+        // Build a human-readable explanation list
+        const explanations = Object.entries(modData)
+            .filter(([, modScore]) => modScore > 0)
+            .map(([mod, modScore]) => ({
+                source: mod,
+                score: Math.round(modScore * 1000) / 1000,
+            }))
+            .sort((a, b) => b.score - a.score);
         return {
             id,
             groupId: f.group_id || null,
@@ -276,6 +306,8 @@ export async function crossModalSearch(query, opts = {}) {
             fileSize: f.file_size || 0,
             createdAt: f.created_at || 0,
             score: Math.round(score * 1000) / 1000,
+            // Per-modality breakdown — shape: [{source, score}, ...]
+            explanations,
         };
     });
 
@@ -579,6 +611,23 @@ function _matchFilename(db, tokens, fileTypes) {
  * @param {string[]} activeModalities
  * @returns {Map<number, number>}
  */
+/**
+ * Build a map of download ID → { modality: score, ... } for every result
+ * so callers can show per-result match explanations.
+ */
+function _buildPerResultModalities(resultsByModality, activeModalities) {
+    const perResult = new Map();
+    for (const mod of activeModalities) {
+        const map = resultsByModality[mod];
+        if (!map) continue;
+        for (const [id, score] of map) {
+            if (!perResult.has(id)) perResult.set(id, {});
+            perResult.get(id)[mod] = score;
+        }
+    }
+    return perResult;
+}
+
 function _combineScores(resultsByModality, weights, activeModalities) {
     const combined = new Map();
 

@@ -1603,8 +1603,8 @@ function _renderSearchResults(results, query, modalities, grid, meta) {
                  src="/api/thumbs/${encodeURIComponent(res.id)}?w=320" alt=""
                  onerror="this.style.display='none'">
             <span class="hidden sm:block absolute top-1 right-1 px-1.5 py-0.5 text-[10px] font-mono rounded bg-tg-blue/85 text-white tabular-nums">${String(Math.round(res.score * 100)).padStart(2)}%</span>
-            <span class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 group-focus:opacity-100 transition flex items-end p-2 pointer-events-none">
-                <span class="text-[11px] text-white truncate w-full text-left">${escapeHtml(res.fileName || '')}</span>
+            <span class="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 group-focus:opacity-100 transition flex items-end p-1.5 pointer-events-none overflow-hidden">
+                <span class="text-[10px] text-white/90 truncate w-full text-left leading-tight">${_formatMatchExplanations(res.explanations)}</span>
             </span>
         </button>`,
         )
@@ -1616,7 +1616,12 @@ function _renderSearchResults(results, query, modalities, grid, meta) {
             Array.isArray(modalities) && modalities.length
                 ? ` \u2014 via ${modalities.join(', ')}`
                 : '';
-        meta.innerHTML = `${results.length} results for &quot;${escapeHtml(query)}&quot;${mods}`;
+        // Show how many results have explanations
+        const withExpl = results.filter(
+            (r) => Array.isArray(r.explanations) && r.explanations.length,
+        ).length;
+        const explSuffix = withExpl > 0 ? ` \u2022 ${withExpl} with match details` : '';
+        meta.innerHTML = `${results.length} results for &quot;${escapeHtml(query)}&quot;${mods}${explSuffix}`;
     }
 
     // Wire click events — open media viewer against this grid's data
@@ -1626,6 +1631,28 @@ function _renderSearchResults(results, query, modalities, grid, meta) {
             if (Number.isFinite(idx)) _openSearchLightbox(tile, idx);
         });
     });
+}
+
+/**
+ * Format match explanations into a compact single-line string.
+ * E.g. "semantic 92% · tags 74% · filename 30%"
+ */
+function _formatMatchExplanations(explanations) {
+    if (!Array.isArray(explanations) || !explanations.length) return '';
+    const labels = {
+        semantic: 'semantic',
+        tags: 'tags',
+        objects: 'objects',
+        people: 'people',
+        text: 'OCR',
+        filename: 'filename',
+    };
+    return explanations
+        .map((e) => {
+            const name = labels[e.source] || e.source;
+            return `${name} ${Math.round(e.score * 100)}%`;
+        })
+        .join(' \u00b7 ');
 }
 
 /**
@@ -1659,10 +1686,13 @@ function _openSearchLightbox(tile, startIndex) {
         metaRender: (file) => {
             const row = file?._searchRow;
             const score = row?.score ? Math.round(row.score * 100) : 0;
-            return `<span class="inline-flex items-center gap-2">
+            const expl = Array.isArray(row?.explanations) ? row.explanations : [];
+            const explStr = expl.length ? ` \u2022 ${_formatMatchExplanations(expl)}` : '';
+            return `<span class="inline-flex items-center gap-2 flex-wrap">
                 <span class="inline-block w-2.5 h-2.5 rounded-full bg-tg-blue"></span>
                 <span>Search: &quot;${escapeHtml(query)}&quot;</span>
                 <span class="font-mono tabular-nums">${score}%</span>
+                ${explStr ? `<span class="text-[10px] text-tg-textSecondary">${explStr}</span>` : ''}
             </span>`;
         },
     });
@@ -1737,8 +1767,17 @@ async function _runUnifiedQuery() {
         albumBtn.classList.add('opacity-50');
     }
 
+    // Gather active source filters
+    const activeSources = [];
+    const chips = document.querySelectorAll('.ai-source-chip[data-active="1"]');
+    chips.forEach((chip) => activeSources.push(chip.dataset.source));
+
     try {
-        const qs = new URLSearchParams({ q: query, topK: '50' }).toString();
+        const params = { q: query, topK: '50' };
+        if (activeSources.length && activeSources.length < 6) {
+            params.sources = activeSources.join(',');
+        }
+        const qs = new URLSearchParams(params).toString();
         const r = await api.get('/api/ai/search?' + qs);
         if (!r.success) {
             grid.classList.remove('hidden');
@@ -2274,6 +2313,21 @@ function _bindOnce() {
     $('#ai-query-album-btn')?.addEventListener('click', _createAlbumFromUnifiedQuery);
     $('#ai-query-input')?.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') _runUnifiedQuery();
+    });
+    // Source chips — toggle active state on click
+    $('#ai-query-sources')?.addEventListener('click', (e) => {
+        const chip = e.target.closest('.ai-source-chip');
+        if (!chip) return;
+        const active = chip.dataset.active === '1';
+        chip.dataset.active = active ? '0' : '1';
+        chip.classList.toggle('opacity-40', active);
+        chip.classList.toggle('border-tg-border/20', active);
+        chip.classList.toggle('border-tg-blue/40', !active);
+        // Refire the search if there's already a result visible
+        const grid = $('#ai-query-grid');
+        if (grid && !grid.classList.contains('hidden') && grid.dataset.searchQuery) {
+            _runUnifiedQuery();
+        }
     });
 
     // WebSocket — scan events for all capabilities.
