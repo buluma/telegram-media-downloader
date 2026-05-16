@@ -1034,6 +1034,34 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                 return res.status(409).json({ error: 'Tracker busy', code: claim.code });
             }
             log({ source: 'ai', level: 'info', msg: `${feature} scan starting` });
+            // Create a durable job record for this scan
+            try {
+                const { createJob } = await import('../../core/ai/jobs.js');
+                const c = (() => {
+                    try {
+                        return getAiCounts({ fileTypes: _facesScanFileTypes(cfg) });
+                    } catch {
+                        return { totalEligible: 0 };
+                    }
+                })();
+                const jobId = createJob({
+                    type: 'scan',
+                    feature,
+                    total: c.totalEligible || 0,
+                    requestedBy: 'admin',
+                });
+                log({
+                    source: 'ai',
+                    level: 'info',
+                    msg: `job ${jobId} created for ${feature} scan`,
+                });
+            } catch (e) {
+                log({
+                    source: 'ai',
+                    level: 'warn',
+                    msg: `failed to create job record: ${e?.message || e}`,
+                });
+            }
             res.json({ success: true, started: true });
         } catch (e) {
             log({ source: 'ai', level: 'error', msg: `scan/start failed: ${e?.message || e}` });
@@ -1049,6 +1077,16 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             return res.status(400).json({ error: 'feature must be embed|tags|faces' });
         }
         const ok = aiCancelScan(feature);
+        // Finish any running job for this feature
+        try {
+            const { listJobs, finishJob } = await import('../../core/ai/jobs.js');
+            const running = listJobs({ feature, status: 'running', limit: 1 });
+            if (running.jobs?.length) {
+                finishJob(running.jobs[0].id, 'cancelled');
+            }
+        } catch (e) {
+            log({ source: 'ai', level: 'warn', msg: `finish job on cancel: ${e?.message || e}` });
+        }
         res.json({ success: true, cancelled: ok });
     });
 
@@ -1058,6 +1096,64 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             return res.status(400).json({ error: 'feature must be embed|tags|faces' });
         }
         res.json({ success: true, state: aiGetScanState(feature) });
+    });
+
+    // ---- Durable job endpoints (Phase 4) ------------------------------------
+
+    router.get('/ai/jobs', async (req, res) => {
+        try {
+            const { listJobs } = await import('../../core/ai/jobs.js');
+            const feature = String(req.query.feature || '').trim() || undefined;
+            const status = String(req.query.status || '').trim() || undefined;
+            const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
+            const offset = Math.max(0, Number(req.query.offset) || 0);
+            res.json({ success: true, ...listJobs({ feature, status, limit, offset }) });
+        } catch (e) {
+            res.status(500).json({ error: e?.message || String(e) });
+        }
+    });
+
+    router.get('/ai/jobs/:jobId', async (req, res) => {
+        try {
+            const { getJob } = await import('../../core/ai/jobs.js');
+            const job = getJob(req.params.jobId);
+            if (!job) return res.status(404).json({ error: 'Job not found' });
+            res.json({ success: true, job });
+        } catch (e) {
+            res.status(500).json({ error: e?.message || String(e) });
+        }
+    });
+
+    router.post('/ai/jobs/:jobId/cancel', async (req, res) => {
+        try {
+            const { cancelJob, getJob } = await import('../../core/ai/jobs.js');
+            const job = getJob(req.params.jobId);
+            if (!job) return res.status(404).json({ error: 'Job not found' });
+            cancelJob(req.params.jobId);
+            // Also cancel the in-memory scan if it's running
+            if (job.feature) aiCancelScan(job.feature);
+            res.json({ success: true });
+        } catch (e) {
+            res.status(500).json({ error: e?.message || String(e) });
+        }
+    });
+
+    router.get('/ai/scan-state/:scanner', async (req, res) => {
+        try {
+            const { getScanStateSummary, releaseStaleLocks } = await import(
+                '../../core/ai/jobs.js'
+            );
+            const scanner = String(req.params.scanner || '')
+                .trim()
+                .toLowerCase();
+            if (!scanner) return res.status(400).json({ error: 'scanner param required' });
+            // Release stale locks before returning state
+            const released = releaseStaleLocks(scanner);
+            const summary = getScanStateSummary(scanner);
+            res.json({ success: true, scanner, summary, staleLocksReleased: released });
+        } catch (e) {
+            res.status(500).json({ error: e?.message || String(e) });
+        }
     });
 
     // ---- Provider probe (face sidecar onnxruntime backends) -----------------

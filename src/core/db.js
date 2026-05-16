@@ -432,6 +432,49 @@ function initSchema() {
         CREATE INDEX IF NOT EXISTS idx_smart_album_items_download ON smart_album_items(download_id);
     `);
 
+    // v2.19 — Durable job model. `maintenance_jobs` persists scan state
+    // across restarts so a crash mid-scan doesn't lose progress tracking.
+    // `media_scan_state` tracks per-download, per-scanner processing so we
+    // can retry failures, detect stale locks, and avoid the `_scanned_` / `_wd14_scanned_`
+    // sentinel tag approach.
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS maintenance_jobs (
+            id              TEXT    PRIMARY KEY,
+            type            TEXT    NOT NULL,
+            feature         TEXT,
+            status          TEXT    NOT NULL DEFAULT 'pending',
+            resources       TEXT,
+            requested_by    TEXT,
+            request_json    TEXT,
+            total           INTEGER NOT NULL DEFAULT 0,
+            processed       INTEGER NOT NULL DEFAULT 0,
+            skipped         INTEGER NOT NULL DEFAULT 0,
+            failed          INTEGER NOT NULL DEFAULT 0,
+            error           TEXT,
+            started_at      INTEGER NOT NULL,
+            finished_at     INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_maintenance_jobs_status ON maintenance_jobs(status);
+        CREATE INDEX IF NOT EXISTS idx_maintenance_jobs_feature ON maintenance_jobs(feature, started_at DESC);
+
+        CREATE TABLE IF NOT EXISTS media_scan_state (
+            download_id     INTEGER NOT NULL,
+            scanner         TEXT    NOT NULL,
+            status          TEXT    NOT NULL DEFAULT 'pending',
+            attempts        INTEGER NOT NULL DEFAULT 0,
+            locked_by       TEXT,
+            locked_at       INTEGER,
+            last_error      TEXT,
+            last_error_code TEXT,
+            updated_at      INTEGER NOT NULL,
+            completed_at    INTEGER,
+            PRIMARY KEY (download_id, scanner),
+            FOREIGN KEY (download_id) REFERENCES downloads(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_scan_state_scanner ON media_scan_state(scanner, status);
+        CREATE INDEX IF NOT EXISTS idx_scan_state_stale  ON media_scan_state(locked_at) WHERE locked_by IS NOT NULL;
+    `);
+
     // Smoke-test every column the rest of the code path depends on. The
     // ALTER TABLE migrations above swallow "column already exists" so they
     // also swallow real failures (out-of-disk, locked DB, corrupt schema).
