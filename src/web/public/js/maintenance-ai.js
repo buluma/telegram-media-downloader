@@ -2683,6 +2683,7 @@ const _SCANNER_CARD_DEFS = [
         scanBtnId: 'ai-scan-btn',
         cancelBtnId: 'ai-cancel-btn',
         estimateKey: null,
+        settingsPaneId: 'ai-pane-faces',
         configSummary: (cfg, _models) => {
             const det = cfg.facesDetectorModel || 'buffalo_l';
             return `${det} · ε=${cfg.facesEpsilon || 0.5} · minPts=${cfg.facesMinPoints || 3}`;
@@ -2700,6 +2701,7 @@ const _SCANNER_CARD_DEFS = [
         scanBtnId: 'ai-tags-scan-btn',
         cancelBtnId: 'ai-tags-cancel-btn',
         estimateKey: 'aiTags',
+        settingsPaneId: 'ai-pane-tags',
         configSummary: (_cfg, models) => {
             const m = models.tags || {};
             const vs = m.vocabularySize || '';
@@ -2718,6 +2720,7 @@ const _SCANNER_CARD_DEFS = [
         scanBtnId: null, // shares objects scan button
         cancelBtnId: null,
         estimateKey: 'aiWd14',
+        settingsPaneId: 'ai-pane-objects',
         configSummary: (_cfg, _models) => 'SmilingWolf wd-v1-4-vit-tagger-v2',
     },
     {
@@ -2732,6 +2735,7 @@ const _SCANNER_CARD_DEFS = [
         scanBtnId: 'ai-ocr-scan-btn',
         cancelBtnId: 'ai-ocr-cancel-btn',
         estimateKey: 'aiOcr',
+        settingsPaneId: 'ai-pane-ocr',
         configSummary: (cfg, _models) => {
             return cfg.imageOcr ? 'enabled' : 'disabled';
         },
@@ -2748,6 +2752,7 @@ const _SCANNER_CARD_DEFS = [
         scanBtnId: 'ai-objects-scan-btn',
         cancelBtnId: 'ai-objects-cancel-btn',
         estimateKey: 'aiObjects',
+        settingsPaneId: 'ai-pane-objects',
         configSummary: (_cfg, _models) => {
             const m = _models.objects || {};
             return m.ready ? 'ready' : m.error || 'not ready';
@@ -2879,8 +2884,12 @@ function _renderScannerCards(status) {
         ${hasErrors && !failedCount && !skippedCount ? `<span class="text-red-300"><i class="ri-error-warning-line"></i> error</span>` : ''}
         <span class="ml-auto" title="Last scan"><i class="ri-time-line"></i> ${lastScanStr}</span>
     </div>
-    <div class="text-[9px] text-tg-textSecondary mt-1.5 truncate" title="${escapeHtml(def.configSummary(cfg, models))}">
-        ${escapeHtml(def.configSummary(cfg, models))}
+    <div class="flex items-center gap-2 mt-1.5 text-[9px]">
+        <span class="text-tg-textSecondary truncate flex-1" title="${escapeHtml(def.configSummary(cfg, models))}">
+            ${escapeHtml(def.configSummary(cfg, models))}
+        </span>
+        ${def.settingsPaneId ? `<button type="button" class="ai-scanner-action text-tg-blue hover:underline shrink-0" data-feature="${def.feature}" data-action="settings">Settings</button>` : ''}
+        ${hasErrors && !running ? `<button type="button" class="ai-scanner-action text-red-300 hover:underline shrink-0" data-feature="${def.feature}" data-action="view-failures">Failures</button>` : ''}
     </div>
 </div>`;
         })
@@ -2897,6 +2906,10 @@ function _renderScannerCards(status) {
                 _triggerScannerCancel(feature);
             } else if (action === 'retry') {
                 _triggerScannerRetry(feature);
+            } else if (action === 'settings') {
+                _scrollToSettings(feature);
+            } else if (action === 'view-failures') {
+                _showScannerFailures(feature);
             }
         });
     });
@@ -2966,6 +2979,26 @@ function _triggerScannerRetry(feature) {
     // already-processed rows and retries failed ones automatically.
     _triggerScannerScan(feature);
     showToast(`Retrying ${feature} scan…`, 'info');
+}
+
+/** Scroll to the settings pane for a given feature */
+function _scrollToSettings(feature) {
+    const def = _SCANNER_CARD_DEFS.find((d) => d.feature === feature);
+    if (!def?.settingsPaneId) return;
+    const el = $(def.settingsPaneId);
+    if (el) {
+        el.open = true; // open the <details> accordion
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+}
+
+/** Show the issues/failures card by scrolling to it */
+function _showScannerFailures(feature) {
+    const card = $('#ai-issues-card');
+    if (card) {
+        card.classList.remove('hidden');
+        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
 }
 
 function _renderStatus(status) {
