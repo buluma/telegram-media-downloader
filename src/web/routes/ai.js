@@ -630,6 +630,19 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         }
     });
 
+    router.get('/ai/tags/details', async (req, res) => {
+        try {
+            const tag = String(req.query.tag || '').trim();
+            if (!tag) return res.status(400).json({ error: 'tag query param required' });
+            const { getTagDetails } = await import('../../core/db/faces.js');
+            const details = getTagDetails(tag);
+            if (!details) return res.status(404).json({ error: 'Tag not found' });
+            res.json({ success: true, details });
+        } catch (e) {
+            res.status(500).json({ error: e?.message || String(e) });
+        }
+    });
+
     router.get('/ai/tags/suggestions', async (req, res) => {
         try {
             const minRate = Math.max(0, Math.min(1, Number(req.query.minRate) || 0.6));

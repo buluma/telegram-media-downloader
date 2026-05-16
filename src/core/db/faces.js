@@ -1401,6 +1401,59 @@ export function listPhotosForTag(tag, { limit = 50, offset = 0 } = {}) {
  * @param {number} minImagesPerTag - Exclude tags appearing in fewer than N images (default 2)
  * @returns {Array} Suggested tag merges
  */
+/**
+ * Return details for a single tag: count, average score, source(s),
+ * and related co-occurring tags.
+ */
+export function getTagDetails(tag, { limit = 20 } = {}) {
+    const db = getDb();
+    const safeTag = String(tag || '');
+    if (!safeTag) return null;
+
+    // Determine source(s) — check which tables contain this tag
+    const sources = [];
+    const clipCount = db
+        .prepare('SELECT COUNT(*) AS n FROM image_tags WHERE tag = ?')
+        .get(safeTag).n;
+    if (clipCount > 0) sources.push({ source: 'clip', count: clipCount });
+
+    const wd14Count = db
+        .prepare('SELECT COUNT(*) AS n FROM image_tags_wd14 WHERE tag = ?')
+        .get(safeTag).n;
+    if (wd14Count > 0) sources.push({ source: 'wd14', count: wd14Count });
+
+    const objCount = db
+        .prepare('SELECT COUNT(*) AS n FROM image_objects WHERE object = ?')
+        .get(safeTag).n;
+    if (objCount > 0) sources.push({ source: 'objects', count: objCount });
+
+    // Average score from CLIP (if available)
+    const clipStats = db
+        .prepare('SELECT AVG(score) AS avg_score, COUNT(*) AS count FROM image_tags WHERE tag = ?')
+        .get(safeTag);
+
+    // Related co-occurring tags (from CLIP image_tags)
+    const related = db
+        .prepare(`
+        SELECT t2.tag, COUNT(*) AS together, AVG(t2.score) AS avg_score
+          FROM image_tags t1
+          JOIN image_tags t2 ON t1.download_id = t2.download_id AND t2.tag != t1.tag
+         WHERE t1.tag = ? AND t2.tag != '_scanned_'
+         GROUP BY t2.tag
+         ORDER BY together DESC, avg_score DESC
+         LIMIT ?
+    `)
+        .all(safeTag, Math.max(1, Math.min(100, Number(limit) || 20)));
+
+    return {
+        tag: safeTag,
+        count: clipStats.count || 0,
+        avgScore: clipStats.avg_score ? Math.round(clipStats.avg_score * 1000) / 1000 : 0,
+        sources,
+        related,
+    };
+}
+
 export function getTagCooccurrenceSuggestions({
     minCooccurrenceRate = 0.6,
     minImagesPerTag = 2,

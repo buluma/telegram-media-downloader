@@ -223,6 +223,7 @@ async function _renderTagBrowser(forceReload = true) {
             }
             if (empty) empty.classList.remove('hidden');
             _tagSelected = '';
+            _renderTagDetails('');
             _tagPhotosTotal = 0;
             _tagPhotosPage = 1;
             _tagPhotosTotalPages = 1;
@@ -256,6 +257,7 @@ async function _renderTagBrowser(forceReload = true) {
                     _tagSelected = tag;
                     _ocrWordFilter = '';
                     _renderOcrChips();
+                    _renderTagDetails(tag);
                     _loadTagPhotos(tag);
                 }
             });
@@ -457,6 +459,87 @@ function _moveTagChipFocus(currentBtn, dir) {
     if (next < 0) next = list.length - 1;
     if (next >= list.length) next = 0;
     list[next]?.focus();
+}
+
+/**
+ * Fetch and render tag details panel (count, avg score, sources,
+ * related tags). Hidden when tag is null/empty.
+ */
+async function _renderTagDetails(tag) {
+    const panel = $('#ai-tag-details');
+    if (!panel) return;
+    if (!tag) {
+        panel.classList.add('hidden');
+        return;
+    }
+    try {
+        const r = await api.get(`/api/ai/tags/details?tag=${encodeURIComponent(tag)}`);
+        if (!r.success || !r.details) {
+            panel.classList.add('hidden');
+            return;
+        }
+        panel.classList.remove('hidden');
+        const d = r.details;
+
+        const nameEl = $('#ai-tag-details-name');
+        if (nameEl) nameEl.textContent = d.tag;
+
+        const metaEl = $('#ai-tag-details-meta');
+        if (metaEl) {
+            const pct = d.avgScore ? Math.round(d.avgScore * 100) : 0;
+            metaEl.textContent = `${d.count.toLocaleString()} photos \u00b7 avg confidence ${pct}%`;
+        }
+
+        // Source badges
+        const sourcesEl = $('#ai-tag-details-sources');
+        if (sourcesEl) {
+            const labels = { clip: 'CLIP', wd14: 'WD14', objects: 'Objects' };
+            sourcesEl.innerHTML = (Array.isArray(d.sources) ? d.sources : [])
+                .map(
+                    (s) =>
+                        `<span class="inline-block rounded px-1.5 py-0.5 border text-[9px] font-medium leading-none ${s.source === 'clip' ? 'border-green-500/30 bg-green-500/10 text-green-200' : s.source === 'wd14' ? 'border-purple-500/30 bg-purple-500/10 text-purple-200' : 'border-blue-500/30 bg-blue-500/10 text-blue-200'}">${escapeHtml(labels[s.source] || s.source)} \u00b7 ${s.count.toLocaleString()}</span>`,
+                )
+                .join('');
+        }
+
+        // Related tags (clickable)
+        const relatedEl = $('#ai-tag-details-related');
+        if (relatedEl) {
+            const related = Array.isArray(d.related) ? d.related.slice(0, 12) : [];
+            if (related.length) {
+                relatedEl.innerHTML = `Related: ${related
+                    .map(
+                        (r) =>
+                            `<button type="button" class="ai-related-tag-link text-tg-blue hover:underline inline" data-tag="${escapeHtml(r.tag)}">${escapeHtml(r.tag)}</button>`,
+                    )
+                    .join(', ')}`;
+                relatedEl.querySelectorAll('.ai-related-tag-link').forEach((btn) => {
+                    btn.addEventListener('click', () => {
+                        const t = btn.dataset.tag;
+                        if (t) _selectTagChip(t);
+                    });
+                });
+            } else {
+                relatedEl.textContent = '';
+            }
+        }
+    } catch (e) {
+        console.warn('tag details:', e);
+        panel.classList.add('hidden');
+    }
+}
+
+/** Programmatically select and click a tag chip by tag name */
+function _selectTagChip(tag) {
+    const chips = $('#ai-tag-chips');
+    if (!chips) return;
+    const btn = Array.from(chips.querySelectorAll('.tag-chip')).find(
+        (el) => el.dataset.tag === tag,
+    );
+    if (btn) {
+        btn.click();
+        btn.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
 }
 
 // ---- Objects browser ----------------------------------------------------
@@ -2209,6 +2292,9 @@ function _bindOnce() {
         _loadTagPhotoPage();
     });
     $('#ai-tag-create-album')?.addEventListener('click', () => _createSmartAlbum(_tagSelected));
+    $('#ai-tag-details-album-btn')?.addEventListener('click', () =>
+        _createSmartAlbum(_tagSelected),
+    );
     $('#ai-tag-suggestions-refresh')?.addEventListener('click', () => _renderTagSuggestions());
     $('#ai-smart-albums-refresh')?.addEventListener('click', () => _renderSmartAlbums());
     $('#ai-album-nl-parse-btn')?.addEventListener('click', _parseAlbumWithAi);
