@@ -30,7 +30,7 @@ const _peoplePhotosLimit = 50;
 let _peoplePhotoRows = [];
 let _doctorScanReady = true;
 let _peopleCache = []; // full people list (un-filtered) for client-side search
-const _peopleFilter = { query: '', unlabeledOnly: false };
+const _peopleFilter = { query: '', unlabeledOnly: false, minFaces: 1, recentFirst: false };
 let _tagListCache = [];
 let _tagSelected = '';
 let _tagFilterQuery = '';
@@ -2237,6 +2237,14 @@ function _bindOnce() {
         _peopleFilter.unlabeledOnly = !!e.target.checked;
         _renderPeopleGrid();
     });
+    $('#ai-people-min-faces')?.addEventListener('change', (e) => {
+        _peopleFilter.minFaces = Number(e.target.value) || 1;
+        _renderPeopleGrid();
+    });
+    $('#ai-people-recent')?.addEventListener('change', (e) => {
+        _peopleFilter.recentFirst = !!e.target.checked;
+        _renderPeopleGrid();
+    });
     $('#ai-people-refresh-btn')?.addEventListener('click', () => _loadPeople());
 
     // Objects browser — backfill + refresh + pagination.
@@ -4306,6 +4314,53 @@ function _onScanDone(feature, msg) {
     if (feature === 'objects') _renderObjectsBrowser();
 }
 
+/**
+ * Show merge suggestions — large unnamed clusters that likely
+ * represent real people who should be named.
+ */
+function _renderPeopleSuggestions(people) {
+    const section = $('#ai-people-suggestions');
+    const list = $('#ai-people-suggestions-list');
+    const count = $('#ai-people-suggestions-count');
+    if (!section || !list) return;
+
+    // Find unnamed clusters with >= 3 faces (likely real people)
+    const suggestions = (Array.isArray(people) ? people : [])
+        .filter((p) => !p.label && Number(p.face_count) >= 3)
+        .sort((a, b) => (b.face_count || 0) - (a.face_count || 0))
+        .slice(0, 8);
+
+    if (!suggestions.length) {
+        section.classList.add('hidden');
+        return;
+    }
+    section.classList.remove('hidden');
+    if (count)
+        count.textContent = `\u2014 ${suggestions.length} unnamed clusters with \u2265 3 faces`;
+
+    list.innerHTML = suggestions
+        .map(
+            (p) =>
+                `<button type="button" class="tg-btn-input text-[10px] px-2 py-1 inline-flex items-center gap-1 rounded-full ai-people-suggestion" data-person="${p.id}">
+                    <i class="ri-user-question-line"></i>
+                    <span>Person #${p.id}</span>
+                    <span class="tabular-nums text-tg-textSecondary">${p.face_count} faces</span>
+                </button>`,
+        )
+        .join('');
+
+    list.querySelectorAll('.ai-people-suggestion').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const pid = Number(btn.dataset.person);
+            const tile = document.querySelector(`[data-person="${pid}"]`);
+            if (tile) {
+                tile.click();
+                tile.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+        });
+    });
+}
+
 // ---- People (face clusters) ----------------------------------------------
 
 async function _loadPeople() {
@@ -4331,14 +4386,20 @@ function _renderPeopleGrid() {
     // search).
     const q = _peopleFilter.query;
     const unlabeled = _peopleFilter.unlabeledOnly;
-    const filtered = _peopleCache.filter((p) => {
+    const minFaces = Number(_peopleFilter.minFaces) || 1;
+    const recentFirst = _peopleFilter.recentFirst === true;
+    let filtered = _peopleCache.filter((p) => {
         if (unlabeled && p.label) return false;
+        if (Number(p.face_count) < minFaces) return false;
         if (q) {
             const hay = `${p.label || ''} ${p.id}`.toLowerCase();
             if (!hay.includes(q)) return false;
         }
         return true;
     });
+    if (recentFirst) {
+        filtered = filtered.slice().sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
+    }
 
     if (count) {
         count.textContent = filtered.length
@@ -4355,6 +4416,9 @@ function _renderPeopleGrid() {
     }
     empty?.classList.add('hidden');
     grid.innerHTML = filtered.map(_personTile).join('');
+
+    // Merge suggestions — show large unnamed clusters that should be named
+    _renderPeopleSuggestions(_peopleCache);
     grid.querySelectorAll('[data-person]').forEach((b) => {
         b.addEventListener('click', () => {
             _selectedPerson = Number(b.dataset.person);
@@ -4411,17 +4475,19 @@ function _personTile(p) {
         imgHtml = `<i class="ri-user-line text-xl text-tg-textSecondary/40"></i>`;
     }
 
+    const updatedStr = p.updated_at ? _timeAgo(p.updated_at) : '';
+
     return `<button type="button" data-person="${p.id}" data-name="${safeName}"
         class="flex flex-col items-center gap-1.5 px-1 py-2 rounded-xl active:scale-95 transition-all group text-center select-none ${selectedCls} ${dimCls}"
         aria-pressed="${Number(p.id) === Number(_selectedPerson) ? 'true' : 'false'}"
-        title="${safeName} · ${faceCount} ${escapeHtml(i18nT('maintenance.ai.faces_short', 'faces'))}">
+        title="${safeName} · ${faceCount} ${escapeHtml(i18nT('maintenance.ai.faces_short', 'faces'))}${updatedStr ? ' · ' + updatedStr : ''}">
         <div class="w-[60px] h-[60px] rounded-full overflow-hidden flex items-center justify-center bg-tg-bg/40 flex-shrink-0">
             ${imgHtml}
         </div>
         <div class="w-full min-w-0 space-y-0.5">
             <div class="ai-person-name text-[10.5px] font-medium text-tg-text leading-tight line-clamp-2 break-words px-0.5">${safeName}</div>
             <div class="text-[10px] text-tg-textSecondary tabular-nums">
-                ${faceCount}
+                ${faceCount}${updatedStr ? ` · ${updatedStr}` : ''}
             </div>
         </div>
     </button>`;

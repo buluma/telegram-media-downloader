@@ -3768,10 +3768,30 @@
                                 <input id="ai-people-unlabeled" type="checkbox" class="accent-tg-blue">
                                 <span data-i18n="maintenance.ai.people.unlabeled_only">Unlabeled only</span>
                             </label>
+                            <select id="ai-people-min-faces" class="tg-input text-[10px] py-1 w-28" title="Minimum face count">
+                                <option value="1">≥ 1 face</option>
+                                <option value="2">≥ 2 faces</option>
+                                <option value="5">≥ 5 faces</option>
+                                <option value="10">≥ 10 faces</option>
+                            </select>
+                            <label class="inline-flex items-center gap-1 text-[11px] text-tg-textSecondary cursor-pointer select-none">
+                                <input id="ai-people-recent" type="checkbox" class="accent-tg-blue">
+                                <span>Recent first</span>
+                            </label>
                             <button id="ai-people-refresh-btn" type="button" class="tg-btn-secondary text-[11px] px-2 py-1 inline-flex items-center gap-1"
                                 title="Refresh the people grid">
                                 <i class="ri-refresh-line"></i>
                             </button>
+                        </div>
+                        <!-- Merge suggestions — large unnamed clusters that likely
+                             represent real people who should be named. -->
+                        <div id="ai-people-suggestions" class="hidden mb-3 bg-tg-bg/30 rounded-lg p-2.5 border border-yellow-500/20">
+                            <div class="flex items-center gap-1.5 mb-1.5">
+                                <i class="ri-lightbulb-flash-line text-yellow-300 text-xs"></i>
+                                <span class="text-[10.5px] font-medium text-tg-text">Merge suggestions</span>
+                                <span id="ai-people-suggestions-count" class="text-[10px] text-tg-textSecondary"></span>
+                            </div>
+                            <div id="ai-people-suggestions-list" class="flex flex-wrap gap-1.5"></div>
                         </div>
                         <div id="ai-people-empty" class="hidden text-center py-8 text-sm text-tg-textSecondary">
                             <i class="ri-user-search-line text-3xl block mb-2 text-tg-textSecondary/60"></i>
