@@ -1337,7 +1337,17 @@ function log({ source = 'app', level = 'info', msg = '' }) {
     // with a sentinel suffix the tee can detect — but in practice the
     // duplicate is harmless (same entry shape, sub-millisecond apart) and
     // the simpler path is to skip the mirror when called from log() itself.
-    const line = `[${new Date(entry.ts).toISOString()}] [${source}] [${level}] ${entry.msg}`;
+    function _localTs(ts) {
+        const d = new Date(ts);
+        const pad = (n, w = 2) => String(n).padStart(w, '0');
+        const off = -d.getTimezoneOffset();
+        const sign = off >= 0 ? '+' : '-';
+        const absOff = Math.abs(off);
+        const offH = pad(Math.floor(absOff / 60));
+        const offM = pad(absOff % 60);
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)} ${sign}${offH}${offM}`;
+    }
+    const line = `[${_localTs(entry.ts)}] [${source}] [${level}] ${entry.msg}`;
     // Bypass the wrapped console so we don't double-record. process.stdout
     // is the un-wrapped underlying writer.
     try {

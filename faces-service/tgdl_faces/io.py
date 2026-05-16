@@ -89,7 +89,9 @@ def load_image_from_path(path: str, allow_roots: list[str]) -> np.ndarray:
     PathNotAllowedError
         ``path`` doesn't resolve under any allow_root.
     FileNotFoundError
-        The file is missing or unreadable as an image.
+        The file is missing, unreadable, or empty.
+    ImageDecodeError
+        The file exists but is not a recognised image format.
     """
     if not path:
         raise FileNotFoundError("empty path")
@@ -118,9 +120,10 @@ def load_image_from_path(path: str, allow_roots: list[str]) -> np.ndarray:
     buf = np.frombuffer(raw, dtype=np.uint8)
     img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
     if img is None:
-        # File exists but couldn't be parsed — treat as missing so the
-        # caller backs off rather than retrying.
-        raise FileNotFoundError(f"failed to decode image at {path!r}")
+        # File exists but could not be parsed as an image. Surface this as
+        # 415 (not 404) so callers can distinguish corrupt/mislabelled media
+        # from a missing file or a missing endpoint.
+        raise ImageDecodeError(f"failed to decode image at {path!r}")
     return img
 
 

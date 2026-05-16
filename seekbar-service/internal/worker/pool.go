@@ -204,6 +204,19 @@ func (p *Pool) processJob(ctx context.Context, j *Job) {
 	dstPath := filepath.Join(outDir, j.VideoID+"."+ext)
 	metaPath := filepath.Join(outDir, j.VideoID+".json")
 
+	// Skip silently if source file is gone (auto-forward, rescue
+	// sweeper, or manual cleanup). The parent process eventually
+	// prunes the DB row; no need for noisy errors about .tmp files.
+	if !fileExists(j.SrcPath) {
+		j.Status = "done"
+		j.SpritePath = dstPath
+		j.MetaPath = metaPath
+		j.FinishedAt = time.Now().UnixMilli()
+		atomic.AddInt32(&p.genOk, 1)
+		p.log.Debug("source vanished, skipping", "video_id", j.VideoID, "src", j.SrcPath)
+		return
+	}
+
 	// Overwrite policy check.
 	if cfg.Storage.Overwrite == "never" {
 		if fileExists(dstPath) && fileExists(metaPath) {

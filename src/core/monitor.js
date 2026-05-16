@@ -1194,7 +1194,8 @@ export class RealtimeMonitor extends EventEmitter {
                     m.sticker || // Check inside media
                     m.className === 'MessageMediaPhoto' ||
                     m.className === 'MessageMediaDocument' ||
-                    (m.className === 'MessageMediaWebPage' && m.webPage?.document)
+                    (m.className === 'MessageMediaWebPage' &&
+                        (m.webpage?.document || m.webPage?.document))
                 ) // Webpage with media preview
             );
         }
@@ -1224,7 +1225,12 @@ export class RealtimeMonitor extends EventEmitter {
         if (m.sticker || message.sticker) return 'stickers';
 
         // 2. Check document mime type for sticker/webp
-        const doc = m.document || (m.className === 'MessageMediaDocument' ? m : null);
+        const doc =
+            m.document ||
+            (m.className === 'MessageMediaDocument' ? m : null) ||
+            (m.className === 'MessageMediaWebPage'
+                ? m.webpage?.document || m.webPage?.document
+                : null);
         if (doc) {
             const mime = doc.mimeType || '';
             if (mime.includes('image/webp') || mime.includes('application/x-tgsticker'))

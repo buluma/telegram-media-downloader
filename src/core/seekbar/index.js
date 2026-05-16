@@ -32,6 +32,7 @@ import {
     getMetaFilePath,
     getSeekbarConfig,
     getSpritePath,
+    resolveDownloadAbs,
 } from './generator.js';
 import { buildAllSeekbar, purgeAllSeekbar } from './scan-runner.js';
 
@@ -104,6 +105,11 @@ async function _drainBg() {
             const row = lookupRow.get(Number(id));
             if (!row) continue;
             if (row.file_type !== 'video') continue;
+            // File may have been deleted (e.g. auto-forward delete-after-forward).
+            // Skip without noise rather than letting the downstream ffmpeg call
+            // log "No such file or directory" for every vanished download.
+            const filePath = resolveDownloadAbs(row.file_path);
+            if (!filePath) continue;
             try {
                 const meta = await generateForDownload(row, cfg, { overwrite: 'if-changed' });
                 // Broadcast on each successful generation so the viewer's

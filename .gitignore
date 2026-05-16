@@ -45,6 +45,7 @@ __pycache__/
 # OS junk
 # Python sidecar (faces-service/) build artefacts + caches
 # Runtime data (everything under data/ is gitignored except a few examples)
+downloads.db
 # Test / coverage output
 $RECYCLE.BIN/
 AGENTS.md

@@ -466,41 +466,64 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                 // Videos: per-frame extraction + single-image detect.
                 for (const { row, abs } of videoItems) {
                     if (signal.aborted) break;
+                    // File may have been deleted since batch assembly (rescue
+                    // sweeper / disk rotator). If gone, skip like a null item.
+                    if (!existsSync(String(abs))) {
+                        log('warn', `faces scan: video file vanished id=${row.id} ${abs}`);
+                        _statNull++;
+                        setAiIndexedAt(row.id);
+                        state.scanned += 1;
+                        bump();
+                        continue;
+                    }
                     let detectedTotal = 0;
                     if (canSampleVideos) {
-                        const framePaths = await _extractVideoFrames(
-                            abs,
-                            { intervalSec: videoFrameIntervalSec, maxFrames: videoMaxFrames },
-                            log,
-                        );
-                        deleteFacesForDownload(row.id);
+                        let framePaths = [];
                         try {
-                            for (const frameAbs of framePaths) {
-                                if (signal.aborted) break;
-                                const faces = await detectFaces(frameAbs, cfg, logEntry);
-                                if (Array.isArray(faces) && faces.length) {
-                                    for (const f of faces) {
-                                        insertFace({
-                                            downloadId: row.id,
-                                            x: f.x,
-                                            y: f.y,
-                                            w: f.w,
-                                            h: f.h,
-                                            embeddingBlob: _f32ToBlob(f.embedding),
-                                            qualityScore: computeFaceQualityScore(f, cfg),
-                                        });
-                                        detectedTotal += 1;
+                            framePaths = await _extractVideoFrames(
+                                abs,
+                                { intervalSec: videoFrameIntervalSec, maxFrames: videoMaxFrames },
+                                log,
+                            );
+                        } catch (e) {
+                            log(
+                                'warn',
+                                `faces scan: video frame extraction failed id=${row.id}: ${e?.message || e}`,
+                            );
+                        }
+                        if (framePaths.length) {
+                            _safeDeleteFaces(row.id, log);
+                            try {
+                                for (const frameAbs of framePaths) {
+                                    if (signal.aborted) break;
+                                    const faces = await detectFaces(frameAbs, cfg, logEntry);
+                                    if (Array.isArray(faces) && faces.length) {
+                                        for (const f of faces) {
+                                            _safeInsertFace(
+                                                {
+                                                    downloadId: row.id,
+                                                    x: f.x,
+                                                    y: f.y,
+                                                    w: f.w,
+                                                    h: f.h,
+                                                    embeddingBlob: _f32ToBlob(f.embedding),
+                                                    qualityScore: computeFaceQualityScore(f, cfg),
+                                                },
+                                                log,
+                                            );
+                                            detectedTotal += 1;
+                                        }
                                     }
                                 }
+                            } finally {
+                                await _cleanupTmpFrames(framePaths);
                             }
-                        } finally {
-                            await _cleanupTmpFrames(framePaths);
                         }
                     }
                     if (detectedTotal > 0) {
                         log('info', `faces scan: id=${row.id} detected=${detectedTotal}`);
                     }
-                    setAiIndexedAt(row.id);
+                    _safeSetIndexed(row.id, log);
                     state.scanned += 1;
                     bump();
                     await new Promise((r) => setImmediate(r));
@@ -526,7 +549,20 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                 for (let bi = 0; bi < imageItems.length; bi++) {
                     const { row } = imageItems[bi];
                     const detected = batchResults[bi] ?? null;
-                    if (detected === null) {
+                    // File may have been deleted since batch detect ran (rescue
+                    // sweeper / disk rotator). Treat as null rather than crashing.
+                    const fileStillExists = existsSync(String(imageItems[bi].abs));
+                    if (!fileStillExists) {
+                        if (detected === null) {
+                            _statNull++;
+                        } else {
+                            log(
+                                'warn',
+                                `faces scan: image vanished after detect id=${row.id} ${imageItems[bi].abs}`,
+                            );
+                            _statNull++;
+                        }
+                    } else if (detected === null) {
                         _statNull++;
                     } else if (detected.length === 0) {
                         _statEmpty++;
@@ -534,22 +570,25 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                         _statFaces += detected.length;
                         _statPhotos++;
                     }
-                    if (Array.isArray(detected) && detected.length) {
-                        deleteFacesForDownload(row.id);
+                    if (fileStillExists && Array.isArray(detected) && detected.length) {
+                        _safeDeleteFaces(row.id, log);
                         for (const f of detected) {
                             if (!f.embedding || !f.embedding.length) continue;
-                            insertFace({
-                                downloadId: row.id,
-                                x: f.x,
-                                y: f.y,
-                                w: f.w,
-                                h: f.h,
-                                embeddingBlob: _f32ToBlob(f.embedding),
-                                qualityScore: computeFaceQualityScore(f, cfg),
-                            });
+                            _safeInsertFace(
+                                {
+                                    downloadId: row.id,
+                                    x: f.x,
+                                    y: f.y,
+                                    w: f.w,
+                                    h: f.h,
+                                    embeddingBlob: _f32ToBlob(f.embedding),
+                                    qualityScore: computeFaceQualityScore(f, cfg),
+                                },
+                                log,
+                            );
                         }
                     }
-                    setAiIndexedAt(row.id);
+                    _safeSetIndexed(row.id, log);
                     state.scanned += 1;
                     bump();
                 }
@@ -788,6 +827,7 @@ export function startTagsScan(cfg, onProgress, onDone, onLog) {
                                     tags = result.tags;
                                     if (result.pathModeDisabled) skipPathMode = true;
                                 } catch (e) {
+                                    if (e?.fatal) throw e;
                                     log(
                                         'warn',
                                         `tagging failed for id=${row.id}: ${e?.message || e}`,
@@ -795,15 +835,14 @@ export function startTagsScan(cfg, onProgress, onDone, onLog) {
                                 }
                             }
                             // DB writes are synchronous — safe across concurrent JS tasks.
-                            clearImageTagsForDownload(row.id);
-                            if (Array.isArray(tags) && tags.length) {
-                                setImageTags(
-                                    row.id,
-                                    tags.map((t) => ({ tag: t.tag, score: t.score })),
-                                );
-                            } else {
-                                setImageTags(row.id, [{ tag: '_scanned_', score: 0 }]);
-                            }
+                            _safeSetImageTagsForDownload(
+                                row.id,
+                                Array.isArray(tags) && tags.length
+                                    ? tags.map((t) => ({ tag: t.tag, score: t.score }))
+                                    : [{ tag: '_scanned_', score: 0 }],
+                                log,
+                                'tags scan',
+                            );
                             state.scanned += 1;
                             bump();
                         }
@@ -850,27 +889,56 @@ async function _tagOne(sidecarUrl, absPath, tagLabels, log, skipPathMode = false
     try {
         let pathModeDisabled = false;
         let res;
+        let errBody = null;
 
         if (skipPathMode) {
             res = await _post(await _b64Body());
         } else {
             res = await _post({ ...baseBody, path: absPath });
-            if (res.status === 403) {
-                const errBody = await res.json().catch(() => ({}));
-                if (errBody?.code === 'path_not_allowed') {
-                    pathModeDisabled = true;
-                    res = await _post(await _b64Body());
-                }
+            if (!res.ok) errBody = await res.json().catch(() => ({}));
+            if (
+                (res.status === 403 && errBody?.code === 'path_not_allowed') ||
+                (res.status === 404 && errBody?.code === 'file_not_found')
+            ) {
+                // 403 means path mode is disabled/not allowed. 404+file_not_found
+                // can also happen for files that exist but are unreadable via
+                // path mode; fall back to base64 before treating it as a skip.
+                if (res.status === 403) pathModeDisabled = true;
+                res = await _post(await _b64Body());
+                errBody = null;
             }
         }
 
         if (!res.ok) {
-            log('warn', `tag endpoint returned ${res.status} for ${absPath}`);
-            return { tags: [], pathModeDisabled };
+            if (!errBody) errBody = await res.json().catch(() => ({}));
+            const code = String(errBody?.code || '');
+            const msg = `tag endpoint returned ${res.status}${code ? ` (${code})` : ''} for ${absPath}`;
+            log('warn', msg);
+            if (res.status === 404 && !code) {
+                const err = new Error(
+                    `${msg} — sidecar does not expose /tag; upgrade/restart the faces sidecar or disable CLIP tags`,
+                );
+                err.code = 'TAG_ENDPOINT_UNAVAILABLE';
+                err.fatal = true;
+                throw err;
+            }
+            if (
+                res.status === 400 ||
+                res.status === 415 ||
+                code === 'file_not_found' ||
+                code === 'image_decode_failed'
+            ) {
+                return { tags: [], pathModeDisabled };
+            }
+            const err = new Error(`${msg}: ${errBody?.error || errBody?.detail || res.statusText}`);
+            err.code = code || `HTTP_${res.status}`;
+            err.fatal = true;
+            throw err;
         }
         const data = await res.json();
         return { tags: Array.isArray(data?.tags) ? data.tags : [], pathModeDisabled };
     } catch (e) {
+        if (e?.fatal) throw e;
         log('warn', `tag request failed for ${absPath}: ${e?.message || e}`);
         return { tags: [], pathModeDisabled: false };
     }
@@ -1102,12 +1170,16 @@ export function startObjectDetectionScan(cfg, onProgress, onDone, onLog) {
 }
 
 /**
- * Call the Python sidecar's ``POST /detect-objects`` for one image.
- * Tries path mode first; falls back to base64 if sidecar's allow-list rejects.
- * Returns array of {object, confidence, x, y, w, h} or empty array on failure.
+ * Calls the WD14 tagger (``POST /tag-wd14``) — a Danbooru/e621 ONNX
+ * model that gives relevant multi-label tags for adult/NSFW content
+ * (body parts, poses, acts, fetishes) instead of the old YOLO COCO
+ * object labels (person, car, chair...).
+ *
+ * Returns array of {object, confidence, x, y, w, h} (x/y/w/h = 0 since
+ * WD14 is a tagger, not an object detector with bounding boxes).
  */
-async function _detectObjectsOne(sidecarUrl, absPath, confidence, log) {
-    const url = `${sidecarUrl.replace(/\/+$/, '')}/detect-objects`;
+async function _detectObjectsOne(sidecarUrl, absPath, minScore, log) {
+    const url = `${sidecarUrl.replace(/\/+$/, '')}/tag-wd14`;
     const doFetch = async (body) =>
         fetch(url, {
             method: 'POST',
@@ -1116,19 +1188,28 @@ async function _detectObjectsOne(sidecarUrl, absPath, confidence, log) {
             signal: AbortSignal.timeout(60000),
         });
     try {
-        let res = await doFetch({ path: absPath, confidence });
+        let res = await doFetch({ path: absPath, min_score: minScore });
         if (res.status === 403) {
             const b64 = await _readAsBase64(absPath);
-            res = await doFetch({ image_b64: b64, confidence });
+            res = await doFetch({ image_b64: b64, min_score: minScore });
         }
         if (!res.ok) {
-            log('warn', `detect-objects endpoint returned ${res.status} for ${absPath}`);
+            log('warn', `tag-wd14 endpoint returned ${res.status} for ${absPath}`);
             return [];
         }
         const data = await res.json();
-        return Array.isArray(data?.objects) ? data.objects : [];
+        const tags = Array.isArray(data?.tags) ? data.tags : [];
+        // Map WD14 {tag, score} → {object, confidence, x:0, y:0, w:0, h:0}
+        return tags.map((t) => ({
+            object: String(t.tag || ''),
+            confidence: Number(t.score) || 0,
+            x: 0,
+            y: 0,
+            w: 0,
+            h: 0,
+        }));
     } catch (e) {
-        log('warn', `detect-objects request failed for ${absPath}: ${e?.message || e}`);
+        log('warn', `tag-wd14 request failed for ${absPath}: ${e?.message || e}`);
         return [];
     }
 }
@@ -1226,6 +1307,69 @@ async function _tagWd14One(sidecarUrl, absPath, minScore, log) {
     } catch (e) {
         log('warn', `tag-wd14 request failed for ${absPath}: ${e?.message || e}`);
         return [];
+    }
+}
+
+/**
+ * Safe wrappers around AI DB operations that catch FOREIGN KEY constraint
+ * failures. Maintenance bulk-delete / rescue sweeps may delete download rows
+ * concurrently with an AI scan, and we don't want that race to crash the scan.
+ * Returns false when the parent download row no longer exists, true on
+ * success (or when the operation was a no-op).
+ */
+function _isForeignKeyError(e) {
+    return /FOREIGN KEY/i.test(String(e?.message || e));
+}
+
+function _safeSetImageTagsForDownload(downloadId, tags, log, context = 'image tags') {
+    try {
+        clearImageTagsForDownload(downloadId);
+        setImageTags(downloadId, tags);
+        return true;
+    } catch (e) {
+        if (_isForeignKeyError(e)) {
+            log('warn', `${context}: download row vanished while writing tags id=${downloadId}`);
+            return false;
+        }
+        throw e;
+    }
+}
+
+function _safeDeleteFaces(downloadId, log) {
+    try {
+        deleteFacesForDownload(downloadId);
+        return true;
+    } catch (e) {
+        if (_isForeignKeyError(e)) {
+            log('warn', `faces scan: download row vanished (deleteFaces) id=${downloadId}`);
+            return false;
+        }
+        throw e;
+    }
+}
+
+function _safeInsertFace(opts, log) {
+    try {
+        insertFace(opts);
+        return true;
+    } catch (e) {
+        if (_isForeignKeyError(e)) {
+            log('warn', `faces scan: download row vanished (insertFace) id=${opts.downloadId}`);
+            return false;
+        }
+        throw e;
+    }
+}
+
+function _safeSetIndexed(downloadId, log) {
+    try {
+        setAiIndexedAt(downloadId);
+    } catch (e) {
+        if (_isForeignKeyError(e)) {
+            log('warn', `faces scan: download row vanished (setAiIndexedAt) id=${downloadId}`);
+        } else {
+            throw e;
+        }
     }
 }
 

@@ -247,6 +247,7 @@ async function _loadClassifier(cfg, onProgress, onLog) {
  *   so the loop doesn't keep retrying).
  */
 async function _classifyFile(classifier, absPath) {
+    if (!absPath || typeof absPath !== 'string') return null;
     if (!existsSync(absPath)) return null;
     let out;
     try {

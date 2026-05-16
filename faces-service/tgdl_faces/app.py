@@ -50,6 +50,7 @@ from .detection import (
     is_ready as detection_is_ready,
     last_error as detection_last_error,
 )
+from . import wd14 as wd14_tagger
 from .insight import (
     DET_SIZE,
     EMBEDDING_DIM,
@@ -1065,5 +1066,89 @@ def detect_objects(body: Annotated[DetectObjectsRequest, ...]) -> JSONResponse:
         return _error(
             f"detection failed: {type(exc).__name__}: {exc}",
             code="detection_failed",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+
+# ---- WD14 tagger (Danbooru/e621 multi-label) ---------------------------
+
+
+class TagWd14Request(BaseModel):
+    """Body for ``/tag-wd14`` endpoint."""
+
+    path: str | None = Field(default=None, description="Absolute path to image on disk.")
+    image_b64: str | None = Field(default=None, description="Base64-encoded image bytes.")
+    min_score: float = Field(
+        default=0.35, ge=0.0, le=1.0, description="Minimum tag confidence threshold."
+    )
+
+    @model_validator(mode="after")
+    def _validate_source(self) -> TagWd14Request:
+        if (self.path is None) == (self.image_b64 is None):
+            raise ValueError("exactly one of path or image_b64 must be set")
+        return self
+
+
+class TagWd14Result(BaseModel):
+    tag: str
+    score: float
+
+
+class TagWd14Response(BaseModel):
+    tags: list[TagWd14Result]
+
+
+@app.post("/tag-wd14")
+def tag_wd14(body: Annotated[TagWd14Request, ...]) -> JSONResponse:
+    """Tag an image with the WD14 Danbooru/e621 ONNX model.
+
+    Returns ``{tags: [{tag, score}]}`` sorted by score descending.
+    Returns up to 200 tags above ``min_score``.
+
+    Error codes: ``path_not_allowed`` (403), ``file_not_found`` (404),
+    ``image_decode_failed`` (415), ``wd14_not_ready`` (503),
+    ``wd14_failed`` (500).
+    """
+    if not wd14_tagger.is_ready():
+        return _error(
+            f"WD14 tagger not available: {wd14_tagger.last_error()}",
+            code="wd14_not_ready",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+
+    try:
+        if body.path:
+            img = load_image_from_path(body.path, _allow_roots())
+        else:
+            assert body.image_b64 is not None
+            img = load_image_from_b64(body.image_b64)
+    except PathNotAllowedError as exc:
+        return _error(
+            str(exc), code="path_not_allowed", status_code=status.HTTP_403_FORBIDDEN
+        )
+    except FileNotFoundError as exc:
+        return _error(
+            str(exc), code="file_not_found", status_code=status.HTTP_404_NOT_FOUND
+        )
+    except ImageDecodeError as exc:
+        return _error(
+            str(exc),
+            code="image_decode_failed",
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+        )
+
+    try:
+        tags = wd14_tagger.tag_image(img, min_score=body.min_score)
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content=TagWd14Response(
+                tags=[TagWd14Result(**t) for t in tags]
+            ).model_dump(),
+        )
+    except Exception as exc:
+        _LOG.exception("tag_wd14 failed")
+        return _error(
+            f"WD14 tagging failed: {type(exc).__name__}: {exc}",
+            code="wd14_failed",
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )

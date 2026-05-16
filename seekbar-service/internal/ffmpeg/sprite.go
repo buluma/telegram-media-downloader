@@ -152,10 +152,18 @@ func AtomicRename(tmp, dst string) error {
 
 // TempPath produces a randomised .tmp path next to `target` so concurrent
 // workers writing different sprites don't collide on filename.
+// The extension is kept at the end so ffmpeg can always infer the output
+// format from the filename, even when the binary's -f flag isn't recognized.
+// Pattern: .<base>.tmp.<random>.<ext>
 func TempPath(target string) string {
 	dir := filepath.Dir(target)
 	base := filepath.Base(target)
+	ext := ""
+	if idx := strings.LastIndex(base, "."); idx >= 0 {
+		ext = base[idx:]
+		base = base[:idx]
+	}
 	var b [4]byte
 	_, _ = rand.Read(b[:])
-	return filepath.Join(dir, "."+base+".tmp."+hex.EncodeToString(b[:]))
+	return filepath.Join(dir, "."+base+".tmp."+hex.EncodeToString(b[:])+ext)
 }

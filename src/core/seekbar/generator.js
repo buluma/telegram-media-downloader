@@ -56,6 +56,8 @@ export const SEEKBAR_DEFAULTS = Object.freeze({
     hwaccel: null,
 });
 
+export { _resolveDownloadAbs as resolveDownloadAbs };
+
 export function getSeekbarConfig() {
     let stored = {};
     try {

@@ -149,6 +149,270 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         }
     }
 
+    const _SIDECAR_HEALTH_CACHE = { url: null, ts: 0, data: null };
+    async function _fetchSidecarHealth(url) {
+        const now = Date.now();
+        if (
+            _SIDECAR_HEALTH_CACHE.url === url &&
+            now - _SIDECAR_HEALTH_CACHE.ts < _SIDECAR_INFO_TTL_MS &&
+            _SIDECAR_HEALTH_CACHE.data
+        ) {
+            return _SIDECAR_HEALTH_CACHE.data;
+        }
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 2000);
+        try {
+            const res = await fetch(`${url.replace(/\/+$/, '')}/health`, {
+                signal: controller.signal,
+            });
+            if (!res.ok) return null;
+            const data = await res.json();
+            _SIDECAR_HEALTH_CACHE.url = url;
+            _SIDECAR_HEALTH_CACHE.ts = now;
+            _SIDECAR_HEALTH_CACHE.data = data;
+            return data;
+        } catch {
+            return null;
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
+    async function _getAiSidecarSnapshot() {
+        let url = null;
+        let mode = 'unknown';
+        try {
+            const facesClient = await import('../../core/ai/faces-client.js');
+            url = facesClient.getSidecarUrl() || null;
+        } catch {}
+        try {
+            const facesSpawn = await import('../../core/ai/faces-spawn.js');
+            const st = facesSpawn.getSidecarStatus?.() || {};
+            url = url || st.url || null;
+            mode = st.mode || st.state || mode;
+        } catch {}
+        const info = url ? await _fetchSidecarInfo(url) : null;
+        const health = url ? await _fetchSidecarHealth(url) : null;
+        const endpoints = {
+            faces: !!url,
+            tag: !!(info?.clip_ready || health?.clip_ready),
+            ocr: !!health?.ocr_ready,
+            objects: !!health?.detection_ready,
+            wd14: true, // endpoint exists in bundled sidecar; readiness is lazy/on first request
+        };
+        return {
+            url,
+            mode,
+            ok: !!(health?.ok ?? info),
+            version: info?.version || health?.version || null,
+            platform: info?.platform || health?.platform || null,
+            python: info?.python || health?.python || null,
+            providers: info?.providers || health?.providers_resolved || null,
+            info,
+            health,
+            endpoints,
+        };
+    }
+
+    const _AI_ISSUES_TTL_MS = 60_000;
+    const _AI_ISSUES_CACHE = { ts: 0, data: null };
+    async function _getAiIssuesSnapshot({ force = false } = {}) {
+        const now = Date.now();
+        if (!force && _AI_ISSUES_CACHE.data && now - _AI_ISSUES_CACHE.ts < _AI_ISSUES_TTL_MS) {
+            return _AI_ISSUES_CACHE.data;
+        }
+        const db = getDb();
+        const issues = [];
+        const push = (issue) => {
+            if (!issue || !issue.count) return;
+            issues.push({ severity: 'warn', samples: [], ...issue });
+        };
+
+        const fkRows = db.prepare('PRAGMA foreign_key_check').all();
+        push({
+            type: 'foreign_key',
+            severity: 'error',
+            title: 'Foreign key integrity errors',
+            count: fkRows.length,
+            detail: 'Derived AI rows reference missing parent rows.',
+            samples: fkRows.slice(0, 20),
+        });
+
+        const sentinelRows = db
+            .prepare(
+                `SELECT t.download_id AS id, d.file_name, d.file_path, d.file_type
+                   FROM image_tags t
+                   LEFT JOIN downloads d ON d.id = t.download_id
+                  WHERE t.tag = '_scanned_'
+                  ORDER BY t.download_id DESC
+                  LIMIT 20`,
+            )
+            .all();
+        const sentinelCount = db
+            .prepare(
+                `SELECT COUNT(DISTINCT download_id) AS n FROM image_tags WHERE tag = '_scanned_'`,
+            )
+            .get().n;
+        push({
+            type: 'clip_empty_sentinel',
+            severity: 'info',
+            title: 'CLIP rows with no returned tags',
+            count: sentinelCount,
+            detail: 'Rows stamped with _scanned_. Some are valid no-tag results; many may indicate invalid media or sidecar failures from earlier runs.',
+            samples: sentinelRows,
+        });
+
+        const scanErrors = [];
+        for (const feature of ['faces', 'tags', 'ocr', 'objects', 'wd14']) {
+            const s = aiGetScanState(feature);
+            if (s?.error) scanErrors.push({ feature, error: s.error, finishedAt: s.finishedAt });
+        }
+        push({
+            type: 'scan_errors',
+            severity: 'error',
+            title: 'Scanner errors',
+            count: scanErrors.length,
+            detail: 'One or more scanners ended with an error this process lifetime.',
+            samples: scanErrors,
+        });
+
+        const sidecar = await _getAiSidecarSnapshot();
+        push({
+            type: 'sidecar_offline',
+            severity: 'error',
+            title: 'AI sidecar offline',
+            count: sidecar.url ? 0 : 1,
+            detail: 'Sidecar-dependent scans cannot run until the sidecar is available.',
+            samples: [],
+        });
+        push({
+            type: 'clip_not_ready',
+            severity: 'warn',
+            title: 'CLIP tagger not ready',
+            count: sidecar.url && !sidecar.endpoints.tag ? 1 : 0,
+            detail: 'CLIP tag scans will be blocked until /health or /info reports clip_ready.',
+            samples: [],
+        });
+
+        const { sniffMediaFile } = await import('../../core/media-sniff.js');
+        const rows = db
+            .prepare(
+                `SELECT id, file_name, file_type, file_path, file_size
+                   FROM downloads
+                  WHERE file_path IS NOT NULL
+                  ORDER BY id DESC
+                  LIMIT 20000`,
+            )
+            .all();
+        let missing = 0;
+        let mislabeled = 0;
+        let invalidPhotos = 0;
+        let folderMismatch = 0;
+        const missingSamples = [];
+        const mislabeledSamples = [];
+        const invalidSamples = [];
+        const folderSamples = [];
+        const expectedFolderFor = (ft) =>
+            ft === 'photo'
+                ? 'images'
+                : ft === 'video'
+                  ? 'videos'
+                  : ft === 'audio'
+                    ? 'audio'
+                    : 'documents';
+        for (const row of rows) {
+            const fp = String(row.file_path || '').replace(/\\/g, '/');
+            if (fp.startsWith('_clusterref/')) continue;
+            const abs = _resolveAiPath(fp);
+            if (!abs) {
+                missing += 1;
+                if (missingSamples.length < 20) missingSamples.push(row);
+                continue;
+            }
+            const parts = fp.split('/');
+            const folder = parts.length >= 3 ? parts[1] : '';
+            const expectedFolder = expectedFolderFor(row.file_type);
+            if (folder && expectedFolder && folder !== expectedFolder) {
+                folderMismatch += 1;
+                if (folderSamples.length < 20)
+                    folderSamples.push({ ...row, folder, expectedFolder });
+            }
+            try {
+                const sniff = await sniffMediaFile(abs);
+                if (sniff.fileType && sniff.fileType !== row.file_type) {
+                    mislabeled += 1;
+                    if (mislabeledSamples.length < 20) {
+                        mislabeledSamples.push({
+                            ...row,
+                            actualType: sniff.fileType,
+                            mime: sniff.mime,
+                        });
+                    }
+                }
+                if (
+                    row.file_type === 'photo' &&
+                    sniff.mime &&
+                    !String(sniff.mime).startsWith('image/')
+                ) {
+                    invalidPhotos += 1;
+                    if (invalidSamples.length < 20)
+                        invalidSamples.push({ ...row, mime: sniff.mime });
+                }
+            } catch (e) {
+                if (row.file_type === 'photo') {
+                    invalidPhotos += 1;
+                    if (invalidSamples.length < 20)
+                        invalidSamples.push({ ...row, error: e?.message || String(e) });
+                }
+            }
+        }
+        push({
+            type: 'missing_files',
+            severity: 'warn',
+            title: 'Database rows with missing files',
+            count: missing,
+            detail: 'Rows in downloads point at files that are not present on disk.',
+            samples: missingSamples,
+        });
+        push({
+            type: 'mislabeled_media',
+            severity: 'warn',
+            title: 'Mislabeled media rows',
+            count: mislabeled,
+            detail: 'The stored file_type does not match the bytes on disk.',
+            samples: mislabeledSamples,
+        });
+        push({
+            type: 'invalid_photos',
+            severity: 'warn',
+            title: 'Photo rows that are not decodable images',
+            count: invalidPhotos,
+            detail: 'These rows would fail image-only scanners such as CLIP tags or NSFW.',
+            samples: invalidSamples,
+        });
+        push({
+            type: 'folder_mismatch',
+            severity: 'info',
+            title: 'Rows in unexpected media folders',
+            count: folderMismatch,
+            detail: 'File path folder does not match file_type convention.',
+            samples: folderSamples,
+        });
+
+        const data = {
+            success: true,
+            generatedAt: now,
+            ttlMs: _AI_ISSUES_TTL_MS,
+            scannedRows: rows.length,
+            total: issues.length,
+            counts: Object.fromEntries(issues.map((i) => [i.type, i.count])),
+            issues,
+        };
+        _AI_ISSUES_CACHE.ts = now;
+        _AI_ISSUES_CACHE.data = data;
+        return data;
+    }
+
     router.get('/ai/status', async (_req, res) => {
         try {
             const cfg = _aiCfg();
@@ -165,6 +429,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             // siblings preserves backward compat with any in-flight code
             // that still reads the legacy shape.
             const facesBlock = cfg.faces && typeof cfg.faces === 'object' ? cfg.faces : {};
+            const sidecar = await _getAiSidecarSnapshot();
             res.json({
                 success: true,
                 config: {
@@ -193,6 +458,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                     },
                 },
                 counts,
+                sidecar,
                 scans: {
                     faces: aiGetScanState('faces'),
                     tags: aiGetScanState('tags'),
@@ -252,15 +518,11 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                         let vocabularySize = 0;
                         let modelId = '';
                         try {
-                            const facesClient = await import('../../core/ai/faces-client.js');
-                            const url = facesClient.getSidecarUrl();
-                            if (url) {
-                                const info = await _fetchSidecarInfo(url);
-                                if (info) {
-                                    loaded = info.clip_ready === true;
-                                    vocabularySize = info.clip_vocabulary_size || 0;
-                                    modelId = info.clip_model || '';
-                                }
+                            const info = sidecar.info || sidecar.health;
+                            if (info) {
+                                loaded = info.clip_ready === true;
+                                vocabularySize = info.clip_vocabulary_size || 0;
+                                modelId = info.clip_model || '';
                             }
                         } catch {
                             /* probe failed — leave defaults */
@@ -279,14 +541,10 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                         let ready = false;
                         let error = null;
                         try {
-                            const facesClient = await import('../../core/ai/faces-client.js');
-                            const url = facesClient.getSidecarUrl();
-                            if (url) {
-                                const info = await _fetchSidecarInfo(url);
-                                if (info) {
-                                    ready = info.ocr_ready === true;
-                                    error = info.ocr_error || null;
-                                }
+                            const info = sidecar.health || sidecar.info;
+                            if (info) {
+                                ready = info.ocr_ready === true;
+                                error = info.ocr_error || null;
                             }
                         } catch {
                             /* probe failed */
@@ -301,20 +559,21 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                         let ready = false;
                         let error = null;
                         try {
-                            const facesClient = await import('../../core/ai/faces-client.js');
-                            const url = facesClient.getSidecarUrl();
-                            if (url) {
-                                const info = await _fetchSidecarInfo(url);
-                                if (info) {
-                                    ready = info.detection_ready === true;
-                                    error = info.detection_error || null;
-                                }
+                            const info = sidecar.health || sidecar.info;
+                            if (info) {
+                                ready = info.detection_ready === true;
+                                error = info.detection_error || null;
                             }
                         } catch {
                             /* probe failed */
                         }
                         return { enabled, ready, error };
                     })(),
+                    wd14: {
+                        enabled: cfg.wd14Tagging !== false,
+                        ready: !!sidecar.url,
+                        id: 'SmilingWolf WD14 tagger',
+                    },
                 },
                 bgQueue: (() => {
                     try {
@@ -333,6 +592,15 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             });
         } catch (e) {
             res.status(500).json({ error: e.message });
+        }
+    });
+
+    router.get('/ai/issues', async (req, res) => {
+        try {
+            const force = req.query.force === '1' || req.query.refresh === '1';
+            res.json(await _getAiIssuesSnapshot({ force }));
+        } catch (e) {
+            res.status(500).json({ error: e?.message || String(e), code: 'AI_ISSUES_FAILED' });
         }
     });
 
@@ -678,6 +946,27 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                 return res
                     .status(409)
                     .json({ error: 'Scan already running', code: 'ALREADY_RUNNING' });
+            }
+            if (['tags', 'ocr', 'objects', 'wd14'].includes(feature)) {
+                const sidecar = await _getAiSidecarSnapshot();
+                if (!sidecar.url) {
+                    return res.status(503).json({
+                        error: 'AI sidecar is not running — start/restart the sidecar before scanning.',
+                        code: 'SIDECAR_OFFLINE',
+                    });
+                }
+                if (feature === 'tags' && !sidecar.endpoints.tag) {
+                    return res.status(503).json({
+                        error: 'CLIP tagger is not ready on the sidecar.',
+                        code: 'TAGGER_NOT_READY',
+                    });
+                }
+                if (feature === 'ocr' && !sidecar.endpoints.ocr) {
+                    return res.status(503).json({
+                        error: 'OCR is not ready on the sidecar.',
+                        code: 'OCR_NOT_READY',
+                    });
+                }
             }
             // Allow request-level parameter overrides (e.g., confidence sliders)
             if (feature === 'objects' && typeof req.body?.minConfidence === 'number') {

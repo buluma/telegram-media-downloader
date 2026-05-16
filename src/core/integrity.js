@@ -18,6 +18,7 @@ import { fileURLToPath } from 'url';
 import { getDb, insertDownload } from './db.js';
 import { logger } from './logger.js';
 import { sanitizeName } from './downloader.js';
+import { fileTypeFromExtension, sniffMediaFile } from './media-sniff.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DOWNLOADS_DIR = path.join(__dirname, '../../data/downloads');
@@ -231,17 +232,6 @@ const TYPE_FOLDER_TO_FILETYPE = {
     others: 'document',
 };
 
-const PHOTO_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif', '.gif']);
-const VIDEO_EXTS = new Set(['.mp4', '.mov', '.avi', '.mkv', '.webm']);
-const AUDIO_EXTS = new Set(['.mp3', '.ogg', '.wav', '.m4a', '.opus', '.flac']);
-
-function fileTypeFromExt(ext) {
-    if (PHOTO_EXTS.has(ext)) return 'photo';
-    if (VIDEO_EXTS.has(ext)) return 'video';
-    if (AUDIO_EXTS.has(ext)) return 'audio';
-    return 'document';
-}
-
 // Filename pattern produced by `downloader.generateFilename`:
 //   `<ISO timestamp>_<messageId|noid><ext>`
 // Stable parser — when messageId is present we reuse it (so re-running the
@@ -399,8 +389,7 @@ export async function reindexFromDisk(configGroups, onProgress) {
                             fileName: f.name,
                             groupId,
                             groupName,
-                            fileType:
-                                folderType || fileTypeFromExt(path.extname(f.name).toLowerCase()),
+                            fileType: folderType || fileTypeFromExtension(f.name),
                         });
                     }
                 } else if (sub.isFile()) {
@@ -417,7 +406,7 @@ export async function reindexFromDisk(configGroups, onProgress) {
                         fileName: sub.name,
                         groupId,
                         groupName,
-                        fileType: fileTypeFromExt(path.extname(sub.name).toLowerCase()),
+                        fileType: fileTypeFromExtension(sub.name),
                     });
                 }
             }
@@ -445,6 +434,15 @@ async function _ingestOne({ result, fullAbs, relPath, fileName, groupId, groupNa
             return;
         }
         const messageId = deriveMessageId(relPath, fileName);
+        // Trust file bytes over folder/extension where possible. Reindex is
+        // often used after manual restores, so it must not recreate `photo`
+        // rows for MP4/TGS payloads with misleading names.
+        try {
+            const sniff = await sniffMediaFile(fullAbs);
+            if (sniff.fileType) fileType = sniff.fileType;
+        } catch {
+            /* extension/folder fallback is fine */
+        }
         // INSERT OR IGNORE drops the row when (group_id, message_id) is
         // already present, so re-runs converge instead of doubling.
         const r = insertDownload({

@@ -25,6 +25,7 @@ import { optimizeDownloadInBackground as faststartInBackground } from './faststa
 import { pregenerateNsfw } from './nsfw.js';
 import { pregenerateAi } from './ai/index.js';
 import { pregenerateSeekbar } from './seekbar/index.js';
+import { fileTypeFromExtension, sniffMediaFile } from './media-sniff.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, '../../data');
@@ -695,6 +696,15 @@ export class DownloadManager extends EventEmitter {
                 }
             }
 
+            const mediaInfo = this.describeDownloadableMedia(job.message);
+            if (!mediaInfo.downloadable) {
+                const err = new Error(
+                    `Message has no downloadable media (${mediaInfo.description})`,
+                );
+                err.nonRetryable = true;
+                throw err;
+            }
+
             // 3. Rate Limit
             if (this.rateLimiter && attempt === 1) await this.rateLimiter.acquire();
 
@@ -794,7 +804,9 @@ export class DownloadManager extends EventEmitter {
                     try {
                         await fs.unlink(partPath);
                     } catch {}
-                    throw new Error('Downloaded file is empty (0 bytes)');
+                    throw new Error(
+                        `Downloaded file is empty (0 bytes); expected=${fileSize || 'unknown'}; media=${mediaInfo.description}`,
+                    );
                 }
                 // Collision guard: `fs.rename` silently overwrites an
                 // existing destination on every major platform, so two
@@ -822,7 +834,9 @@ export class DownloadManager extends EventEmitter {
                     try {
                         await fs.unlink(writtenPath);
                     } catch {}
-                    throw new Error('Final file is 0 bytes after rename');
+                    throw new Error(
+                        `Final file is 0 bytes after rename; expected=${fileSize || 'unknown'}; media=${mediaInfo.description}`,
+                    );
                 }
                 return await this.registerDownload(job, writtenPath, finalStats.size);
             } catch (error) {
@@ -848,6 +862,8 @@ export class DownloadManager extends EventEmitter {
                 this.emit('queue_changed', { key: job.key, op: 'cancel' });
                 return; // swallow — runWorker treats absence of throw as "done"
             }
+
+            if (error?.nonRetryable) throw error;
 
             if (error.errorMessage === 'FLOOD_WAIT' || error.message?.includes('FLOOD_WAIT')) {
                 const seconds = error.seconds || 60;
@@ -918,14 +934,32 @@ export class DownloadManager extends EventEmitter {
         let storedPath = filePath;
         let storedSize = size;
         let bytesAddedToDisk = size;
+        let sniffedType = null;
         try {
+            // Trust bytes over Telegram metadata/extension. Some Telegram
+            // uploads arrive as `photo` with a .jpg name while the payload is
+            // actually MP4/TGS. Normalise before hashing/inserting so image
+            // scanners never try to decode videos as JPEGs.
+            try {
+                const normalised = await this.normaliseDownloadedMediaPath(storedPath);
+                storedPath = normalised.filePath;
+                sniffedType = normalised.fileType;
+                if (normalised.changed) {
+                    console.warn(
+                        `[downloader] corrected media type ${normalised.mime || 'unknown'}: ${path.basename(filePath)} -> ${path.basename(storedPath)} (${sniffedType})`,
+                    );
+                }
+            } catch (e) {
+                console.warn('[downloader] media sniff failed:', e?.message || e);
+            }
+
             // Hash on a worker thread so the main event loop stays free
             // during multi-GB post-write hashing. Falls back automatically
             // to the in-process streamer if the pool is disabled.
             try {
-                fileHash = await sha256OfFileViaPool(filePath);
+                fileHash = await sha256OfFileViaPool(storedPath);
             } catch {
-                fileHash = await sha256OfFile(filePath);
+                fileHash = await sha256OfFile(storedPath);
             }
             // Match on hash AND size — size match guards against the
             // (vanishingly improbable) SHA-256 collision and rejects rows
@@ -947,7 +981,7 @@ export class DownloadManager extends EventEmitter {
                     : path.resolve(DOWNLOADS_DIR, dup.file_path);
                 if (existsSync(dupAbs)) {
                     try {
-                        await fs.unlink(filePath);
+                        await fs.unlink(storedPath);
                     } catch {
                         /* leave stale; integrity sweep handles it */
                     }
@@ -969,7 +1003,7 @@ export class DownloadManager extends EventEmitter {
                         const winner = hits.find((h) => h.peerStatus !== 'offline') || hits[0];
                         if (winner) {
                             try {
-                                await fs.unlink(filePath);
+                                await fs.unlink(storedPath);
                             } catch {
                                 /* leave stale; integrity sweep handles it */
                             }
@@ -1002,18 +1036,9 @@ export class DownloadManager extends EventEmitter {
 
         // DB Insert
         try {
-            // Determine type based on extension or message. HEIC / HEIF
-            // count as photo so the gallery renders them via <img> + the
-            // /files/<path>?inline=1 transcode path (sharp libvips handles
-            // the format on the server) — otherwise iPhone uploads land
-            // in the "documents" bucket and never preview.
-            let type = 'document';
-            const ext = path.extname(storedPath).toLowerCase();
-            if (['.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif', '.gif'].includes(ext))
-                type = 'photo';
-            else if (['.mp4', '.mov', '.avi', '.mkv', '.webm'].includes(ext)) type = 'video';
-            else if (['.mp3', '.ogg', '.wav', '.m4a', '.opus', '.flac'].includes(ext))
-                type = 'audio';
+            // Prefer content-sniffed type; fall back to extension for
+            // unknown documents / legacy formats.
+            const type = sniffedType || fileTypeFromExtension(storedPath);
 
             const insertResult = insertDownload({
                 groupId: String(groupId),
@@ -1116,6 +1141,74 @@ export class DownloadManager extends EventEmitter {
         });
 
         return storedPath;
+    }
+
+    async normaliseDownloadedMediaPath(filePath) {
+        const sniff = await sniffMediaFile(filePath);
+        const fileType = sniff.fileType || fileTypeFromExtension(filePath);
+        const wantedExt = sniff.ext || path.extname(filePath).toLowerCase() || '.bin';
+        const folder =
+            fileType === 'photo'
+                ? 'images'
+                : fileType === 'video'
+                  ? 'videos'
+                  : fileType === 'audio'
+                    ? 'audio'
+                    : 'documents';
+
+        const currentExt = path.extname(filePath).toLowerCase();
+        const currentDir = path.basename(path.dirname(filePath));
+        const needsExt = wantedExt && currentExt !== wantedExt;
+        const needsFolder = currentDir !== folder;
+        if (!needsExt && !needsFolder) {
+            return { filePath, fileType, mime: sniff.mime, changed: false };
+        }
+
+        const groupDir = path.dirname(path.dirname(filePath));
+        const targetDir = path.join(groupDir, folder);
+        await fs.mkdir(targetDir, { recursive: true });
+        const parsed = path.parse(filePath);
+        const baseName = `${parsed.name}${needsExt ? wantedExt : parsed.ext}`;
+        let target = path.join(targetDir, baseName);
+        if (existsSync(target) && path.resolve(target) !== path.resolve(filePath)) {
+            const p = path.parse(target);
+            let i = 1;
+            while (i < 1000 && existsSync(path.join(p.dir, `${p.name} (${i})${p.ext}`))) i++;
+            target = path.join(p.dir, `${p.name} (${i})${p.ext}`);
+        }
+        if (path.resolve(target) !== path.resolve(filePath)) {
+            await fs.rename(filePath, target);
+        }
+        return { filePath: target, fileType, mime: sniff.mime, changed: true };
+    }
+
+    describeDownloadableMedia(message) {
+        const media = message?.media || null;
+        const cls = media?.className || message?.className || typeof media;
+        let resolved = media;
+        if (media instanceof Api.MessageMediaWebPage || cls === 'MessageMediaWebPage') {
+            const wp = media.webpage || media.webPage;
+            resolved = wp?.document || wp?.photo || null;
+        }
+        const resolvedCls = resolved?.className || resolved?.constructor?.name || typeof resolved;
+        const downloadable = Boolean(
+            message?.photo ||
+                message?.document ||
+                resolved instanceof Api.MessageMediaPhoto ||
+                resolved instanceof Api.Photo ||
+                resolved instanceof Api.MessageMediaDocument ||
+                resolved instanceof Api.Document ||
+                resolvedCls === 'MessageMediaPhoto' ||
+                resolvedCls === 'Photo' ||
+                resolvedCls === 'MessageMediaDocument' ||
+                resolvedCls === 'Document',
+        );
+        const mime =
+            resolved?.document?.mimeType || resolved?.mimeType || message?.document?.mimeType || '';
+        return {
+            downloadable,
+            description: `${cls || 'unknown'}${resolved && resolved !== media ? `->${resolvedCls}` : ''}${mime ? ` mime=${mime}` : ''}`,
+        };
     }
 
     getFileSize(message) {

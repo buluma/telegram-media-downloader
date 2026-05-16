@@ -1834,6 +1834,15 @@ export async function refreshStatus() {
         if (!r.success) return;
         _lastStatus = r;
         _renderStatus(r);
+        api.get('/api/ai/issues')
+            .then((issues) => {
+                if (!issues?.success || _lastStatus !== r) return;
+                _lastStatus.issues = issues;
+                _renderQuickOps(_lastStatus);
+            })
+            .catch(() => {
+                /* status should still render if issue audit fails */
+            });
         _renderTagBrowser().catch(() => {});
         _renderObjectsBrowser().catch(() => {});
         _renderTagSuggestions().catch(() => {});
@@ -1863,6 +1872,7 @@ function _bindOnce() {
     // for tweaking ε / minPoints + seeing the new cluster count
     // immediately without waiting for a full re-scan.
     $('#ai-recluster-btn')?.addEventListener('click', _recluster);
+    $('#ai-copy-diagnostics-btn')?.addEventListener('click', _copyAiDiagnostics);
 
     // Master + auto toggles — both live as labelled rows in the Face
     // clustering settings section. Click-anywhere on the toggle flips
@@ -2465,6 +2475,197 @@ async function _onIncludeVideosToggle() {
 
 // ---- Status / settings ----------------------------------------------------
 
+function _featurePill(label, state, detail = '') {
+    const tone =
+        state === 'ready'
+            ? 'border-green-500/30 bg-green-500/10 text-green-200'
+            : state === 'disabled'
+              ? 'border-tg-border/30 bg-tg-bg/30 text-tg-textSecondary'
+              : state === 'warn'
+                ? 'border-yellow-500/30 bg-yellow-500/10 text-yellow-200'
+                : 'border-red-500/30 bg-red-500/10 text-red-200';
+    const icon =
+        state === 'ready'
+            ? 'ri-checkbox-circle-line'
+            : state === 'disabled'
+              ? 'ri-pause-circle-line'
+              : state === 'warn'
+                ? 'ri-error-warning-line'
+                : 'ri-close-circle-line';
+    return `<div class="rounded-md border ${tone} px-2 py-1.5 min-w-0">
+        <div class="flex items-center gap-1.5 text-[11px] font-medium"><i class="${icon}"></i><span>${escapeHtml(label)}</span></div>
+        <div class="text-[10px] opacity-80 truncate mt-0.5" title="${escapeHtml(detail)}">${escapeHtml(detail || (state === 'ready' ? 'Ready' : state))}</div>
+    </div>`;
+}
+
+function _scanLabel(feature) {
+    return (
+        {
+            faces: 'Faces',
+            tags: 'CLIP tags',
+            ocr: 'OCR',
+            objects: 'Objects',
+            wd14: 'WD14',
+        }[feature] || feature
+    );
+}
+
+function _renderQuickOps(status) {
+    const grid = $('#ai-readiness-grid');
+    const meta = $('#ai-readiness-meta');
+    const jobsCard = $('#ai-active-jobs-card');
+    const jobsList = $('#ai-active-jobs-list');
+    const issuesCard = $('#ai-issues-card');
+    const issuesList = $('#ai-issues-list');
+    const cfg = status?.config || {};
+    const models = status?.models || {};
+    const sidecar = status?.sidecar || {};
+    const scans = status?.scans || {};
+
+    if (grid) {
+        const sidecarState = sidecar.url && sidecar.ok !== false ? 'ready' : 'error';
+        const facesReady = models.faces?.loaded === true;
+        const tagsReady = models.tags?.loaded === true;
+        const ocrEnabled = cfg.imageOcr === true;
+        const objectsEnabled =
+            cfg.objectDetection === true || typeof cfg.objectDetection === 'object';
+        grid.innerHTML = [
+            _featurePill('Sidecar', sidecarState, sidecar.url || 'Offline'),
+            _featurePill('Faces', facesReady ? 'ready' : 'error', models.faces?.id || 'Not ready'),
+            _featurePill(
+                'CLIP tags',
+                tagsReady ? 'ready' : 'error',
+                models.tags?.id || 'Not ready',
+            ),
+            _featurePill(
+                'OCR',
+                !ocrEnabled ? 'disabled' : models.ocr?.ready ? 'ready' : 'warn',
+                !ocrEnabled
+                    ? 'Disabled'
+                    : models.ocr?.error || (models.ocr?.ready ? 'Ready' : 'Not ready'),
+            ),
+            _featurePill(
+                'Objects',
+                !objectsEnabled ? 'disabled' : models.objects?.ready ? 'ready' : 'warn',
+                !objectsEnabled
+                    ? 'Disabled'
+                    : models.objects?.error || (models.objects?.ready ? 'Ready' : 'Not ready'),
+            ),
+        ].join('');
+    }
+    if (meta) {
+        const parts = [
+            sidecar.version ? `version ${sidecar.version}` : null,
+            sidecar.platform || null,
+            Array.isArray(sidecar.providers) && sidecar.providers.length
+                ? sidecar.providers.map((p) => _PROVIDER_LABEL[p] || p).join(', ')
+                : null,
+        ].filter(Boolean);
+        meta.textContent = parts.length
+            ? parts.join(' · ')
+            : 'Capability status updates on refresh.';
+        meta.title = meta.textContent;
+    }
+
+    const active = Object.entries(scans).filter(([, s]) => s?.running);
+    if (jobsCard && jobsList) {
+        jobsCard.classList.toggle('hidden', !active.length);
+        jobsList.innerHTML = active
+            .map(([feature, s]) => {
+                const scanned = Number(s.scanned) || 0;
+                const total = Number(s.total) || 0;
+                const pct = total ? Math.min(100, Math.round((scanned / total) * 100)) : 0;
+                return `<div>
+                    <div class="flex items-center justify-between gap-2 text-[11px] text-tg-text">
+                        <span>${escapeHtml(_scanLabel(feature))}</span>
+                        <span class="tabular-nums text-tg-textSecondary">${total ? `${scanned.toLocaleString()} / ${total.toLocaleString()} · ${pct}%` : `${scanned.toLocaleString()} processed`}</span>
+                    </div>
+                    <div class="h-1.5 bg-tg-bg/60 rounded overflow-hidden mt-1"><div class="h-full bg-tg-blue" style="width:${pct}%"></div></div>
+                </div>`;
+            })
+            .join('');
+    }
+
+    const issues = [];
+    if (!sidecar.url)
+        issues.push({
+            severity: 'error',
+            title: 'Sidecar offline',
+            count: 1,
+            detail: 'AI scans that need the Python service cannot start.',
+        });
+    for (const [feature, s] of Object.entries(scans)) {
+        if (s?.error)
+            issues.push({
+                severity: 'error',
+                title: `${_scanLabel(feature)} failed`,
+                count: 1,
+                detail: s.error,
+            });
+    }
+    if (models.ocr?.error)
+        issues.push({
+            severity: 'warn',
+            title: 'OCR not ready',
+            count: 1,
+            detail: models.ocr.error,
+        });
+    if (models.objects?.error)
+        issues.push({
+            severity: 'warn',
+            title: 'Object detection not ready',
+            count: 1,
+            detail: models.objects.error,
+        });
+    if (models.tags && models.tags.loaded === false)
+        issues.push({
+            severity: 'warn',
+            title: 'CLIP tagger not ready',
+            count: 1,
+            detail: 'Tag scans are disabled until the sidecar reports clip_ready.',
+        });
+    const auditedIssues = Array.isArray(status?.issues?.issues)
+        ? status.issues.issues.filter((i) => Number(i.count) > 0 && i.severity !== 'info')
+        : [];
+    issues.push(...auditedIssues);
+    if (issuesCard && issuesList) {
+        issuesCard.classList.toggle('hidden', !issues.length);
+        issuesList.innerHTML = issues
+            .slice(0, 8)
+            .map((issue) => {
+                const sevCls =
+                    issue.severity === 'error'
+                        ? 'text-red-200'
+                        : issue.severity === 'info'
+                          ? 'text-tg-textSecondary'
+                          : 'text-yellow-100';
+                const count =
+                    Number(issue.count) > 1 ? ` (${Number(issue.count).toLocaleString()})` : '';
+                return `<div><span class="${sevCls} font-medium">${escapeHtml(issue.title || issue.type)}${count}:</span> <span class="text-red-100/80">${escapeHtml(String(issue.detail || ''))}</span></div>`;
+            })
+            .join('');
+    }
+}
+
+async function _copyAiDiagnostics() {
+    if (!_lastStatus) return;
+    const data = {
+        generatedAt: new Date().toISOString(),
+        sidecar: _lastStatus.sidecar || null,
+        models: _lastStatus.models || {},
+        scans: _lastStatus.scans || {},
+        counts: _lastStatus.counts || {},
+        trackers: _lastStatus.trackers || {},
+        issues: _lastStatus.issues || null,
+    };
+    try {
+        await navigator.clipboard.writeText(JSON.stringify(data, null, 2));
+        showToast('AI diagnostics copied', 'success');
+    } catch {
+        showToast('Could not copy diagnostics', 'error');
+    }
+}
+
 function _renderStatus(status) {
     if (!status) return;
     const cfg = status.config || {};
@@ -2475,6 +2676,7 @@ function _renderStatus(status) {
     // Sidecar status pill — always rendered now (the prior hide-on-
     // empty path silently dropped the chip during partial rollouts).
     _renderSidecarBadge(status);
+    _renderQuickOps(status);
 
     // Progress + scan buttons. Cancel is always rendered and just
     // toggles its disabled state; the thumbs page uses the same
@@ -2673,7 +2875,11 @@ function _renderStatus(status) {
     const tagsScanBtn = $('#ai-tags-scan-btn');
     const tagsCancelBtn = $('#ai-tags-cancel-btn');
     if (tagsScanBtn) {
-        tagsScanBtn.disabled = tagsRunning;
+        const tagsReady = tagsModel.loaded === true;
+        tagsScanBtn.disabled = tagsRunning || !tagsReady;
+        tagsScanBtn.title = tagsReady
+            ? 'Run CLIP tag scan'
+            : 'CLIP tagger is not ready on the sidecar';
         const tagScanIcon = tagsScanBtn.querySelector('i');
         if (tagScanIcon)
             tagScanIcon.className = tagsRunning
@@ -2711,11 +2917,14 @@ function _renderStatus(status) {
         ocrToggle.setAttribute('aria-checked', String(on));
     }
     const ocrRunning = !!scans?.ocr?.running;
+    const ocrModel = models.ocr || {};
     const ocrScanBtn = $('#ai-ocr-scan-btn');
     const ocrCancelBtn = $('#ai-ocr-cancel-btn');
-    if (ocrScanBtn) ocrScanBtn.disabled = ocrRunning;
+    if (ocrScanBtn) {
+        ocrScanBtn.disabled = ocrRunning || !ocrModel.ready;
+        ocrScanBtn.title = ocrModel.ready ? 'Run OCR scan' : 'OCR is not ready on the sidecar';
+    }
     if (ocrCancelBtn) ocrCancelBtn.disabled = !ocrRunning;
-    const ocrModel = models.ocr || {};
     const ocrStatusEl = $('#ai-ocr-status-line');
     if (ocrStatusEl) {
         if (ocrModel.ready) {
@@ -2738,11 +2947,19 @@ function _renderStatus(status) {
         objectsToggle.setAttribute('aria-checked', String(on));
     }
     const objectsRunning = !!scans?.objects?.running;
+    const detModel = models.objects || {};
     const objectsScanBtn = $('#ai-objects-scan-btn');
     const objectsCancelBtn = $('#ai-objects-cancel-btn');
-    if (objectsScanBtn) objectsScanBtn.disabled = objectsRunning;
+    if (objectsScanBtn) {
+        // Do not hard-disable here: some deployments use the newer WD14
+        // tagger behind this card and older sidecars do not expose a
+        // detection_ready flag. Server-side preflight remains authoritative.
+        objectsScanBtn.disabled = objectsRunning;
+        objectsScanBtn.title = detModel.ready
+            ? 'Run object detection scan'
+            : 'Run scan (readiness will be checked before start)';
+    }
     if (objectsCancelBtn) objectsCancelBtn.disabled = !objectsRunning;
-    const detModel = models.objects || {};
     const detStatusEl = $('#ai-objects-status-line');
     if (detStatusEl) {
         if (detModel.ready) {

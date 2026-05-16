@@ -3228,6 +3228,34 @@
                                 <div id="ai-stat-last" class="text-xs text-tg-text tabular-nums leading-tight pt-1">—</div>
                             </div>
                         </div>
+                        <!-- Quick-win AI ops panels: readiness, active jobs,
+                             and recent issues. These are intentionally compact
+                             so they improve operator visibility without a full
+                             page redesign. -->
+                        <div id="ai-readiness-card" class="mt-3 bg-tg-bg/30 rounded-lg p-3 border border-tg-border/30">
+                            <div class="flex items-center justify-between gap-2 flex-wrap mb-2">
+                                <div class="text-xs font-medium text-tg-text inline-flex items-center gap-1.5">
+                                    <i class="ri-pulse-line text-tg-blue"></i><span>AI readiness</span>
+                                </div>
+                                <button id="ai-copy-diagnostics-btn" type="button" class="text-[10.5px] text-tg-textSecondary hover:text-tg-text inline-flex items-center gap-1 px-2 py-0.5 rounded hover:bg-tg-bg/40">
+                                    <i class="ri-file-copy-line"></i><span>Copy diagnostics</span>
+                                </button>
+                            </div>
+                            <div id="ai-readiness-grid" class="grid grid-cols-2 sm:grid-cols-5 gap-1.5"></div>
+                            <div id="ai-readiness-meta" class="text-[10.5px] text-tg-textSecondary mt-2 truncate"></div>
+                        </div>
+                        <div id="ai-active-jobs-card" class="hidden mt-2 bg-tg-bg/30 rounded-lg p-3 border border-tg-border/30">
+                            <div class="text-xs font-medium text-tg-text inline-flex items-center gap-1.5 mb-2">
+                                <i class="ri-loader-4-line text-tg-blue"></i><span>Active AI jobs</span>
+                            </div>
+                            <div id="ai-active-jobs-list" class="space-y-2"></div>
+                        </div>
+                        <div id="ai-issues-card" class="hidden mt-2 bg-red-500/10 rounded-lg p-3 border border-red-500/25">
+                            <div class="text-xs font-medium text-red-200 inline-flex items-center gap-1.5 mb-2">
+                                <i class="ri-error-warning-line"></i><span>AI issues</span>
+                            </div>
+                            <div id="ai-issues-list" class="space-y-1 text-[11px]"></div>
+                        </div>
                         <!-- Auto-cluster cadence hint — populated by JS when
                              autoCluster is enabled; hidden otherwise. -->
                         <div id="ai-auto-cluster-info" class="hidden text-[10.5px] text-tg-textSecondary mt-2 flex items-center gap-1">
