@@ -2666,6 +2666,308 @@ async function _copyAiDiagnostics() {
     }
 }
 
+/**
+ * Scanner card definitions — one per feature.
+ * Each entry maps status API fields to card content.
+ */
+const _SCANNER_CARD_DEFS = [
+    {
+        feature: 'faces',
+        label: 'Faces',
+        icon: 'ri-user-smile-line',
+        color: 'text-tg-blue',
+        enabledKey: 'faceClustering',
+        sidecarEndpoint: 'faces',
+        modelKey: 'faces',
+        countKey: 'withFaces',
+        scanBtnId: 'ai-scan-btn',
+        cancelBtnId: 'ai-cancel-btn',
+        estimateKey: null,
+        configSummary: (cfg, _models) => {
+            const det = cfg.facesDetectorModel || 'buffalo_l';
+            return `${det} · ε=${cfg.facesEpsilon || 0.5} · minPts=${cfg.facesMinPoints || 3}`;
+        },
+    },
+    {
+        feature: 'tags',
+        label: 'CLIP Tags',
+        icon: 'ri-price-tag-3-line',
+        color: 'text-tg-orange',
+        enabledKey: null, // uses models.tags.enabled
+        sidecarEndpoint: 'tag',
+        modelKey: 'tags',
+        countKey: 'withTags',
+        scanBtnId: 'ai-tags-scan-btn',
+        cancelBtnId: 'ai-tags-cancel-btn',
+        estimateKey: 'aiTags',
+        configSummary: (_cfg, models) => {
+            const m = models.tags || {};
+            const vs = m.vocabularySize || '';
+            return `${m.id || 'clip-vit-base-patch32'}${vs ? ' · vocab=' + vs : ''}`;
+        },
+    },
+    {
+        feature: 'wd14',
+        label: 'WD14 Tags',
+        icon: 'ri-hashtag-line',
+        color: 'text-purple-400',
+        enabledKey: null, // cfg.wd14Tagging !== false
+        sidecarEndpoint: null, // always requires sidecar url
+        modelKey: 'wd14',
+        countKey: 'withWd14Tags',
+        scanBtnId: null, // shares objects scan button
+        cancelBtnId: null,
+        estimateKey: 'aiWd14',
+        configSummary: (_cfg, _models) => 'SmilingWolf wd-v1-4-vit-tagger-v2',
+    },
+    {
+        feature: 'ocr',
+        label: 'OCR',
+        icon: 'ri-file-text-line',
+        color: 'text-teal-400',
+        enabledKey: 'imageOcr',
+        sidecarEndpoint: 'ocr',
+        modelKey: 'ocr',
+        countKey: 'withText',
+        scanBtnId: 'ai-ocr-scan-btn',
+        cancelBtnId: 'ai-ocr-cancel-btn',
+        estimateKey: 'aiOcr',
+        configSummary: (cfg, _models) => {
+            return cfg.imageOcr ? 'enabled' : 'disabled';
+        },
+    },
+    {
+        feature: 'objects',
+        label: 'Objects',
+        icon: 'ri-search-eye-line',
+        color: 'text-emerald-400',
+        enabledKey: null, // uses models.objects.enabled
+        sidecarEndpoint: 'objects',
+        modelKey: 'objects',
+        countKey: 'withObjects',
+        scanBtnId: 'ai-objects-scan-btn',
+        cancelBtnId: 'ai-objects-cancel-btn',
+        estimateKey: 'aiObjects',
+        configSummary: (_cfg, _models) => {
+            const m = _models.objects || {};
+            return m.ready ? 'ready' : m.error || 'not ready';
+        },
+    },
+];
+
+/**
+ * Render per-scanner cards into #ai-scanner-cards.
+ * Shows coverage, readiness, last-scan, and quick actions.
+ */
+function _renderScannerCards(status) {
+    const container = $('#ai-scanner-cards');
+    if (!container) return;
+    const cfg = status.config || {};
+    const counts = status.counts || {};
+    const scans = status.scans || {};
+    const models = status.models || {};
+    const sidecar = status.sidecar || {};
+    const trackers = status.trackers || {};
+    const totalEligible = Number(counts.totalEligible) || 0;
+    const now = Date.now();
+
+    container.innerHTML = _SCANNER_CARD_DEFS
+        .map((def) => {
+            const model = models[def.modelKey] || {};
+            const scanState = scans[def.feature] || {};
+            const tracker = trackers[def.estimateKey] || {};
+            const running = !!scanState.running;
+
+            // Enabled: check config key or model.enabled
+            let enabled = true;
+            if (def.enabledKey !== null) {
+                enabled = cfg[def.enabledKey] === true;
+            } else if (model.enabled !== undefined) {
+                enabled = model.enabled === true;
+            } else if (def.feature === 'wd14') {
+                enabled = cfg.wd14Tagging !== false;
+            }
+
+            // Readiness
+            const modelReady =
+                model.loaded === true || model.ready === true || model.ready === undefined;
+            const sidecarOk = !!sidecar.url;
+            const hasEndpoint =
+                def.sidecarEndpoint === null
+                    ? sidecarOk
+                    : !!sidecar.endpoints?.[def.sidecarEndpoint];
+            const readiness = !sidecarOk
+                ? 'offline'
+                : !enabled
+                  ? 'disabled'
+                  : def.sidecarEndpoint !== null && !hasEndpoint
+                    ? 'missing'
+                    : modelReady
+                      ? 'ready'
+                      : 'unready';
+
+            // Coverage
+            const doneCount = Number(counts[def.countKey]) || 0;
+            const pct = totalEligible
+                ? Math.min(100, Math.round((doneCount / totalEligible) * 100))
+                : 0;
+
+            // Last scan / finished timestamp
+            const finishedAt = scanState.finishedAt || tracker.finishedAt || 0;
+            const lastScanStr = finishedAt ? _timeAgo(finishedAt, now) : 'never';
+
+            // Failed / skipped / errors from tracker progress
+            const progress = tracker.progress || {};
+            const failedCount = Number(progress.failed || scanState.failed || 0);
+            const skippedCount = Number(progress.skipped || scanState.skipped || 0);
+            const hasErrors = !!scanState.error || !!tracker.error;
+
+            // Build action buttons
+            const actionsHtml = [];
+            if (def.scanBtnId) {
+                const scanDisabled = running || readiness === 'offline' || readiness === 'missing';
+                actionsHtml.push(
+                    `<button type="button" class="tg-btn text-[10px] px-2 py-1 inline-flex items-center gap-1 ai-scanner-action"` +
+                        ` data-feature="${def.feature}" data-action="scan"` +
+                        (scanDisabled ? ' disabled' : '') +
+                        ` title="${scanDisabled ? 'Cannot scan — ' + readiness : 'Scan ' + def.label.toLowerCase()}">` +
+                        `<i class="${running ? 'ri-loader-4-line animate-spin' : 'ri-play-fill'}"></i>` +
+                        `<span>${running ? 'Running' : 'Scan'}</span></button>`,
+                );
+            }
+            if (def.cancelBtnId && running) {
+                actionsHtml.push(
+                    `<button type="button" class="tg-btn-secondary text-[10px] px-2 py-1 inline-flex items-center gap-1 ai-scanner-action"` +
+                        ` data-feature="${def.feature}" data-action="cancel" title="Cancel ${def.label} scan">` +
+                        `<i class="ri-stop-circle-line"></i><span>Cancel</span></button>`,
+                );
+            }
+            if (hasErrors && !running) {
+                actionsHtml.push(
+                    `<button type="button" class="tg-btn-secondary text-[10px] px-2 py-1 inline-flex items-center gap-1 text-yellow-200 ai-scanner-action"` +
+                        ` data-feature="${def.feature}" data-action="retry" title="Retry failed items for ${def.label}">` +
+                        `<i class="ri-refresh-line"></i><span>Retry</span></button>`,
+                );
+            }
+
+            // Readiness pill
+            const readinessPill = _readinessPill(readiness);
+
+            return `<div class="ai-scanner-card bg-tg-panel rounded-xl p-3 border border-tg-border/30">
+    <div class="flex items-start justify-between gap-2">
+        <div class="min-w-0 flex items-center gap-1.5">
+            <i class="${def.icon} ${def.color}"></i>
+            <span class="text-xs font-medium text-tg-text">${escapeHtml(def.label)}</span>
+            <span class="shrink-0">${readinessPill}</span>
+        </div>
+        <div class="flex items-center gap-1 shrink-0 flex-wrap justify-end">
+            ${actionsHtml.join('')}
+        </div>
+    </div>
+    <div class="mt-2">
+        <div class="flex justify-between text-[10px] text-tg-textSecondary">
+            <span>${escapeHtml(doneCount.toLocaleString())} / ${escapeHtml(totalEligible.toLocaleString())} indexed</span>
+            <span class="tabular-nums">${pct}%</span>
+        </div>
+        <div class="h-1.5 bg-tg-bg/60 rounded overflow-hidden mt-0.5" role="progressbar" aria-valuenow="${doneCount}" aria-valuemin="0" aria-valuemax="${totalEligible || 1}">
+            <div class="h-full ${pct >= 100 ? 'bg-green-500' : running ? 'bg-tg-blue' : pct > 0 ? 'bg-tg-blue/70' : 'bg-tg-bg'}" style="width:${Math.max(pct, running ? 2 : 0)}%"></div>
+        </div>
+    </div>
+    <div class="flex items-center gap-2 mt-1.5 text-[10px] text-tg-textSecondary flex-wrap">
+        ${failedCount > 0 ? `<span class="text-red-300" title="Failed rows"><i class="ri-close-circle-line"></i> ${failedCount.toLocaleString()} failed</span>` : ''}
+        ${skippedCount > 0 ? `<span title="Skipped rows"><i class="ri-skip-forward-line"></i> ${skippedCount.toLocaleString()} skipped</span>` : ''}
+        ${hasErrors && !failedCount && !skippedCount ? `<span class="text-red-300"><i class="ri-error-warning-line"></i> error</span>` : ''}
+        <span class="ml-auto" title="Last scan"><i class="ri-time-line"></i> ${lastScanStr}</span>
+    </div>
+    <div class="text-[9px] text-tg-textSecondary mt-1.5 truncate" title="${escapeHtml(def.configSummary(cfg, models))}">
+        ${escapeHtml(def.configSummary(cfg, models))}
+    </div>
+</div>`;
+        })
+        .join('');
+
+    // Wire click handlers for action buttons
+    container.querySelectorAll('.ai-scanner-action').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+            const feature = btn.dataset.feature;
+            const action = btn.dataset.action;
+            if (action === 'scan') {
+                _triggerScannerScan(feature);
+            } else if (action === 'cancel') {
+                _triggerScannerCancel(feature);
+            } else if (action === 'retry') {
+                _triggerScannerRetry(feature);
+            }
+        });
+    });
+}
+
+/** Small pill for one of: ready, offline, disabled, missing, unready */
+function _readinessPill(state) {
+    const map = {
+        ready: 'border-green-500/30 bg-green-500/10 text-green-200',
+        offline: 'border-red-500/30 bg-red-500/10 text-red-200',
+        disabled: 'border-tg-border/30 bg-tg-bg/30 text-tg-textSecondary',
+        missing: 'border-yellow-500/30 bg-yellow-500/10 text-yellow-200',
+        unready: 'border-yellow-500/30 bg-yellow-500/10 text-yellow-200',
+    };
+    const cls = map[state] || map.disabled;
+    const label =
+        {
+            ready: 'Ready',
+            offline: 'Offline',
+            disabled: 'Off',
+            missing: 'No endpoint',
+            unready: 'Not ready',
+        }[state] || state;
+    return `<span class="inline-block rounded px-1.5 py-0.5 border text-[9px] font-medium leading-none ${cls}">${label}</span>`;
+}
+
+/** Human-friendly relative time */
+function _timeAgo(ts, now) {
+    const diff = (now || Date.now()) - ts;
+    if (diff < 60000) return 'just now';
+    if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+    return `${Math.floor(diff / 86400000)}d ago`;
+}
+
+/**
+ * Trigger a scanner scan for the given feature.
+ * Falls back to clicking the existing DOM scan button (if any) so we
+ * don't duplicate the API-call logic already in event handlers.
+ */
+function _triggerScannerScan(feature) {
+    const def = _SCANNER_CARD_DEFS.find((d) => d.feature === feature);
+    if (!def) return;
+    if (def.scanBtnId) {
+        const btn = $(def.scanBtnId);
+        if (btn && !btn.disabled) {
+            btn.click();
+            return;
+        }
+    }
+    // Fallback for WD14 which shares the objects scan button
+    if (feature === 'wd14') {
+        const btn = $('#ai-objects-scan-btn');
+        if (btn && !btn.disabled) btn.click();
+    }
+}
+
+function _triggerScannerCancel(feature) {
+    const def = _SCANNER_CARD_DEFS.find((d) => d.feature === feature);
+    if (!def) return;
+    const btn = def.cancelBtnId ? $(def.cancelBtnId) : null;
+    if (btn && !btn.disabled) btn.click();
+}
+
+function _triggerScannerRetry(feature) {
+    // For now, clicking retry fires the scan — the scan-runner skips
+    // already-processed rows and retries failed ones automatically.
+    _triggerScannerScan(feature);
+    showToast(`Retrying ${feature} scan…`, 'info');
+}
+
 function _renderStatus(status) {
     if (!status) return;
     const cfg = status.config || {};
@@ -2677,6 +2979,7 @@ function _renderStatus(status) {
     // empty path silently dropped the chip during partial rollouts).
     _renderSidecarBadge(status);
     _renderQuickOps(status);
+    _renderScannerCards(status);
 
     // Progress + scan buttons. Cancel is always rendered and just
     // toggles its disabled state; the thumbs page uses the same
