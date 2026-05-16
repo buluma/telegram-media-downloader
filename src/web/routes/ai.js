@@ -1388,7 +1388,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                 sampleErrors: errors_.length ? errors_ : undefined,
                 total: totalAfter,
                 remaining: Math.max(0, missing.length - processed - errors),
-                done: errors > 0 ? false : true,
+                done: !(errors > 0),
             });
         } catch (e) {
             res.status(500).json({ error: e?.message || String(e) });
