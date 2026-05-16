@@ -1873,6 +1873,9 @@ function _bindOnce() {
     // immediately without waiting for a full re-scan.
     $('#ai-recluster-btn')?.addEventListener('click', _recluster);
     $('#ai-copy-diagnostics-btn')?.addEventListener('click', _copyAiDiagnostics);
+    // Scanner card action buttons — delegated listener on the container
+    // so it survives innerHTML swaps on every status refresh.
+    $('#ai-scanner-cards')?.addEventListener('click', _onScannerCardClick);
 
     // Master + auto toggles — both live as labelled rows in the Face
     // clustering settings section. Click-anywhere on the toggle flips
@@ -2894,25 +2897,31 @@ function _renderScannerCards(status) {
 </div>`;
         })
         .join('');
+}
 
-    // Wire click handlers for action buttons
-    container.querySelectorAll('.ai-scanner-action').forEach((btn) => {
-        btn.addEventListener('click', (e) => {
-            const feature = btn.dataset.feature;
-            const action = btn.dataset.action;
-            if (action === 'scan') {
-                _triggerScannerScan(feature);
-            } else if (action === 'cancel') {
-                _triggerScannerCancel(feature);
-            } else if (action === 'retry') {
-                _triggerScannerRetry(feature);
-            } else if (action === 'settings') {
-                _scrollToSettings(feature);
-            } else if (action === 'view-failures') {
-                _showScannerFailures(feature);
-            }
-        });
-    });
+/**
+ * Delegated click handler for scanner card action buttons.
+ * Bound once in _bindOnce so it survives repeated innerHTML swaps.
+ */
+function _onScannerCardClick(e) {
+    const btn = e.target.closest('.ai-scanner-action');
+    if (!btn) return;
+    // Disabled buttons don't fire click events in the browser, but
+    // double-check as a safety net.
+    if (btn.disabled) return;
+    const feature = btn.dataset.feature;
+    const action = btn.dataset.action;
+    if (action === 'scan') {
+        _triggerScannerScan(feature);
+    } else if (action === 'cancel') {
+        _triggerScannerCancel(feature);
+    } else if (action === 'retry') {
+        _triggerScannerRetry(feature);
+    } else if (action === 'settings') {
+        _scrollToSettings(feature);
+    } else if (action === 'view-failures') {
+        _showScannerFailures(feature);
+    }
 }
 
 /** Small pill for one of: ready, offline, disabled, missing, unready */
@@ -2947,31 +2956,22 @@ function _timeAgo(ts, now) {
 
 /**
  * Trigger a scanner scan for the given feature.
- * Falls back to clicking the existing DOM scan button (if any) so we
- * don't duplicate the API-call logic already in event handlers.
+ * Calls _startScan directly instead of going through the DOM button,
+ * which avoids the disabled-button-doesn't-click problem.
  */
 function _triggerScannerScan(feature) {
-    const def = _SCANNER_CARD_DEFS.find((d) => d.feature === feature);
-    if (!def) return;
-    if (def.scanBtnId) {
-        const btn = $(def.scanBtnId);
-        if (btn && !btn.disabled) {
-            btn.click();
-            return;
-        }
-    }
-    // Fallback for WD14 which shares the objects scan button
-    if (feature === 'wd14') {
-        const btn = $('#ai-objects-scan-btn');
-        if (btn && !btn.disabled) btn.click();
-    }
+    _startScan(feature);
 }
 
 function _triggerScannerCancel(feature) {
     const def = _SCANNER_CARD_DEFS.find((d) => d.feature === feature);
     if (!def) return;
-    const btn = def.cancelBtnId ? $(def.cancelBtnId) : null;
-    if (btn && !btn.disabled) btn.click();
+    if (def.feature === 'faces') {
+        _cancelScan('faces');
+    } else {
+        const btn = def.cancelBtnId ? $(def.cancelBtnId) : null;
+        if (btn && !btn.disabled) btn.click();
+    }
 }
 
 function _triggerScannerRetry(feature) {
