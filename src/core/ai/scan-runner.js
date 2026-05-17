@@ -46,6 +46,7 @@ import {
 import { clusterFaces, computeFaceQualityScore, detectFaces } from './faces.js';
 import { resolveFacesValue } from './faces-config.js';
 import { detectFacesBatch, getSidecarUrl } from './faces-client.js';
+import { mlOcr, isTgdlMlEnabled } from './tgdl-ml-client.js';
 import { getVocabularyPreset } from './tag-vocabulary.js';
 import { hasFfmpeg, resolveFfmpegBin } from '../thumbs.js';
 
@@ -954,10 +955,11 @@ export function startOcrScan(cfg, onProgress, onDone, onLog) {
         cfg,
         async (state, signal, bump, log) => {
             const sidecarUrl = getSidecarUrl();
-            if (!sidecarUrl) {
+            const useMlOcr = isTgdlMlEnabled();
+            if (!sidecarUrl && !useMlOcr) {
                 throw new Error(
-                    'Python sidecar is not available — cannot extract text. ' +
-                        'Check the AI maintenance page for sidecar status.',
+                    'No OCR provider is available — cannot extract text. ' +
+                        'Start the Python sidecar or enable tgdl-ml.',
                 );
             }
 
@@ -998,7 +1000,13 @@ export function startOcrScan(cfg, onProgress, onDone, onLog) {
                             typeof cfg.ocrLanguage === 'string' && cfg.ocrLanguage.trim()
                                 ? cfg.ocrLanguage.trim()
                                 : 'eng';
-                        const result = await _extractTextOne(sidecarUrl, absPath, lang, log);
+                        const result = useMlOcr
+                            ? await mlOcr(absPath, {
+                                  minDetectionScore: cfg.ocrMinDetectionScore,
+                                  minRecognitionScore: cfg.ocrMinRecognitionScore,
+                                  maxResolution: cfg.ocrMaxResolution,
+                              })
+                            : await _extractTextOne(sidecarUrl, absPath, lang, log);
                         // Always write a row (even empty) so the same image
                         // isn't picked up on the next batch query.
                         setImageText(

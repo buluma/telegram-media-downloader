@@ -25,6 +25,7 @@ import { deleteFacesForDownload, getDb, insertFace, setAiIndexedAt } from '../db
 import { buildMetadataText, setImageEmbedding, setTextEmbedding } from '../db/faces.js';
 import { computeFaceQualityScore, detectFaces } from './faces.js';
 import { embedImage as _clientEmbedImage } from './faces-client.js';
+import { resolveClipModelId } from './tgdl-ml-client.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..', '..');
@@ -37,12 +38,7 @@ function _f32ToBlob(f) {
 }
 
 function _resolveClipModelId(cfg = {}) {
-    return (
-        String(cfg?.searchModel || '').trim() ||
-        String(cfg?.model || '').trim() ||
-        String(cfg?.clipModel || '').trim() ||
-        'Xenova/clip-vit-base-patch32'
-    );
+    return resolveClipModelId(cfg);
 }
 
 // better-sqlite3 throws "This database connection is busy executing a
@@ -252,9 +248,8 @@ async function _drainBg() {
                 const r = await _clientEmbedImage(abs);
                 if (r?.embedding?.length) {
                     imageEmbedding = Float32Array.from(r.embedding);
-                    // Keep model id aligned with semantic-search config.
-                    // Prefer searchModel/model over legacy clipModel key.
-                    embeddingModel = _resolveClipModelId(cfg);
+                    // Keep model id aligned with the backend that produced it.
+                    embeddingModel = r.model || _resolveClipModelId(cfg);
                 }
             } catch {
                 /* sidecar unavailable or non-image — skip silently */

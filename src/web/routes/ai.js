@@ -5,6 +5,7 @@ import express from 'express';
 import sharp from 'sharp';
 import { loadConfig, watchConfig } from '../../config/manager.js';
 import { maskLlmConfig } from '../../core/llm/llm-config.js';
+import { resolveClipModelId } from '../../core/ai/tgdl-ml-client.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..', '..');
@@ -126,12 +127,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
     }
 
     function _resolveClipModelId(cfg = _aiCfg()) {
-        return (
-            String(cfg?.searchModel || '').trim() ||
-            String(cfg?.model || '').trim() ||
-            String(cfg?.clipModel || '').trim() ||
-            'Xenova/clip-vit-base-patch32'
-        );
+        return resolveClipModelId(cfg);
     }
 
     // ---- AI status -----------------------------------------------------------
@@ -1770,7 +1766,9 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
     router.post('/ai/embeddings/reindex', async (req, res) => {
         try {
             const { loadConfig } = await import('../../config/manager.js');
-            const { embedImage, getSidecarUrl } = await import('../../core/ai/faces-client.js');
+            const { embedImage, hasEmbeddingProvider } = await import(
+                '../../core/ai/faces-client.js'
+            );
             const { clearStaleEmbeddings, listEmbeddingModels, setImageEmbedding } = await import(
                 '../../core/db/faces.js'
             );
@@ -1779,10 +1777,10 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             const live = loadConfig();
             const clipModel = _resolveClipModelId(live?.advanced?.ai || {});
 
-            if (!getSidecarUrl()) {
+            if (!hasEmbeddingProvider()) {
                 return res.status(503).json({
-                    error: 'AI sidecar is not running — image embeddings require sidecar CLIP',
-                    code: 'SIDECAR_OFFLINE',
+                    error: 'No embedding provider is running — configure tgdl sidecar CLIP or tgdl-ml',
+                    code: 'EMBEDDING_PROVIDER_OFFLINE',
                 });
             }
 
@@ -1849,7 +1847,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                         const blob = Buffer.from(
                             new Uint8Array(Float32Array.from(r.embedding).buffer),
                         );
-                        setImageEmbedding(row.id, blob, clipModel);
+                        setImageEmbedding(row.id, blob, r.model || clipModel);
                         processed++;
                     } else {
                         errors++;

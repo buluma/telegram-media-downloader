@@ -74,6 +74,14 @@ services:
       # stays empty and Node falls back to the bundled PyInstaller
       # binary downloaded on first use.
       - FACES_SERVICE_URL=${FACES_SERVICE_URL:-http://tgdl-faces:8011}
+      # Optional tgdl-ml sidecar for CLIP embeddings and OCR. When the
+      # `tgdl-ml` profile is enabled, set TGDL_ML_URL=http://tgdl-ml:3800
+      # to route embeddings/OCR through the sidecar while keeping tgdl-faces
+      # available for tags/objects until feature parity is complete.
+      - TGDL_ML_URL=${TGDL_ML_URL:-}
+      - TGDL_ML_CLIP_MODEL=${TGDL_ML_CLIP_MODEL:-ViT-B-32__openai}
+      - TGDL_ML_OCR_MODEL=${TGDL_ML_OCR_MODEL:-PP-OCRv5_mobile}
+      - TGDL_ML_PROVIDER=${TGDL_ML_PROVIDER:-}
       # Seekbar preview sidecar URL. Leave unset to let the dashboard
       # auto-spawn the bundled Go binary on a random localhost port;
       # set when running `seekbar-service/` as a separate compose
@@ -339,6 +347,50 @@ services:
       resources:
         limits:
           memory: ${TGDL_FACES_MEM_LIMIT:-2g}
+        reservations:
+          memory: 512m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # tgdl-ml sidecar — CLIP embeddings and OCR. ENABLE WITH:
+  #   TGDL_ML_URL=http://tgdl-ml:3800 docker compose --profile tgdl-ml up -d
+  #
+  # Covers CLIP embeddings and OCR. Keep tgdl-faces enabled for /tag and
+  # object detection until feature parity is complete.
+  tgdl-ml:
+    image: ghcr.io/buluma/tgdl-ml:latest
+    # build: ./tgdl-ml
+    pull_policy: always
+    container_name: tgdl-ml
+    restart: unless-stopped
+    profiles: ["tgdl-ml"]
+    volumes:
+      - ./data/downloads:/app/data/downloads:ro
+      - ./data/ml-cache:/cache
+    environment:
+      - TGDL_ML_HOST=0.0.0.0
+      - TGDL_ML_PORT=3800
+      - TGDL_ML_ALLOW_ROOTS=/app/data/downloads
+      - TGDL_ML_CLIP_MODEL=${TGDL_ML_CLIP_MODEL:-ViT-B-32__openai}
+      - TGDL_ML_FACE_MODEL=${TGDL_ML_FACE_MODEL:-buffalo_l}
+      - TGDL_ML_OCR_MODEL=${TGDL_ML_OCR_MODEL:-PP-OCRv5_mobile}
+      - MACHINE_LEARNING_CACHE_FOLDER=/cache
+      - TZ=${TZ:-UTC}
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import json,urllib.request; d=json.loads(urllib.request.urlopen('http://localhost:3800/health',timeout=3).read()); exit(0 if d.get('ok') else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    deploy:
+      resources:
+        limits:
+          memory: ${TGDL_ML_MEM_LIMIT:-4g}
         reservations:
           memory: 512m
     logging:

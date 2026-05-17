@@ -24,6 +24,7 @@ import { promises as fs } from 'fs';
 import { Buffer } from 'buffer';
 
 import { resolveFacesValue } from './faces-config.js';
+import { mlEmbedImage, mlEmbedText, isTgdlMlEnabled, getTgdlMlUrl } from './tgdl-ml-client.js';
 
 // Defaults used when the operator hasn't tuned `advanced.ai.faces.*` and
 // hasn't set any of the matching `TGDL_FACES_*` env vars. `applyFacesCfg`
@@ -560,10 +561,24 @@ export function _runtimeKnobs() {
 // ---- Embeddings (CLIP) ---------------------------------------------------
 
 /**
+ * Current embedding backend URL. Prefer tgdl-ml when configured;
+ * otherwise fall back to the tgdl sidecar CLIP endpoints.
+ */
+export function getEmbeddingProviderUrl() {
+    return getTgdlMlUrl() || getSidecarUrl();
+}
+
+export function hasEmbeddingProvider() {
+    return !!getEmbeddingProviderUrl();
+}
+
+/**
  * Compute the CLIP image embedding for a single file on disk.
  * Returns ``{ embedding: number[], dim: number }`` or throws.
  */
 export async function embedImage(absPath) {
+    if (isTgdlMlEnabled()) return mlEmbedImage(absPath);
+
     const url = getSidecarUrl();
     if (!url) throw new Error('sidecar URL not configured');
 
@@ -606,7 +621,9 @@ export async function embedImage(absPath) {
  * Compute a CLIP text embedding for a natural-language query string.
  * Returns ``{ embedding: number[], dim: number }`` or throws.
  */
-export async function embedText(text) {
+export async function embedText(text, opts = {}) {
+    if (isTgdlMlEnabled()) return mlEmbedText(text, opts);
+
     const url = getSidecarUrl();
     if (!url) throw new Error('sidecar URL not configured');
     const res = await _postWithRetry(url + '/embed-text', { text: String(text) });
