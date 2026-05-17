@@ -3049,7 +3049,7 @@ const _SCANNER_CARD_DEFS = [
         icon: 'ri-hashtag-line',
         color: 'text-purple-400',
         enabledKey: null, // cfg.wd14Tagging !== false
-        sidecarEndpoint: null, // always requires sidecar url
+        sidecarEndpoint: 'wd14', // needs explicit wd14 endpoint — tgdl-ml doesn't expose it
         modelKey: 'wd14',
         countKey: 'withWd14Tags',
         scanBtnId: null, // shares objects scan button
@@ -3169,7 +3169,11 @@ function _renderScannerCards(status) {
             // Build action buttons
             const actionsHtml = [];
             if (def.scanBtnId) {
-                const scanDisabled = running || readiness === 'offline' || readiness === 'missing';
+                const scanDisabled =
+                    running ||
+                    readiness === 'offline' ||
+                    readiness === 'missing' ||
+                    readiness === 'disabled';
                 actionsHtml.push(
                     `<button type="button" class="tg-btn text-[10px] px-2 py-1 inline-flex items-center gap-1 ai-scanner-action"` +
                         ` data-feature="${def.feature}" data-action="scan"` +
