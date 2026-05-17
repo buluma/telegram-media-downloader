@@ -700,7 +700,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                     })(),
                     wd14: {
                         enabled: cfg.wd14Tagging !== false,
-                        ready: !!sidecar.url,
+                        ready: !!sidecar.url && !!sidecar.endpoints?.wd14,
                         id: 'SmilingWolf WD14 tagger',
                     },
                 },
