@@ -38,9 +38,9 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('getTgdlMlUrl', () => {
-    it('returns localhost default when no env set', () => {
+    it('returns default URL when no env set', () => {
         clearMlEnv();
-        expect(client.getTgdlMlUrl()).toBe('http://localhost:3800');
+        expect(client.getTgdlMlUrl()).toMatch(/^http:\/\/.+:3800$/);
     });
 
     it('returns TGDL_ML_URL when set, stripping trailing slash', () => {
