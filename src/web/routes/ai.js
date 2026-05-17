@@ -1178,70 +1178,115 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             const starter = _aiStarterFor(feature);
             const claim = tracker.tryStart(({ onProgress, signal }) => {
                 return new Promise((resolve, reject) => {
-                    // Forward the runner's signal abort -> our internal
-                    // cancelScan, so /api/ai/scan/cancel and the tracker's
-                    // own abort path both terminate the same scan.
-                    if (signal && typeof signal.addEventListener === 'function') {
-                        signal.addEventListener('abort', () => {
-                            try {
-                                aiCancelScan(feature);
-                            } catch {}
-                        });
-                    }
-                    starter(
-                        cfg,
-                        (p) => {
-                            // tracker.onProgress already _safeBroadcasts
-                            // `${prefix}_progress` with the merged status — a
-                            // second broadcast here would double every event
-                            // on the wire. Keep tracker as the single source.
-                            try {
-                                onProgress(p);
-                            } catch {}
-                        },
-                        (p) => {
-                            // tracker auto-broadcasts `${prefix}_done` on
-                            // resolve/reject — surface scan errors back into
-                            // the tracker promise so it logs + finishes once.
-                            if (p?.error) reject(new Error(p.error));
-                            else resolve(p || {});
-                        },
-                        (entry) => log(entry),
-                    );
+                    (async () => {
+                        let durableJobId = null;
+                        let jobsMod = null;
+
+                        // Create a durable job record as part of the actual run.
+                        // This guarantees every started scan gets a lifecycle row
+                        // we can close on success/failure.
+                        try {
+                            jobsMod = await import('../../core/ai/jobs.js');
+                            const c = (() => {
+                                try {
+                                    return getAiCounts({ fileTypes: _facesScanFileTypes(cfg) });
+                                } catch {
+                                    return { totalEligible: 0 };
+                                }
+                            })();
+                            durableJobId = jobsMod.createJob({
+                                type: 'scan',
+                                feature,
+                                total: c.totalEligible || 0,
+                                requestedBy: 'admin',
+                            });
+                            log({
+                                source: 'ai',
+                                level: 'info',
+                                msg: `job ${durableJobId} created for ${feature} scan`,
+                            });
+                        } catch (e) {
+                            log({
+                                source: 'ai',
+                                level: 'warn',
+                                msg: `failed to create durable job for ${feature}: ${e?.message || e}`,
+                            });
+                        }
+
+                        // Forward the runner's signal abort -> our internal
+                        // cancelScan, so /api/ai/scan/cancel and the tracker's
+                        // own abort path both terminate the same scan.
+                        if (signal && typeof signal.addEventListener === 'function') {
+                            signal.addEventListener('abort', () => {
+                                try {
+                                    aiCancelScan(feature);
+                                } catch {}
+                            });
+                        }
+
+                        try {
+                            starter(
+                                cfg,
+                                (p) => {
+                                    // tracker.onProgress already _safeBroadcasts
+                                    // `${prefix}_progress` with the merged status — a
+                                    // second broadcast here would double every event
+                                    // on the wire. Keep tracker as the single source.
+                                    try {
+                                        onProgress(p);
+                                    } catch {}
+                                    if (durableJobId && jobsMod?.updateJobProgress) {
+                                        try {
+                                            const processed = Number.isFinite(p?.scanned)
+                                                ? p.scanned
+                                                : Number.isFinite(p?.processed)
+                                                  ? p.processed
+                                                  : undefined;
+                                            jobsMod.updateJobProgress(durableJobId, { processed });
+                                        } catch {}
+                                    }
+                                },
+                                (p) => {
+                                    // tracker auto-broadcasts `${prefix}_done` on
+                                    // resolve/reject — surface scan errors back into
+                                    // the tracker promise so it logs + finishes once.
+                                    if (p?.error) {
+                                        if (durableJobId && jobsMod?.finishJob) {
+                                            try {
+                                                jobsMod.finishJob(durableJobId, 'failed', p.error);
+                                            } catch {}
+                                        }
+                                        reject(new Error(p.error));
+                                        return;
+                                    }
+                                    if (durableJobId && jobsMod?.finishJob) {
+                                        try {
+                                            jobsMod.finishJob(durableJobId, 'completed');
+                                        } catch {}
+                                    }
+                                    resolve(p || {});
+                                },
+                                (entry) => log(entry),
+                            );
+                        } catch (e) {
+                            if (durableJobId && jobsMod?.finishJob) {
+                                try {
+                                    jobsMod.finishJob(
+                                        durableJobId,
+                                        'failed',
+                                        e?.message || String(e),
+                                    );
+                                } catch {}
+                            }
+                            reject(e);
+                        }
+                    })().catch(reject);
                 });
             });
             if (!claim.started) {
                 return res.status(409).json({ error: 'Tracker busy', code: claim.code });
             }
             log({ source: 'ai', level: 'info', msg: `${feature} scan starting` });
-            // Create a durable job record for this scan
-            try {
-                const { createJob } = await import('../../core/ai/jobs.js');
-                const c = (() => {
-                    try {
-                        return getAiCounts({ fileTypes: _facesScanFileTypes(cfg) });
-                    } catch {
-                        return { totalEligible: 0 };
-                    }
-                })();
-                const jobId = createJob({
-                    type: 'scan',
-                    feature,
-                    total: c.totalEligible || 0,
-                    requestedBy: 'admin',
-                });
-                log({
-                    source: 'ai',
-                    level: 'info',
-                    msg: `job ${jobId} created for ${feature} scan`,
-                });
-            } catch (e) {
-                log({
-                    source: 'ai',
-                    level: 'warn',
-                    msg: `failed to create job record: ${e?.message || e}`,
-                });
-            }
             res.json({ success: true, started: true });
         } catch (e) {
             log({ source: 'ai', level: 'error', msg: `scan/start failed: ${e?.message || e}` });

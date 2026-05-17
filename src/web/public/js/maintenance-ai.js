@@ -2034,7 +2034,8 @@ async function _runUnifiedQuery() {
 
     try {
         const params = { q: query, topK: '50' };
-        if (activeSources.length && activeSources.length < 6) {
+        const totalSourceChips = document.querySelectorAll('.ai-source-chip[data-source]').length;
+        if (activeSources.length && activeSources.length < Math.max(1, totalSourceChips)) {
             params.sources = activeSources.join(',');
         }
         const qs = new URLSearchParams(params).toString();
