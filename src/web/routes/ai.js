@@ -21,7 +21,6 @@ import {
 import {
     startTagsScan as aiStartTagsScan,
     startOcrScan as aiStartOcrScan,
-    startObjectDetectionScan as aiStartObjectDetectionScan,
     startWd14Scan as aiStartWd14Scan,
 } from '../../core/ai/scan-runner.js';
 import {
@@ -60,7 +59,6 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         if (feature === 'faces') return jobTrackers.aiPeople;
         if (feature === 'tags') return jobTrackers.aiTags;
         if (feature === 'ocr') return jobTrackers.aiOcr;
-        if (feature === 'objects') return jobTrackers.aiObjects;
         if (feature === 'wd14') return jobTrackers.aiWd14;
         return null;
     }
@@ -82,7 +80,6 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         if (feature === 'faces') return aiStartFacesScan;
         if (feature === 'tags') return aiStartTagsScan;
         if (feature === 'ocr') return aiStartOcrScan;
-        if (feature === 'objects') return aiStartObjectDetectionScan;
         if (feature === 'wd14') return aiStartWd14Scan;
         return null;
     }
@@ -245,7 +242,6 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                 detect: !!(info?.endpoints?.faces ?? ok),
                 ocr: !!(info?.endpoints?.ocr ?? ok),
                 tag: !!info?.endpoints?.tag,
-                objects: !!info?.endpoints?.objects,
             },
         };
     }
@@ -305,7 +301,6 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                   faces: !!eps.faces,
                   tag: !!eps.tag,
                   ocr: !!eps.ocr,
-                  objects: !!eps.objects,
                   wd14: false,
                   embedImage: !!eps.embed_image,
                   embedText: !!eps.embed_text,
@@ -314,7 +309,6 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                   faces: !!url,
                   tag: !!(info?.clip_ready || health?.clip_ready),
                   ocr: !!health?.ocr_ready,
-                  objects: !!health?.detection_ready,
                   wd14: true,
               };
         return {
@@ -380,7 +374,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         });
 
         const scanErrors = [];
-        for (const feature of ['faces', 'tags', 'ocr', 'objects', 'wd14']) {
+        for (const feature of ['faces', 'tags', 'ocr', 'wd14']) {
             const s = aiGetScanState(feature);
             if (s?.error) scanErrors.push({ feature, error: s.error, finishedAt: s.finishedAt });
         }
@@ -569,7 +563,6 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                               detect: !!sidecar.endpoints?.faces,
                               ocr: !!sidecar.endpoints?.ocr,
                               tag: !!sidecar.endpoints?.tag,
-                              objects: !!sidecar.endpoints?.objects,
                           },
                       }
                     : await _getTgdlMlSnapshot();
@@ -587,9 +580,6 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                         facesBlock.detectorModel || cfg.facesDetectorModel || 'buffalo_l',
                     ),
                     imageOcr: cfg.imageOcr === true,
-                    objectDetection:
-                        cfg.objectDetection === true ||
-                        (typeof cfg.objectDetection === 'object' && cfg.objectDetection !== null),
                     faces: {
                         providers: String(facesBlock.providers || 'auto').toLowerCase(),
                         detectorModel: String(
@@ -607,7 +597,6 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                     faces: aiGetScanState('faces'),
                     tags: aiGetScanState('tags'),
                     ocr: aiGetScanState('ocr'),
-                    objects: aiGetScanState('objects'),
                     wd14: aiGetScanState('wd14'),
                 },
                 models: {
@@ -712,24 +701,6 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                         }
                         return { enabled, ready, error, provider };
                     })(),
-                    objects: await (async () => {
-                        const enabled =
-                            cfg.objectDetection === true ||
-                            (typeof cfg.objectDetection === 'object' &&
-                                cfg.objectDetection !== null);
-                        let ready = false;
-                        let error = null;
-                        try {
-                            const info = sidecar.health || sidecar.info;
-                            if (info) {
-                                ready = info.detection_ready === true;
-                                error = info.detection_error || null;
-                            }
-                        } catch {
-                            /* probe failed */
-                        }
-                        return { enabled, ready, error };
-                    })(),
                     wd14: {
                         enabled: cfg.wd14Tagging !== false,
                         ready: !!sidecar.url && !!sidecar.endpoints?.wd14,
@@ -747,7 +718,6 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                     aiPeople: jobTrackers.aiPeople.getStatus(),
                     aiTags: jobTrackers.aiTags.getStatus(),
                     aiOcr: jobTrackers.aiOcr.getStatus(),
-                    aiObjects: jobTrackers.aiObjects.getStatus(),
                     aiWd14: jobTrackers.aiWd14.getStatus(),
                 },
             });
@@ -837,57 +807,6 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 100));
             const words = listOcrWords({ minLength, minCount, limit });
             res.json({ success: true, words });
-        } catch (e) {
-            res.status(500).json({ error: e.message });
-        }
-    });
-
-    router.get('/ai/objects/list', async (req, res) => {
-        try {
-            const minConf = Math.max(0, Math.min(1, Number(req.query.minConfidence) || 0.5));
-            const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 50));
-            const offset = Math.max(0, Number(req.query.offset) || 0);
-            const { listDetectedObjects } = await import('../../core/db/faces.js');
-            const objects = listDetectedObjects({
-                minConfidence: minConf,
-                limit,
-                offset,
-            });
-            res.json({ success: true, objects });
-        } catch (e) {
-            res.status(500).json({ error: e.message });
-        }
-    });
-
-    router.get('/ai/objects/photos', async (req, res) => {
-        try {
-            const object = String(req.query.object || '').trim();
-            if (!object) return res.status(400).json({ error: 'object required' });
-            const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
-            const offset = Math.max(0, Number(req.query.offset) || 0);
-            const { getImagesWithObject } = await import('../../core/db/faces.js');
-            const result = getImagesWithObject(object, { limit, offset });
-            res.json({ success: true, files: result.files, total: result.total });
-        } catch (e) {
-            res.status(500).json({ error: e.message });
-        }
-    });
-
-    router.get('/ai/objects/:downloadId', async (req, res) => {
-        try {
-            const { getImageObjects } = await import('../../core/db/faces.js');
-            const objects = getImageObjects(Number(req.params.downloadId));
-            res.json({ success: true, objects });
-        } catch (e) {
-            res.status(500).json({ error: e.message });
-        }
-    });
-
-    router.post('/ai/objects/backfill-tags', async (_req, res) => {
-        try {
-            const { backfillObjectsToImageTags } = await import('../../core/db/faces.js');
-            const written = backfillObjectsToImageTags();
-            res.json({ success: true, written });
         } catch (e) {
             res.status(500).json({ error: e.message });
         }
@@ -1156,7 +1075,6 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                             { type: 'tags_contains', tag: 'nsfw', minScore: 0 },
                             { type: 'people_count', min: 2 },
                             { type: 'semantic', query: 'smiling at sunset', minScore: 0.7 },
-                            { type: 'objects', names: ['person', 'dog'] },
                             { type: 'text_contains', substring: 'receipt' },
                             { type: 'date', from: '2025-06-01', to: '2025-09-01' },
                             { type: 'file_type', fileType: 'photo' },
@@ -1176,7 +1094,6 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                 '- "tags_contains" for CLIP tag matches — ONLY use tags from AVAILABLE TAGS list.',
                 '- "people_count" for minimum people in photo.',
                 '- "semantic" for natural-language similarity (person names, moods, scenes).',
-                '- "objects" for YOLO detected objects.',
                 '- "text_contains" for OCR text search.',
                 '- "date" with ISO date strings.',
                 '- "file_type": photo/video/audio/file/voice.',
@@ -1247,7 +1164,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
     // branches have been removed. The handler still accepts a `feature`
     // field so older clients fail with a clear `unknown feature` error
     // rather than a silent no-op.
-    const AI_SCAN_FEATURES = new Set(['faces', 'tags', 'ocr', 'objects', 'wd14']);
+    const AI_SCAN_FEATURES = new Set(['faces', 'tags', 'ocr', 'wd14']);
 
     // JobTracker integration for AI scans:
     //   The scan-runner module already owns the per-feature state machine
@@ -1276,7 +1193,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                     .status(409)
                     .json({ error: 'Scan already running', code: 'ALREADY_RUNNING' });
             }
-            if (['tags', 'ocr', 'objects', 'wd14'].includes(feature)) {
+            if (['tags', 'ocr', 'wd14'].includes(feature)) {
                 const sidecar = await _getAiSidecarSnapshot();
                 const mlOcrReady = feature === 'ocr' && isTgdlMlEnabled();
                 if (!sidecar.url && !mlOcrReady) {
@@ -1299,12 +1216,6 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                 }
             }
             // Allow request-level parameter overrides (e.g., confidence sliders)
-            if (feature === 'objects' && typeof req.body?.minConfidence === 'number') {
-                if (typeof cfg.objectDetection !== 'object' || !cfg.objectDetection) {
-                    cfg.objectDetection = {};
-                }
-                cfg.objectDetection.minConfidence = req.body.minConfidence;
-            }
             if (feature === 'tags' && typeof req.body?.minScore === 'number') {
                 cfg.wd14MinScore = Math.max(0, Math.min(1, req.body.minScore));
             }
@@ -2511,7 +2422,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         try {
             // Cancel any in-flight scan before nuking the artefacts.
             let cancelled = 0;
-            for (const f of ['embed', 'tags', 'faces', 'ocr', 'objects', 'wd14']) {
+            for (const f of ['embed', 'tags', 'faces', 'ocr', 'wd14']) {
                 if (aiCancelScan(f)) cancelled += 1;
             }
             // Settle one tick so the scan loops see the abort signal.
@@ -2520,7 +2431,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             log({
                 source: 'ai',
                 level: 'info',
-                msg: `re-index — wiped embeddings=${r.embeddings} tags=${r.tags} wd14Tags=${r.wd14Tags} faces=${r.faces} people=${r.people} text=${r.text} objects=${r.objects}; re-queued=${r.requeued}; cancelled-scans=${cancelled}`,
+                msg: `re-index — wiped embeddings=${r.embeddings} tags=${r.tags} wd14Tags=${r.wd14Tags} faces=${r.faces} people=${r.people} text=${r.text}; re-queued=${r.requeued}; cancelled-scans=${cancelled}`,
             });
             try {
                 broadcast({ type: 'ai_reindex', ...r });

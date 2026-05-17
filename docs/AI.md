@@ -1,21 +1,18 @@
 # AI subsystem
 
-Three independent analysis pipelines backed by a single Python sidecar
+Two independent analysis pipelines backed by a single Python sidecar
 (`faces-service/`):
 
 1. **Face detection + clustering** — insightface buffalo_l (MIT, 512-dim ArcFace embeddings). DBSCAN groups recurring people; cluster ops (rename, merge, split, reassign) stay in-process.
 2. **Text extraction (OCR)** — pytesseract wrapper around system Tesseract binary. Extracts visible text from images with per-character confidence scoring.
-3. **Object detection** — YOLOv8-nano ONNX model (6MB, 80 COCO classes: person, car, dog, chair, etc). Returns bounding boxes + confidence scores.
 
 The Node app speaks HTTP to the sidecar; everything else stays in-process.
 
 The sidecar is **zero-install** on every supported platform — see the
 support matrix below.
 
-> **New in v2.18.** OCR and object detection added to the AI subsystem.
-> Requires `tesseract-ocr` system binary (OCR only) and `~6 MB YOLOv8n ONNX
-> model` (object detection only). Both are optional; enable individually
-> from Maintenance → AI.
+> **New in v2.18.** OCR added to the AI subsystem.
+> Requires the `tesseract-ocr` system binary and can be enabled from Maintenance → AI.
 
 ## Architecture
 
@@ -214,42 +211,16 @@ If tesseract is on PATH, pytesseract finds it automatically. The
 dashboard's AI maintenance page reports readiness; a 503 response code
 means tesseract is missing.
 
-## Object detection setup
-
-**YOLOv8-nano ONNX model** (~6 MB, required for object detection):
-
-The model auto-downloads on first use to `~/.cache/yolov8n.onnx`. If
-download fails (offline, firewall), manually place the file at that path
-or build from source:
-
-```bash
-pip install ultralytics onnxruntime
-python3 << 'EOF'
-from ultralytics import YOLO
-model = YOLO('yolov8n')
-model.export(format='onnx')
-# Copy yolov8n.onnx to ~/.cache/yolov8n.onnx
-EOF
-```
-
-Detects 80 common object classes (COCO dataset). Returns per-object
-confidence scores and bounding boxes in original image coordinates.
-
-The dashboard reports readiness on the AI page; a 503 response means the
-model is missing.
-
 ## Configuration
 
 Surface: `config.advanced.ai` (kv['config']). Capability-specific knobs:
 
 - **Face clustering:** `advanced.ai.faces.*` (detector model, DBSCAN epsilon/minPoints, video sampling)
 - **Text extraction:** `advanced.ai.imageOcr` (enable/disable toggle)
-- **Object detection:** `advanced.ai.objectDetection` (enable/disable toggle)
 
 Every value can also be overridden at deploy time via env vars:
 - `TGDL_FACES_*` for faces config
 - `TGDL_OCR_*` for OCR config (future)
-- `TGDL_OBJECTS_*` for object detection config (future)
 
 Priority: deployment > config file > default.
 

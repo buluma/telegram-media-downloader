@@ -8,7 +8,6 @@ const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'tgdl-search-test-'));
 let db;
 let insertDownload;
 let setImageTags;
-let addImageObjects;
 let setImageText;
 let insertFace;
 let insertPerson;
@@ -46,7 +45,6 @@ beforeAll(async () => {
     insertDownload = dbApi.insertDownload;
     const facesApi = await import('../../src/core/db/faces.js');
     setImageTags = facesApi.setImageTags;
-    addImageObjects = facesApi.addImageObjects;
     setImageText = facesApi.setImageText;
     insertFace = facesApi.insertFace;
     insertPerson = facesApi.insertPerson;
@@ -127,29 +125,6 @@ describe('crossModalSearch — tags modality', () => {
     });
 });
 
-// ---- objects matcher -------------------------------------------------------
-
-describe('crossModalSearch — objects modality', () => {
-    it('finds image by detected object', async () => {
-        const id = _newDownload();
-        addImageObjects(id, [{ object: 'bicycle', confidence: 0.88 }]);
-
-        const r = await crossModalSearch('bicycle', opts);
-        const ids = r.results.map((x) => x.id);
-        expect(ids).toContain(id);
-        expect(r.modalities).toContain('objects');
-    });
-
-    it('ignores low-confidence objects (threshold 0.3)', async () => {
-        const id = _newDownload();
-        addImageObjects(id, [{ object: 'unicycle', confidence: 0.1 }]);
-
-        const r = await crossModalSearch('unicycle', opts);
-        const ids = r.results.map((x) => x.id);
-        expect(ids).not.toContain(id);
-    });
-});
-
 // ---- people matcher --------------------------------------------------------
 
 describe('crossModalSearch — people modality', () => {
@@ -205,7 +180,7 @@ describe('crossModalSearch — people modality', () => {
 
         const r = await crossModalSearch('bob', {
             ...opts,
-            weights: { people: 1.0, tags: 0, objects: 0, text: 0, filename: 0 },
+            weights: { people: 1.0, tags: 0, text: 0, filename: 0 },
         });
         const hit = r.results.find((x) => x.id === dlId);
         expect(hit).toBeDefined();
@@ -685,7 +660,7 @@ describe('crossModalSearch — semantic exclusion via LLM path', () => {
             llmEmbed: _mkLlmEmbed(),
             topK: 100,
             // zero out all non-semantic modalities so only the semantic map matters
-            weights: { filename: 0, tags: 0, objects: 0, people: 0, text: 0, semantic: 1 },
+            weights: { filename: 0, tags: 0, people: 0, text: 0, semantic: 1 },
         });
 
         const ids = r.results.map((x) => x.id);
@@ -703,7 +678,7 @@ describe('crossModalSearch — semantic exclusion via LLM path', () => {
             skipSemantic: false,
             llmEmbed: _mkLlmEmbed(),
             topK: 100,
-            weights: { filename: 0, tags: 0, objects: 0, people: 0, text: 0, semantic: 1 },
+            weights: { filename: 0, tags: 0, people: 0, text: 0, semantic: 1 },
         });
 
         const ids = r.results.map((x) => x.id);

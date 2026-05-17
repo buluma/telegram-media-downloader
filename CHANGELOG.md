@@ -38,10 +38,10 @@ Maintenance → AI received a full workflow pass: scanner status cards, richer s
 
 ## [2.18.0] — 2026-05-13
 
-OCR text and object-detection results now surface in the media viewer — open any image and a compact AI panel below the review bar shows extracted text and detected object chips. Plus a batch of sidecar reliability fixes backported from community testing.
+OCR text now surfaces in the media viewer — open any image and a compact AI panel below the review bar shows extracted text when available. Plus a batch of sidecar reliability fixes backported from community testing.
 
 ### Added
-- **AI panel in media viewer** — compact strip below the review bar shows OCR text (scrollable, max 5 lines) and detected-object chips (label + confidence %) for the current image. Panel is hidden when no AI data exists; both blocks are independently hidden when their data is absent. Populated via two parallel `fetch` calls (`/api/ai/text/:id` + `/api/ai/objects/:id`) on image open; cleared on navigation and close.
+- **AI panel in media viewer** — compact strip below the review bar shows OCR text (scrollable, max 5 lines) for the current image. Panel is hidden when no AI data exists. Populated via `/api/ai/text/:id` on image open; cleared on navigation and close.
 
 ### Changed
 - **`sidecarMaxConcurrency` default 0 → 1** — unlimited concurrency causes pile-up on CPU-only sidecars; 1 is the safe default. Existing installs with the old default are migrated automatically on first boot.

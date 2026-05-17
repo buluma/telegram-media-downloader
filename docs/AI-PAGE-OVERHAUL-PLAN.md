@@ -109,7 +109,6 @@ Faces indexed: 2,810
 CLIP tagged: 2,217
 WD14 tagged: 1,944
 OCR scanned: 600
-Objects scanned: 0
 ```
 
 Use progress bars per feature.
@@ -298,18 +297,9 @@ Config summary:
 - file types
 - timeout
 
-#### Objects / Detection
+#### WD14 Tagging
 
-Clarify whether this is general object detection or WD14-style tagging.
-
-If WD14 replaces object detection for the main use case, either:
-
-- hide legacy object detection behind Advanced, or
-- rename it clearly to `General objects`.
-
-Show:
-
-- model readiness
+Keep WD14 distinct from CLIP tags and OCR in scanner status, counts, and result explanations.
 - scanned rows
 - object rows
 - top object classes
@@ -615,7 +605,6 @@ Should return:
       "tag": true,
       "wd14": true,
       "ocr": true,
-      "objects": false
     },
     "models": {
       "faces": { "ready": true, "id": "buffalo_l" },
@@ -821,7 +810,7 @@ CREATE TABLE IF NOT EXISTS media_scan_state (
 - [ ] Active scans show progress, skipped count, failed count, ETA, and cancel action.
 - [ ] Recent failures are visible without opening logs.
 - [ ] Invalid/mislabeled media appears in Issues with repair actions.
-- [ ] CLIP tags, WD14 tags, OCR, objects, and faces are visually distinct.
+- [ ] CLIP tags, WD14 tags, OCR, and faces are visually distinct.
 - [ ] Dangerous reset actions are per-feature and show affected row counts.
 - [ ] Search results explain why each item matched.
 - [ ] Sidecar version/capability mismatch is detected and clearly reported.

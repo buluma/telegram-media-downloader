@@ -32,7 +32,7 @@ Maintenance jobs currently run independently even when they operate on the same 
 
 - `downloads` rows
 - media files on disk
-- AI derived tables: `image_tags`, `image_tags_wd14`, `image_objects`, `image_text`, `faces`, embeddings
+- AI derived tables: `image_tags`, `image_tags_wd14`, `image_text`, `faces`, embeddings
 - thumbnails / seekbar sprites
 
 ### Recommendation
@@ -49,7 +49,6 @@ files:delete
 ai:tags:write
 ai:faces:write
 ai:ocr:write
-ai:objects:write
 nsfw:write
 thumbs:write
 seekbar:write
@@ -103,7 +102,6 @@ Wrap writes to these tables:
 
 - `image_tags`
 - `image_tags_wd14`
-- `image_objects`
 - `image_text`
 - `faces`
 - `image_embeddings`
@@ -154,7 +152,7 @@ Distinguish outcomes:
 
 | Outcome | Mark scanned? | Retry later? |
 |---|---:|---:|
-| Valid image processed, no tags/faces/objects found | Yes | No |
+| Valid image processed, no tags/faces/OCR found | Yes | No |
 | File missing on disk | Maybe, or queue integrity repair | Usually no |
 | Unsupported file type | Yes | No |
 | Corrupt/undecodable file | Yes with error metadata | No, unless repaired |
@@ -425,7 +423,7 @@ Health output should be JSON and UI-renderable.
 Add race-condition tests:
 
 1. Tag scan selects a row; delete parent before tag write; scan must not crash.
-2. WD14/object/faces/OCR writes see missing parent; scan must skip and continue.
+2. WD14/faces/OCR writes see missing parent; scan must skip and continue.
 3. `/tag` returns `404`; scan must fail job and not mark row scanned.
 4. Sidecar returns `503`; row remains retryable.
 5. Missing file path does not call `existsSync(null)`.

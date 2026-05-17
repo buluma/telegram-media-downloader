@@ -358,8 +358,8 @@ services:
   # tgdl-ml sidecar — CLIP embeddings and OCR. ENABLE WITH:
   #   TGDL_ML_URL=http://tgdl-ml:3800 docker compose --profile tgdl-ml up -d
   #
-  # Covers CLIP embeddings and OCR. Keep tgdl-faces enabled for /tag and
-  # object detection until feature parity is complete.
+  # Covers CLIP embeddings and OCR. Keep tgdl-faces enabled for /tag
+  # until feature parity is complete.
   tgdl-ml:
     image: ghcr.io/buluma/tgdl-ml:latest
     # build: ./tgdl-ml

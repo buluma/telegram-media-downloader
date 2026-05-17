@@ -189,7 +189,6 @@ export function createStatsRouter({ broadcast, getAccountManager, getIsConnected
                 'image_tags',
                 'image_tags_wd14',
                 'image_text',
-                'image_objects',
             ];
             const tableCounts = {};
             for (const t of tables) {
@@ -288,7 +287,6 @@ export function createStatsRouter({ broadcast, getAccountManager, getIsConnected
                 aiPeople = 0,
                 aiTags = 0,
                 aiOcrFiles = 0,
-                aiObjectFiles = 0,
                 aiWd14Files = 0,
                 aiEmbeddings = 0;
             try {
@@ -305,11 +303,6 @@ export function createStatsRouter({ broadcast, getAccountManager, getIsConnected
             } catch {}
             try {
                 aiOcrFiles = db.prepare('SELECT COUNT(*) AS n FROM image_text').get()?.n || 0;
-            } catch {}
-            try {
-                aiObjectFiles =
-                    db.prepare('SELECT COUNT(DISTINCT download_id) AS n FROM image_objects').get()
-                        ?.n || 0;
             } catch {}
             try {
                 aiWd14Files =
@@ -336,7 +329,6 @@ export function createStatsRouter({ broadcast, getAccountManager, getIsConnected
                     people: aiPeople,
                     tags: aiTags,
                     ocrFiles: aiOcrFiles,
-                    objectFiles: aiObjectFiles,
                     wd14Files: aiWd14Files,
                     embeddings: aiEmbeddings,
                 },

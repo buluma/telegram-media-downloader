@@ -504,22 +504,6 @@ export function getUnscannedOcrBatch({ fileTypes = ['photo'], limit = 50 } = {})
         .all(...types, Math.max(1, Math.min(500, Number(limit) || 50)));
 }
 
-export function getUnscannedObjectBatch({ fileTypes = ['photo'], limit = 50 } = {}) {
-    const types = Array.isArray(fileTypes) && fileTypes.length ? fileTypes : ['photo'];
-    const placeholders = types.map(() => '?').join(',');
-    return getDb()
-        .prepare(`
-        SELECT id, group_id, group_name, file_name, file_path, file_type, file_size, created_at
-          FROM downloads
-         WHERE file_type IN (${placeholders})
-           AND id NOT IN (SELECT DISTINCT download_id FROM image_objects)
-           AND LOWER(file_name) NOT LIKE '%.webp'
-         ORDER BY created_at ASC, id ASC
-         LIMIT ?
-    `)
-        .all(...types, Math.max(1, Math.min(500, Number(limit) || 50)));
-}
-
 export function getUnscannedTagsBatch({ fileTypes = ['photo'], limit = 50 } = {}) {
     const types = Array.isArray(fileTypes) && fileTypes.length ? fileTypes : ['photo'];
     const placeholders = types.map(() => '?').join(',');
@@ -570,9 +554,6 @@ export function getAiCounts({ fileTypes = ['photo'] } = {}) {
     const withFaces = db.prepare(`SELECT COUNT(DISTINCT download_id) AS n FROM faces`).get().n;
     const withTags = db.prepare(`SELECT COUNT(DISTINCT download_id) AS n FROM image_tags`).get().n;
     const withText = db.prepare(`SELECT COUNT(DISTINCT download_id) AS n FROM image_text`).get().n;
-    const withObjects = db
-        .prepare(`SELECT COUNT(DISTINCT download_id) AS n FROM image_objects`)
-        .get().n;
     const withTextEmbedding = db.prepare(`SELECT COUNT(*) AS n FROM text_embeddings`).get().n;
     const withWd14Tags = db
         .prepare(
@@ -590,7 +571,6 @@ export function getAiCounts({ fileTypes = ['photo'] } = {}) {
         withTags,
         withWd14Tags,
         withText,
-        withObjects,
         withFaces,
         peopleCount,
         lastScanAt,
@@ -739,7 +719,6 @@ export function resetAllAiData() {
         const faces = db.prepare('DELETE FROM faces').run().changes;
         const people = db.prepare('DELETE FROM people').run().changes;
         const text = db.prepare('DELETE FROM image_text').run().changes;
-        const objects = db.prepare('DELETE FROM image_objects').run().changes;
         const requeued = db
             .prepare('UPDATE downloads SET ai_indexed_at = NULL WHERE ai_indexed_at IS NOT NULL')
             .run().changes;
@@ -751,7 +730,6 @@ export function resetAllAiData() {
             faces,
             people,
             text,
-            objects,
             requeued,
         };
     });
@@ -867,7 +845,7 @@ export function searchTextEmbeddings(queryEmbedding, opts = {}) {
 
 /**
  * Build a human-readable metadata string for a download from its tags,
- * detected objects, OCR text, and filename. This text is embedded by the
+ * OCR text, and filename. This text is embedded by the
  * LLM and stored in `text_embeddings` so query embeddings can be matched
  * against it via cosine similarity.
  *
@@ -905,14 +883,6 @@ export function buildMetadataText(downloadId) {
         )
         .all(id);
     for (const r of wd14Tags) add(r.tag);
-
-    // Detected objects (threshold 0.3 filters weak detections)
-    const objects = db
-        .prepare(
-            `SELECT object FROM image_objects WHERE download_id = ? AND confidence >= 0.3 ORDER BY confidence DESC LIMIT 20`,
-        )
-        .all(id);
-    for (const r of objects) add(r.object);
 
     // Filename tokens (split on non-alphanumeric, skip very short tokens)
     const row = db.prepare(`SELECT file_name, group_name FROM downloads WHERE id = ?`).get(id);
@@ -1422,11 +1392,6 @@ export function getTagDetails(tag, { limit = 20 } = {}) {
         .get(safeTag).n;
     if (wd14Count > 0) sources.push({ source: 'wd14', count: wd14Count });
 
-    const objCount = db
-        .prepare('SELECT COUNT(*) AS n FROM image_objects WHERE object = ?')
-        .get(safeTag).n;
-    if (objCount > 0) sources.push({ source: 'objects', count: objCount });
-
     // Average score from CLIP (if available)
     const clipStats = db
         .prepare('SELECT AVG(score) AS avg_score, COUNT(*) AS count FROM image_tags WHERE tag = ?')
@@ -1439,11 +1404,9 @@ export function getTagDetails(tag, { limit = 20 } = {}) {
             SELECT download_id FROM image_tags WHERE tag = ?
             UNION
             SELECT download_id FROM image_tags_wd14 WHERE tag = ?
-            UNION
-            SELECT download_id FROM image_objects WHERE object = ?
         )`,
         )
-        .get(safeTag, safeTag, safeTag).n;
+        .get(safeTag, safeTag).n;
 
     // Related co-occurring tags (from CLIP image_tags)
     const related = db
@@ -1712,125 +1675,6 @@ export function listOcrWords({ minLength = 3, minCount = 1, limit = 100 } = {}) 
         .map(([word, cnt]) => ({ word, cnt }));
 }
 
-// ---- Image Objects (Detection) -----------------------------------------
-
-export function addImageObjects(downloadId, objects) {
-    if (!Array.isArray(objects) || !objects.length) return 0;
-    const db = getDb();
-    const ins = db.prepare(`
-        INSERT INTO image_objects (download_id, object, confidence, x, y, w, h, detected_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    const tx = db.transaction(() => {
-        let n = 0;
-        for (const obj of objects) {
-            if (!obj || !obj.object) continue;
-            ins.run(
-                Number(downloadId),
-                String(obj.object).slice(0, 80),
-                Number(obj.confidence) || 0,
-                obj.x ?? null,
-                obj.y ?? null,
-                obj.w ?? null,
-                obj.h ?? null,
-                Math.floor(Date.now() / 1000),
-            );
-            n += 1;
-        }
-        return n;
-    });
-    return tx();
-}
-
-export function getImageObjects(downloadId) {
-    return getDb()
-        .prepare(`
-        SELECT object, confidence, x, y, w, h
-          FROM image_objects
-         WHERE download_id = ? AND object != '_scanned_'
-         ORDER BY confidence DESC
-    `)
-        .all(Number(downloadId));
-}
-
-export function clearImageObjects(downloadId) {
-    return getDb()
-        .prepare('DELETE FROM image_objects WHERE download_id = ?')
-        .run(Number(downloadId)).changes;
-}
-
-export function listDetectedObjects({ minConfidence = 0.5, limit = 50, offset = 0 } = {}) {
-    const lim = Math.max(1, Math.min(500, Number(limit) || 50));
-    const off = Math.max(0, Number(offset) || 0);
-    const minConf = Math.max(0, Math.min(1, Number(minConfidence) || 0.5));
-
-    return getDb()
-        .prepare(`
-        SELECT object, COUNT(DISTINCT download_id) AS count, AVG(confidence) AS avg_confidence
-          FROM image_objects
-         WHERE confidence >= ? AND object != '_scanned_'
-         GROUP BY object
-         ORDER BY count DESC
-         LIMIT ?  OFFSET ?
-    `)
-        .all(minConf, lim, off);
-}
-
-export function getImagesWithObject(object, { limit = 50, offset = 0 } = {}) {
-    const lim = Math.max(1, Math.min(500, Number(limit) || 50));
-    const off = Math.max(0, Number(offset) || 0);
-
-    const rows = getDb()
-        .prepare(`
-        SELECT d.*, o.confidence
-          FROM image_objects o
-          JOIN downloads d ON d.id = o.download_id
-         WHERE o.object = ?
-         ORDER BY o.confidence DESC, d.created_at DESC
-         LIMIT ? OFFSET ?
-    `)
-        .all(String(object), lim, off);
-
-    const total = getDb()
-        .prepare('SELECT COUNT(DISTINCT download_id) AS n FROM image_objects WHERE object = ?')
-        .get(String(object)).n;
-
-    return { files: rows, total };
-}
-
-/**
- * One-time backfill: read all existing image_objects rows and upsert the
- * best-confidence detection per object class into image_tags. Idempotent —
- * safe to call repeatedly; ON CONFLICT updates score if new value is higher.
- * Returns the number of (downloadId, tag) pairs written.
- */
-export function backfillObjectsToImageTags() {
-    const db = getDb();
-    const rows = db
-        .prepare(
-            `SELECT download_id, object, MAX(confidence) AS best_conf
-               FROM image_objects
-              WHERE object != '_scanned_' AND confidence > 0
-              GROUP BY download_id, object`,
-        )
-        .all();
-    if (!rows.length) return 0;
-    const ins = db.prepare(`
-        INSERT INTO image_tags (download_id, tag, score)
-        VALUES (?, ?, ?)
-        ON CONFLICT(download_id, tag) DO UPDATE SET score = MAX(excluded.score, score)
-    `);
-    const tx = db.transaction(() => {
-        let n = 0;
-        for (const r of rows) {
-            ins.run(Number(r.download_id), String(r.object).slice(0, 80), Number(r.best_conf) || 0);
-            n += 1;
-        }
-        return n;
-    });
-    return tx();
-}
-
 // ---- Smart Albums --------------------------------------------------------
 
 /**
@@ -1840,7 +1684,6 @@ const COMPOUND_RULE_TYPES = new Set([
     'tags_contains',
     'people_count',
     'semantic',
-    'objects',
     'text_contains',
     'date',
     'file_type',
@@ -1915,14 +1758,6 @@ function _normalizeSmartAlbumSubRule(sr, container) {
             if (!query) throw new Error('semantic: query is required');
             const minScore = Math.max(0, Math.min(1, Number(sr?.minScore) || 0));
             return { type: t, query, minScore };
-        }
-        case 'objects': {
-            const names = Array.isArray(sr?.names) ? sr.names : [];
-            if (!names.length) throw new Error('objects: names[] is required');
-            return {
-                type: t,
-                names: names.map((n) => String(n).trim().slice(0, 60)).filter(Boolean),
-            };
         }
         case 'text_contains': {
             const substr = String(sr?.substring || '')
@@ -2230,19 +2065,6 @@ function _matchSubRule(sr, embCache = new Map(), cacheKey = '') {
             const embedding = embCache.get(cacheKey);
             if (!embedding) return new Set();
             return _matchEmbedding(embedding, sr.minScore);
-        }
-
-        case 'objects': {
-            if (!Array.isArray(sr.names) || !sr.names.length) return new Set();
-            const placeholders = sr.names.map(() => '?').join(',');
-            const rows = db
-                .prepare(
-                    `SELECT DISTINCT download_id
-                       FROM image_objects
-                      WHERE object IN (${placeholders})`,
-                )
-                .all(...sr.names);
-            return new Set(rows.map((r) => Number(r.download_id)));
         }
 
         case 'text_contains': {

@@ -20,7 +20,6 @@ Implemented endpoints:
 Stubbed endpoints:
 
 - `POST /tag` returns `501 not_implemented`
-- `POST /detect-objects` returns `501 not_implemented`
 
 ## Docker
 

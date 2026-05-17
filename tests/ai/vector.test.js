@@ -17,7 +17,6 @@ let setTextEmbedding;
 let searchTextEmbeddings;
 let buildMetadataText;
 let setImageTags;
-let addImageObjects;
 let setImageText;
 
 let _counter = 9000;
@@ -58,7 +57,6 @@ beforeAll(async () => {
     searchTextEmbeddings = facesApi.searchTextEmbeddings;
     buildMetadataText = facesApi.buildMetadataText;
     setImageTags = facesApi.setImageTags;
-    addImageObjects = facesApi.addImageObjects;
     setImageText = facesApi.setImageText;
     db.pragma('foreign_keys = OFF');
 });
@@ -235,19 +233,6 @@ describe('buildMetadataText', () => {
         expect(text).not.toContain('verylow');
     });
 
-    it('includes detected objects with confidence >= 0.3', () => {
-        const dlId = _newDownload();
-        addImageObjects(dlId, [
-            { object: 'dog', confidence: 0.9 },
-            { object: 'car', confidence: 0.4 },
-            { object: 'blur', confidence: 0.2 }, // below threshold
-        ]);
-        const text = buildMetadataText(dlId);
-        expect(text).toContain('dog');
-        expect(text).toContain('car');
-        expect(text).not.toContain('blur');
-    });
-
     it('includes OCR text', () => {
         const dlId = _newDownload();
         setImageText(dlId, 'Hello world from OCR');
@@ -262,10 +247,12 @@ describe('buildMetadataText', () => {
         expect(text.toLowerCase()).toContain('retriever');
     });
 
-    it('deduplicates terms that appear in multiple sources', () => {
+    it('deduplicates terms that appear in multiple tag sources', () => {
         const dlId = _newDownload();
-        setImageTags(dlId, [{ tag: 'cat', score: 0.8 }]);
-        addImageObjects(dlId, [{ object: 'cat', confidence: 0.9 }]);
+        setImageTags(dlId, [
+            { tag: 'cat', score: 0.8 },
+            { tag: 'cat', score: 0.7 },
+        ]);
         const text = buildMetadataText(dlId);
         const matches = text.toLowerCase().match(/\bcat\b/g) || [];
         expect(matches.length).toBe(1);

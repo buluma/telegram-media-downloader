@@ -1,13 +1,12 @@
 /**
  * Cross-modal search engine.
  *
- * Combines six signal sources into one ranked result set:
+ * Combines five signal sources into one ranked result set:
  *   1. **Semantic** — CLIP image embedding cosine similarity (sidecar)
  *   2. **Tags** — CLIP zero-shot tag matches (image_tags table)
- *   3. **Objects** — YOLO detected object matches (image_objects table)
- *   4. **People** — labelled person matches (faces → people table)
- *   5. **Text / OCR** — OCR text substring match (image_text table)
- *   6. **Filename** — keyword match on file_name / group_name (downloads)
+ *   3. **People** — labelled person matches (faces → people table)
+ *   4. **Text / OCR** — OCR text substring match (image_text table)
+ *   5. **Filename** — keyword match on file_name / group_name (downloads)
  *
  * Each matcher produces scored download-ID sets; the combiner normalises
  * and merges them via a weighted sum. Empty/unavailable matchers are
@@ -22,7 +21,6 @@ import { searchTextEmbeddings } from '../db/faces.js';
 const DEFAULT_WEIGHTS = {
     semantic: 1.0,
     tags: 0.6,
-    objects: 0.4,
     people: 0.5,
     text: 0.3,
     filename: 0.3,
@@ -122,18 +120,11 @@ export async function crossModalSearch(query, opts = {}) {
         );
     }
 
-    // 2-6. Local DB matchers (fast, run in parallel)
+    // 2-5. Local DB matchers (fast, run in parallel)
     if (_sourceEnabled('tags')) {
         tasks.push(
             Promise.resolve().then(() => {
                 resultsByModality.tags = _matchTags(db, tokens, opts.fileTypes);
-            }),
-        );
-    }
-    if (_sourceEnabled('objects')) {
-        tasks.push(
-            Promise.resolve().then(() => {
-                resultsByModality.objects = _matchObjects(db, tokens, opts.fileTypes);
             }),
         );
     }
@@ -166,10 +157,9 @@ export async function crossModalSearch(query, opts = {}) {
     if (excludedTokens.length) {
         const excluded = new Set();
 
-        // Text-based matchers (tags, objects, people, OCR, filename)
+        // Text-based matchers (tags, people, OCR, filename)
         const exResults = await Promise.allSettled([
             Promise.resolve(_matchTags(db, excludedTokens, opts.fileTypes)),
-            Promise.resolve(_matchObjects(db, excludedTokens, opts.fileTypes)),
             Promise.resolve(_matchPeople(db, excludedTokens, opts.fileTypes)),
             Promise.resolve(_matchText(db, excludedTokens, opts.fileTypes)),
             Promise.resolve(_matchFilename(db, excludedTokens, opts.fileTypes)),
@@ -460,37 +450,6 @@ function _matchTags(db, tokens, fileTypes) {
         }
     }
 
-    return results;
-}
-
-/**
- * Object matcher — find images whose detected objects match any token.
- * Returns Map<downloadId, score> where score = max confidence.
- */
-function _matchObjects(db, tokens, fileTypes) {
-    const likeClauses = tokens.map(() => `o.object LIKE ?`);
-    let sql = `SELECT DISTINCT o.download_id, o.confidence
-                 FROM image_objects o
-                 JOIN downloads d ON d.id = o.download_id
-                WHERE (${likeClauses.join(' OR ')})
-                  AND o.confidence >= 0.3`;
-    const params = [];
-    for (const tok of tokens) params.push(`%${tok}%`);
-    if (Array.isArray(fileTypes) && fileTypes.length) {
-        const fps = fileTypes.map(() => '?').join(',');
-        sql += ` AND d.file_type IN (${fps})`;
-        params.push(...fileTypes);
-    }
-
-    const rows = db.prepare(sql).all(...params);
-    const results = new Map();
-    for (const row of rows) {
-        const id = Number(row.download_id);
-        const score = Math.max(0, Math.min(1, Number(row.confidence) || 0));
-        if (!results.has(id) || score > results.get(id)) {
-            results.set(id, score);
-        }
-    }
     return results;
 }
 

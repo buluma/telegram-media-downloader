@@ -454,7 +454,3 @@ async def tag(body: Annotated[TagRequest, ...]) -> JSONResponse:
     except Exception as exc:
         return _error(f"tag failed: {type(exc).__name__}: {exc}", "tag_failed", status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-
-@app.post("/detect-objects")
-def objects_not_supported() -> JSONResponse:
-    return _error("/detect-objects is not implemented in tgdl-ml yet", "not_implemented", status.HTTP_501_NOT_IMPLEMENTED)

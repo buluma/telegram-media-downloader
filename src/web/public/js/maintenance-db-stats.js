@@ -406,7 +406,6 @@ async function load() {
                             ['People clusters', fmt(ai.people), ''],
                             ['CLIP tags', fmt(ai.tags), pctPhoto(ai.tags)],
                             ['OCR scanned', fmt(ai.ocrFiles || 0), pctPhoto(ai.ocrFiles)],
-                            ['Objects scanned', fmt(ai.objectFiles || 0), pctPhoto(ai.objectFiles)],
                             ['WD14 tagged', fmt(ai.wd14Files || 0), pctPhoto(ai.wd14Files)],
                             ['Embeddings', fmt(ai.embeddings || 0), pctPhoto(ai.embeddings)],
                         ],

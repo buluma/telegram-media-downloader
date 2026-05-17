@@ -257,20 +257,6 @@ function initSchema() {
             PRIMARY KEY (download_id),
             FOREIGN KEY (download_id) REFERENCES downloads(id) ON DELETE CASCADE
         );
-        CREATE TABLE IF NOT EXISTS image_objects (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            download_id INTEGER NOT NULL,
-            object      TEXT    NOT NULL,
-            confidence  REAL    NOT NULL,
-            x           REAL,
-            y           REAL,
-            w           REAL,
-            h           REAL,
-            detected_at INTEGER NOT NULL,
-            FOREIGN KEY (download_id) REFERENCES downloads(id) ON DELETE CASCADE
-        );
-        CREATE INDEX IF NOT EXISTS idx_objects_download ON image_objects(download_id);
-        CREATE INDEX IF NOT EXISTS idx_objects_object ON image_objects(object);
         CREATE TABLE IF NOT EXISTS people (
             id                 INTEGER PRIMARY KEY AUTOINCREMENT,
             label              TEXT,

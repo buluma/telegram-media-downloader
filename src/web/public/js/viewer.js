@@ -355,26 +355,19 @@ function _resetAllPreviewContainers() {
 function _clearAiPanel() {
     const panel = document.getElementById('modal-ai-panel');
     const ocrBlock = document.getElementById('modal-ocr-block');
-    const objBlock = document.getElementById('modal-objects-block');
     if (panel) panel.classList.add('hidden');
     if (ocrBlock) ocrBlock.classList.add('hidden');
-    if (objBlock) objBlock.classList.add('hidden');
 }
 
 async function _loadAiPanel(fileId) {
     if (!fileId) return;
     try {
-        const [textRes, objRes] = await Promise.all([
-            fetch(`/api/ai/text/${fileId}`, { credentials: 'same-origin' }),
-            fetch(`/api/ai/objects/${fileId}`, { credentials: 'same-origin' }),
-        ]);
+        const textRes = await fetch(`/api/ai/text/${fileId}`, { credentials: 'same-origin' });
         const textData = textRes.ok ? await textRes.json() : null;
-        const objData = objRes.ok ? await objRes.json() : null;
 
         const ocrText = textData?.result?.text?.trim();
-        const objects = (objData?.objects || []).filter((o) => o.object !== '_scanned_');
 
-        if (!ocrText && !objects.length) return;
+        if (!ocrText) return;
 
         const panel = document.getElementById('modal-ai-panel');
         if (!panel) return;
@@ -384,27 +377,6 @@ async function _loadAiPanel(fileId) {
             const el = document.getElementById('modal-ocr-text');
             if (block && el) {
                 el.textContent = ocrText;
-                block.classList.remove('hidden');
-            }
-        }
-
-        if (objects.length) {
-            const block = document.getElementById('modal-objects-block');
-            const chips = document.getElementById('modal-objects-chips');
-            if (block && chips) {
-                chips.innerHTML = '';
-                const seen = new Map();
-                for (const o of objects) {
-                    const key = o.object.toLowerCase();
-                    if (!seen.has(key)) seen.set(key, Math.round((o.confidence || 0) * 100));
-                }
-                for (const [label, pct] of seen) {
-                    const chip = document.createElement('span');
-                    chip.className =
-                        'inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/10 text-white/80 text-[11px]';
-                    chip.textContent = `${label} ${pct}%`;
-                    chips.appendChild(chip);
-                }
                 block.classList.remove('hidden');
             }
         }
