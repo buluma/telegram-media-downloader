@@ -4,6 +4,38 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+Maintenance → AI received a full workflow pass: scanner status cards, richer search/tag/people tooling, durable scan state, and Smart Albums v2 runtime controls. This release also hardens downloader edge cases behind empty-file failures and aligns semantic-search APIs/config with the current AI roadmap.
+
+### Added
+- **AI scanner cards** — per-feature status cards (faces/tags/OCR/objects/WD14) with readiness, coverage, quick actions, and direct links to Settings / View failures.
+- **AI search tab improvements** — source toggles (semantic/tags/objects/people/text/filename) and per-result match explanations.
+- **AI tag details panel** — source-aware tag details, related tags, and one-click "create album" flow from tag context.
+- **AI people tab upgrades** — recency/filter controls and merge suggestions for likely duplicate clusters.
+- **Durable scan-state model** — persistent maintenance job and per-media scanner state tracking for crash-safe progress + retries.
+- **Smart Albums runtime controls** — new preview/runtime/rebuild-all surfaces:
+  - `POST /api/ai/smart-albums/preview`
+  - `GET /api/ai/smart-albums/runtime`
+  - `POST /api/ai/smart-albums/rebuild-all`
+- **NL Smart Album builder polish** — auto-preview after parse, preview-count header above rule JSON, "Apply recommended fixes" action, and better create-error context.
+
+### Changed
+- **Semantic search API compatibility restored** — supports both `GET /api/ai/search` and `POST /api/ai/search`, plus `POST /api/ai/search/similar` for viewer/gallery flows.
+- **Search response back-compat aliases** — semantic-search rows now include both camelCase and legacy snake_case fields so older UI callers continue to work.
+- **AI config alignment** — added/normalized `advanced.ai.semanticSearch` and `advanced.ai.smartAlbums` blocks (deep-merged + validated in config route).
+- **Embedding model resolution unified** — semantic-index producers/consumers now resolve CLIP model consistently (`searchModel` → `model` → legacy `clipModel` fallback).
+- **Smart Albums scheduling** — optional periodic rebuild loop driven by `advanced.ai.smartAlbums.refreshIntervalMin` when smart albums are enabled.
+
+### Fixed
+- **Scanner card action wiring** — event delegation + direct start path removed stale handlers that could noop on action clicks.
+- **Downloader empty-file/race hardening** — prevents duplicate enqueue of the same `(groupId,messageId)`, adds in-worker same-key guard, and always removes stale `.part` before download attempts.
+- **Embedding reindex failure visibility** — sidecar-offline conditions now return explicit `503 SIDECAR_OFFLINE` instead of silent batch error drift.
+- **Smart Album validation errors** — parse/create flows now return structured `INVALID_RULE` payloads with `details.section` for clearer UI/operator feedback.
+
+### Database
+- Additive schema for durable scan tracking:
+  - `maintenance_jobs`
+  - `media_scan_state`
+
 ## [2.18.0] — 2026-05-13
 
 OCR text and object-detection results now surface in the media viewer — open any image and a compact AI panel below the review bar shows extracted text and detected object chips. Plus a batch of sidecar reliability fixes backported from community testing.
