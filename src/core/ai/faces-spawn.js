@@ -161,6 +161,10 @@ export function stopSidecar() {
         _healthMonitorTimer = null;
     }
     _killChild();
+    // Clear client URL so a dead remote/manual sidecar isn't treated as live.
+    try {
+        setSidecarUrl('');
+    } catch {}
     _starting = null;
     _state = 'idle';
     _error = null;
@@ -661,6 +665,13 @@ async function _tryPythonFallback({ host, port, allowRoots, modelsDir }) {
  * when nothing on PATH is Python ≥ 3.10.
  */
 async function _findPython3OrAbove() {
+    const venvNames = ['.venv', 'venv'];
+    const pyName = process.platform === 'win32' ? 'python.exe' : 'python3';
+    for (const venv of venvNames) {
+        const bin = path.join(PROJECT_ROOT, 'faces-service', venv, 'bin', pyName);
+        if (existsSync(bin) && _checkPythonVersion(bin)) return bin;
+    }
+
     const candidates = process.platform === 'win32' ? ['python', 'python3'] : ['python3', 'python'];
     for (const bin of candidates) {
         const ok = _checkPythonVersion(bin);

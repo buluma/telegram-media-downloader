@@ -200,6 +200,9 @@ const DEFAULT_CONFIG = {
             // Per-batch tuning. `batchSize` caps the rows pulled per scan
             // tick. Higher = fewer WS broadcasts, lower = smoother UI.
             batchSize: 16,
+            // CLIP tag scan worker width. Keep low by default so the
+            // sidecar doesn't get hammered on CPU-bound hosts.
+            tagConcurrency: 2,
             indexConcurrency: 1,
             fileTypes: ['photo'],
             // Face clustering. eps=0.5 matches face-api's "definitely the

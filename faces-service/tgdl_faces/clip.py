@@ -277,8 +277,13 @@ def _resolve_models_dir() -> Path:
 
 
 def is_ready() -> bool:
-    """Return True iff the tagger has been initialised at least once."""
-    return _TAGGER is not None
+    """Return True iff the tagger is loaded OR can be loaded (deps present)."""
+    return _TAGGER is not None or (is_available() and _TAGGER_ERROR is None)
+
+
+def is_available() -> bool:
+    """Return True iff all dependencies for CLIP tagging are installed."""
+    return hf_hub_download is not None and HFTokenizer is not None
 
 
 def last_error() -> Exception | None:

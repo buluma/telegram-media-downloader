@@ -2367,18 +2367,52 @@ export async function previewSmartAlbumRule(rule, { limit = 50, offset = 0 } = {
         return { total: 0, files: [], rule: normalized };
     }
 
-    const placeholders = ids.map(() => '?').join(',');
-    const rows = db
-        .prepare(
-            `SELECT d.*
-               FROM downloads d
-              WHERE d.id IN (${placeholders})
-              ORDER BY d.created_at DESC, d.id DESC`,
-        )
-        .all(...ids);
-    const total = rows.length;
-    const files = rows.slice(off, off + lim);
-    return { total, files, rule: normalized };
+    // Materialise matched IDs into a temp table so pagination stays in SQL.
+    // This avoids giant `IN (...)` statements and sidesteps SQLite's host
+    // parameter limits on broad rules.
+    const uniqIds = [
+        ...new Set(ids.map((n) => Number(n)).filter((n) => Number.isFinite(n) && n > 0)),
+    ];
+    if (!uniqIds.length) return { total: 0, files: [], rule: normalized };
+
+    const tmpTable = `tmp_preview_ids_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    db.exec(`CREATE TEMP TABLE ${tmpTable} (id INTEGER PRIMARY KEY)`);
+    try {
+        const CHUNK = 500;
+        const tx = db.transaction((arr) => {
+            for (let i = 0; i < arr.length; i += CHUNK) {
+                const chunk = arr.slice(i, i + CHUNK);
+                const placeholders = chunk.map(() => '(?)').join(',');
+                db.prepare(`INSERT OR IGNORE INTO ${tmpTable} (id) VALUES ${placeholders}`).run(
+                    ...chunk,
+                );
+            }
+        });
+        tx(uniqIds);
+
+        const total =
+            db
+                .prepare(
+                    `SELECT COUNT(*) AS n
+                       FROM downloads d
+                       JOIN ${tmpTable} t ON t.id = d.id`,
+                )
+                .get()?.n || 0;
+
+        const files = db
+            .prepare(
+                `SELECT d.*
+                   FROM downloads d
+                   JOIN ${tmpTable} t ON t.id = d.id
+                  ORDER BY d.created_at DESC, d.id DESC
+                  LIMIT ? OFFSET ?`,
+            )
+            .all(lim, off);
+
+        return { total, files, rule: normalized };
+    } finally {
+        db.exec(`DROP TABLE IF EXISTS ${tmpTable}`);
+    }
 }
 
 export function listSmartAlbumItems(id, { limit = 50, offset = 0 } = {}) {

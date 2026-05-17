@@ -4532,7 +4532,9 @@ function _renderPeopleSuggestions(people) {
     list.querySelectorAll('.ai-people-suggestion').forEach((btn) => {
         btn.addEventListener('click', () => {
             const pid = Number(btn.dataset.person);
-            const tile = document.querySelector(`[data-person="${pid}"]`);
+            // Scope to the people grid so we never resolve back to this
+            // suggestion chip (it also carries data-person).
+            const tile = document.querySelector(`#ai-people-grid [data-person="${pid}"]`);
             if (tile) {
                 tile.click();
                 tile.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
