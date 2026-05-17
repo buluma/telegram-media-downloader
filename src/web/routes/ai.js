@@ -301,7 +301,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                   faces: !!eps.faces,
                   tag: !!eps.tag,
                   ocr: !!eps.ocr,
-                  wd14: false,
+                  wd14: !!eps.wd14,
                   embedImage: !!eps.embed_image,
                   embedText: !!eps.embed_text,
               }
