@@ -1,7 +1,7 @@
 /* Maintenance → AI page module.
  *
  * AI maintenance surface for local-only analysis: face clustering,
- * image tagging, OCR, object detection, people management, tag
+ * image tagging, OCR, people management, tag
  * browsing, and smart albums.
  *
  * Init contract: `init()` is called every time the SPA navigates to
@@ -15,14 +15,24 @@ import { showToast, escapeHtml } from './utils.js';
 import { ws } from './ws.js';
 import { confirmSheet, openSheet, promptSheet } from './sheet.js';
 import { openMediaViewerForReview } from './viewer.js';
+import { createStore } from './store.js';
 
 const $ = (sel) => document.querySelector(sel);
 
 // Module state.
 let _initOnce = false;
-let _lastStatus = null;
-let _selectedPerson = null;
-let _selectedPersonName = '';
+
+const aiStore = createStore({
+    status: null,
+    // People panel selection (pagination vars stay module-level)
+    selectedPerson: null,
+    selectedPersonName: '',
+    // Tags panel selection
+    tagSelected: '',
+    // Smart albums panel selection
+    smartAlbumSelected: null,
+    smartAlbumSelectedName: '',
+});
 let _peoplePhotosPage = 1;
 let _peoplePhotosTotal = 0;
 let _peoplePhotosTotalPages = 1;
@@ -32,7 +42,6 @@ let _doctorScanReady = true;
 let _peopleCache = []; // full people list (un-filtered) for client-side search
 const _peopleFilter = { query: '', unlabeledOnly: false, minFaces: 1, recentFirst: false };
 let _tagListCache = [];
-let _tagSelected = '';
 let _tagFilterQuery = '';
 let _tagSortMode = 'count_desc';
 let _ocrWordFilter = ''; // when set, only show photos whose ocr_text contains this word
@@ -42,15 +51,6 @@ let _tagPhotosTotalPages = 1;
 const _tagPhotosLimit = 50;
 let _tagCurrentRows = [];
 let _lastTagsChangedAt = 0;
-let _objectListCache = [];
-let _objectSelected = '';
-let _objectPhotosTotal = 0;
-let _objectPhotosPage = 1;
-let _objectPhotosTotalPages = 1;
-const _objectPhotosLimit = 50;
-let _objectCurrentRows = [];
-let _smartAlbumSelected = null;
-let _smartAlbumSelectedName = '';
 let _smartAlbumItemsPage = 1;
 let _smartAlbumItemsTotal = 0;
 let _smartAlbumItemsTotalPages = 1;
@@ -60,7 +60,6 @@ const LS_FACES_COLLAPSED = 'tgdl.ai.faces.collapsed';
 const LS_TAGS_COLLAPSED = 'tgdl.ai.tags.collapsed';
 const LS_PEOPLE_COLLAPSED = 'tgdl.ai.people.collapsed';
 const LS_TAG_BROWSER_COLLAPSED = 'tgdl.ai.tagBrowser.collapsed';
-const LS_OBJECTS_BROWSER_COLLAPSED = 'tgdl.ai.objectsBrowser.collapsed';
 const LS_TAG_SUGGESTIONS_COLLAPSED = 'tgdl.ai.tagSuggestions.collapsed';
 const LS_SMART_ALBUMS_COLLAPSED = 'tgdl.ai.smartAlbums.collapsed';
 const LS_LLM_COLLAPSED = 'tgdl.ai.llm.collapsed';
@@ -222,7 +221,7 @@ async function _renderTagBrowser(forceReload = true) {
                     '<p class="text-[11px] text-tg-textSecondary col-span-full text-center py-6">No tags yet — run a tag scan to populate.</p>';
             }
             if (empty) empty.classList.remove('hidden');
-            _tagSelected = '';
+            aiStore.set('tagSelected', '');
             _renderTagDetails('');
             _tagPhotosTotal = 0;
             _tagPhotosPage = 1;
@@ -254,11 +253,7 @@ async function _renderTagBrowser(forceReload = true) {
                 const tag = btn.dataset.tag;
                 btn.setAttribute('aria-pressed', 'true');
                 if (tag) {
-                    _tagSelected = tag;
-                    _ocrWordFilter = '';
-                    _renderOcrChips();
-                    _renderTagDetails(tag);
-                    _loadTagPhotos(tag);
+                    aiStore.set('tagSelected', tag);
                 }
             });
             btn.addEventListener('keydown', (e) => {
@@ -275,13 +270,14 @@ async function _renderTagBrowser(forceReload = true) {
             });
         });
         chips.querySelectorAll('.tag-chip').forEach((b) => {
-            if (b.dataset.tag !== _tagSelected) b.setAttribute('aria-pressed', 'false');
+            if (b.dataset.tag !== aiStore.get('tagSelected'))
+                b.setAttribute('aria-pressed', 'false');
         });
 
         // Keep selected tag if it still exists after refresh/filtering.
-        const selectedBtn = _tagSelected
+        const selectedBtn = aiStore.get('tagSelected')
             ? Array.from(chips.querySelectorAll('.tag-chip')).find(
-                  (el) => el.dataset.tag === _tagSelected,
+                  (el) => el.dataset.tag === aiStore.get('tagSelected'),
               )
             : null;
         const pick = selectedBtn || chips.querySelector('.tag-chip');
@@ -290,8 +286,11 @@ async function _renderTagBrowser(forceReload = true) {
             pick.setAttribute('aria-pressed', 'true');
             const tag = pick.dataset.tag || '';
             if (tag) {
-                if (_tagSelected !== tag) _tagSelected = tag;
-                _loadTagPhotos(tag);
+                if (aiStore.get('tagSelected') !== tag) {
+                    aiStore.set('tagSelected', tag); // watcher fires _loadTagPhotos
+                } else {
+                    _loadTagPhotos(tag); // same tag: watcher won't re-fire, load directly
+                }
             }
             return;
         }
@@ -317,7 +316,6 @@ async function _renderTagBrowser(forceReload = true) {
 async function _loadTagPhotos(tag) {
     const photos = $('#ai-tag-photos');
     if (!photos) return;
-    _tagSelected = String(tag || '');
     _tagPhotosPage = 1;
     _tagPhotosTotal = 0;
     _tagPhotosTotalPages = 1;
@@ -328,7 +326,7 @@ async function _loadTagPhotos(tag) {
 
 async function _loadTagPhotoPage() {
     const photos = $('#ai-tag-photos');
-    const tag = _tagSelected;
+    const tag = aiStore.get('tagSelected');
     if (!photos || !tag) return;
     photos.innerHTML =
         '<p class="text-[11px] text-tg-textSecondary col-span-full text-center py-6"><i class="ri-loader-4-line animate-spin mr-1"></i>Loading…</p>';
@@ -419,7 +417,7 @@ function _tagReviewMetaFor(file) {
     const score = Math.round((Number(row?.tag_score) || 0) * 100);
     return `<span class="inline-flex items-center gap-2">
         <span class="inline-block w-2.5 h-2.5 rounded-full bg-tg-blue"></span>
-        <span>${escapeHtml(_tagSelected || '')}</span>
+        <span>${escapeHtml(aiStore.get('tagSelected') || '')}</span>
         <span class="font-mono tabular-nums">${score}%</span>
     </span>`;
 }
@@ -436,7 +434,7 @@ function _syncTagPager() {
     const pageInfo = $('#ai-tag-page-info');
     const prevBtn = $('#ai-tag-prev-btn');
     const nextBtn = $('#ai-tag-next-btn');
-    const hasTag = !!_tagSelected;
+    const hasTag = !!aiStore.get('tagSelected');
     if (pageInfo) {
         pageInfo.textContent = hasTag
             ? `Page ${_tagPhotosPage} / ${_tagPhotosTotalPages} · ${_tagPhotosTotal.toLocaleString()} photos`
@@ -493,7 +491,7 @@ async function _renderTagDetails(tag) {
         // Source badges
         const sourcesEl = $('#ai-tag-details-sources');
         if (sourcesEl) {
-            const labels = { clip: 'CLIP', wd14: 'WD14', objects: 'Objects' };
+            const labels = { clip: 'CLIP', wd14: 'WD14' };
             sourcesEl.innerHTML = (Array.isArray(d.sources) ? d.sources : [])
                 .map(
                     (s) =>
@@ -542,200 +540,6 @@ function _selectTagChip(tag) {
     }
 }
 
-// ---- Objects browser ----------------------------------------------------
-
-async function _renderObjectsBrowser(forceReload = true) {
-    const section = $('#ai-objects-browser');
-    const chips = $('#ai-objects-chips');
-    const empty = $('#ai-objects-empty');
-    if (!section || !chips) return;
-
-    try {
-        if (forceReload || !_objectListCache.length) {
-            const r = await api.get('/api/ai/objects/list?minConfidence=0.3&limit=100');
-            _objectListCache = Array.isArray(r?.objects) ? r.objects : [];
-        }
-        const countEl = $('#ai-objects-browser-count');
-        if (countEl)
-            countEl.textContent = _objectListCache.length ? `(${_objectListCache.length})` : '';
-
-        section.classList.remove('hidden');
-        if (!_objectListCache.length) {
-            chips.innerHTML = '';
-            const photos = $('#ai-objects-photos');
-            if (photos) {
-                photos.innerHTML =
-                    '<p class="text-[11px] text-tg-textSecondary col-span-full text-center py-6">No objects yet — run an object detection scan to populate.</p>';
-            }
-            if (empty) empty.classList.remove('hidden');
-            _objectSelected = '';
-            _syncObjectPager();
-            return;
-        }
-        if (empty) empty.classList.add('hidden');
-        chips.innerHTML = _objectListCache
-            .map(
-                (o) =>
-                    `<button type="button" class="tg-btn-input text-[11px] px-2.5 py-1 inline-flex items-center gap-1 obj-chip" data-object="${escapeHtml(o.object)}" aria-pressed="false">
-                        ${escapeHtml(o.object)}
-                        <span class="text-[10px] text-tg-textSecondary tabular-nums">${o.count}</span>
-                    </button>`,
-            )
-            .join('');
-
-        chips.querySelectorAll('.obj-chip').forEach((btn) => {
-            btn.addEventListener('click', () => {
-                chips.querySelectorAll('.obj-chip').forEach((b) => {
-                    b.classList.remove('active');
-                    b.setAttribute('aria-pressed', 'false');
-                });
-                btn.classList.add('active');
-                btn.setAttribute('aria-pressed', 'true');
-                const obj = btn.dataset.object;
-                if (obj) {
-                    _objectSelected = obj;
-                    _loadObjectPhotos(obj);
-                }
-            });
-        });
-
-        const selectedBtn = _objectSelected
-            ? Array.from(chips.querySelectorAll('.obj-chip')).find(
-                  (el) => el.dataset.object === _objectSelected,
-              )
-            : null;
-        const pick = selectedBtn || chips.querySelector('.obj-chip');
-        if (pick) {
-            pick.classList.add('active');
-            pick.setAttribute('aria-pressed', 'true');
-            const obj = pick.dataset.object || '';
-            if (obj) {
-                if (_objectSelected !== obj) _objectSelected = obj;
-                _loadObjectPhotos(obj);
-            }
-        }
-    } catch (e) {
-        console.warn('objects browser:', e);
-        section.classList.add('hidden');
-    }
-}
-
-async function _loadObjectPhotos(object) {
-    const photos = $('#ai-objects-photos');
-    if (!photos) return;
-    _objectSelected = String(object || '');
-    _objectPhotosPage = 1;
-    _objectPhotosTotal = 0;
-    _objectPhotosTotalPages = 1;
-    _objectCurrentRows = [];
-    _syncObjectPager();
-    await _loadObjectPhotoPage();
-}
-
-async function _loadObjectPhotoPage() {
-    const photos = $('#ai-objects-photos');
-    const obj = _objectSelected;
-    if (!photos || !obj) return;
-    photos.innerHTML =
-        '<p class="text-[11px] text-tg-textSecondary col-span-full text-center py-6"><i class="ri-loader-4-line animate-spin mr-1"></i>Loading…</p>';
-    try {
-        const offset = Math.max(0, (_objectPhotosPage - 1) * _objectPhotosLimit);
-        const r = await api.get(
-            `/api/ai/objects/photos?object=${encodeURIComponent(obj)}&limit=${_objectPhotosLimit}&offset=${offset}`,
-        );
-        const files = Array.isArray(r?.files) ? r.files : [];
-        _objectCurrentRows = files;
-        _objectPhotosTotal = Number(r?.total) || files.length;
-        _objectPhotosTotalPages = Math.max(1, Math.ceil(_objectPhotosTotal / _objectPhotosLimit));
-        if (!files.length) {
-            photos.innerHTML =
-                '<p class="text-[11px] text-tg-textSecondary col-span-full text-center py-6">No photos with this object.</p>';
-            _syncObjectPager();
-            return;
-        }
-        photos.innerHTML = files.map((f, i) => _renderObjectPhotoTile(f, i)).join('');
-        _wireObjectPhotoClicks();
-        _syncObjectPager();
-    } catch (e) {
-        _objectCurrentRows = [];
-        _syncObjectPager();
-        photos.innerHTML = `<p class="text-[11px] text-red-400 col-span-full text-center py-6">Failed: ${escapeHtml(e?.message || 'unknown')}</p>`;
-    }
-}
-
-function _renderObjectPhotoTile(file, index) {
-    const thumb = `/api/thumbs/${encodeURIComponent(file.id)}?w=320`;
-    const confPct = file.confidence ? Math.round(file.confidence * 100) : 0;
-    return `<button type="button" data-obj-tile-index="${index}" data-id="${file.id}"
-            class="nsfw-tile group relative aspect-square rounded-md overflow-hidden bg-tg-bg/40 focus:outline-none focus:ring-2 focus:ring-tg-blue">
-        <img loading="lazy" decoding="async"
-             class="absolute inset-0 w-full h-full object-cover"
-             src="${escapeHtml(thumb)}" alt=""
-             onerror="this.style.display='none'">
-        <span class="hidden sm:block absolute top-1 right-1 px-1.5 py-0.5 text-[10px] font-mono rounded bg-tg-blue/85 text-white tabular-nums">${confPct}%</span>
-        <span class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 group-focus:opacity-100 transition flex items-end p-2 pointer-events-none">
-            <span class="text-[11px] text-white truncate w-full text-left">${escapeHtml(file.file_name || '')}</span>
-        </span>
-    </button>`;
-}
-
-function _wireObjectPhotoClicks() {
-    const photos = $('#ai-objects-photos');
-    if (!photos) return;
-    photos.querySelectorAll('[data-obj-tile-index]').forEach((tile) => {
-        if (tile.dataset.wired) return;
-        tile.dataset.wired = '1';
-        tile.addEventListener('click', () => {
-            const idx = Number(tile.dataset.objTileIndex);
-            if (Number.isFinite(idx)) _openObjectLightbox(idx);
-        });
-    });
-}
-
-function _objectRowToViewerFile(row) {
-    const sizeMb = row.file_size ? (row.file_size / (1024 * 1024)).toFixed(1) : '0';
-    return {
-        fullPath: row.file_path || '',
-        type: row.file_type === 'video' ? 'videos' : 'images',
-        name: row.file_name || '',
-        sizeFormatted: `${sizeMb} MB`,
-        modified: row.created_at || Date.now(),
-        _objRow: row,
-    };
-}
-
-function _objectReviewMetaFor(file) {
-    const row = file?._objRow;
-    const conf = Math.round((Number(row?.confidence) || 0) * 100);
-    return `<span class="inline-flex items-center gap-2">
-        <span class="inline-block w-2.5 h-2.5 rounded-full bg-tg-blue"></span>
-        <span>${escapeHtml(_objectSelected || '')}</span>
-        <span class="font-mono tabular-nums">${conf}%</span>
-    </span>`;
-}
-
-function _openObjectLightbox(startIndex) {
-    if (!_objectCurrentRows.length) return;
-    openMediaViewerForReview(_objectCurrentRows.map(_objectRowToViewerFile), startIndex, {
-        actions: [],
-        metaRender: _objectReviewMetaFor,
-    });
-}
-
-function _syncObjectPager() {
-    const pageInfo = $('#ai-objects-page-info');
-    const prevBtn = $('#ai-objects-prev-btn');
-    const nextBtn = $('#ai-objects-next-btn');
-    const hasObj = !!_objectSelected;
-    if (pageInfo) {
-        pageInfo.textContent = hasObj
-            ? `Page ${_objectPhotosPage} / ${_objectPhotosTotalPages} · ${_objectPhotosTotal.toLocaleString()} photos`
-            : '';
-    }
-    if (prevBtn) prevBtn.disabled = !hasObj || _objectPhotosPage <= 1;
-    if (nextBtn) nextBtn.disabled = !hasObj || _objectPhotosPage >= _objectPhotosTotalPages;
-}
-
 // ---- OCR word chips -----------------------------------------------------
 
 let _ocrWordsCache = [];
@@ -762,7 +566,7 @@ async function _renderOcrChips() {
             clearBtn.onclick = () => {
                 _ocrWordFilter = '';
                 _renderOcrChips();
-                if (_tagSelected) _loadTagPhotos(_tagSelected);
+                if (aiStore.get('tagSelected')) _loadTagPhotos(aiStore.get('tagSelected'));
             };
         }
         chips.innerHTML = _ocrWordsCache
@@ -779,7 +583,7 @@ async function _renderOcrChips() {
                 const word = btn.dataset.word;
                 _ocrWordFilter = _ocrWordFilter === word ? '' : word;
                 _renderOcrChips();
-                if (_tagSelected) _loadTagPhotos(_tagSelected);
+                if (aiStore.get('tagSelected')) _loadTagPhotos(aiStore.get('tagSelected'));
             });
         });
     } catch {
@@ -893,8 +697,8 @@ async function _renderSmartAlbums() {
             list.innerHTML =
                 '<p class="text-[11px] text-tg-textSecondary text-center py-3">No smart albums yet. Add one above.</p>';
             $('#ai-smart-album-items')?.classList.add('hidden');
-            _smartAlbumSelected = null;
-            _smartAlbumSelectedName = '';
+            aiStore.set('smartAlbumSelected', null);
+            aiStore.set('smartAlbumSelectedName', '');
             _smartAlbumItemsPage = 1;
             _smartAlbumItemsTotal = 0;
             _smartAlbumItemsTotalPages = 1;
@@ -933,10 +737,10 @@ async function _renderSmartAlbums() {
             .join('');
         list.querySelectorAll('[data-sa-open]').forEach((btn) => {
             btn.addEventListener('click', () => {
-                _loadSmartAlbumItems(
-                    btn.getAttribute('data-sa-open'),
-                    btn.getAttribute('data-sa-name'),
-                );
+                const id = btn.getAttribute('data-sa-open');
+                const name = btn.getAttribute('data-sa-name');
+                aiStore.set('smartAlbumSelectedName', String(name || `#${id}`));
+                aiStore.set('smartAlbumSelected', id); // watcher fires _loadSmartAlbumItems
             });
         });
         list.querySelectorAll('[data-sa-rebuild]').forEach((btn) => {
@@ -999,27 +803,25 @@ async function _loadSmartAlbumItems(id, name) {
     const nameEl = $('#ai-smart-album-items-name');
     const grid = $('#ai-smart-album-items-grid');
     if (!section || !grid) return;
-    _smartAlbumSelected = id;
-    _smartAlbumSelectedName = String(name || `#${id}`);
     _smartAlbumItemsPage = 1;
     _smartAlbumItemsTotal = 0;
     _smartAlbumItemsTotalPages = 1;
     _smartAlbumCurrentRows = [];
     section.classList.remove('hidden');
-    if (nameEl) nameEl.textContent = _smartAlbumSelectedName;
+    if (nameEl) nameEl.textContent = aiStore.get('smartAlbumSelectedName');
     _syncSmartAlbumPager();
     await _loadSmartAlbumItemsPage();
 }
 
 async function _loadSmartAlbumItemsPage() {
     const grid = $('#ai-smart-album-items-grid');
-    if (!grid || !_smartAlbumSelected) return;
+    if (!grid || !aiStore.get('smartAlbumSelected')) return;
     grid.innerHTML =
         '<p class="text-[11px] text-tg-textSecondary col-span-full text-center py-3">Loading…</p>';
     try {
         const offset = Math.max(0, (_smartAlbumItemsPage - 1) * _smartAlbumItemsLimit);
         const r = await api.get(
-            `/api/ai/smart-albums/${encodeURIComponent(_smartAlbumSelected)}/items?limit=${_smartAlbumItemsLimit}&offset=${offset}`,
+            `/api/ai/smart-albums/${encodeURIComponent(aiStore.get('smartAlbumSelected'))}/items?limit=${_smartAlbumItemsLimit}&offset=${offset}`,
         );
         const files = Array.isArray(r?.files) ? r.files : [];
         _smartAlbumCurrentRows = files;
@@ -1086,7 +888,7 @@ function _smartAlbumRowToViewerFile(row) {
 function _smartAlbumMetaFor() {
     return `<span class="inline-flex items-center gap-2">
         <span class="inline-block w-2.5 h-2.5 rounded-full bg-tg-blue"></span>
-        <span>${escapeHtml(_smartAlbumSelectedName || 'Smart album')}</span>
+        <span>${escapeHtml(aiStore.get('smartAlbumSelectedName') || 'Smart album')}</span>
     </span>`;
 }
 
@@ -1102,7 +904,7 @@ function _syncSmartAlbumPager() {
     const pageInfo = $('#ai-smart-album-page-info');
     const prevBtn = $('#ai-smart-album-prev-btn');
     const nextBtn = $('#ai-smart-album-next-btn');
-    const hasAlbum = !!_smartAlbumSelected;
+    const hasAlbum = !!aiStore.get('smartAlbumSelected');
     if (pageInfo) {
         pageInfo.textContent = hasAlbum
             ? `Page ${_smartAlbumItemsPage} / ${_smartAlbumItemsTotalPages} · ${_smartAlbumItemsTotal.toLocaleString()} photos`
@@ -1126,7 +928,7 @@ async function _createSmartAlbum(prefillTag = '') {
         return;
     }
     const choice = await _smartAlbumPickerSheet(
-        prefillTag || _tagSelected || _tagListCache[0]?.tag,
+        prefillTag || aiStore.get('tagSelected') || _tagListCache[0]?.tag,
     );
     if (!choice) return;
     try {
@@ -1328,7 +1130,6 @@ function _applyCommonNlRuleFixes(rule) {
         'tags_contains',
         'people_count',
         'semantic',
-        'objects',
         'text_contains',
         'date',
         'file_type',
@@ -1902,7 +1703,6 @@ function _formatMatchExplanations(explanations) {
     const labels = {
         semantic: 'semantic',
         tags: 'tags',
-        objects: 'objects',
         people: 'people',
         text: 'OCR',
         filename: 'filename',
@@ -2132,19 +1932,17 @@ export async function refreshStatus() {
     try {
         const r = await api.get('/api/ai/status');
         if (!r.success) return;
-        _lastStatus = r;
-        _renderStatus(r);
+        aiStore.set('status', r);
         api.get('/api/ai/issues')
             .then((issues) => {
-                if (!issues?.success || _lastStatus !== r) return;
-                _lastStatus.issues = issues;
-                _renderQuickOps(_lastStatus);
+                if (!issues?.success || aiStore.get('status') !== r) return;
+                r.issues = issues;
+                _renderQuickOps(r);
             })
             .catch(() => {
                 /* status should still render if issue audit fails */
             });
         _renderTagBrowser().catch(() => {});
-        _renderObjectsBrowser().catch(() => {});
         _renderTagSuggestions().catch(() => {});
         _renderSmartAlbums().catch(() => {});
         _renderLlmStatus().catch(() => {});
@@ -2296,14 +2094,14 @@ function _bindOnce() {
         if (display) display.textContent = val.toFixed(2);
     });
 
-    // "Scan everything" — fires all four scan features sequentially.
+    // "Scan everything" — fires all scan features sequentially.
     // Each _startScan is independent (own tracker/endpoint), but we
     // fire them one after the other to avoid hammering the sidecar.
     $('#ai-scan-all-btn')?.addEventListener('click', async () => {
         const btn = $('#ai-scan-all-btn');
         const statusEl = $('#ai-scan-all-status');
         if (btn) btn.disabled = true;
-        const features = ['faces', 'tags', 'ocr', 'objects'];
+        const features = ['faces', 'tags', 'ocr'];
         let started = 0;
         for (const f of features) {
             try {
@@ -2356,49 +2154,6 @@ function _bindOnce() {
     $('#ai-ocr-scan-btn')?.addEventListener('click', () => _startScan('ocr'));
     $('#ai-ocr-cancel-btn')?.addEventListener('click', () => _cancelScan('ocr'));
 
-    // Object detection — toggle + confidence slider + scan/cancel buttons.
-    $('#ai-objects-toggle')?.addEventListener('click', async () => {
-        const el = $('#ai-objects-toggle');
-        const was = el.getAttribute('aria-checked') === 'true';
-        const next = !was;
-        try {
-            el.style.pointerEvents = 'none';
-            await api.post('/api/config', {
-                advanced: { ai: { objectDetection: next } },
-            });
-            el.setAttribute('aria-checked', String(next));
-            el.classList.toggle('bg-tg-blue', next);
-            el.classList.toggle('bg-tg-bg/40', !next);
-        } catch (e) {
-            showToast(
-                `${i18nT('common.save_failed', 'Save failed')}: ${e?.data?.error || e?.message}`,
-                'error',
-            );
-        } finally {
-            el.style.pointerEvents = '';
-        }
-    });
-    $('#ai-objects-toggle')?.addEventListener('keydown', (e) => {
-        if (e.code === 'Space' || e.code === 'Enter') {
-            e.preventDefault();
-            $('#ai-objects-toggle')?.click();
-        }
-    });
-    $('#ai-objects-confidence')?.addEventListener('input', async (e) => {
-        const val = parseFloat(e.target.value) || 0.5;
-        const display = $('#ai-objects-confidence-value');
-        if (display) display.textContent = val.toFixed(1);
-        try {
-            await api.post('/api/config', {
-                advanced: { ai: { objectDetection: { minConfidence: val } } },
-            });
-        } catch (e) {
-            console.warn('Failed to save confidence threshold:', e);
-        }
-    });
-    $('#ai-objects-scan-btn')?.addEventListener('click', () => _startScan('objects'));
-    $('#ai-objects-cancel-btn')?.addEventListener('click', () => _cancelScan('objects'));
-
     // Doctor refresh
     $('#ai-doctor-refresh-btn')?.addEventListener('click', (e) => {
         e.preventDefault();
@@ -2425,38 +2180,6 @@ function _bindOnce() {
     });
     $('#ai-people-refresh-btn')?.addEventListener('click', () => _loadPeople());
 
-    // Objects browser — backfill + refresh + pagination.
-    $('#ai-objects-backfill-btn')?.addEventListener('click', async () => {
-        const btn = $('#ai-objects-backfill-btn');
-        if (btn) {
-            btn.disabled = true;
-            btn.classList.add('opacity-50');
-        }
-        try {
-            const r = await api.post('/api/ai/objects/backfill-tags', {});
-            showToast(`Synced ${r.written ?? 0} object→tag entries`, 'success');
-            _renderTagBrowser().catch(() => {});
-        } catch (e) {
-            showToast(`Backfill failed: ${e?.message || 'unknown'}`, 'error');
-        } finally {
-            if (btn) {
-                btn.disabled = false;
-                btn.classList.remove('opacity-50');
-            }
-        }
-    });
-    $('#ai-objects-browser-refresh')?.addEventListener('click', () => _renderObjectsBrowser());
-    $('#ai-objects-prev-btn')?.addEventListener('click', () => {
-        if (!_objectSelected || _objectPhotosPage <= 1) return;
-        _objectPhotosPage -= 1;
-        _loadObjectPhotoPage();
-    });
-    $('#ai-objects-next-btn')?.addEventListener('click', () => {
-        if (!_objectSelected || _objectPhotosPage >= _objectPhotosTotalPages) return;
-        _objectPhotosPage += 1;
-        _loadObjectPhotoPage();
-    });
-
     // Tag browser — refresh + chip clicks.
     $('#ai-tag-browser-refresh')?.addEventListener('click', () => _renderTagBrowser());
     $('#ai-tag-filter')?.addEventListener('input', (e) => {
@@ -2468,18 +2191,20 @@ function _bindOnce() {
         _renderTagBrowser(false);
     });
     $('#ai-tag-prev-btn')?.addEventListener('click', () => {
-        if (!_tagSelected || _tagPhotosPage <= 1) return;
+        if (!aiStore.get('tagSelected') || _tagPhotosPage <= 1) return;
         _tagPhotosPage -= 1;
         _loadTagPhotoPage();
     });
     $('#ai-tag-next-btn')?.addEventListener('click', () => {
-        if (!_tagSelected || _tagPhotosPage >= _tagPhotosTotalPages) return;
+        if (!aiStore.get('tagSelected') || _tagPhotosPage >= _tagPhotosTotalPages) return;
         _tagPhotosPage += 1;
         _loadTagPhotoPage();
     });
-    $('#ai-tag-create-album')?.addEventListener('click', () => _createSmartAlbum(_tagSelected));
+    $('#ai-tag-create-album')?.addEventListener('click', () =>
+        _createSmartAlbum(aiStore.get('tagSelected')),
+    );
     $('#ai-tag-details-album-btn')?.addEventListener('click', () =>
-        _createSmartAlbum(_tagSelected),
+        _createSmartAlbum(aiStore.get('tagSelected')),
     );
     $('#ai-tag-suggestions-refresh')?.addEventListener('click', () => _renderTagSuggestions());
     $('#ai-smart-albums-refresh')?.addEventListener('click', () => _renderSmartAlbums());
@@ -2490,12 +2215,16 @@ function _bindOnce() {
     $('#ai-album-nl-cancel-btn')?.addEventListener('click', _clearAlbumNlBuilder);
     $('#ai-smart-albums-add')?.addEventListener('click', () => _createSmartAlbum());
     $('#ai-smart-album-prev-btn')?.addEventListener('click', () => {
-        if (!_smartAlbumSelected || _smartAlbumItemsPage <= 1) return;
+        if (!aiStore.get('smartAlbumSelected') || _smartAlbumItemsPage <= 1) return;
         _smartAlbumItemsPage -= 1;
         _loadSmartAlbumItemsPage();
     });
     $('#ai-smart-album-next-btn')?.addEventListener('click', () => {
-        if (!_smartAlbumSelected || _smartAlbumItemsPage >= _smartAlbumItemsTotalPages) return;
+        if (
+            !aiStore.get('smartAlbumSelected') ||
+            _smartAlbumItemsPage >= _smartAlbumItemsTotalPages
+        )
+            return;
         _smartAlbumItemsPage += 1;
         _loadSmartAlbumItemsPage();
     });
@@ -2517,11 +2246,6 @@ function _bindOnce() {
     _initDetailsCollapsedState({
         detailsId: 'ai-tag-browser',
         storageKey: LS_TAG_BROWSER_COLLAPSED,
-        defaultOpen: false,
-    });
-    _initDetailsCollapsedState({
-        detailsId: 'ai-objects-browser',
-        storageKey: LS_OBJECTS_BROWSER_COLLAPSED,
         defaultOpen: false,
     });
     _initDetailsCollapsedState({
@@ -2555,12 +2279,12 @@ function _bindOnce() {
     // grid container so it survives re-renders.
     _wirePeopleGridKeyboard();
     $('#ai-people-photos-prev-btn')?.addEventListener('click', () => {
-        if (!_selectedPerson || _peoplePhotosPage <= 1) return;
+        if (!aiStore.get('selectedPerson') || _peoplePhotosPage <= 1) return;
         _peoplePhotosPage -= 1;
         _loadPersonPhotosPage();
     });
     $('#ai-people-photos-next-btn')?.addEventListener('click', () => {
-        if (!_selectedPerson || _peoplePhotosPage >= _peoplePhotosTotalPages) return;
+        if (!aiStore.get('selectedPerson') || _peoplePhotosPage >= _peoplePhotosTotalPages) return;
         _peoplePhotosPage += 1;
         _loadPersonPhotosPage();
     });
@@ -2612,8 +2336,6 @@ function _bindOnce() {
     ws.on('ai_tags_done', (m) => _onScanDone('tags', m));
     ws.on('ai_ocr_progress', (m) => _onScanProgress('ocr', m));
     ws.on('ai_ocr_done', (m) => _onScanDone('ocr', m));
-    ws.on('ai_objects_progress', (m) => _onScanProgress('objects', m));
-    ws.on('ai_objects_done', (m) => _onScanDone('objects', m));
     ws.on('ai_faces_status', () => refreshStatus());
 
     // Auto-installer feedback. Streams stdout from `python -m
@@ -2636,6 +2358,33 @@ function _bindOnce() {
         }
         const menu = document.getElementById('ai-more-menu');
         if (menu instanceof HTMLDetailsElement) menu.open = false;
+    });
+
+    // Single status watcher — fires whenever refreshStatus() stores a new
+    // API response. All render paths driven by status go here; callers
+    // only need to call aiStore.set('status', ...) and this handles the rest.
+    aiStore.watch('status', (v) => _renderStatus(v || {}));
+
+    // People panel — sync tile highlight when selection changes.
+    // Photo loading is kept imperative (click handlers call _showPersonPhotos
+    // explicitly) because dblclick → rename and click → show-photos share the
+    // same selectedPerson write and need different follow-up actions.
+    aiStore.watch('selectedPerson', () => _syncSelectedPersonTile());
+
+    // Smart albums panel — album selection drives item load reactively.
+    aiStore.watch('smartAlbumSelected', (id) => {
+        if (id != null) _loadSmartAlbumItems(id, aiStore.get('smartAlbumSelectedName'));
+    });
+
+    // Tags panel — chip selection drives photo load reactively.
+    // Also resets the OCR word filter so photos show unfiltered for the new tag.
+    aiStore.watch('tagSelected', (tag) => {
+        if (tag) {
+            _ocrWordFilter = '';
+            _renderOcrChips();
+            _renderTagDetails(tag).catch(() => {});
+            _loadTagPhotos(tag);
+        }
     });
 }
 
@@ -2835,7 +2584,6 @@ function _scanLabel(feature) {
             faces: 'Faces',
             tags: 'CLIP tags',
             ocr: 'OCR',
-            objects: 'Objects',
             wd14: 'WD14',
         }[feature] || feature
     );
@@ -2859,8 +2607,6 @@ function _renderQuickOps(status) {
         const facesReady = models.faces?.loaded === true;
         const tagsReady = models.tags?.loaded === true;
         const ocrEnabled = cfg.imageOcr === true;
-        const objectsEnabled =
-            cfg.objectDetection === true || typeof cfg.objectDetection === 'object';
         const pills = [
             _featurePill('Sidecar', sidecarState, sidecar.url || 'Offline'),
             _featurePill('Faces', facesReady ? 'ready' : 'error', models.faces?.id || 'Not ready'),
@@ -2875,13 +2621,6 @@ function _renderQuickOps(status) {
                 !ocrEnabled
                     ? 'Disabled'
                     : models.ocr?.error || (models.ocr?.ready ? 'Ready' : 'Not ready'),
-            ),
-            _featurePill(
-                'Objects',
-                !objectsEnabled ? 'disabled' : models.objects?.ready ? 'ready' : 'warn',
-                !objectsEnabled
-                    ? 'Disabled'
-                    : models.objects?.error || (models.objects?.ready ? 'Ready' : 'Not ready'),
             ),
         ];
         grid.innerHTML = pills.join('');
@@ -2943,13 +2682,6 @@ function _renderQuickOps(status) {
             count: 1,
             detail: models.ocr.error,
         });
-    if (models.objects?.error)
-        issues.push({
-            severity: 'warn',
-            title: 'Object detection not ready',
-            count: 1,
-            detail: models.objects.error,
-        });
     if (models.tags && models.tags.loaded === false)
         issues.push({
             severity: 'warn',
@@ -2981,16 +2713,17 @@ function _renderQuickOps(status) {
 }
 
 async function _copyAiDiagnostics() {
-    if (!_lastStatus) return;
+    const status = aiStore.get('status');
+    if (!status) return;
     const data = {
         generatedAt: new Date().toISOString(),
-        sidecar: _lastStatus.sidecar || null,
-        mlSidecar: _lastStatus.mlSidecar || null,
-        models: _lastStatus.models || {},
-        scans: _lastStatus.scans || {},
-        counts: _lastStatus.counts || {},
-        trackers: _lastStatus.trackers || {},
-        issues: _lastStatus.issues || null,
+        sidecar: status.sidecar || null,
+        mlSidecar: status.mlSidecar || null,
+        models: status.models || {},
+        scans: status.scans || {},
+        counts: status.counts || {},
+        trackers: status.trackers || {},
+        issues: status.issues || null,
     };
     try {
         await navigator.clipboard.writeText(JSON.stringify(data, null, 2));
@@ -3052,10 +2785,10 @@ const _SCANNER_CARD_DEFS = [
         sidecarEndpoint: 'wd14', // needs explicit wd14 endpoint — tgdl-ml doesn't expose it
         modelKey: 'wd14',
         countKey: 'withWd14Tags',
-        scanBtnId: null, // shares objects scan button
+        scanBtnId: null,
         cancelBtnId: null,
         estimateKey: 'aiWd14',
-        settingsPaneId: 'ai-pane-objects',
+        settingsPaneId: 'ai-pane-tags',
         configSummary: (_cfg, _models) => 'SmilingWolf wd-v1-4-vit-tagger-v2',
     },
     {
@@ -3073,24 +2806,6 @@ const _SCANNER_CARD_DEFS = [
         settingsPaneId: 'ai-pane-ocr',
         configSummary: (cfg, _models) => {
             return cfg.imageOcr ? 'enabled' : 'disabled';
-        },
-    },
-    {
-        feature: 'objects',
-        label: 'Objects',
-        icon: 'ri-search-eye-line',
-        color: 'text-emerald-400',
-        enabledKey: null, // uses models.objects.enabled
-        sidecarEndpoint: 'objects',
-        modelKey: 'objects',
-        countKey: 'withObjects',
-        scanBtnId: 'ai-objects-scan-btn',
-        cancelBtnId: 'ai-objects-cancel-btn',
-        estimateKey: 'aiObjects',
-        settingsPaneId: 'ai-pane-objects',
-        configSummary: (_cfg, _models) => {
-            const m = _models.objects || {};
-            return m.ready ? 'ready' : m.error || 'not ready';
         },
     },
 ];
@@ -3408,11 +3123,6 @@ function _renderStatus(status) {
         const n = Number(counts.withText) || 0;
         ocrCount.textContent = n ? `(${n.toLocaleString()})` : '';
     }
-    const objectsCount = $('#ai-objects-count');
-    if (objectsCount) {
-        const n = Number(counts.withObjects) || 0;
-        objectsCount.textContent = n ? `(${n.toLocaleString()})` : '';
-    }
     _lastTagsChangedAt = Number(scans?.tags?.finishedAt) || _lastTagsChangedAt || 0;
     const lastEl = $('#ai-stat-last');
     if (lastEl) {
@@ -3423,7 +3133,6 @@ function _renderStatus(status) {
             Number(scans?.faces?.finishedAt) || 0,
             Number(scans?.tags?.finishedAt) || 0,
             Number(scans?.ocr?.finishedAt) || 0,
-            Number(scans?.objects?.finishedAt) || 0,
         );
         const finishedAt = dbLast || memLast;
         lastEl.textContent =
@@ -3611,41 +3320,6 @@ function _renderStatus(status) {
             ocrStatusEl.className = 'text-[10px] text-red-400 mt-1';
         } else {
             ocrStatusEl.textContent = '';
-        }
-    }
-
-    // Object detection card — toggle, scan state, sidecar readiness hint.
-    const objectsToggle = $('#ai-objects-toggle');
-    if (objectsToggle) {
-        const on = cfg.objectDetection === true;
-        objectsToggle.classList.toggle('bg-tg-blue', on);
-        objectsToggle.classList.toggle('bg-tg-bg/40', !on);
-        objectsToggle.setAttribute('aria-checked', String(on));
-    }
-    const objectsRunning = !!scans?.objects?.running;
-    const detModel = models.objects || {};
-    const objectsScanBtn = $('#ai-objects-scan-btn');
-    const objectsCancelBtn = $('#ai-objects-cancel-btn');
-    if (objectsScanBtn) {
-        // Do not hard-disable here: some deployments use the newer WD14
-        // tagger behind this card and older sidecars do not expose a
-        // detection_ready flag. Server-side preflight remains authoritative.
-        objectsScanBtn.disabled = objectsRunning;
-        objectsScanBtn.title = detModel.ready
-            ? 'Run object detection scan'
-            : 'Run scan (readiness will be checked before start)';
-    }
-    if (objectsCancelBtn) objectsCancelBtn.disabled = !objectsRunning;
-    const detStatusEl = $('#ai-objects-status-line');
-    if (detStatusEl) {
-        if (detModel.ready) {
-            detStatusEl.textContent = 'YOLOv8n ready';
-            detStatusEl.className = 'text-[10px] text-tg-green mt-1';
-        } else if (detModel.error) {
-            detStatusEl.textContent = `YOLO: ${detModel.error}`;
-            detStatusEl.className = 'text-[10px] text-red-400 mt-1';
-        } else {
-            detStatusEl.textContent = '';
         }
     }
 }
@@ -4010,9 +3684,10 @@ function _renderCapabilityCard(cap, model, cfg) {
     const title = escapeHtml(i18nT(cap.i18n?.title, cap.defaults.title));
     const desc = escapeHtml(i18nT(cap.i18n?.desc, cap.defaults.desc));
     const enabled = cfg[cap.autoToggleKey] !== false;
-    const running = !!_lastStatus?.scans?.[cap.scanFeature]?.running;
-    const scanned = Number(_lastStatus?.scans?.[cap.scanFeature]?.scanned) || 0;
-    const total = Number(_lastStatus?.scans?.[cap.scanFeature]?.total) || 0;
+    const _s = aiStore.get('status');
+    const running = !!_s?.scans?.[cap.scanFeature]?.running;
+    const scanned = Number(_s?.scans?.[cap.scanFeature]?.scanned) || 0;
+    const total = Number(_s?.scans?.[cap.scanFeature]?.total) || 0;
     const pct = total > 0 ? Math.min(100, Math.round((scanned / total) * 100)) : 0;
     const scanLabel = escapeHtml(i18nT(cap.i18n?.scanLabel, cap.defaults.scanLabel || 'Scan now'));
     const cancelLabel = escapeHtml(
@@ -4329,8 +4004,8 @@ async function _reindexFromScratch() {
         // Wipe local people cache + status to reflect the clean slate; the
         // scan progress events will refresh both as the run rebuilds them.
         _peopleCache = [];
-        _selectedPerson = null;
-        _selectedPersonName = '';
+        aiStore.set('selectedPerson', null);
+        aiStore.set('selectedPersonName', '');
         _resetPeoplePhotosState();
         _renderPeopleGrid();
         await refreshStatus();
@@ -4354,7 +4029,7 @@ async function _backfillFaceQuality() {
         if (!r.success) throw new Error(r.error || 'backfill failed');
         showToast(`Backfill complete: ${r.updated || 0} updated`, 'success');
         await refreshStatus();
-        if (_selectedPerson) await _showPersonPhotos();
+        if (aiStore.get('selectedPerson')) await _showPersonPhotos();
     } catch (e) {
         const msg = e?.data?.error || e?.message || 'unknown';
         showToast(`Backfill failed: ${msg}`, 'error');
@@ -4373,7 +4048,7 @@ async function _startScan(feature) {
     // shouldn't have to find two switches to start a scan. The master
     // toggle remains visible so it can be turned off explicitly to
     // pause auto-index on new downloads.
-    if (!_lastStatus?.config?.enabled) {
+    if (!aiStore.get('status')?.config?.enabled) {
         try {
             await api.post('/api/config', {
                 advanced: { ai: { enabled: true } },
@@ -4389,12 +4064,6 @@ async function _startScan(feature) {
     }
     try {
         const payload = { feature };
-        if (feature === 'objects') {
-            const confidenceSlider = $('#ai-objects-confidence');
-            if (confidenceSlider) {
-                payload.minConfidence = parseFloat(confidenceSlider.value) || 0.5;
-            }
-        }
         if (feature === 'tags') {
             const confSlider = $('#ai-tags-confidence');
             if (confSlider) {
@@ -4456,11 +4125,6 @@ function _onScanProgress(feature, msg) {
         const cancelBtn = $('#ai-ocr-cancel-btn');
         if (scanBtn) scanBtn.disabled = running;
         if (cancelBtn) cancelBtn.disabled = !running;
-    } else if (feature === 'objects') {
-        const scanBtn = $('#ai-objects-scan-btn');
-        const cancelBtn = $('#ai-objects-cancel-btn');
-        if (scanBtn) scanBtn.disabled = running;
-        if (cancelBtn) cancelBtn.disabled = !running;
     }
 
     // Shared progress bar — shows whichever scan is currently running.
@@ -4486,8 +4150,6 @@ function _onScanProgress(feature, msg) {
             label = i18nT('maintenance.ai.scanning_tags', 'Tagging photos…');
         } else if (feature === 'ocr') {
             label = i18nT('maintenance.ai.scanning_ocr', 'Extracting text…');
-        } else if (feature === 'objects') {
-            label = i18nT('maintenance.ai.scanning_objects', 'Detecting objects…');
         }
         if (label) progressStatus.textContent = label;
     }
@@ -4503,7 +4165,6 @@ function _onScanDone(feature, msg) {
     refreshStatus();
     if (feature === 'faces') _loadPeople();
     if (feature === 'tags') _renderTagBrowser();
-    if (feature === 'objects') _renderObjectsBrowser();
 }
 
 /**
@@ -4615,8 +4276,8 @@ function _renderPeopleGrid() {
     _renderPeopleSuggestions(_peopleCache);
     grid.querySelectorAll('[data-person]').forEach((b) => {
         b.addEventListener('click', () => {
-            _selectedPerson = Number(b.dataset.person);
-            _selectedPersonName = b.dataset.name || '';
+            aiStore.set('selectedPerson', Number(b.dataset.person));
+            aiStore.set('selectedPersonName', b.dataset.name || '');
             _syncSelectedPersonTile();
             _showPersonPhotos({ scrollIntoSection: true });
         });
@@ -4624,8 +4285,8 @@ function _renderPeopleGrid() {
             if (e.target.closest('.ai-person-name')) {
                 e.preventDefault();
                 e.stopPropagation();
-                _selectedPerson = Number(b.dataset.person);
-                _selectedPersonName = b.dataset.name || '';
+                aiStore.set('selectedPerson', Number(b.dataset.person));
+                aiStore.set('selectedPersonName', b.dataset.name || '');
                 _renameSelectedPerson();
             }
         });
@@ -4634,7 +4295,7 @@ function _renderPeopleGrid() {
 
 function _syncSelectedPersonTile() {
     document.querySelectorAll('#ai-people-grid [data-person]').forEach((tile) => {
-        const selected = Number(tile.dataset.person) === Number(_selectedPerson);
+        const selected = Number(tile.dataset.person) === Number(aiStore.get('selectedPerson'));
         tile.classList.toggle('bg-tg-blue/10', selected);
         tile.classList.toggle('ring-2', selected);
         tile.classList.toggle('ring-tg-blue/60', selected);
@@ -4654,7 +4315,7 @@ function _personTile(p) {
     const safeName = escapeHtml(name);
     const dimCls = !p.label && !isUnclassified ? 'opacity-50' : '';
     const selectedCls =
-        Number(p.id) === Number(_selectedPerson)
+        Number(p.id) === Number(aiStore.get('selectedPerson'))
             ? 'bg-tg-blue/10 ring-2 ring-tg-blue/60'
             : 'hover:bg-tg-bg/50';
     let imgHtml;
@@ -4673,7 +4334,7 @@ function _personTile(p) {
 
     return `<button type="button" data-person="${p.id}" data-name="${safeName}"
         class="flex flex-col items-center gap-1.5 px-1 py-2 rounded-xl active:scale-95 transition-all group text-center select-none ${selectedCls} ${dimCls}"
-        aria-pressed="${Number(p.id) === Number(_selectedPerson) ? 'true' : 'false'}"
+        aria-pressed="${Number(p.id) === Number(aiStore.get('selectedPerson')) ? 'true' : 'false'}"
         title="${safeName} · ${faceCount} ${escapeHtml(i18nT('maintenance.ai.faces_short', 'faces'))}${updatedStr ? ' · ' + updatedStr : ''}">
         <div class="w-[60px] h-[60px] rounded-full overflow-hidden flex items-center justify-center bg-tg-bg/40 flex-shrink-0">
             ${imgHtml}
@@ -4688,14 +4349,14 @@ function _personTile(p) {
 }
 
 async function _showPersonPhotos({ scrollIntoSection = false } = {}) {
-    if (!_selectedPerson) return;
+    if (!aiStore.get('selectedPerson')) return;
     const section = $('#ai-people-photos');
     section?.classList.remove('hidden');
     if (scrollIntoSection && section) {
         section.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
     const nameEl = $('#ai-people-photos-name');
-    if (nameEl) nameEl.textContent = _selectedPersonName;
+    if (nameEl) nameEl.textContent = aiStore.get('selectedPersonName');
     _peoplePhotosPage = 1;
     _peoplePhotosTotal = 0;
     _peoplePhotosTotalPages = 1;
@@ -4706,12 +4367,12 @@ async function _showPersonPhotos({ scrollIntoSection = false } = {}) {
 
 async function _loadPersonPhotosPage() {
     const grid = $('#ai-people-photos-grid');
-    if (!grid || !_selectedPerson) return;
+    if (!grid || !aiStore.get('selectedPerson')) return;
     grid.innerHTML = `<div class="col-span-full text-center text-xs text-tg-textSecondary py-8">${escapeHtml(i18nT('common.loading', 'Loading…'))}</div>`;
     try {
         const offset = Math.max(0, (_peoplePhotosPage - 1) * _peoplePhotosLimit);
         const r = await api.get(
-            `/api/ai/people/${_selectedPerson}/photos?limit=${_peoplePhotosLimit}&offset=${offset}`,
+            `/api/ai/people/${aiStore.get('selectedPerson')}/photos?limit=${_peoplePhotosLimit}&offset=${offset}`,
         );
         if (!r.success) throw new Error(r.error || 'load failed');
         const files = r.files || [];
@@ -4823,7 +4484,7 @@ function _peoplePhotoMetaFor(file) {
     const qualityScore = Number.isFinite(q) ? Math.round(Math.max(0, Math.min(1, q)) * 100) : null;
     return `<span class="inline-flex items-center gap-2">
         <span class="inline-block w-2.5 h-2.5 rounded-full bg-tg-blue"></span>
-        <span>${escapeHtml(_selectedPersonName || 'Person')}</span>
+        <span>${escapeHtml(aiStore.get('selectedPersonName') || 'Person')}</span>
         ${qualityScore == null ? '' : `<span class="font-mono tabular-nums">Q${qualityScore}</span>`}
     </span>`;
 }
@@ -4840,7 +4501,7 @@ function _syncPeoplePhotosPager() {
     const pageInfo = $('#ai-people-photos-page-info');
     const prevBtn = $('#ai-people-photos-prev-btn');
     const nextBtn = $('#ai-people-photos-next-btn');
-    const hasPerson = !!_selectedPerson;
+    const hasPerson = !!aiStore.get('selectedPerson');
     if (pageInfo) {
         pageInfo.textContent = hasPerson
             ? `Page ${_peoplePhotosPage} / ${_peoplePhotosTotalPages} · ${_peoplePhotosTotal.toLocaleString()} photos`
@@ -4893,8 +4554,8 @@ function _wirePeopleGridKeyboard() {
             e.preventDefault();
             const pid = Number(focused.dataset.person);
             if (!pid || pid === -1) return;
-            _selectedPerson = pid;
-            _selectedPersonName = focused.dataset.name || '';
+            aiStore.set('selectedPerson', pid);
+            aiStore.set('selectedPersonName', focused.dataset.name || '');
             _syncSelectedPersonTile();
             const saved = await _renameSelectedPerson();
             if (saved) _focusNextUnlabeled(pid);
@@ -4923,18 +4584,18 @@ function _focusNextUnlabeled(afterPersonId) {
 }
 
 async function _renameSelectedPerson() {
-    if (!_selectedPerson) return false;
+    if (!aiStore.get('selectedPerson')) return false;
     const label = await promptSheet({
         title: i18nT('maintenance.ai.person_rename', 'Rename'),
         message: i18nT('maintenance.ai.rename_prompt', 'Name this person:'),
-        defaultValue: _selectedPersonName || '',
+        defaultValue: aiStore.get('selectedPersonName') || '',
         confirmLabel: i18nT('common.save', 'Save'),
     });
     if (label == null) return false;
     try {
-        const r = await api.patch(`/api/ai/people/${_selectedPerson}`, { label });
+        const r = await api.patch(`/api/ai/people/${aiStore.get('selectedPerson')}`, { label });
         if (!r.success) throw new Error(r.error || 'rename failed');
-        _selectedPersonName = label;
+        aiStore.set('selectedPersonName', label);
         showToast(i18nT('common.saved', 'Saved'), 'success');
         const nameEl = $('#ai-people-photos-name');
         if (nameEl) nameEl.textContent = label;
@@ -4947,7 +4608,7 @@ async function _renameSelectedPerson() {
 }
 
 // Renders a single person tile for the merge picker sheet.
-// Separate from _personTile so it doesn't read module-level _selectedPerson.
+// Separate from _personTile so it doesn't read selectedPerson from the store.
 function _mergePickerTile(p, selectedId) {
     const isUnclassified = p.id === -1 || p.noise === true;
     const name = isUnclassified
@@ -4987,8 +4648,8 @@ function _openMergePickerSheet(candidates) {
     return new Promise((resolve) => {
         let pickedId = null;
         const sourceName =
-            _selectedPersonName ||
-            `${i18nT('maintenance.ai.person_default', 'Person')} #${_selectedPerson}`;
+            aiStore.get('selectedPersonName') ||
+            `${i18nT('maintenance.ai.person_default', 'Person')} #${aiStore.get('selectedPerson')}`;
 
         const wrap = document.createElement('div');
         wrap.innerHTML = `
@@ -5073,10 +4734,10 @@ function _openMergePickerSheet(candidates) {
 }
 
 async function _mergeSelectedPerson() {
-    if (!_selectedPerson) return;
+    if (!aiStore.get('selectedPerson')) return;
     // Exclude the current cluster and noise/unclassified from the picker.
     const candidates = _peopleCache.filter(
-        (p) => p.id !== _selectedPerson && p.id !== -1 && !p.noise,
+        (p) => p.id !== aiStore.get('selectedPerson') && p.id !== -1 && !p.noise,
     );
     if (!candidates.length) {
         showToast(
@@ -5091,8 +4752,8 @@ async function _mergeSelectedPerson() {
 
     const targetPerson = candidates.find((p) => p.id === targetId);
     const sourceName =
-        _selectedPersonName ||
-        `${i18nT('maintenance.ai.person_default', 'Person')} #${_selectedPerson}`;
+        aiStore.get('selectedPersonName') ||
+        `${i18nT('maintenance.ai.person_default', 'Person')} #${aiStore.get('selectedPerson')}`;
     const targetName =
         targetPerson?.label || `${i18nT('maintenance.ai.person_default', 'Person')} #${targetId}`;
     const ok = await confirmSheet({
@@ -5109,15 +4770,15 @@ async function _mergeSelectedPerson() {
 
     try {
         const res = await api.post(`/api/ai/people/${targetId}/merge`, {
-            otherId: _selectedPerson,
+            otherId: aiStore.get('selectedPerson'),
         });
         if (!res.success) throw new Error(res.error || 'merge failed');
         showToast(
             `${i18nT('maintenance.ai.merge_done', 'Merged')} — ${res.moved || 0} ${i18nT('maintenance.ai.faces_short', 'faces')}`,
             'success',
         );
-        _selectedPerson = null;
-        _selectedPersonName = '';
+        aiStore.set('selectedPerson', null);
+        aiStore.set('selectedPersonName', '');
         _resetPeoplePhotosState();
         $('#ai-people-photos')?.classList.add('hidden');
         _loadPeople();
@@ -5292,15 +4953,17 @@ function _openSplitPickerSheet(allFaces, sourceName) {
 }
 
 async function _splitSelectedPerson() {
-    if (!_selectedPerson) return;
+    if (!aiStore.get('selectedPerson')) return;
     const sourceName =
-        _selectedPersonName ||
-        `${i18nT('maintenance.ai.person_default', 'Person')} #${_selectedPerson}`;
+        aiStore.get('selectedPersonName') ||
+        `${i18nT('maintenance.ai.person_default', 'Person')} #${aiStore.get('selectedPerson')}`;
 
     // Fetch all faces for this cluster in one shot so the full grid is visible.
     let allFaces;
     try {
-        const r = await api.get(`/api/ai/people/${_selectedPerson}/photos?limit=500&offset=0`);
+        const r = await api.get(
+            `/api/ai/people/${aiStore.get('selectedPerson')}/photos?limit=500&offset=0`,
+        );
         if (!r.success) throw new Error(r.error || 'load failed');
         allFaces = Array.isArray(r.files) ? r.files : [];
     } catch (e) {
@@ -5318,7 +4981,7 @@ async function _splitSelectedPerson() {
     const { faceIds, label } = result;
 
     try {
-        const res = await api.post(`/api/ai/people/${_selectedPerson}/split`, {
+        const res = await api.post(`/api/ai/people/${aiStore.get('selectedPerson')}/split`, {
             faceIds,
             newLabel: label || undefined,
         });
@@ -5335,7 +4998,7 @@ async function _splitSelectedPerson() {
 }
 
 async function _deleteSelectedPerson() {
-    if (!_selectedPerson) return;
+    if (!aiStore.get('selectedPerson')) return;
     const ok = await confirmSheet({
         title: i18nT('maintenance.ai.person_delete', 'Delete'),
         message: i18nT(
@@ -5347,11 +5010,11 @@ async function _deleteSelectedPerson() {
     });
     if (!ok) return;
     try {
-        const r = await api.delete(`/api/ai/people/${_selectedPerson}`);
+        const r = await api.delete(`/api/ai/people/${aiStore.get('selectedPerson')}`);
         if (!r.success) throw new Error(r.error || 'delete failed');
         showToast(i18nT('common.deleted', 'Deleted'), 'success');
-        _selectedPerson = null;
-        _selectedPersonName = '';
+        aiStore.set('selectedPerson', null);
+        aiStore.set('selectedPersonName', '');
         _resetPeoplePhotosState();
         $('#ai-people-photos')?.classList.add('hidden');
         _loadPeople();
@@ -5404,7 +5067,7 @@ async function _refreshDoctor() {
             )
             .join('');
         // Re-apply control enable/disable state using the latest doctor gate.
-        _renderStatus(_lastStatus || {});
+        _renderStatus(aiStore.get('status') || {});
     } catch (e) {
         _doctorScanReady = false;
         el.innerHTML = `<div class="text-red-300 text-xs py-2">${escapeHtml(e.message)}</div>`;
@@ -5412,6 +5075,6 @@ async function _refreshDoctor() {
             sumEl.className = 'text-[10.5px] text-red-300';
             sumEl.textContent = `· ${i18nT('common.error', 'Error')}`;
         }
-        _renderStatus(_lastStatus || {});
+        _renderStatus(aiStore.get('status') || {});
     }
 }

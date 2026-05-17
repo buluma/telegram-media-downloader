@@ -1,5 +1,9 @@
 // Central State Store
 //
+// Also exports `createStore` — a factory for scoped reactive stores used
+// by page modules (e.g. the AI maintenance page). Each instance is
+// independent: its own state bag, its own subscriber map.
+//
 // Beyond the bag-of-state, this module owns the *canonical* group-name
 // lookup used by every render path in the SPA. Multiple paths used to
 // resolve names independently (`g.name`, `g.title`, dataset attrs,
@@ -176,4 +180,44 @@ export function updateGroupNameCache(updates) {
 /** Exposed for the unresolved-row detection in the sidebar render. */
 export function isUnresolvedName(name, id) {
     return looksUnresolved(name, id);
+}
+
+/**
+ * Factory for scoped reactive stores.
+ *
+ * Usage:
+ *   const s = createStore({ status: null, filter: '' });
+ *   const unsub = s.watch('status', (v) => render(v), { immediate: true });
+ *   s.set('status', freshData);   // triggers watcher
+ *   unsub();                      // clean up on SPA teardown
+ *
+ * Object values: replace the reference (don't mutate in-place) to trigger
+ * watchers, since equality is checked by reference (`===`).
+ */
+export function createStore(initial) {
+    const state = { ...initial };
+    const subs = new Map(); // key -> Set<fn>
+
+    function get(key) {
+        return state[key];
+    }
+
+    function set(key, value) {
+        if (state[key] === value) return;
+        state[key] = value;
+        subs.get(key)?.forEach((fn) => fn(value));
+    }
+
+    function patch(partial) {
+        for (const [k, v] of Object.entries(partial)) set(k, v);
+    }
+
+    function watch(key, fn, { immediate = false } = {}) {
+        if (!subs.has(key)) subs.set(key, new Set());
+        subs.get(key).add(fn);
+        if (immediate) fn(state[key]);
+        return () => subs.get(key).delete(fn);
+    }
+
+    return { get, set, patch, watch };
 }
