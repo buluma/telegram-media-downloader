@@ -489,7 +489,7 @@ function _renderOcrBrowserChips() {
             (w) =>
                 `<button type="button" class="tg-btn-input text-[10px] px-2 py-0.5 inline-flex items-center gap-1 ocr-word-chip${selected === w.word ? ' active' : ''}" data-ocr-word="${escapeHtml(w.word)}">
                     <span>${escapeHtml(w.word)}</span>
-                    <span class="opacity-60">${w.count}</span>
+                    <span class="opacity-60">${w.cnt}</span>
                 </button>`,
         )
         .join('');
