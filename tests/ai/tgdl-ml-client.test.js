@@ -351,3 +351,236 @@ describe('mlOcr', () => {
         );
     });
 });
+
+// ---------------------------------------------------------------------------
+// mlDetect
+// ---------------------------------------------------------------------------
+
+describe('mlDetect', () => {
+    it('POSTs to /detect with image_b64 body', async () => {
+        process.env.TGDL_ML_URL = 'http://tgdl-ml:3800';
+        const faces = [
+            { x: 10, y: 20, w: 80, h: 90, score: 0.95, embedding: new Array(512).fill(0.1) },
+        ];
+
+        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({ faces, image_w: 640, image_h: 480 }),
+        });
+
+        const result = await client.mlDetect('/tmp/face.jpg');
+
+        const [url, init] = fetchSpy.mock.calls[0];
+        expect(url).toBe('http://tgdl-ml:3800/detect');
+        expect(init.method).toBe('POST');
+        const body = JSON.parse(init.body);
+        expect(typeof body.image_b64).toBe('string');
+
+        expect(result.faces).toHaveLength(1);
+        expect(result.faces[0].score).toBeCloseTo(0.95);
+        expect(result.image_w).toBe(640);
+    });
+
+    it('passes optional thresholds to body', async () => {
+        process.env.TGDL_ML_URL = 'http://tgdl-ml:3800';
+
+        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({ faces: [], image_w: 320, image_h: 240 }),
+        });
+
+        await client.mlDetect('/tmp/face.jpg', {
+            minScore: 0.8,
+            minBoxPx: 64,
+            arRange: [0.5, 2.0],
+        });
+
+        const body = JSON.parse(fetchSpy.mock.calls[0][1].body);
+        expect(body.min_score).toBe(0.8);
+        expect(body.min_box_px).toBe(64);
+        expect(body.ar_range).toEqual([0.5, 2.0]);
+    });
+
+    it('omits optional fields when not provided', async () => {
+        process.env.TGDL_ML_URL = 'http://tgdl-ml:3800';
+
+        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({ faces: [], image_w: 0, image_h: 0 }),
+        });
+
+        await client.mlDetect('/tmp/face.jpg');
+
+        const body = JSON.parse(fetchSpy.mock.calls[0][1].body);
+        expect(body).not.toHaveProperty('min_score');
+        expect(body).not.toHaveProperty('min_box_px');
+        expect(body).not.toHaveProperty('ar_range');
+    });
+
+    it('throws on HTTP error', async () => {
+        process.env.TGDL_ML_URL = 'http://tgdl-ml:3800';
+
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+            ok: false,
+            status: 500,
+            text: async () => JSON.stringify({ error: 'detect failed', code: 'detect_failed' }),
+        });
+
+        await expect(client.mlDetect('/tmp/face.jpg')).rejects.toThrow(
+            'tgdl-ml HTTP 500: detect failed',
+        );
+    });
+});
+
+// ---------------------------------------------------------------------------
+// mlDetectBatch
+// ---------------------------------------------------------------------------
+
+describe('mlDetectBatch', () => {
+    it('POSTs to /detect/batch with files array', async () => {
+        process.env.TGDL_ML_URL = 'http://tgdl-ml:3800';
+        const results = [
+            {
+                file: '/tmp/a.jpg',
+                faces: [
+                    { x: 0, y: 0, w: 50, h: 60, score: 0.9, embedding: new Array(512).fill(0.2) },
+                ],
+            },
+            { file: '/tmp/b.jpg', faces: [] },
+        ];
+
+        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({ results }),
+        });
+
+        const result = await client.mlDetectBatch(['/tmp/a.jpg', '/tmp/b.jpg']);
+
+        const [url, init] = fetchSpy.mock.calls[0];
+        expect(url).toBe('http://tgdl-ml:3800/detect/batch');
+        const body = JSON.parse(init.body);
+        expect(body.files).toEqual(['/tmp/a.jpg', '/tmp/b.jpg']);
+
+        expect(result.results).toHaveLength(2);
+        expect(result.results[0].faces).toHaveLength(1);
+        expect(result.results[1].faces).toHaveLength(0);
+    });
+
+    it('passes optional thresholds to body', async () => {
+        process.env.TGDL_ML_URL = 'http://tgdl-ml:3800';
+
+        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({ results: [] }),
+        });
+
+        await client.mlDetectBatch(['/tmp/a.jpg'], { minScore: 0.7, minBoxPx: 48 });
+
+        const body = JSON.parse(fetchSpy.mock.calls[0][1].body);
+        expect(body.min_score).toBe(0.7);
+        expect(body.min_box_px).toBe(48);
+    });
+
+    it('throws on HTTP error', async () => {
+        process.env.TGDL_ML_URL = 'http://tgdl-ml:3800';
+
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+            ok: false,
+            status: 500,
+            text: async () => JSON.stringify({ error: 'batch detect failed' }),
+        });
+
+        await expect(client.mlDetectBatch(['/tmp/a.jpg'])).rejects.toThrow('tgdl-ml HTTP 500');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// mlTag
+// ---------------------------------------------------------------------------
+
+describe('mlTag', () => {
+    it('POSTs to /tag with image_b64 and vocabulary', async () => {
+        process.env.TGDL_ML_URL = 'http://tgdl-ml:3800';
+        process.env.TGDL_ML_CLIP_MODEL = 'ViT-B-32__openai';
+        const tags = [
+            { tag: 'sunset', score: 0.82 },
+            { tag: 'mountain', score: 0.61 },
+        ];
+
+        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({ tags, model: 'ViT-B-32__openai' }),
+        });
+
+        const result = await client.mlTag('/tmp/photo.jpg', {
+            vocabulary: ['sunset', 'mountain', 'city'],
+            minScore: 0.5,
+            topK: 10,
+        });
+
+        const [url, init] = fetchSpy.mock.calls[0];
+        expect(url).toBe('http://tgdl-ml:3800/tag');
+        const body = JSON.parse(init.body);
+        expect(typeof body.image_b64).toBe('string');
+        expect(body.vocabulary).toEqual(['sunset', 'mountain', 'city']);
+        expect(body.min_score).toBe(0.5);
+        expect(body.top_k).toBe(10);
+
+        expect(result.tags).toHaveLength(2);
+        expect(result.tags[0].tag).toBe('sunset');
+        expect(result.tags[0].score).toBeCloseTo(0.82);
+        expect(result.model).toBe('ViT-B-32__openai');
+    });
+
+    it('omits optional fields when not provided', async () => {
+        process.env.TGDL_ML_URL = 'http://tgdl-ml:3800';
+
+        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({ tags: [], model: 'ViT-B-32__openai' }),
+        });
+
+        await client.mlTag('/tmp/photo.jpg');
+
+        const body = JSON.parse(fetchSpy.mock.calls[0][1].body);
+        expect(body).not.toHaveProperty('vocabulary');
+        expect(body).not.toHaveProperty('min_score');
+        expect(body).not.toHaveProperty('top_k');
+    });
+
+    it('returns empty tags array when response tags is missing', async () => {
+        process.env.TGDL_ML_URL = 'http://tgdl-ml:3800';
+
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({ model: 'ViT-B-32__openai' }),
+        });
+
+        const result = await client.mlTag('/tmp/photo.jpg');
+        expect(result.tags).toEqual([]);
+    });
+
+    it('throws on HTTP 501 not implemented', async () => {
+        process.env.TGDL_ML_URL = 'http://tgdl-ml:3800';
+
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+            ok: false,
+            status: 501,
+            text: async () =>
+                JSON.stringify({
+                    error: '/tag is not implemented in tgdl-ml yet',
+                    code: 'not_implemented',
+                }),
+        });
+
+        await expect(client.mlTag('/tmp/photo.jpg')).rejects.toThrow('tgdl-ml HTTP 501');
+    });
+});

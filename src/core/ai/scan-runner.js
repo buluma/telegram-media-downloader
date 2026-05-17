@@ -46,7 +46,7 @@ import {
 import { clusterFaces, computeFaceQualityScore, detectFaces } from './faces.js';
 import { resolveFacesValue } from './faces-config.js';
 import { detectFacesBatch, getSidecarUrl } from './faces-client.js';
-import { mlOcr, isTgdlMlEnabled } from './tgdl-ml-client.js';
+import { mlOcr, mlTag, isTgdlMlEnabled } from './tgdl-ml-client.js';
 import { getVocabularyPreset } from './tag-vocabulary.js';
 import { hasFfmpeg, resolveFfmpegBin } from '../thumbs.js';
 
@@ -777,11 +777,12 @@ export function startTagsScan(cfg, onProgress, onDone, onLog) {
                 return;
             }
 
-            const sidecarUrl = getSidecarUrl();
-            if (!sidecarUrl) {
+            const useMlTag = isTgdlMlEnabled();
+            const sidecarUrl = useMlTag ? null : getSidecarUrl();
+            if (!useMlTag && !sidecarUrl) {
                 throw new Error(
-                    'Python sidecar is not available — cannot tag images. ' +
-                        'Check the AI maintenance page for sidecar status.',
+                    'No tagging provider available — cannot tag images. ' +
+                        'Start tgdl-ml or check the AI maintenance page.',
                 );
             }
 
@@ -818,15 +819,22 @@ export function startTagsScan(cfg, onProgress, onDone, onLog) {
                             let tags = [];
                             if (abs) {
                                 try {
-                                    const result = await _tagOne(
-                                        sidecarUrl,
-                                        abs,
-                                        tagLabels,
-                                        log,
-                                        skipPathMode,
-                                    );
-                                    tags = result.tags;
-                                    if (result.pathModeDisabled) skipPathMode = true;
+                                    if (useMlTag) {
+                                        const result = await mlTag(abs, {
+                                            vocabulary: tagLabels.length ? tagLabels : undefined,
+                                        });
+                                        tags = result.tags;
+                                    } else {
+                                        const result = await _tagOne(
+                                            sidecarUrl,
+                                            abs,
+                                            tagLabels,
+                                            log,
+                                            skipPathMode,
+                                        );
+                                        tags = result.tags;
+                                        if (result.pathModeDisabled) skipPathMode = true;
+                                    }
                                 } catch (e) {
                                     if (e?.fatal) throw e;
                                     log(

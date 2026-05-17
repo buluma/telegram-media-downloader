@@ -24,7 +24,14 @@ import { promises as fs } from 'fs';
 import { Buffer } from 'buffer';
 
 import { resolveFacesValue } from './faces-config.js';
-import { mlEmbedImage, mlEmbedText, isTgdlMlEnabled, getTgdlMlUrl } from './tgdl-ml-client.js';
+import {
+    mlDetect,
+    mlDetectBatch,
+    mlEmbedImage,
+    mlEmbedText,
+    isTgdlMlEnabled,
+    getTgdlMlUrl,
+} from './tgdl-ml-client.js';
 
 // Defaults used when the operator hasn't tuned `advanced.ai.faces.*` and
 // hasn't set any of the matching `TGDL_FACES_*` env vars. `applyFacesCfg`
@@ -118,9 +125,9 @@ export function setSidecarUrl(url) {
     _healthCache = null;
 }
 
-/** Current sidecar URL or null when none is configured. */
+/** Current sidecar URL or null when none is configured. tgdl-ml takes priority. */
 export function getSidecarUrl() {
-    return _sidecarUrl || null;
+    return getTgdlMlUrl() || _sidecarUrl || null;
 }
 
 const HEALTH_PROBE_TIMEOUT_MS = 5000;
@@ -217,15 +224,6 @@ export async function health() {
  */
 export async function detectFaces(absPath, cfg = {}, onLog = null) {
     _bootstrapFromEnv();
-    const url = getSidecarUrl();
-    if (!url) {
-        _log(onLog, 'warn', 'sidecar URL unset — detectFaces returning null');
-        return null;
-    }
-    // Resolve detection thresholds with the same precedence as the rest of
-    // the stack: explicit `cfg.faces.*` > legacy flat alias > env override >
-    // hardcoded default. The caller passes `cfg.advanced.ai` (or the
-    // already-flattened `cfg`), so we probe both shapes.
     const facesCfg = cfg?.faces || cfg || {};
     const minScore = _pickNumber([cfg?.minDetectionScore, facesCfg.minDetectionScore], 0.3);
     const minBoxPx = _pickNumber([cfg?.minFaceSizePx, facesCfg.minFaceSizePx], 48);
@@ -233,6 +231,28 @@ export async function detectFaces(absPath, cfg = {}, onLog = null) {
         Array.isArray(facesCfg.arRange) && facesCfg.arRange.length === 2
             ? facesCfg.arRange
             : [0.5, 2.0];
+
+    if (isTgdlMlEnabled()) {
+        if (_maxConcurrency > 0) {
+            while (_inflight >= _maxConcurrency) await _sleep(25);
+        }
+        _inflight++;
+        try {
+            const data = await mlDetect(absPath, { minScore, minBoxPx, arRange });
+            return _parseFacesList(data?.faces ?? []);
+        } catch (e) {
+            _log(onLog, 'warn', `mlDetect failed for ${absPath}: ${e?.message || e}`);
+            return null;
+        } finally {
+            _inflight = Math.max(0, _inflight - 1);
+        }
+    }
+
+    const url = getSidecarUrl();
+    if (!url) {
+        _log(onLog, 'warn', 'sidecar URL unset — detectFaces returning null');
+        return null;
+    }
 
     const baseBody = { min_score: minScore, min_box_px: minBoxPx, ar_range: arRange };
     const pathBody = { ...baseBody, path: absPath };
@@ -270,11 +290,6 @@ export async function detectFaces(absPath, cfg = {}, onLog = null) {
 export async function detectFacesBatch(absPaths, cfg = {}, onLog = null) {
     _bootstrapFromEnv();
     if (!absPaths.length) return [];
-    const url = getSidecarUrl();
-    if (!url) {
-        _log(onLog, 'warn', 'sidecar URL unset — detectFacesBatch returning nulls');
-        return absPaths.map(() => null);
-    }
 
     const facesCfg = cfg?.faces || cfg || {};
     const minScore = _pickNumber([cfg?.minDetectionScore, facesCfg.minDetectionScore], 0.5);
@@ -283,6 +298,52 @@ export async function detectFacesBatch(absPaths, cfg = {}, onLog = null) {
         Array.isArray(facesCfg.arRange) && facesCfg.arRange.length === 2
             ? facesCfg.arRange
             : [0.5, 2.0];
+
+    if (isTgdlMlEnabled()) {
+        let batchBody;
+        try {
+            batchBody = await mlDetectBatch(absPaths, { minScore, minBoxPx, arRange });
+        } catch (e) {
+            _log(onLog, 'warn', `mlDetectBatch network error: ${e?.message || e}`);
+            return absPaths.map(() => null);
+        }
+
+        const resultMap = new Map();
+        for (const item of batchBody?.results ?? []) {
+            resultMap.set(item.file, item);
+        }
+
+        const output = new Array(absPaths.length).fill(null);
+        const b64Fallbacks = [];
+
+        for (let i = 0; i < absPaths.length; i++) {
+            const item = resultMap.get(absPaths[i]);
+            if (!item) continue;
+            if (item.error === 'path_not_allowed') {
+                b64Fallbacks.push(i);
+                continue;
+            }
+            if (item.error) {
+                const lvl = item.error === 'decode_failed' ? 'info' : 'warn';
+                _log(onLog, lvl, `batch detect ${absPaths[i]}: soft-error="${item.error}"`);
+                output[i] = [];
+                continue;
+            }
+            output[i] = _parseFacesList(item.faces);
+        }
+
+        for (const idx of b64Fallbacks) {
+            output[idx] = await detectFaces(absPaths[idx], cfg, onLog);
+        }
+
+        return output;
+    }
+
+    const url = getSidecarUrl();
+    if (!url) {
+        _log(onLog, 'warn', 'sidecar URL unset — detectFacesBatch returning nulls');
+        return absPaths.map(() => null);
+    }
 
     // Sidecar processes the batch sequentially — scale timeout with count.
     const batchTimeoutMs = Math.max(absPaths.length * _requestTimeoutMs, 120_000);

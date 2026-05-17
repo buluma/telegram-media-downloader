@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from io import BytesIO
@@ -134,6 +135,12 @@ class OcrRequest(ImageRequest):
     max_resolution: int = 736
 
 
+class TagRequest(ImageRequest):
+    vocabulary: list[str] | None = Field(default=None, description="Label vocabulary for zero-shot classification.")
+    min_score: float = Field(default=0.0, description="Minimum cosine similarity to include a tag.")
+    top_k: int = Field(default=50, description="Maximum number of tags to return.")
+
+
 async def _load_image(body: ImageRequest) -> Image.Image:
     try:
         if body.path:
@@ -246,7 +253,7 @@ def info() -> JSONResponse:
                 "faces": True,
                 "detect_batch": True,
                 "ocr": True,
-                "tag": False,
+                "tag": True,
                 "objects": False,
             },
         }
@@ -385,9 +392,66 @@ async def ocr(body: Annotated[OcrRequest, ...]) -> JSONResponse:
         return _error(f"ocr failed: {type(exc).__name__}: {exc}", "ocr_failed", status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+_LABEL_EMBED_CACHE: dict[str, list[float]] = {}
+_LABEL_EMBED_LOCK = threading.Lock()
+
+
+async def _embed_label(label: str) -> list[float]:
+    with _LABEL_EMBED_LOCK:
+        cached = _LABEL_EMBED_CACHE.get(label)
+    if cached is not None:
+        return cached
+    data = await _run(label, _entries(task=ModelTask.SEARCH, textual={"modelName": _clip_model()}))
+    emb = _embedding_from_wire(data[ModelTask.SEARCH])
+    with _LABEL_EMBED_LOCK:
+        _LABEL_EMBED_CACHE[label] = emb
+    return emb
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    try:
+        import math
+        dot = sum(x * y for x, y in zip(a, b))
+        na = math.sqrt(sum(x * x for x in a))
+        nb = math.sqrt(sum(x * x for x in b))
+        if na < 1e-8 or nb < 1e-8:
+            return 0.0
+        return dot / (na * nb)
+    except Exception:
+        return 0.0
+
+
 @app.post("/tag")
-def tag_not_supported() -> JSONResponse:
-    return _error("/tag is not implemented in tgdl-ml yet", "not_implemented", status.HTTP_501_NOT_IMPLEMENTED)
+async def tag(body: Annotated[TagRequest, ...]) -> JSONResponse:
+    try:
+        image = await _load_image(body)
+        img_data = await _run(
+            image,
+            _entries(task=ModelTask.SEARCH, visual={"modelName": _clip_model()}),
+        )
+        img_emb = _embedding_from_wire(img_data[ModelTask.SEARCH])
+
+        labels = body.vocabulary or []
+        if not labels:
+            return JSONResponse({"tags": [], "model": _clip_model()})
+
+        tags_out = []
+        for label in labels:
+            txt_emb = await _embed_label(label)
+            score = _cosine(img_emb, txt_emb)
+            if score >= body.min_score:
+                tags_out.append({"tag": label, "score": round(score, 6)})
+
+        tags_out.sort(key=lambda t: -t["score"])
+        return JSONResponse({"tags": tags_out[: body.top_k], "model": _clip_model()})
+    except PermissionError as exc:
+        return _error(str(exc), "path_not_allowed", status.HTTP_403_FORBIDDEN)
+    except FileNotFoundError as exc:
+        return _error(str(exc), "file_not_found", status.HTTP_404_NOT_FOUND)
+    except ValueError as exc:
+        return _error(str(exc), "image_decode_failed", status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
+    except Exception as exc:
+        return _error(f"tag failed: {type(exc).__name__}: {exc}", "tag_failed", status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @app.post("/detect-objects")

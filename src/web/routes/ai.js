@@ -5,7 +5,7 @@ import express from 'express';
 import sharp from 'sharp';
 import { loadConfig, watchConfig } from '../../config/manager.js';
 import { maskLlmConfig } from '../../core/llm/llm-config.js';
-import { resolveClipModelId } from '../../core/ai/tgdl-ml-client.js';
+import { resolveClipModelId, getTgdlMlUrl, isTgdlMlEnabled } from '../../core/ai/tgdl-ml-client.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..', '..');
@@ -171,6 +171,85 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
     }
 
     const _SIDECAR_HEALTH_CACHE = { url: null, ts: 0, data: null };
+    const _ML_HEALTH_CACHE = { url: null, ts: 0, data: null };
+    const _ML_INFO_CACHE = { url: null, ts: 0, data: null };
+
+    async function _fetchTgdlMlHealth(url) {
+        const now = Date.now();
+        if (
+            _ML_HEALTH_CACHE.url === url &&
+            now - _ML_HEALTH_CACHE.ts < _SIDECAR_INFO_TTL_MS &&
+            _ML_HEALTH_CACHE.data
+        )
+            return _ML_HEALTH_CACHE.data;
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 2000);
+        try {
+            const res = await fetch(`${url.replace(/\/+$/, '')}/health`, { signal: ctrl.signal });
+            if (!res.ok) return null;
+            const data = await res.json();
+            _ML_HEALTH_CACHE.url = url;
+            _ML_HEALTH_CACHE.ts = now;
+            _ML_HEALTH_CACHE.data = data;
+            return data;
+        } catch {
+            return null;
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
+    async function _fetchTgdlMlInfo(url) {
+        const now = Date.now();
+        if (
+            _ML_INFO_CACHE.url === url &&
+            now - _ML_INFO_CACHE.ts < _SIDECAR_INFO_TTL_MS &&
+            _ML_INFO_CACHE.data
+        )
+            return _ML_INFO_CACHE.data;
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 2000);
+        try {
+            const res = await fetch(`${url.replace(/\/+$/, '')}/info`, { signal: ctrl.signal });
+            if (!res.ok) return null;
+            const data = await res.json();
+            _ML_INFO_CACHE.url = url;
+            _ML_INFO_CACHE.ts = now;
+            _ML_INFO_CACHE.data = data;
+            return data;
+        } catch {
+            return null;
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
+    async function _getTgdlMlSnapshot() {
+        const url = getTgdlMlUrl() || null;
+        if (!url) return { url: null, ok: false, ready: false, endpoints: {} };
+        const [health, info] = await Promise.all([_fetchTgdlMlHealth(url), _fetchTgdlMlInfo(url)]);
+        const ok = !!health?.ok;
+        return {
+            url,
+            ok,
+            ready: !!health?.ready,
+            version: health?.version || null,
+            clipModel: health?.clip_model || null,
+            ocrModel: health?.ocr_model || null,
+            faceModel: health?.face_model || null,
+            providers: info?.providers || null,
+            error: health?.error || null,
+            endpoints: {
+                embedImage: !!(info?.endpoints?.embed_image ?? ok),
+                embedText: !!(info?.endpoints?.embed_text ?? ok),
+                detect: !!(info?.endpoints?.faces ?? ok),
+                ocr: !!(info?.endpoints?.ocr ?? ok),
+                tag: !!info?.endpoints?.tag,
+                objects: !!info?.endpoints?.objects,
+            },
+        };
+    }
+
     async function _fetchSidecarHealth(url) {
         const now = Date.now();
         if (
@@ -214,13 +293,25 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         } catch {}
         const info = url ? await _fetchSidecarInfo(url) : null;
         const health = url ? await _fetchSidecarHealth(url) : null;
-        const endpoints = {
-            faces: !!url,
-            tag: !!(info?.clip_ready || health?.clip_ready),
-            ocr: !!health?.ocr_ready,
-            objects: !!health?.detection_ready,
-            wd14: true, // endpoint exists in bundled sidecar; readiness is lazy/on first request
-        };
+        const isTgdlMl = info?.provider === 'tgdl-ml';
+        const eps = info?.endpoints || {};
+        const endpoints = isTgdlMl
+            ? {
+                  faces: !!eps.faces,
+                  tag: !!eps.tag,
+                  ocr: !!eps.ocr,
+                  objects: !!eps.objects,
+                  wd14: false,
+                  embedImage: !!eps.embed_image,
+                  embedText: !!eps.embed_text,
+              }
+            : {
+                  faces: !!url,
+                  tag: !!(info?.clip_ready || health?.clip_ready),
+                  ocr: !!health?.ocr_ready,
+                  objects: !!health?.detection_ready,
+                  wd14: true,
+              };
         return {
             url,
             mode,
@@ -451,6 +542,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             // that still reads the legacy shape.
             const facesBlock = cfg.faces && typeof cfg.faces === 'object' ? cfg.faces : {};
             const sidecar = await _getAiSidecarSnapshot();
+            const mlSidecar = await _getTgdlMlSnapshot();
             res.json({
                 success: true,
                 config: {
@@ -480,6 +572,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                 },
                 counts,
                 sidecar,
+                mlSidecar,
                 scans: {
                     faces: aiGetScanState('faces'),
                     tags: aiGetScanState('tags'),
@@ -512,7 +605,11 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                         let providers = null;
                         try {
                             const facesSpawn = await import('../../core/ai/faces-spawn.js');
-                            const sidecarUrl = facesSpawn.getSidecarStatus()?.url;
+                            const facesClient = await import('../../core/ai/faces-client.js');
+                            const sidecarUrl =
+                                facesSpawn.getSidecarStatus()?.url ||
+                                facesClient.getSidecarUrl() ||
+                                null;
                             if (sidecarUrl) {
                                 const info = await _fetchSidecarInfo(sidecarUrl);
                                 if (info?.providers) providers = info.providers;
@@ -561,6 +658,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                         const enabled = cfg.imageOcr === true;
                         let ready = false;
                         let error = null;
+                        let provider = 'sidecar';
                         try {
                             const info = sidecar.health || sidecar.info;
                             if (info) {
@@ -570,7 +668,12 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                         } catch {
                             /* probe failed */
                         }
-                        return { enabled, ready, error };
+                        if (!ready && mlSidecar.ok && mlSidecar.endpoints?.ocr) {
+                            ready = true;
+                            error = null;
+                            provider = 'tgdl-ml';
+                        }
+                        return { enabled, ready, error, provider };
                     })(),
                     objects: await (async () => {
                         const enabled =
@@ -1138,7 +1241,8 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             }
             if (['tags', 'ocr', 'objects', 'wd14'].includes(feature)) {
                 const sidecar = await _getAiSidecarSnapshot();
-                if (!sidecar.url) {
+                const mlOcrReady = feature === 'ocr' && isTgdlMlEnabled();
+                if (!sidecar.url && !mlOcrReady) {
                     return res.status(503).json({
                         error: 'AI sidecar is not running — start/restart the sidecar before scanning.',
                         code: 'SIDECAR_OFFLINE',
@@ -1150,9 +1254,9 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                         code: 'TAGGER_NOT_READY',
                     });
                 }
-                if (feature === 'ocr' && !sidecar.endpoints.ocr) {
+                if (feature === 'ocr' && !sidecar.endpoints.ocr && !mlOcrReady) {
                     return res.status(503).json({
-                        error: 'OCR is not ready on the sidecar.',
+                        error: 'OCR is not ready — start the sidecar or enable tgdl-ml.',
                         code: 'OCR_NOT_READY',
                     });
                 }

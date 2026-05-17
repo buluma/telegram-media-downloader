@@ -2851,6 +2851,7 @@ function _renderQuickOps(status) {
     const cfg = status?.config || {};
     const models = status?.models || {};
     const sidecar = status?.sidecar || {};
+    const mlSidecar = status?.mlSidecar || {};
     const scans = status?.scans || {};
 
     if (grid) {
@@ -2860,7 +2861,7 @@ function _renderQuickOps(status) {
         const ocrEnabled = cfg.imageOcr === true;
         const objectsEnabled =
             cfg.objectDetection === true || typeof cfg.objectDetection === 'object';
-        grid.innerHTML = [
+        const pills = [
             _featurePill('Sidecar', sidecarState, sidecar.url || 'Offline'),
             _featurePill('Faces', facesReady ? 'ready' : 'error', models.faces?.id || 'Not ready'),
             _featurePill(
@@ -2882,7 +2883,17 @@ function _renderQuickOps(status) {
                     ? 'Disabled'
                     : models.objects?.error || (models.objects?.ready ? 'Ready' : 'Not ready'),
             ),
-        ].join('');
+        ];
+        if (mlSidecar.url) {
+            pills.push(
+                _featurePill(
+                    'tgdl-ml',
+                    mlSidecar.ok ? 'ready' : 'error',
+                    mlSidecar.clipModel || mlSidecar.url || 'Offline',
+                ),
+            );
+        }
+        grid.innerHTML = pills.join('');
     }
     if (meta) {
         const parts = [
@@ -2918,7 +2929,7 @@ function _renderQuickOps(status) {
     }
 
     const issues = [];
-    if (!sidecar.url)
+    if (!sidecar.url && !mlSidecar.url)
         issues.push({
             severity: 'error',
             title: 'Sidecar offline',
@@ -2983,6 +2994,7 @@ async function _copyAiDiagnostics() {
     const data = {
         generatedAt: new Date().toISOString(),
         sidecar: _lastStatus.sidecar || null,
+        mlSidecar: _lastStatus.mlSidecar || null,
         models: _lastStatus.models || {},
         scans: _lastStatus.scans || {},
         counts: _lastStatus.counts || {},
@@ -3103,6 +3115,7 @@ function _renderScannerCards(status) {
     const scans = status.scans || {};
     const models = status.models || {};
     const sidecar = status.sidecar || {};
+    const mlSidecarCards = status.mlSidecar || {};
     const trackers = status.trackers || {};
     const totalEligible = Number(counts.totalEligible) || 0;
     const now = Date.now();
@@ -3124,15 +3137,18 @@ function _renderScannerCards(status) {
                 enabled = cfg.wd14Tagging !== false;
             }
 
-            // Readiness
+            // Readiness — OCR can be served by either sidecar or tgdl-ml
             const modelReady =
                 model.loaded === true || model.ready === true || model.ready === undefined;
             const sidecarOk = !!sidecar.url;
+            const mlOcrOk =
+                def.feature === 'ocr' && !!mlSidecarCards.ok && !!mlSidecarCards.endpoints?.ocr;
+            const providerOk = sidecarOk || mlOcrOk;
             const hasEndpoint =
                 def.sidecarEndpoint === null
-                    ? sidecarOk
-                    : !!sidecar.endpoints?.[def.sidecarEndpoint];
-            const readiness = !sidecarOk
+                    ? providerOk
+                    : mlOcrOk || !!sidecar.endpoints?.[def.sidecarEndpoint];
+            const readiness = !providerOk
                 ? 'offline'
                 : !enabled
                   ? 'disabled'

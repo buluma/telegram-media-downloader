@@ -122,6 +122,39 @@ export async function mlEmbedText(text, { language } = {}) {
     };
 }
 
+export async function mlDetect(absPath, opts = {}) {
+    const bytes = await readFile(absPath);
+    const body = { image_b64: bytes.toString('base64') };
+    if (Number.isFinite(Number(opts.minScore))) body.min_score = Number(opts.minScore);
+    if (Number.isFinite(Number(opts.minBoxPx))) body.min_box_px = Number(opts.minBoxPx);
+    if (Array.isArray(opts.arRange)) body.ar_range = opts.arRange;
+
+    return _postJson('/detect', body);
+}
+
+export async function mlDetectBatch(absPaths, opts = {}) {
+    const body = { files: absPaths };
+    if (Number.isFinite(Number(opts.minScore))) body.min_score = Number(opts.minScore);
+    if (Number.isFinite(Number(opts.minBoxPx))) body.min_box_px = Number(opts.minBoxPx);
+    if (Array.isArray(opts.arRange)) body.ar_range = opts.arRange;
+
+    return _postJson('/detect/batch', body);
+}
+
+export async function mlTag(absPath, opts = {}) {
+    const bytes = await readFile(absPath);
+    const body = { image_b64: bytes.toString('base64') };
+    if (Array.isArray(opts.vocabulary) && opts.vocabulary.length) body.vocabulary = opts.vocabulary;
+    if (Number.isFinite(Number(opts.minScore))) body.min_score = Number(opts.minScore);
+    if (Number.isFinite(Number(opts.topK))) body.top_k = Number(opts.topK);
+
+    const data = await _postJson('/tag', body);
+    return {
+        tags: Array.isArray(data.tags) ? data.tags : [],
+        model: data.model || null,
+    };
+}
+
 export async function mlOcr(absPath, opts = {}) {
     const bytes = await readFile(absPath);
     const body = { image_b64: bytes.toString('base64') };
