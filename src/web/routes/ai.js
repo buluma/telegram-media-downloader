@@ -638,15 +638,20 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                         try {
                             const info = sidecar.info || sidecar.health;
                             if (info) {
-                                loaded = info.clip_ready === true;
-                                vocabularySize = info.clip_vocabulary_size || 0;
-                                modelId = info.clip_model || '';
+                                if (info.provider === 'tgdl-ml') {
+                                    loaded = !!(info.endpoints?.tag ?? sidecar.endpoints?.tag);
+                                    modelId = info.models?.clip || info.clip_model || '';
+                                } else {
+                                    loaded = info.clip_ready === true;
+                                    vocabularySize = info.clip_vocabulary_size || 0;
+                                    modelId = info.clip_model || '';
+                                }
                             }
                         } catch {
                             /* probe failed — leave defaults */
                         }
                         return {
-                            id: modelId || 'Xenova/clip-vit-base-patch32',
+                            id: modelId || 'tgdl-ml:ViT-B-32__openai',
                             dim: 512,
                             dtype: 'fp32',
                             enabled,
