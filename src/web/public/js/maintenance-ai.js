@@ -2989,14 +2989,14 @@ const _SCANNER_CARD_DEFS = [
         icon: 'ri-hashtag-line',
         color: 'text-purple-400',
         enabledKey: null, // cfg.wd14Tagging !== false
-        sidecarEndpoint: 'wd14', // needs explicit wd14 endpoint — tgdl-ml doesn't expose it
+        sidecarEndpoint: 'wd14',
         modelKey: 'wd14',
         countKey: 'withWd14Tags',
-        scanBtnId: null,
-        cancelBtnId: null,
+        scanBtnId: 'wd14-scan-btn',
+        cancelBtnId: 'wd14-cancel-btn',
         estimateKey: 'aiWd14',
         settingsPaneId: 'ai-pane-tags',
-        configSummary: (_cfg, _models) => 'SmilingWolf wd-v1-4-vit-tagger-v2',
+        configSummary: (_cfg, _models) => 'SmilingWolf wd-v1-4-convnext-tagger-v2',
     },
     {
         feature: 'ocr',
