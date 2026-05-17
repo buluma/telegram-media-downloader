@@ -335,6 +335,7 @@ async function _renderTagBrowser(forceReload = true) {
 async function _loadTagPhotos(tag) {
     const photos = $('#ai-tag-photos');
     if (!photos) return;
+    photos.scrollIntoView({ behavior: 'smooth', block: 'start' });
     _tagPhotosPage = 1;
     _tagPhotosTotal = 0;
     _tagPhotosTotalPages = 1;
@@ -519,6 +520,7 @@ function _renderOcrBrowserChips() {
 }
 
 async function _loadOcrWordPhotos(word) {
+    $('#ai-ocr-word-photos')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     _ocrWordPhotosPage = 1;
     _ocrWordCurrentRows = [];
     _ocrWordPhotosTotal = 0;
@@ -701,6 +703,7 @@ function _renderWd14BrowserChips() {
 }
 
 async function _loadWd14TagPhotos(tag) {
+    $('#ai-wd14-tag-photos')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     _wd14TagPhotosPage = 1;
     _wd14TagCurrentRows = [];
     _wd14TagPhotosTotal = 0;
@@ -3201,7 +3204,7 @@ const _SCANNER_CARD_DEFS = [
     {
         feature: 'wd14',
         label: 'WD14 Tags',
-        icon: 'ri-hashtag-line',
+        icon: 'ri-palette-line',
         color: 'text-purple-400',
         enabledKey: null, // cfg.wd14Tagging !== false
         sidecarEndpoint: 'wd14',
@@ -3368,7 +3371,6 @@ function _renderScannerCards(status) {
         <span class="text-tg-textSecondary truncate flex-1" title="${escapeHtml(def.configSummary(cfg, models))}">
             ${escapeHtml(def.configSummary(cfg, models))}
         </span>
-        ${def.settingsPaneId ? `<button type="button" class="ai-scanner-action text-tg-blue hover:underline shrink-0" data-feature="${def.feature}" data-action="settings">Settings</button>` : ''}
         ${hasErrors && !running ? `<button type="button" class="ai-scanner-action text-red-300 hover:underline shrink-0" data-feature="${def.feature}" data-action="view-failures">Failures</button>` : ''}
     </div>
 </div>`;
