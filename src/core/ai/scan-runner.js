@@ -78,6 +78,52 @@ function _blobToF32(blob) {
     return out;
 }
 
+/**
+ * Returns a wrapper that tracks consecutive network-level failures against
+ * tgdl-ml. Once `maxFails` consecutive calls throw without a success in
+ * between, it surfaces a fatal error that aborts the entire scan rather than
+ * grinding through thousands of files each waiting up to the request timeout.
+ *
+ * "Network failure" is any error whose name is AbortError or whose message
+ * contains typical fetch/TCP failure strings. HTTP 4xx/5xx from the service
+ * itself are NOT counted — those are per-file errors, not connectivity loss.
+ */
+function _makeCircuitBreaker(maxFails = 5) {
+    let consecutive = 0;
+    return async function guard(fn) {
+        try {
+            const result = await fn();
+            consecutive = 0;
+            return result;
+        } catch (e) {
+            const msg = String(e?.message || e).toLowerCase();
+            const isNetwork =
+                e?.name === 'AbortError' ||
+                msg.includes('fetch failed') ||
+                msg.includes('econnrefused') ||
+                msg.includes('econnreset') ||
+                msg.includes('etimedout') ||
+                msg.includes('network') ||
+                msg.includes('socket');
+            if (isNetwork) {
+                consecutive += 1;
+                if (consecutive >= maxFails) {
+                    const fatal = new Error(
+                        `tgdl-ml unreachable after ${consecutive} consecutive failures — ` +
+                            'aborting scan. Check that the tgdl-ml container is running.',
+                    );
+                    fatal.fatal = true;
+                    fatal.code = 'TGDL_ML_UNREACHABLE';
+                    throw fatal;
+                }
+            } else {
+                consecutive = 0;
+            }
+            throw e;
+        }
+    };
+}
+
 // Per-feature state.
 const _scans = {
     faces: _emptyState(),
@@ -418,6 +464,7 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                         .replace(/^\.?/, '.'),
                 ),
             );
+            const faceGuard = isTgdlMlEnabled() ? _makeCircuitBreaker() : null;
             let _statNull = 0;
             let _statSkip = 0;
             let _statEmpty = 0;
@@ -497,7 +544,11 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                             try {
                                 for (const frameAbs of framePaths) {
                                     if (signal.aborted) break;
-                                    const faces = await detectFaces(frameAbs, cfg, logEntry);
+                                    const faces = faceGuard
+                                        ? await faceGuard(() =>
+                                              detectFaces(frameAbs, cfg, logEntry),
+                                          )
+                                        : await detectFaces(frameAbs, cfg, logEntry);
                                     if (Array.isArray(faces) && faces.length) {
                                         for (const f of faces) {
                                             _safeInsertFace(
@@ -536,12 +587,21 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                 let batchResults = [];
                 if (imageItems.length) {
                     try {
-                        batchResults = await detectFacesBatch(
-                            imageItems.map((i) => i.abs),
-                            cfg,
-                            logEntry,
-                        );
+                        batchResults = faceGuard
+                            ? await faceGuard(() =>
+                                  detectFacesBatch(
+                                      imageItems.map((i) => i.abs),
+                                      cfg,
+                                      logEntry,
+                                  ),
+                              )
+                            : await detectFacesBatch(
+                                  imageItems.map((i) => i.abs),
+                                  cfg,
+                                  logEntry,
+                              );
                     } catch (e) {
+                        if (e?.fatal) throw e;
                         log('warn', `detectFacesBatch threw: ${e?.message || e}`);
                         batchResults = imageItems.map(() => null);
                     }
@@ -786,6 +846,8 @@ export function startTagsScan(cfg, onProgress, onDone, onLog) {
                 );
             }
 
+            const mlTagGuard = useMlTag ? _makeCircuitBreaker() : null;
+
             // Resolve tag vocabulary: explicit list > named preset > sidecar default.
             const presetLabels = cfg.tagVocabularyPreset
                 ? (getVocabularyPreset(String(cfg.tagVocabularyPreset)) ?? [])
@@ -820,9 +882,13 @@ export function startTagsScan(cfg, onProgress, onDone, onLog) {
                             if (abs) {
                                 try {
                                     if (useMlTag) {
-                                        const result = await mlTag(abs, {
-                                            vocabulary: tagLabels.length ? tagLabels : undefined,
-                                        });
+                                        const result = await mlTagGuard(() =>
+                                            mlTag(abs, {
+                                                vocabulary: tagLabels.length
+                                                    ? tagLabels
+                                                    : undefined,
+                                            }),
+                                        );
                                         tags = result.tags;
                                     } else {
                                         const result = await _tagOne(
@@ -971,6 +1037,7 @@ export function startOcrScan(cfg, onProgress, onDone, onLog) {
                 );
             }
 
+            const mlOcrGuard = useMlOcr ? _makeCircuitBreaker() : null;
             const batchSize = Math.max(1, Math.min(50, Number(cfg.batchSize) || 16));
 
             while (!signal.aborted) {
@@ -1009,11 +1076,13 @@ export function startOcrScan(cfg, onProgress, onDone, onLog) {
                                 ? cfg.ocrLanguage.trim()
                                 : 'eng';
                         const result = useMlOcr
-                            ? await mlOcr(absPath, {
-                                  minDetectionScore: cfg.ocrMinDetectionScore,
-                                  minRecognitionScore: cfg.ocrMinRecognitionScore,
-                                  maxResolution: cfg.ocrMaxResolution,
-                              })
+                            ? await mlOcrGuard(() =>
+                                  mlOcr(absPath, {
+                                      minDetectionScore: cfg.ocrMinDetectionScore,
+                                      minRecognitionScore: cfg.ocrMinRecognitionScore,
+                                      maxResolution: cfg.ocrMaxResolution,
+                                  }),
+                              )
                             : await _extractTextOne(sidecarUrl, absPath, lang, log);
                         // Always write a row (even empty) so the same image
                         // isn't picked up on the next batch query.
@@ -1024,6 +1093,7 @@ export function startOcrScan(cfg, onProgress, onDone, onLog) {
                             result?.confidence || null,
                         );
                     } catch (e) {
+                        if (e?.fatal) throw e;
                         log('warn', `ocr failed for id=${row.id}: ${e?.message || e}`);
                         setImageText(row.id, '', null, null);
                     }
