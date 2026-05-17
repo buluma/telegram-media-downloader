@@ -25,8 +25,11 @@ export function inferPyLevel(line, fallback) {
 // non-200 response so failures still surface. Health probes are
 // filtered too since `/health` fires every few seconds from the health
 // monitor.
+//
+// We also filter the OCR readiness check lines which fire on every
+// health probe.
 const _ACCESS_NOISE_RE =
-    /(?:"(?:GET|POST|PUT|DELETE|OPTIONS)\s+\/(?:detect|health|info|detect_b64)(?:\?\S*)?\s+HTTP\/[\d.]+"\s+200\b|(?:GET|POST|PUT|DELETE|OPTIONS)\s+\/(?:detect|health|info|detect_b64)\s+->\s+200\b)/;
+    /(?:"(?:GET|POST|PUT|DELETE|OPTIONS)\s+\/(?:detect|health|info|detect_b64)(?:\?\S*)?\s+HTTP\/[\d.]+"\s+200\b|(?:GET|POST|PUT|DELETE|OPTIONS)\s+\/(?:detect|health|info|detect_b64)\s+->\s+200\b|OCR is_ready check: True, error: None)/;
 
 export function isAccessNoise(line) {
     return _ACCESS_NOISE_RE.test(line);

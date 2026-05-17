@@ -32,7 +32,7 @@ def _check_tesseract():
 def is_ready() -> bool:
     """Check if OCR is ready to use."""
     result = _check_tesseract()
-    _LOG.info(f"OCR is_ready check: {result}, error: {_TESSERACT_ERROR}")
+    _LOG.debug(f"OCR is_ready check: {result}, error: {_TESSERACT_ERROR}")
     return result
 
 
