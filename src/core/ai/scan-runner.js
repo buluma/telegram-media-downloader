@@ -1191,7 +1191,13 @@ export function startWd14Scan(cfg, onProgress, onDone, onLog) {
                     let tags = [];
                     if (abs) {
                         try {
-                            tags = await _tagWd14One(sidecarUrl, abs, minScore, log);
+                            tags = await _tagWd14One(
+                                sidecarUrl,
+                                abs,
+                                minScore,
+                                log,
+                                isTgdlMlEnabled(),
+                            );
                         } catch (e) {
                             log('warn', `wd14 tagging failed for id=${row.id}: ${e?.message || e}`);
                         }
@@ -1214,7 +1220,7 @@ export function startWd14Scan(cfg, onProgress, onDone, onLog) {
  * Call the Python sidecar's `POST /tag-wd14` for one image.
  * Returns `[{tag, score}, …]` or an empty array on failure.
  */
-async function _tagWd14One(sidecarUrl, absPath, minScore, log) {
+async function _tagWd14One(sidecarUrl, absPath, minScore, log, skipPathMode = false) {
     const url = `${sidecarUrl.replace(/\/+$/, '')}/tag-wd14`;
     const doFetch = async (body) =>
         fetch(url, {
@@ -1224,10 +1230,16 @@ async function _tagWd14One(sidecarUrl, absPath, minScore, log) {
             signal: AbortSignal.timeout(60000),
         });
     try {
-        let res = await doFetch({ path: absPath, min_score: minScore });
-        if (res.status === 403) {
+        let res;
+        if (skipPathMode) {
             const b64 = await _readAsBase64(absPath);
             res = await doFetch({ image_b64: b64, min_score: minScore });
+        } else {
+            res = await doFetch({ path: absPath, min_score: minScore });
+            if (res.status === 403) {
+                const b64 = await _readAsBase64(absPath);
+                res = await doFetch({ image_b64: b64, min_score: minScore });
+            }
         }
         if (!res.ok) {
             log('warn', `tag-wd14 endpoint returned ${res.status} for ${absPath}`);
