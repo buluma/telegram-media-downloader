@@ -16,6 +16,9 @@ dependencies = [
     "uvicorn[standard]>=0.32,<1",
     "pillow>=10,<13",
     "pydantic>=2,<3",
+    "onnxruntime>=1.18,<2",
+    "huggingface-hub>=0.24,<2",
+    "numpy>=1.24,<3",
 ]
 
 [project.scripts]

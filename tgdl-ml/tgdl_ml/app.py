@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import base64
+import csv
 import json
 import os
 import threading
@@ -35,6 +37,16 @@ except Exception as exc:  # pragma: no cover - exercised in non-ml-runtime dev e
 DEFAULT_CLIP_MODEL = "ViT-B-32__openai"
 DEFAULT_FACE_MODEL = "buffalo_l"
 DEFAULT_OCR_MODEL = "PP-OCRv5_mobile"
+
+# WD14 tagger — lazy-loaded on first POST /tag-wd14 request.
+# Model: SmilingWolf/wd-v1-4-convnext-tagger-v2 (ONNX, ~356 MB).
+# Downloaded to HF_HOME cache (default ~/.cache/huggingface).
+_WD14_REPO = os.environ.get("TGDL_WD14_REPO") or "SmilingWolf/wd-v1-4-convnext-tagger-v2"
+_WD14_IMG_SIZE = 448
+_wd14_session: Any | None = None
+_wd14_tags: list[tuple[str, int]] | None = None
+_wd14_lock = threading.Lock()
+_wd14_load_error: str | None = None
 
 
 def _env(name: str, default: str) -> str:
@@ -255,8 +267,11 @@ def info() -> JSONResponse:
                 "detect_batch": True,
                 "ocr": True,
                 "tag": True,
+                "wd14": True,
                 "objects": False,
             },
+            "wd14_repo": _WD14_REPO,
+            "wd14_load_error": _wd14_load_error,
         }
     )
 
@@ -453,4 +468,86 @@ async def tag(body: Annotated[TagRequest, ...]) -> JSONResponse:
         return _error(str(exc), "image_decode_failed", status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
     except Exception as exc:
         return _error(f"tag failed: {type(exc).__name__}: {exc}", "tag_failed", status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# ---- WD14 tagger ------------------------------------------------------------
+
+def _load_wd14_sync() -> tuple[Any, list[tuple[str, int]]]:
+    """Load WD14 ONNX session + tag list. Thread-safe, cached after first call."""
+    global _wd14_session, _wd14_tags, _wd14_load_error
+    if _wd14_session is not None and _wd14_tags is not None:
+        return _wd14_session, _wd14_tags
+    with _wd14_lock:
+        if _wd14_session is not None and _wd14_tags is not None:
+            return _wd14_session, _wd14_tags
+        try:
+            import numpy as np  # noqa: F401 — verify available before heavy work
+            from huggingface_hub import hf_hub_download
+            import onnxruntime as ort
+
+            model_path = hf_hub_download(_WD14_REPO, "model.onnx")
+            tags_path = hf_hub_download(_WD14_REPO, "selected_tags.csv")
+
+            opts = ort.SessionOptions()
+            opts.inter_op_num_threads = 2
+            opts.intra_op_num_threads = 4
+            _wd14_session = ort.InferenceSession(model_path, sess_options=opts)
+
+            with open(tags_path, newline="", encoding="utf-8") as f:
+                _wd14_tags = [(r["name"], int(r["category"])) for r in csv.DictReader(f)]
+
+            _wd14_load_error = None
+        except Exception as exc:
+            _wd14_load_error = f"{type(exc).__name__}: {exc}"
+            raise
+        return _wd14_session, _wd14_tags  # type: ignore[return-value]
+
+
+def _preprocess_wd14(image: Image.Image) -> Any:
+    import numpy as np
+
+    image = image.convert("RGB")
+    w, h = image.size
+    pad = max(w, h)
+    canvas = Image.new("RGB", (pad, pad), (255, 255, 255))
+    canvas.paste(image, ((pad - w) // 2, (pad - h) // 2))
+    canvas = canvas.resize((_WD14_IMG_SIZE, _WD14_IMG_SIZE), Image.BICUBIC)
+    arr = np.array(canvas, dtype=np.float32)
+    arr = arr[:, :, ::-1]  # RGB → BGR (WD14 expects BGR)
+    return np.expand_dims(arr, axis=0)
+
+
+class Wd14Request(ImageRequest):
+    min_score: float = Field(default=0.35, description="Minimum score threshold (0–1).")
+    top_k: int = Field(default=100, description="Maximum number of tags to return.")
+
+
+@app.post("/tag-wd14")
+async def tag_wd14(body: Annotated[Wd14Request, ...]) -> JSONResponse:
+    try:
+        image = await _load_image(body)
+        loop = asyncio.get_event_loop()
+        session, all_tags = await loop.run_in_executor(None, _load_wd14_sync)
+        arr = _preprocess_wd14(image)
+        input_name = session.get_inputs()[0].name
+        output = await loop.run_in_executor(
+            None, lambda: session.run(None, {input_name: arr})[0][0]
+        )
+        tags_out = [
+            {"tag": name, "score": round(float(score), 6), "category": cat}
+            for (name, cat), score in zip(all_tags, output)
+            if float(score) >= body.min_score
+        ]
+        tags_out.sort(key=lambda t: -t["score"])
+        return JSONResponse({"tags": tags_out[: body.top_k], "model": _WD14_REPO})
+    except PermissionError as exc:
+        return _error(str(exc), "path_not_allowed", status.HTTP_403_FORBIDDEN)
+    except FileNotFoundError as exc:
+        return _error(str(exc), "file_not_found", status.HTTP_404_NOT_FOUND)
+    except ValueError as exc:
+        return _error(str(exc), "image_decode_failed", status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
+    except Exception as exc:
+        return _error(
+            f"wd14 failed: {type(exc).__name__}: {exc}", "wd14_failed", status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
 

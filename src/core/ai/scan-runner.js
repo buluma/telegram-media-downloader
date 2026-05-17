@@ -44,7 +44,7 @@ import {
 import { clusterFaces, computeFaceQualityScore, detectFaces } from './faces.js';
 import { resolveFacesValue } from './faces-config.js';
 import { detectFacesBatch, getSidecarUrl } from './faces-client.js';
-import { mlOcr, mlTag, isTgdlMlEnabled } from './tgdl-ml-client.js';
+import { mlOcr, mlTag, isTgdlMlEnabled, getTgdlMlUrl } from './tgdl-ml-client.js';
 import { getVocabularyPreset } from './tag-vocabulary.js';
 import { hasFfmpeg, resolveFfmpegBin } from '../thumbs.js';
 
@@ -1170,11 +1170,7 @@ export function startWd14Scan(cfg, onProgress, onDone, onLog) {
                 return;
             }
 
-            if (isTgdlMlEnabled()) {
-                log('info', 'wd14 scan: not supported by tgdl-ml — skipping');
-                return;
-            }
-            const sidecarUrl = getSidecarUrl();
+            const sidecarUrl = isTgdlMlEnabled() ? getTgdlMlUrl() : getSidecarUrl();
             if (!sidecarUrl) {
                 throw new Error(
                     'Python sidecar is not available — cannot run WD14 tagger. ' +
