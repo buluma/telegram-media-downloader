@@ -883,6 +883,7 @@ async function _applyTagMerge(tag1, tag2) {
 async function _renderSmartAlbums() {
     const list = $('#ai-smart-albums-list');
     if (!list) return;
+    _renderSmartAlbumsRuntime().catch(() => {});
     try {
         const r = await api.get('/api/ai/smart-albums');
         const albums = Array.isArray(r?.albums) ? r.albums : [];
@@ -950,6 +951,46 @@ async function _renderSmartAlbums() {
         });
     } catch (e) {
         list.innerHTML = `<p class="text-[11px] text-red-300 text-center py-3">Failed: ${escapeHtml(e?.message || 'unknown')}</p>`;
+    }
+}
+
+async function _renderSmartAlbumsRuntime() {
+    const el = $('#ai-smart-albums-runtime');
+    if (!el) return;
+    try {
+        const r = await api.get('/api/ai/smart-albums/runtime');
+        if (!r?.success) throw new Error(r?.error || 'runtime failed');
+        const cfg = r.config || {};
+        const rt = r.runtime || {};
+        const mode = cfg.enabled === false ? 'disabled' : `every ${cfg.refreshIntervalMin || 15}m`;
+        const last = rt.lastRunAt ? new Date(rt.lastRunAt).toLocaleString() : 'never';
+        const state = rt.running ? 'running' : 'idle';
+        const lastInfo = rt.lastRunAt
+            ? ` · last: ${last} (${rt.lastAlbums || 0} albums, ${rt.lastMatched || 0} matches)`
+            : '';
+        const err = rt.lastError ? ` · error: ${rt.lastError}` : '';
+        el.textContent = `Auto rebuild: ${mode} · state: ${state}${lastInfo}${err}`;
+    } catch (e) {
+        el.textContent = 'Auto rebuild: unavailable';
+    }
+}
+
+async function _rebuildAllSmartAlbums() {
+    const btn = $('#ai-smart-albums-rebuild-all');
+    if (btn) btn.disabled = true;
+    try {
+        const r = await api.post('/api/ai/smart-albums/rebuild-all', {});
+        if (!r.success) throw new Error(r.error || 'rebuild-all failed');
+        if (r.skipped) {
+            showToast(`Skipped: ${r.reason || 'already running'}`, 'info');
+        } else {
+            showToast(`Rebuilt ${r.rebuilt || 0} albums (${r.matched || 0} matches)`, 'success');
+        }
+        await _renderSmartAlbums();
+    } catch (e) {
+        showToast(`Rebuild-all failed: ${e?.data?.error || e?.message || 'unknown'}`, 'error');
+    } finally {
+        if (btn) btn.disabled = false;
     }
 }
 
@@ -1215,6 +1256,89 @@ async function _deleteSmartAlbum(id) {
 
 /** Current parsed rule from the NL builder, or null. */
 let _nlAlbumRule = null;
+let _nlAlbumPreviewTotal = null;
+
+function _renderNlPreviewCount(total, label = 'Preview matches') {
+    const el = $('#ai-album-nl-preview-count');
+    if (!el) return;
+    if (total == null || Number.isNaN(Number(total))) {
+        el.classList.add('hidden');
+        el.textContent = '';
+        return;
+    }
+    el.classList.remove('hidden');
+    el.textContent = `${label}: ${Number(total).toLocaleString()}`;
+}
+
+async function _previewNlAlbumRule(rule) {
+    const r = await api.post('/api/ai/smart-albums/preview', { rule, limit: 1, offset: 0 });
+    if (!r?.success) throw new Error(r?.error || 'preview failed');
+    _nlAlbumPreviewTotal = Number(r.total) || 0;
+    return _nlAlbumPreviewTotal;
+}
+
+function _applyCommonNlRuleFixes(rule) {
+    if (!rule || typeof rule !== 'object') return rule;
+    const out = JSON.parse(JSON.stringify(rule));
+
+    const mapFileType = (v) => {
+        const ft = String(v || '')
+            .trim()
+            .toLowerCase();
+        if (ft === 'image') return 'photo';
+        if (ft === 'images') return 'photo';
+        if (ft === 'videos') return 'video';
+        if (ft === 'audios') return 'audio';
+        return ft;
+    };
+
+    const fixSubRule = (sr) => {
+        if (!sr || typeof sr !== 'object') return sr;
+        if (sr.type === 'text_contains' && !sr.substring && sr.text) {
+            sr.substring = String(sr.text);
+            delete sr.text;
+        }
+        if (sr.type === 'semantic' && (sr.minScore == null || Number.isNaN(Number(sr.minScore)))) {
+            sr.minScore = 0;
+        }
+        if (
+            sr.type === 'tags_contains' &&
+            (sr.minScore == null || Number.isNaN(Number(sr.minScore)))
+        ) {
+            sr.minScore = 0;
+        }
+        if (sr.type === 'people_count' && (sr.min == null || Number(sr.min) < 0)) {
+            sr.min = 1;
+        }
+        if (sr.type === 'file_type') {
+            if (!sr.fileType && sr.typeName) sr.fileType = sr.typeName;
+            sr.fileType = mapFileType(sr.fileType);
+        }
+        return sr;
+    };
+
+    if (out.type === 'compound') {
+        if (Array.isArray(out.all)) out.all = out.all.map(fixSubRule);
+        if (Array.isArray(out.any)) out.any = out.any.map(fixSubRule);
+        return out;
+    }
+
+    // Wrap a single leaf rule into compound for compatibility with v2 flow.
+    const leafTypes = new Set([
+        'tags_contains',
+        'people_count',
+        'semantic',
+        'objects',
+        'text_contains',
+        'date',
+        'file_type',
+    ]);
+    if (leafTypes.has(String(out.type || '').trim())) {
+        return { type: 'compound', all: [fixSubRule(out)], sort: 'score_desc' };
+    }
+
+    return out;
+}
 
 /** Parse the NL description via the LLM provider and show a preview. */
 async function _parseAlbumWithAi() {
@@ -1238,6 +1362,8 @@ async function _parseAlbumWithAi() {
     if (status) status.textContent = '\u2022 waiting for model';
     actions?.classList.add('hidden');
     _nlAlbumRule = null;
+    _nlAlbumPreviewTotal = null;
+    _renderNlPreviewCount(null);
 
     try {
         const r = await api.post('/api/ai/smart-albums/parse', { description });
@@ -1251,14 +1377,52 @@ async function _parseAlbumWithAi() {
         _nlAlbumRule = r.rule;
         preview.classList.remove('text-red-400');
         preview.textContent = JSON.stringify(r.rule, null, 2);
-        if (status) status.textContent = '\u2713 Parsed';
+
+        try {
+            const total = await _previewNlAlbumRule(_nlAlbumRule);
+            _renderNlPreviewCount(total);
+            if (status)
+                status.textContent = `\u2713 Parsed · preview ${total.toLocaleString()} matches`;
+        } catch (e) {
+            _renderNlPreviewCount(null);
+            if (status) status.textContent = '\u2713 Parsed · preview unavailable';
+        }
+
         actions?.classList.remove('hidden');
     } catch (e) {
-        preview.textContent = `Error: ${e?.message || 'unknown'}`;
+        _renderNlPreviewCount(null);
+        preview.textContent = `Error: ${e?.data?.error || e?.message || 'unknown'}`;
         preview.classList.add('text-red-400');
         if (status) status.textContent = 'Failed';
     } finally {
         btn.disabled = false;
+    }
+}
+
+async function _fixNlRuleAndPreview() {
+    const preview = $('#ai-album-nl-preview');
+    const status = $('#ai-album-nl-status');
+    if (!_nlAlbumRule) {
+        showToast('Parse a description first.', 'info');
+        return;
+    }
+    _nlAlbumRule = _applyCommonNlRuleFixes(_nlAlbumRule);
+    if (preview) {
+        preview.classList.remove('text-red-400');
+        preview.textContent = JSON.stringify(_nlAlbumRule, null, 2);
+    }
+    try {
+        const total = await _previewNlAlbumRule(_nlAlbumRule);
+        _renderNlPreviewCount(total, 'Preview matches (after fix)');
+        if (status) status.textContent = `\u2713 Fixed · preview ${total.toLocaleString()} matches`;
+        showToast('Applied recommended rule fixes', 'success');
+    } catch (e) {
+        _renderNlPreviewCount(null);
+        if (status) status.textContent = '\u2713 Fixed · preview unavailable';
+        showToast(
+            `Preview failed after fix: ${e?.data?.error || e?.message || 'unknown'}`,
+            'error',
+        );
     }
 }
 
@@ -1270,7 +1434,9 @@ async function _createAlbumFromNl() {
     }
 
     // Prompt for a name
-    const name = prompt('Album name:', 'Smart album');
+    const suggested =
+        _nlAlbumPreviewTotal != null ? `Smart album (${_nlAlbumPreviewTotal})` : 'Smart album';
+    const name = prompt('Album name:', suggested);
     if (!name || !name.trim()) return;
 
     try {
@@ -1283,13 +1449,16 @@ async function _createAlbumFromNl() {
         await _renderSmartAlbums();
         _clearAlbumNlBuilder();
     } catch (e) {
-        showToast(`Create failed: ${e?.data?.error || e?.message || 'unknown'}`, 'error');
+        const details = e?.data?.details?.section ? ` (${e.data.details.section})` : '';
+        showToast(`Create failed${details}: ${e?.data?.error || e?.message || 'unknown'}`, 'error');
     }
 }
 
 /** Reset the NL builder inputs. */
 function _clearAlbumNlBuilder() {
     _nlAlbumRule = null;
+    _nlAlbumPreviewTotal = null;
+    _renderNlPreviewCount(null);
     const input = $('#ai-album-nl-input');
     const preview = $('#ai-album-nl-preview');
     const status = $('#ai-album-nl-status');
@@ -1570,6 +1739,8 @@ async function _renderEmbeddingsStatus() {
         const r = await api.get('/api/ai/embeddings/stats');
         const total = r?.total ?? 0;
         const models = Array.isArray(r?.models) ? r.models : [];
+        const configuredModel = r?.configuredModel || '';
+        const staleRows = Number(r?.staleRows || 0);
 
         if (summary) {
             summary.textContent = total > 0 ? `${total} indexed` : 'No embeddings';
@@ -1584,6 +1755,12 @@ async function _renderEmbeddingsStatus() {
                 modelEl.textContent = `Models: ${models.map((m) => `${m.model} (${m.count})`).join(', ')}`;
             } else {
                 modelEl.textContent = 'No embedding model active — run a re-index first.';
+            }
+            if (configuredModel) {
+                modelEl.textContent += ` • configured: ${configuredModel}`;
+            }
+            if (staleRows > 0) {
+                modelEl.textContent += ` • stale rows: ${staleRows}`;
             }
         }
     } catch (e) {
@@ -2305,8 +2482,10 @@ function _bindOnce() {
     );
     $('#ai-tag-suggestions-refresh')?.addEventListener('click', () => _renderTagSuggestions());
     $('#ai-smart-albums-refresh')?.addEventListener('click', () => _renderSmartAlbums());
+    $('#ai-smart-albums-rebuild-all')?.addEventListener('click', () => _rebuildAllSmartAlbums());
     $('#ai-album-nl-parse-btn')?.addEventListener('click', _parseAlbumWithAi);
     $('#ai-album-nl-create-btn')?.addEventListener('click', _createAlbumFromNl);
+    $('#ai-album-nl-fix-btn')?.addEventListener('click', _fixNlRuleAndPreview);
     $('#ai-album-nl-cancel-btn')?.addEventListener('click', _clearAlbumNlBuilder);
     $('#ai-smart-albums-add')?.addEventListener('click', () => _createSmartAlbum());
     $('#ai-smart-album-prev-btn')?.addEventListener('click', () => {

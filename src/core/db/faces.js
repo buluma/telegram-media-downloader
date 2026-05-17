@@ -2294,7 +2294,24 @@ function _matchTagsContains(tag, minScore) {
  */
 function _matchEmbedding(queryEmbedding, minScore) {
     const db = getDb();
-    const rows = db.prepare(`SELECT download_id, embedding FROM image_embeddings`).all();
+
+    // Model hygiene: never mix semantic scores across different embedding
+    // models. Use the most common stored model as the active one.
+    const modelRow = db
+        .prepare(
+            `SELECT model, COUNT(*) AS cnt
+               FROM image_embeddings
+              GROUP BY model
+              ORDER BY cnt DESC
+              LIMIT 1`,
+        )
+        .get();
+    const activeModel = modelRow?.model || null;
+    const rows = activeModel
+        ? db
+              .prepare(`SELECT download_id, embedding FROM image_embeddings WHERE model = ?`)
+              .all(activeModel)
+        : db.prepare(`SELECT download_id, embedding FROM image_embeddings`).all();
 
     const q =
         queryEmbedding instanceof Float32Array ? queryEmbedding : Float32Array.from(queryEmbedding);
@@ -2321,6 +2338,47 @@ function _matchEmbedding(queryEmbedding, minScore) {
         }
     }
     return matches;
+}
+
+/**
+ * Preview a smart-album rule without persisting anything.
+ * Returns paged matching files + total count, mirroring listSmartAlbumItems.
+ */
+export async function previewSmartAlbumRule(rule, { limit = 50, offset = 0 } = {}) {
+    const db = getDb();
+    const lim = Math.max(1, Math.min(500, Number(limit) || 50));
+    const off = Math.max(0, Number(offset) || 0);
+    const normalized = _normalizeSmartAlbumRule(rule || {});
+
+    // Precompute embeddings for semantic sub-rules.
+    const embCache = new Map();
+    if (normalized.type === 'compound') {
+        await _precomputeSemanticEmbeddings(normalized, embCache);
+    }
+
+    let ids = [];
+    if (normalized.type === 'tags_contains') {
+        ids = [..._matchTagsContains(normalized.tag, normalized.minScore)];
+    } else if (normalized.type === 'compound') {
+        ids = _matchCompound(normalized, embCache);
+    }
+
+    if (!ids.length) {
+        return { total: 0, files: [], rule: normalized };
+    }
+
+    const placeholders = ids.map(() => '?').join(',');
+    const rows = db
+        .prepare(
+            `SELECT d.*
+               FROM downloads d
+              WHERE d.id IN (${placeholders})
+              ORDER BY d.created_at DESC, d.id DESC`,
+        )
+        .all(...ids);
+    const total = rows.length;
+    const files = rows.slice(off, off + lim);
+    return { total, files, rule: normalized };
 }
 
 export function listSmartAlbumItems(id, { limit = 50, offset = 0 } = {}) {

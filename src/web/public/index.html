@@ -4065,15 +4065,19 @@
                         </summary>
                         <div class="flex items-start justify-between gap-3 flex-wrap mb-2">
                             <p class="text-[11px] text-tg-textSecondary mt-0.5 min-w-0">Rule-based collections. v1 supports tag rules; v2 adds compound rules with people, date, semantic search, and more.</p>
-                            <div class="flex items-center gap-1.5">
+                            <div class="flex items-center gap-1.5 flex-wrap justify-end">
                                 <button id="ai-smart-albums-add" type="button" class="tg-btn text-xs px-2.5 py-1 inline-flex items-center gap-1">
                                     <i class="ri-add-line"></i><span>Add</span>
+                                </button>
+                                <button id="ai-smart-albums-rebuild-all" type="button" class="tg-btn-secondary text-xs px-2.5 py-1 inline-flex items-center gap-1">
+                                    <i class="ri-hammer-line"></i><span>Rebuild all</span>
                                 </button>
                                 <button id="ai-smart-albums-refresh" type="button" class="tg-btn-secondary text-xs px-2.5 py-1 inline-flex items-center gap-1">
                                     <i class="ri-refresh-line"></i><span>Refresh</span>
                                 </button>
                             </div>
                         </div>
+                        <p id="ai-smart-albums-runtime" class="text-[10px] text-tg-textSecondary mb-2"></p>
 
                         <!-- Natural-language album builder (v2) -->
                         <div class="bg-tg-bg/30 rounded-lg p-2.5 mb-3">
@@ -4092,10 +4096,14 @@
                                         </button>
                                         <span id="ai-album-nl-status" class="text-[10px] text-tg-textSecondary hidden"></span>
                                     </div>
+                                    <div id="ai-album-nl-preview-count" class="text-[10px] text-tg-textSecondary hidden"></div>
                                     <pre id="ai-album-nl-preview" class="bg-tg-bg/60 rounded p-2 text-[10px] font-mono whitespace-pre-wrap leading-snug max-h-48 overflow-auto hidden"></pre>
-                                    <div id="ai-album-nl-actions" class="flex items-center gap-2 hidden">
+                                    <div id="ai-album-nl-actions" class="flex items-center gap-2 hidden flex-wrap">
                                         <button id="ai-album-nl-create-btn" type="button" class="tg-btn text-xs px-3 py-1.5 inline-flex items-center gap-1">
                                             <i class="ri-album-add-line"></i><span>Create album with this rule</span>
+                                        </button>
+                                        <button id="ai-album-nl-fix-btn" type="button" class="tg-btn-secondary text-xs px-3 py-1.5 inline-flex items-center gap-1">
+                                            <i class="ri-magic-line"></i><span>Apply recommended fixes</span>
                                         </button>
                                         <button id="ai-album-nl-cancel-btn" type="button" class="tg-btn-secondary text-xs px-3 py-1.5">Clear</button>
                                     </div>

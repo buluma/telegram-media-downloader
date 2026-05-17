@@ -33,6 +33,7 @@ import {
     listSmartAlbums,
     renamePerson,
     rebuildSmartAlbum,
+    previewSmartAlbumRule,
     deletePerson,
     resetAllAiData,
     upsertSmartAlbum,
@@ -107,6 +108,30 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         } catch {
             return {};
         }
+    }
+
+    function _semanticSearchEnabled(cfg = _aiCfg()) {
+        const s = cfg?.semanticSearch;
+        if (typeof s === 'object' && s) return s.enabled === true;
+        if (typeof s === 'boolean') return s === true;
+        return false;
+    }
+
+    function _smartAlbumsLlmRulesEnabled(cfg = _aiCfg()) {
+        const sa = cfg?.smartAlbums;
+        if (typeof sa === 'object' && sa) {
+            return sa.enabled !== false && sa.allowLlmRules === true;
+        }
+        return false;
+    }
+
+    function _resolveClipModelId(cfg = _aiCfg()) {
+        return (
+            String(cfg?.searchModel || '').trim() ||
+            String(cfg?.model || '').trim() ||
+            String(cfg?.clipModel || '').trim() ||
+            'Xenova/clip-vit-base-patch32'
+        );
     }
 
     // ---- AI status -----------------------------------------------------------
@@ -732,7 +757,130 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         }
     });
 
-    // ---- Smart albums (v1: tags_contains rule) ------------------------------
+    // ---- Smart albums (v1 + v2 compound rules) ------------------------------
+    function _smartAlbumRuleErrorPayload(error) {
+        const msg = String(error?.message || 'invalid smart album rule');
+        const prefix = msg.includes(':') ? msg.split(':', 1)[0] : 'rule';
+        return {
+            error: msg,
+            code: 'INVALID_RULE',
+            details: {
+                section: prefix,
+            },
+        };
+    }
+
+    const _smartAlbumsRuntime = {
+        running: false,
+        enabled: false,
+        intervalMin: 15,
+        lastRunAt: 0,
+        lastDurationMs: 0,
+        lastError: null,
+        lastAlbums: 0,
+        lastMatched: 0,
+    };
+    let _smartAlbumsTimer = null;
+
+    async function _rebuildAllSmartAlbums({ source = 'manual' } = {}) {
+        if (_smartAlbumsRuntime.running) {
+            return { skipped: true, reason: 'already_running' };
+        }
+        _smartAlbumsRuntime.running = true;
+        const start = Date.now();
+        let totalMatched = 0;
+        let rebuilt = 0;
+        try {
+            const cfg = _aiCfg();
+            const sa =
+                cfg.smartAlbums && typeof cfg.smartAlbums === 'object' ? cfg.smartAlbums : {};
+            if (sa.enabled === false) {
+                return { skipped: true, reason: 'disabled' };
+            }
+            const albums = listSmartAlbums().filter((a) => a.enabled !== false);
+            for (const album of albums) {
+                try {
+                    const r = await rebuildSmartAlbum(album.id);
+                    rebuilt += 1;
+                    totalMatched += Number(r?.matched || 0);
+                } catch (e) {
+                    _smartAlbumsRuntime.lastError = `album ${album.id}: ${e?.message || e}`;
+                }
+            }
+            _smartAlbumsRuntime.lastRunAt = Date.now();
+            _smartAlbumsRuntime.lastDurationMs = _smartAlbumsRuntime.lastRunAt - start;
+            _smartAlbumsRuntime.lastAlbums = rebuilt;
+            _smartAlbumsRuntime.lastMatched = totalMatched;
+            _smartAlbumsRuntime.lastError = null;
+            log({
+                source: 'smart-albums',
+                level: 'info',
+                msg: `rebuild-all (${source}): albums=${rebuilt} matched=${totalMatched} in ${_smartAlbumsRuntime.lastDurationMs}ms`,
+            });
+            return { rebuilt, matched: totalMatched };
+        } catch (e) {
+            _smartAlbumsRuntime.lastError = e?.message || String(e);
+            log({
+                source: 'smart-albums',
+                level: 'warn',
+                msg: `rebuild-all failed (${source}): ${_smartAlbumsRuntime.lastError}`,
+            });
+            throw e;
+        } finally {
+            _smartAlbumsRuntime.running = false;
+        }
+    }
+
+    function _smartAlbumsRearmSchedule() {
+        if (_smartAlbumsTimer) {
+            clearInterval(_smartAlbumsTimer);
+            _smartAlbumsTimer = null;
+        }
+        const cfg = _aiCfg();
+        const sa = cfg.smartAlbums && typeof cfg.smartAlbums === 'object' ? cfg.smartAlbums : {};
+        const enabled = sa.enabled !== false;
+        const intervalMin = Math.max(1, Math.min(1440, Number(sa.refreshIntervalMin) || 15));
+        _smartAlbumsRuntime.enabled = enabled;
+        _smartAlbumsRuntime.intervalMin = intervalMin;
+        if (!enabled) return;
+        const ms = intervalMin * 60_000;
+        _smartAlbumsTimer = setInterval(() => {
+            _rebuildAllSmartAlbums({ source: 'scheduled' }).catch(() => {});
+        }, ms);
+        _smartAlbumsTimer.unref?.();
+    }
+
+    setImmediate(_smartAlbumsRearmSchedule);
+    try {
+        watchConfig(() => _smartAlbumsRearmSchedule());
+    } catch {}
+
+    router.get('/ai/smart-albums/runtime', async (_req, res) => {
+        const cfg = _aiCfg();
+        const sa = cfg.smartAlbums && typeof cfg.smartAlbums === 'object' ? cfg.smartAlbums : {};
+        res.json({
+            success: true,
+            config: {
+                enabled: sa.enabled !== false,
+                refreshIntervalMin: Math.max(
+                    1,
+                    Math.min(1440, Number(sa.refreshIntervalMin) || 15),
+                ),
+                allowLlmRules: sa.allowLlmRules === true,
+            },
+            runtime: { ..._smartAlbumsRuntime },
+        });
+    });
+
+    router.post('/ai/smart-albums/rebuild-all', async (_req, res) => {
+        try {
+            const out = await _rebuildAllSmartAlbums({ source: 'manual' });
+            res.json({ success: true, ...out, runtime: { ..._smartAlbumsRuntime } });
+        } catch (e) {
+            res.status(500).json({ error: e?.message || String(e) });
+        }
+    });
+
     router.get('/ai/smart-albums', async (_req, res) => {
         try {
             const albums = listSmartAlbums();
@@ -753,7 +901,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             const rebuilt = await rebuildSmartAlbum(albumId);
             res.json({ success: true, id: albumId, rebuilt });
         } catch (e) {
-            res.status(400).json({ error: e.message });
+            res.status(400).json(_smartAlbumRuleErrorPayload(e));
         }
     });
 
@@ -778,6 +926,25 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         }
     });
 
+    // Preview a rule without saving/materializing an album.
+    router.post('/ai/smart-albums/preview', async (req, res) => {
+        try {
+            const rule = req.body?.rule || null;
+            if (!rule || typeof rule !== 'object') {
+                return res.status(400).json({
+                    error: 'rule object is required',
+                    code: 'MISSING_RULE',
+                });
+            }
+            const limit = Math.max(1, Math.min(500, Number(req.body?.limit) || 50));
+            const offset = Math.max(0, Number(req.body?.offset) || 0);
+            const preview = await previewSmartAlbumRule(rule, { limit, offset });
+            res.json({ success: true, ...preview });
+        } catch (e) {
+            res.status(400).json(_smartAlbumRuleErrorPayload(e));
+        }
+    });
+
     // Parse a natural-language album description into a validated compound
     // rule using the active LLM provider. Returns the parsed rule JSON for
     // the operator to preview before saving. Returns 503 when the LLM is
@@ -789,6 +956,14 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                 return res.status(400).json({
                     error: 'description is required',
                     code: 'MISSING_DESCRIPTION',
+                });
+            }
+
+            const cfg = _aiCfg();
+            if (!_smartAlbumsLlmRulesEnabled(cfg)) {
+                return res.status(503).json({
+                    error: 'Natural-language smart album rules are disabled in config',
+                    code: 'SMART_ALBUMS_LLM_RULES_DISABLED',
                 });
             }
 
@@ -905,7 +1080,12 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                 });
             }
 
-            const normalized = facesMod._normalizeSmartAlbumRule(parsed);
+            let normalized;
+            try {
+                normalized = facesMod._normalizeSmartAlbumRule(parsed);
+            } catch (e) {
+                return res.status(400).json(_smartAlbumRuleErrorPayload(e));
+            }
 
             res.json({ success: true, description, rule: normalized });
         } catch (e) {
@@ -1314,11 +1494,55 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
 
     // ====== Semantic / natural-language search (image embeddings) =============
 
-    // Search images by natural-language query. Internally embeds the query
-    // text via the sidecar's CLIP text encoder, then cosine-ranks against
-    // stored image embeddings. Returns top-N results with file metadata.
+    function _compatSearchRow(row) {
+        return {
+            ...row,
+            // Back-compat aliases for older gallery callers that still read
+            // snake_case fields from /api/ai/search.
+            download_id: row.id,
+            group_id: row.groupId,
+            group_name: row.groupName,
+            file_name: row.fileName,
+            file_path: row.filePath,
+            file_type: row.fileType,
+            file_size: row.fileSize,
+            created_at: row.createdAt,
+        };
+    }
+
+    async function _runAiSearch({ query, topK, minScore, fileTypes, sources }) {
+        const { crossModalSearch } = await import('../../core/ai/search.js');
+        const { embed: llmEmbedFn } = await import('../../core/llm/index.js');
+        const llmEmbed = async (texts) => {
+            const r = await llmEmbedFn({ texts });
+            return Array.isArray(r) ? r : null;
+        };
+        const result = await crossModalSearch(query, {
+            topK,
+            minScore,
+            fileTypes,
+            sources,
+            llmEmbed,
+        });
+        return {
+            query: result.query,
+            modalities: result.modalities,
+            results: (result.results || []).map(_compatSearchRow),
+        };
+    }
+
+    // Search images by natural-language query. Supports both GET and POST
+    // for backward compatibility with older gallery clients.
     router.get('/ai/search', async (req, res) => {
         try {
+            const cfg = _aiCfg();
+            if (!_semanticSearchEnabled(cfg)) {
+                return res.status(503).json({
+                    error: 'Semantic search is disabled in config',
+                    code: 'SEMANTIC_SEARCH_DISABLED',
+                });
+            }
+
             const query = String(req.query.q || '').trim();
             if (!query) {
                 return res.status(400).json({
@@ -1342,23 +1566,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                       .filter(Boolean)
                 : undefined;
 
-            // Run cross-modal search — wire LLM text embedding as fallback
-            // for when the CLIP sidecar is unavailable.
-            const { crossModalSearch } = await import('../../core/ai/search.js');
-            const { embed: llmEmbedFn } = await import('../../core/llm/index.js');
-            const llmEmbed = async (texts) => {
-                const r = await llmEmbedFn({ texts });
-                return Array.isArray(r) ? r : null;
-            };
-
-            const result = await crossModalSearch(query, {
-                topK,
-                minScore,
-                fileTypes,
-                sources,
-                llmEmbed,
-            });
-
+            const result = await _runAiSearch({ query, topK, minScore, fileTypes, sources });
             res.json({
                 success: true,
                 query: result.query,
@@ -1371,13 +1579,140 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         }
     });
 
+    router.post('/ai/search', async (req, res) => {
+        try {
+            const cfg = _aiCfg();
+            if (!_semanticSearchEnabled(cfg)) {
+                return res.status(503).json({
+                    error: 'Semantic search is disabled in config',
+                    code: 'SEMANTIC_SEARCH_DISABLED',
+                });
+            }
+
+            const query = String(req.body?.q || '').trim();
+            if (!query) {
+                return res.status(400).json({
+                    error: 'q is required',
+                    code: 'MISSING_QUERY',
+                });
+            }
+
+            const topK = Math.min(
+                Math.max(1, Number(req.body?.topK || req.body?.limit) || 50),
+                500,
+            );
+            const minScore = Number(req.body?.minScore) || 0.0;
+            const fileTypes = Array.isArray(req.body?.fileTypes)
+                ? req.body.fileTypes.map((s) => String(s).trim()).filter(Boolean)
+                : undefined;
+            const sources = Array.isArray(req.body?.sources)
+                ? req.body.sources.map((s) => String(s).trim().toLowerCase()).filter(Boolean)
+                : undefined;
+
+            const result = await _runAiSearch({ query, topK, minScore, fileTypes, sources });
+            res.json({
+                success: true,
+                query: result.query,
+                total: result.results.length,
+                results: result.results,
+                modalities: result.modalities,
+            });
+        } catch (e) {
+            res.status(500).json({ error: e?.message || String(e) });
+        }
+    });
+
+    // Find similar media by seeding cosine search with one existing
+    // embedding row. Response shape mirrors /ai/search for gallery reuse.
+    router.post('/ai/search/similar', async (req, res) => {
+        try {
+            const cfg = _aiCfg();
+            if (!_semanticSearchEnabled(cfg)) {
+                return res.status(503).json({
+                    error: 'Semantic search is disabled in config',
+                    code: 'SEMANTIC_SEARCH_DISABLED',
+                });
+            }
+
+            const downloadId = Number(req.body?.downloadId);
+            if (!Number.isFinite(downloadId) || downloadId <= 0) {
+                return res
+                    .status(400)
+                    .json({ error: 'downloadId is required', code: 'INVALID_ID' });
+            }
+            const limit = Math.min(Math.max(1, Number(req.body?.limit) || 60), 500);
+
+            const db = getDb();
+            const seed = db
+                .prepare(
+                    `SELECT download_id, embedding, model FROM image_embeddings WHERE download_id = ?`,
+                )
+                .get(downloadId);
+            if (!seed?.embedding?.byteLength) {
+                return res.json({
+                    success: true,
+                    seedId: downloadId,
+                    total: 0,
+                    results: [],
+                    modalities: ['semantic'],
+                    code: 'SEED_EMBEDDING_MISSING',
+                });
+            }
+
+            const queryEmbedding = new Float32Array(
+                seed.embedding.buffer,
+                seed.embedding.byteOffset,
+                seed.embedding.byteLength / 4,
+            );
+            const { searchEmbeddings } = await import('../../core/db/faces.js');
+            const rows = searchEmbeddings(queryEmbedding, {
+                topK: limit + 1,
+                minScore: 0,
+                model: seed.model || null,
+            })
+                .filter((r) => Number(r.id) !== downloadId)
+                .slice(0, limit)
+                .map((r) =>
+                    _compatSearchRow({
+                        ...r,
+                        explanations: [{ source: 'semantic', score: Number(r.score) || 0 }],
+                    }),
+                );
+
+            return res.json({
+                success: true,
+                seedId: downloadId,
+                total: rows.length,
+                results: rows,
+                modalities: ['semantic'],
+            });
+        } catch (e) {
+            return res.status(500).json({ error: e?.message || String(e) });
+        }
+    });
+
     // Return embedding coverage stats for the AI maintenance page.
     router.get('/ai/embeddings/stats', async (_req, res) => {
         try {
             const { listEmbeddingModels } = await import('../../core/db/faces.js');
+            const cfg = _aiCfg();
+            const configuredModel = _resolveClipModelId(cfg);
             const models = listEmbeddingModels();
             const totalImages = models.reduce((sum, m) => sum + m.count, 0);
-            res.json({ success: true, total: totalImages, models });
+            const activeStoredModel = models.length
+                ? models.reduce((a, b) => (a.count >= b.count ? a : b)).model
+                : null;
+            const staleRows = models
+                .filter((m) => String(m.model) !== String(configuredModel))
+                .reduce((sum, m) => sum + Number(m.count || 0), 0);
+            res.json({
+                success: true,
+                total: totalImages,
+                models,
+                configuredModel,
+                activeStoredModel,
+                staleRows,
+            });
         } catch (e) {
             res.status(500).json({ error: e?.message || String(e) });
         }
@@ -1390,15 +1725,21 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
     router.post('/ai/embeddings/reindex', async (req, res) => {
         try {
             const { loadConfig } = await import('../../config/manager.js');
-            const { embedImage } = await import('../../core/ai/faces-client.js');
+            const { embedImage, getSidecarUrl } = await import('../../core/ai/faces-client.js');
             const { clearStaleEmbeddings, listEmbeddingModels, setImageEmbedding } = await import(
                 '../../core/db/faces.js'
             );
             const { getDb } = await import('../../core/db.js');
 
             const live = loadConfig();
-            const llmCfg = live?.advanced?.ai?.llm || {};
-            const clipModel = live?.advanced?.ai?.clipModel || 'Xenova/clip-vit-base-patch32';
+            const clipModel = _resolveClipModelId(live?.advanced?.ai || {});
+
+            if (!getSidecarUrl()) {
+                return res.status(503).json({
+                    error: 'AI sidecar is not running — image embeddings require sidecar CLIP',
+                    code: 'SIDECAR_OFFLINE',
+                });
+            }
 
             // Clear stale embeddings if the model changed.
             // Always pick the most common model for comparison — when
@@ -1479,6 +1820,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
 
             res.json({
                 success: true,
+                model: clipModel,
                 processed,
                 errors,
                 sampleErrors: errors_.length ? errors_ : undefined,

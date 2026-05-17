@@ -179,6 +179,14 @@ const DEFAULT_CONFIG = {
             autoCluster: true,
             autoClusterIntervalMin: 60,
             autoClusterDebounceMs: 60000,
+            // Semantic / natural-language search controls.
+            // Disabled by default; enabling turns on /api/ai/search
+            // endpoints and embedding-driven query paths.
+            semanticSearch: {
+                enabled: false,
+                embedOnDownload: false,
+                batchSize: 32,
+            },
             // Face detector backend override (HF model id). Default empty
             // → bundled `@vladmandic/face-api` weights are used. Sticking
             // with the bundle is the recommended path; the override exists
@@ -598,6 +606,13 @@ const DEFAULT_CONFIG = {
                 // are biometric data. Alias of the legacy `federateFaces`
                 // flat key.
                 federate: false,
+            },
+            // Smart albums engine toggles. v1 tag-rules remain enabled by
+            // default; LLM-driven rule parsing is a separate opt-in.
+            smartAlbums: {
+                enabled: true,
+                refreshIntervalMin: 15,
+                allowLlmRules: false,
             },
             // ===== LLM provider =====
             // Pluggable text-generation backend for caption generation,
