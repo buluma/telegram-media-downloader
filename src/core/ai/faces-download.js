@@ -6,7 +6,7 @@ import http from 'http';
 import path from 'path';
 import { spawn as _spawn, spawnSync } from 'child_process';
 
-export const SIDECAR_VERSION = '0.3.1';
+export const SIDECAR_VERSION = '0.3.2';
 export const GH_RELEASE_BASE = `https://github.com/buluma/telegram-media-downloader/releases/download/faces-v${SIDECAR_VERSION}`;
 
 const DOWNLOAD_CONNECT_TIMEOUT_MS = 30_000;
