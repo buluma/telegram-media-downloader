@@ -246,7 +246,7 @@ async function _renderTagBrowser(forceReload = true) {
                 (t) =>
                     `<button type="button" class="tg-btn-input text-[11px] px-2.5 py-1 inline-flex items-center gap-1 tag-chip" data-tag="${escapeHtml(t.tag)}" aria-pressed="false">
                         ${escapeHtml(t.tag)}
-                        <span class="text-[10px] text-tg-textSecondary tabular-nums">${t.count}</span>
+                        <span class="text-[10px] text-white/70 tabular-nums">${t.count}</span>
                     </button>`,
             )
             .join('');
@@ -489,7 +489,7 @@ function _renderOcrBrowserChips() {
             (w) =>
                 `<button type="button" class="tg-btn-input text-[10px] px-2 py-0.5 inline-flex items-center gap-1 ocr-word-chip${selected === w.word ? ' active' : ''}" data-ocr-word="${escapeHtml(w.word)}">
                     ${escapeHtml(w.word)}
-                    <span class="text-[10px] text-tg-textSecondary tabular-nums">${w.cnt}</span>
+                    <span class="text-[10px] text-white/70 tabular-nums">${w.cnt}</span>
                 </button>`,
         )
         .join('');
@@ -757,7 +757,7 @@ async function _renderOcrChips() {
                 (w) =>
                     `<button type="button" class="tg-btn-input text-[10px] px-2 py-0.5 inline-flex items-center gap-1 ocr-chip${_ocrWordFilter === w.word ? ' active' : ''}" data-word="${escapeHtml(w.word)}">
                         ${escapeHtml(w.word)}
-                        <span class="text-[9px] text-tg-textSecondary tabular-nums">${w.cnt}</span>
+                        <span class="text-[9px] text-white/70 tabular-nums">${w.cnt}</span>
                     </button>`,
             )
             .join('');
