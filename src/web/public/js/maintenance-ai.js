@@ -2126,27 +2126,29 @@ function _bindOnce() {
     // OCR — toggle + scan/cancel buttons.
     $('#ai-ocr-toggle')?.addEventListener('click', async () => {
         const el = $('#ai-ocr-toggle');
-        const was = el.getAttribute('aria-checked') === 'true';
-        const next = !was;
+        if (!el) return;
+        const cur = el.classList.contains('active');
+        const next = !cur;
+        el.classList.toggle('active', next);
+        el.setAttribute('aria-checked', String(next));
         try {
-            el.style.pointerEvents = 'none';
-            await api.post('/api/config', {
+            const r = await api.post('/api/config', {
                 advanced: { ai: { imageOcr: next } },
             });
-            el.setAttribute('aria-checked', String(next));
-            el.classList.toggle('bg-tg-blue', next);
-            el.classList.toggle('bg-tg-bg/40', !next);
+            if (!r.success) throw new Error(r.error || 'save failed');
+            showToast(i18nT('common.saved', 'Saved'), 'success');
+            await refreshStatus();
         } catch (e) {
+            el.classList.toggle('active', cur);
+            el.setAttribute('aria-checked', String(cur));
             showToast(
-                `${i18nT('common.save_failed', 'Save failed')}: ${e?.data?.error || e?.message}`,
+                `${i18nT('common.save_failed', 'Save failed')}: ${e?.data?.error || e?.message || 'unknown'}`,
                 'error',
             );
-        } finally {
-            el.style.pointerEvents = '';
         }
     });
     $('#ai-ocr-toggle')?.addEventListener('keydown', (e) => {
-        if (e.code === 'Space' || e.code === 'Enter') {
+        if (e.key === ' ' || e.key === 'Enter') {
             e.preventDefault();
             $('#ai-ocr-toggle')?.click();
         }
@@ -3297,8 +3299,7 @@ function _renderStatus(status) {
     const ocrToggle = $('#ai-ocr-toggle');
     if (ocrToggle) {
         const on = cfg.imageOcr === true;
-        ocrToggle.classList.toggle('bg-tg-blue', on);
-        ocrToggle.classList.toggle('bg-tg-bg/40', !on);
+        ocrToggle.classList.toggle('active', on);
         ocrToggle.setAttribute('aria-checked', String(on));
     }
     const ocrRunning = !!scans?.ocr?.running;
