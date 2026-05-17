@@ -13,6 +13,7 @@ const ML_ENV_KEYS = [
     'TGDL_ML_CLIP_MODEL',
     'TGDL_ML_OCR_MODEL',
     'TGDL_ML_TIMEOUT_MS',
+    'TGDL_ML_ENABLED',
 ];
 
 const ORIGINAL_ENV = { ...process.env };
@@ -37,9 +38,9 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('getTgdlMlUrl', () => {
-    it('returns empty string when no env set', () => {
+    it('returns localhost default when no env set', () => {
         clearMlEnv();
-        expect(client.getTgdlMlUrl()).toBe('');
+        expect(client.getTgdlMlUrl()).toBe('http://localhost:3800');
     });
 
     it('returns TGDL_ML_URL when set, stripping trailing slash', () => {
@@ -47,23 +48,35 @@ describe('getTgdlMlUrl', () => {
         expect(client.getTgdlMlUrl()).toBe('http://tgdl-ml:3800');
     });
 
-    it('returns localhost default when TGDL_ML_PROVIDER=tgdl-ml and no URL', () => {
-        process.env.TGDL_ML_PROVIDER = 'tgdl-ml';
-        expect(client.getTgdlMlUrl()).toBe('http://localhost:3800');
+    it('returns empty string when TGDL_ML_ENABLED=false', () => {
+        process.env.TGDL_ML_ENABLED = 'false';
+        expect(client.getTgdlMlUrl()).toBe('');
     });
 
-    it('returns empty string for unrecognised TGDL_ML_PROVIDER value', () => {
-        process.env.TGDL_ML_PROVIDER = 'ollama';
+    it('returns empty string when TGDL_ML_ENABLED=0', () => {
+        process.env.TGDL_ML_ENABLED = '0';
+        expect(client.getTgdlMlUrl()).toBe('');
+    });
+
+    it('TGDL_ML_ENABLED=false overrides explicit URL', () => {
+        process.env.TGDL_ML_ENABLED = 'false';
+        process.env.TGDL_ML_URL = 'http://tgdl-ml:3800';
         expect(client.getTgdlMlUrl()).toBe('');
     });
 });
 
 describe('isTgdlMlEnabled', () => {
-    it('false when no env set', () => {
+    it('true when no env set (default on)', () => {
+        clearMlEnv();
+        expect(client.isTgdlMlEnabled()).toBe(true);
+    });
+
+    it('false when TGDL_ML_ENABLED=false', () => {
+        process.env.TGDL_ML_ENABLED = 'false';
         expect(client.isTgdlMlEnabled()).toBe(false);
     });
 
-    it('true when URL configured', () => {
+    it('true when URL explicitly configured', () => {
         process.env.TGDL_ML_URL = 'http://tgdl-ml:3800';
         expect(client.isTgdlMlEnabled()).toBe(true);
     });
@@ -76,15 +89,15 @@ describe('resolveClipModelId', () => {
         expect(client.resolveClipModelId({})).toBe('tgdl-ml:ViT-L-14__openai');
     });
 
-    it('falls back to cfg fields when sidecar disabled', () => {
-        clearMlEnv();
+    it('falls back to cfg fields when tgdl-ml disabled', () => {
+        process.env.TGDL_ML_ENABLED = 'false';
         expect(client.resolveClipModelId({ searchModel: 'MyModel' })).toBe('MyModel');
         expect(client.resolveClipModelId({ model: 'Alt' })).toBe('Alt');
         expect(client.resolveClipModelId({ clipModel: 'ClipAlt' })).toBe('ClipAlt');
     });
 
-    it('falls back to Xenova default when cfg empty and sidecar disabled', () => {
-        clearMlEnv();
+    it('falls back to Xenova default when cfg empty and tgdl-ml disabled', () => {
+        process.env.TGDL_ML_ENABLED = 'false';
         expect(client.resolveClipModelId({})).toBe('Xenova/clip-vit-base-patch32');
     });
 });
@@ -165,8 +178,8 @@ describe('mlEmbedImage', () => {
         );
     });
 
-    it('throws when URL not configured', async () => {
-        clearMlEnv();
+    it('throws when tgdl-ml disabled', async () => {
+        process.env.TGDL_ML_ENABLED = 'false';
         await expect(client.mlEmbedImage('/tmp/test.jpg')).rejects.toThrow(
             'tgdl-ml URL is not configured',
         );

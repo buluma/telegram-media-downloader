@@ -11,14 +11,16 @@ const ORIGINAL_ENV = { ...process.env };
 
 beforeEach(() => {
     for (const k of Object.keys(process.env)) {
-        if (k.startsWith('TGDL_FACES_')) delete process.env[k];
+        if (k.startsWith('TGDL_FACES_') || k.startsWith('TGDL_ML_')) delete process.env[k];
     }
+    // Disable tgdl-ml so these tests exercise the old sidecar path.
+    process.env.TGDL_ML_ENABLED = 'false';
     client._resetForTests();
 });
 
 afterEach(() => {
     for (const k of Object.keys(process.env)) {
-        if (k.startsWith('TGDL_FACES_')) delete process.env[k];
+        if (k.startsWith('TGDL_FACES_') || k.startsWith('TGDL_ML_')) delete process.env[k];
     }
     Object.assign(process.env, ORIGINAL_ENV);
     vi.restoreAllMocks();

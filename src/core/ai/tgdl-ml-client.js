@@ -12,13 +12,15 @@ function _cleanUrl(url) {
 }
 
 export function getTgdlMlUrl() {
+    const enabled = String(process.env.TGDL_ML_ENABLED ?? '')
+        .trim()
+        .toLowerCase();
+    if (enabled === 'false' || enabled === '0') return '';
+
     const explicit = _cleanUrl(process.env.TGDL_ML_URL || '');
     if (explicit) return explicit;
 
-    const provider = String(process.env.TGDL_ML_PROVIDER || '')
-        .trim()
-        .toLowerCase();
-    return provider === 'tgdl-ml' ? DEFAULT_TGDL_ML_URL : '';
+    return DEFAULT_TGDL_ML_URL;
 }
 
 export function isTgdlMlEnabled() {

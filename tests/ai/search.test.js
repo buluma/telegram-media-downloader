@@ -38,6 +38,9 @@ function _newDownload(overrides = {}) {
 
 beforeAll(async () => {
     process.env.TGDL_DATA_DIR = DATA_DIR;
+    // Disable tgdl-ml so embedText throws "sidecar unavailable" and
+    // tests that exercise the LLM semantic fallback path work correctly.
+    process.env.TGDL_ML_ENABLED = 'false';
     const dbApi = await import('../../src/core/db.js');
     db = dbApi.getDb();
     insertDownload = dbApi.insertDownload;
@@ -61,6 +64,7 @@ afterAll(() => {
         db.close();
     } catch {}
     delete process.env.TGDL_DATA_DIR;
+    delete process.env.TGDL_ML_ENABLED;
     fs.rmSync(DATA_DIR, { recursive: true, force: true });
 });
 
