@@ -34,6 +34,8 @@ const aiStore = createStore({
     smartAlbumSelectedName: '',
     // OCR word browser selection
     ocrWordSelected: '',
+    // WD14 tag browser selection
+    wd14TagSelected: '',
 });
 let _peoplePhotosPage = 1;
 let _peoplePhotosTotal = 0;
@@ -58,6 +60,14 @@ let _smartAlbumItemsTotal = 0;
 let _smartAlbumItemsTotalPages = 1;
 const _smartAlbumItemsLimit = 50;
 let _smartAlbumCurrentRows = [];
+let _wd14BrowserCache = []; // full tag list for client-side filter
+let _wd14BrowserFilterQuery = '';
+let _wd14BrowserSortMode = 'count_desc';
+let _wd14TagPhotosPage = 1;
+let _wd14TagPhotosTotal = 0;
+let _wd14TagPhotosTotalPages = 1;
+const _wd14TagPhotosLimit = 50;
+let _wd14TagCurrentRows = [];
 let _ocrBrowserCache = []; // full word list for client-side filter
 let _ocrBrowserFilterQuery = '';
 let _ocrWordPhotosPage = 1;
@@ -626,6 +636,185 @@ function _openOcrWordLightbox(startIndex) {
     openMediaViewerForReview(_ocrWordCurrentRows.map(_ocrWordRowToViewerFile), startIndex, {
         actions: [],
         metaRender: _ocrWordReviewMetaFor,
+    });
+}
+
+// ---- WD14 tag browser -------------------------------------------------------
+
+function _sortWd14Tags(tags) {
+    const copy = [...tags];
+    if (_wd14BrowserSortMode === 'avg_score_desc')
+        return copy.sort((a, b) => b.avg_score - a.avg_score || b.count - a.count);
+    if (_wd14BrowserSortMode === 'tag_asc') return copy.sort((a, b) => a.tag.localeCompare(b.tag));
+    return copy.sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
+}
+
+async function _renderWd14Browser() {
+    const section = $('#ai-wd14-browser');
+    if (!section) return;
+    try {
+        const r = await api.get('/api/ai/wd14/tags?limit=1000&minCount=1&minScore=0.2');
+        if (!r?.success) return;
+        _wd14BrowserCache = r.tags || [];
+        const count = _wd14BrowserCache.length;
+        const countEl = $('#ai-wd14-browser-count');
+        if (countEl) countEl.textContent = count ? `${count.toLocaleString()} tags` : '';
+        const emptyEl = $('#ai-wd14-browser-empty');
+        if (emptyEl) emptyEl.classList.toggle('hidden', count > 0);
+        if (count > 0) section.classList.remove('hidden');
+        _renderWd14BrowserChips();
+    } catch (e) {
+        console.warn('wd14/browser:', e);
+    }
+}
+
+function _renderWd14BrowserChips() {
+    const chips = $('#ai-wd14-browser-chips');
+    if (!chips) return;
+    const q = _wd14BrowserFilterQuery.toLowerCase();
+    const visible = _sortWd14Tags(
+        q ? _wd14BrowserCache.filter((t) => t.tag.toLowerCase().includes(q)) : _wd14BrowserCache,
+    );
+    const selected = aiStore.get('wd14TagSelected');
+    chips.innerHTML = visible
+        .map(
+            (t) =>
+                `<button type="button" class="tg-btn-input text-[10px] px-2 py-0.5 inline-flex items-center gap-1 wd14-tag-chip${selected === t.tag ? ' active' : ''}" data-wd14-tag="${escapeHtml(t.tag)}">
+                    ${escapeHtml(t.tag)}
+                    <span class="text-[10px] text-white/70 tabular-nums">${t.count}</span>
+                </button>`,
+        )
+        .join('');
+    chips.querySelectorAll('.wd14-tag-chip').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const tag = btn.dataset.wd14Tag;
+            if (!tag) return;
+            if (aiStore.get('wd14TagSelected') !== tag) {
+                _wd14TagPhotosPage = 1;
+                aiStore.set('wd14TagSelected', tag);
+            } else {
+                _wd14TagPhotosPage = 1;
+                _loadWd14TagPhotos(tag);
+            }
+        });
+    });
+}
+
+async function _loadWd14TagPhotos(tag) {
+    _wd14TagPhotosPage = 1;
+    _wd14TagCurrentRows = [];
+    _wd14TagPhotosTotal = 0;
+    _wd14TagPhotosTotalPages = 1;
+    const label = $('#ai-wd14-tag-selected-label');
+    if (label) {
+        label.textContent = tag;
+        label.classList.remove('hidden');
+    }
+    _renderWd14BrowserChips();
+    await _loadWd14TagPhotoPage();
+}
+
+async function _loadWd14TagPhotoPage() {
+    const tag = aiStore.get('wd14TagSelected');
+    if (!tag) return;
+    const grid = $('#ai-wd14-tag-photos');
+    if (!grid) return;
+    const offset = Math.max(0, (_wd14TagPhotosPage - 1) * _wd14TagPhotosLimit);
+    try {
+        const r = await api.get(
+            `/api/ai/wd14/photos?tag=${encodeURIComponent(tag)}&limit=${_wd14TagPhotosLimit}&offset=${offset}`,
+        );
+        if (!r?.success) {
+            grid.innerHTML = `<p class="text-[11px] text-tg-textSecondary col-span-full text-center py-6">Failed to load photos.</p>`;
+            return;
+        }
+        _wd14TagCurrentRows = r.files || [];
+        _wd14TagPhotosTotal = r.total || 0;
+        _wd14TagPhotosTotalPages = Math.max(
+            1,
+            Math.ceil(_wd14TagPhotosTotal / _wd14TagPhotosLimit),
+        );
+        _syncWd14TagPager();
+        if (!_wd14TagCurrentRows.length) {
+            grid.innerHTML = `<p class="text-[11px] text-tg-textSecondary col-span-full text-center py-6">No photos for "${escapeHtml(tag)}".</p>`;
+            return;
+        }
+        grid.innerHTML = _wd14TagCurrentRows.map((f, i) => _renderWd14PhotoTile(f, i)).join('');
+        _wireWd14PhotoClicks();
+    } catch (e) {
+        grid.innerHTML = `<p class="text-[11px] text-red-400 col-span-full text-center py-6">Error: ${escapeHtml(e?.message || e)}</p>`;
+    }
+}
+
+function _syncWd14TagPager() {
+    const pageInfo = $('#ai-wd14-tag-page-info');
+    const prevBtn = $('#ai-wd14-tag-prev-btn');
+    const nextBtn = $('#ai-wd14-tag-next-btn');
+    const hasTag = !!aiStore.get('wd14TagSelected');
+    if (pageInfo)
+        pageInfo.textContent = hasTag
+            ? `Page ${_wd14TagPhotosPage} / ${_wd14TagPhotosTotalPages} · ${_wd14TagPhotosTotal.toLocaleString()} photos`
+            : '';
+    if (prevBtn) prevBtn.disabled = !hasTag || _wd14TagPhotosPage <= 1;
+    if (nextBtn) nextBtn.disabled = !hasTag || _wd14TagPhotosPage >= _wd14TagPhotosTotalPages;
+}
+
+function _renderWd14PhotoTile(file, index) {
+    const thumb = `/api/thumbs/${encodeURIComponent(file.id)}?w=320`;
+    const scorePct = file.tag_score ? Math.round(file.tag_score * 100) : 0;
+    return `<button type="button" data-wd14-tile-index="${index}" data-id="${file.id}"
+            class="nsfw-tile group relative aspect-square rounded-md overflow-hidden bg-tg-bg/40 focus:outline-none focus:ring-2 focus:ring-purple-400">
+        <img loading="lazy" decoding="async"
+             class="absolute inset-0 w-full h-full object-cover"
+             src="${escapeHtml(thumb)}" alt=""
+             onerror="this.style.display='none'">
+        <span class="hidden sm:block absolute top-1 right-1 px-1.5 py-0.5 text-[10px] font-mono rounded bg-purple-500/85 text-white tabular-nums">${scorePct}%</span>
+        <span class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 group-focus:opacity-100 transition flex items-end p-2 pointer-events-none">
+            <span class="text-[11px] text-white truncate w-full text-left">${escapeHtml(file.file_name || '')}</span>
+        </span>
+    </button>`;
+}
+
+function _wireWd14PhotoClicks() {
+    const grid = $('#ai-wd14-tag-photos');
+    if (!grid) return;
+    grid.querySelectorAll('[data-wd14-tile-index]').forEach((tile) => {
+        if (tile.dataset.wired) return;
+        tile.dataset.wired = '1';
+        tile.addEventListener('click', () => {
+            const idx = Number(tile.dataset.wd14TileIndex);
+            if (Number.isFinite(idx)) _openWd14Lightbox(idx);
+        });
+    });
+}
+
+function _wd14RowToViewerFile(row) {
+    const sizeMb = row.file_size ? (row.file_size / (1024 * 1024)).toFixed(1) : '0';
+    return {
+        fullPath: row.file_path || '',
+        type: row.file_type === 'video' ? 'videos' : 'images',
+        name: row.file_name || '',
+        sizeFormatted: `${sizeMb} MB`,
+        modified: row.created_at || Date.now(),
+        _wd14Row: row,
+    };
+}
+
+function _wd14ReviewMetaFor(file) {
+    const score = Math.round((Number(file._wd14Row?.tag_score) || 0) * 100);
+    const tag = aiStore.get('wd14TagSelected') || '';
+    return `<span class="inline-flex items-center gap-2">
+        <span class="inline-block w-2.5 h-2.5 rounded-full bg-purple-400"></span>
+        <span>${escapeHtml(tag)}</span>
+        <span class="font-mono tabular-nums">${score}%</span>
+    </span>`;
+}
+
+function _openWd14Lightbox(startIndex) {
+    if (!_wd14TagCurrentRows.length) return;
+    openMediaViewerForReview(_wd14TagCurrentRows.map(_wd14RowToViewerFile), startIndex, {
+        actions: [],
+        metaRender: _wd14ReviewMetaFor,
     });
 }
 
@@ -2128,6 +2317,7 @@ export async function refreshStatus() {
         _renderTagBrowser().catch(() => {});
         _renderTagSuggestions().catch(() => {});
         _renderOcrBrowser().catch(() => {});
+        _renderWd14Browser().catch(() => {});
         _renderSmartAlbums().catch(() => {});
         _renderLlmStatus().catch(() => {});
         _renderEmbeddingsStatus().catch(() => {});
@@ -2409,6 +2599,26 @@ function _bindOnce() {
         _ocrWordPhotosPage += 1;
         _loadOcrWordPhotoPage();
     });
+    $('#ai-wd14-browser-refresh')?.addEventListener('click', () => _renderWd14Browser());
+    $('#ai-wd14-browser-filter')?.addEventListener('input', (e) => {
+        _wd14BrowserFilterQuery = String(e.target?.value || '');
+        _renderWd14BrowserChips();
+    });
+    $('#ai-wd14-browser-sort')?.addEventListener('change', (e) => {
+        _wd14BrowserSortMode = String(e.target?.value || 'count_desc');
+        _renderWd14BrowserChips();
+    });
+    $('#ai-wd14-tag-prev-btn')?.addEventListener('click', () => {
+        if (!aiStore.get('wd14TagSelected') || _wd14TagPhotosPage <= 1) return;
+        _wd14TagPhotosPage -= 1;
+        _loadWd14TagPhotoPage();
+    });
+    $('#ai-wd14-tag-next-btn')?.addEventListener('click', () => {
+        if (!aiStore.get('wd14TagSelected') || _wd14TagPhotosPage >= _wd14TagPhotosTotalPages)
+            return;
+        _wd14TagPhotosPage += 1;
+        _loadWd14TagPhotoPage();
+    });
     $('#ai-smart-albums-refresh')?.addEventListener('click', () => _renderSmartAlbums());
     $('#ai-smart-albums-rebuild-all')?.addEventListener('click', () => _rebuildAllSmartAlbums());
     $('#ai-album-nl-parse-btn')?.addEventListener('click', _parseAlbumWithAi);
@@ -2592,6 +2802,11 @@ function _bindOnce() {
     // OCR browser — word chip selection drives photo grid reactively.
     aiStore.watch('ocrWordSelected', (word) => {
         if (word) _loadOcrWordPhotos(word);
+    });
+
+    // WD14 browser — tag chip selection drives photo grid reactively.
+    aiStore.watch('wd14TagSelected', (tag) => {
+        if (tag) _loadWd14TagPhotos(tag);
     });
 }
 

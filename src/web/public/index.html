@@ -4006,6 +4006,47 @@
                         <p id="ai-ocr-browser-empty" class="text-[11px] text-tg-textSecondary text-center py-3 hidden">No OCR words yet — run text extraction first.</p>
                     </details>
 
+                    <!-- WD14 tag browser — mirrors tag browser, driven by image_tags_wd14. -->
+                    <details id="ai-wd14-browser" class="hidden bg-tg-panel rounded-xl p-4 mb-3 group">
+                        <summary class="cursor-pointer list-none flex items-center justify-between gap-2 mb-1">
+                            <h3 class="text-tg-text text-sm font-medium flex items-center gap-2">
+                                <i class="ri-arrow-right-s-line text-tg-textSecondary text-xs transition-transform group-open:rotate-90"></i>
+                                <i class="ri-hashtag-line text-purple-400"></i>
+                                <span>WD14 tag browser</span>
+                                <span id="ai-wd14-browser-count" class="text-[10.5px] text-tg-textSecondary"></span>
+                            </h3>
+                        </summary>
+                        <div class="flex items-start justify-between gap-3 flex-wrap mb-3">
+                            <p class="text-[11px] text-tg-textSecondary min-w-0">Browse photos by Danbooru-style WD14 tag. Requires a WD14 scan to have been run.</p>
+                            <button id="ai-wd14-browser-refresh" type="button" class="tg-btn-secondary text-xs px-2.5 py-1 inline-flex items-center gap-1">
+                                <i class="ri-refresh-line"></i><span>Refresh</span>
+                            </button>
+                        </div>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
+                            <input id="ai-wd14-browser-filter" type="search" class="tg-input text-xs" placeholder="Filter tags…">
+                            <select id="ai-wd14-browser-sort" class="tg-input text-xs">
+                                <option value="count_desc">Sort: Most used</option>
+                                <option value="avg_score_desc">Sort: Highest confidence</option>
+                                <option value="tag_asc">Sort: A-Z</option>
+                            </select>
+                        </div>
+                        <div id="ai-wd14-browser-chips" class="flex flex-wrap gap-1.5 mb-3"></div>
+                        <section class="bg-tg-panel rounded-xl p-3">
+                            <div id="ai-wd14-tag-selected-label" class="text-[11px] font-medium text-tg-textSecondary mb-2 hidden"></div>
+                            <div id="ai-wd14-tag-photos" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2 max-h-[70vh] overflow-y-auto pr-1">
+                                <p class="text-[11px] text-tg-textSecondary col-span-full text-center py-6">Select a tag above to browse photos.</p>
+                            </div>
+                            <div class="mt-3 flex items-center justify-between gap-3 flex-wrap">
+                                <div id="ai-wd14-tag-page-info" class="text-xs text-tg-textSecondary"></div>
+                                <div class="flex items-center gap-1.5">
+                                    <button id="ai-wd14-tag-prev-btn" type="button" class="tg-btn-secondary text-xs px-3 py-1.5">Prev</button>
+                                    <button id="ai-wd14-tag-next-btn" type="button" class="tg-btn-secondary text-xs px-3 py-1.5">Next</button>
+                                </div>
+                            </div>
+                        </section>
+                        <p id="ai-wd14-browser-empty" class="text-[11px] text-tg-textSecondary text-center py-3 hidden">No WD14 tags yet — run a WD14 scan first.</p>
+                    </details>
+
                     <details id="ai-smart-albums" class="bg-tg-panel rounded-xl p-4 mb-3 group">
                         <summary class="cursor-pointer list-none flex items-center justify-between gap-2 mb-1">
                             <h3 class="text-tg-text text-sm font-medium flex items-center gap-2">

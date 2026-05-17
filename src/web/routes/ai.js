@@ -826,6 +826,34 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         }
     });
 
+    router.get('/ai/wd14/tags', async (req, res) => {
+        try {
+            const limit = Math.min(2000, Math.max(1, Number(req.query.limit) || 500));
+            const minCount = Math.max(1, Number(req.query.minCount) || 1);
+            const minScore = Math.max(0, Math.min(1, Number(req.query.minScore) || 0.2));
+            const { listWd14Tags } = await import('../../core/db/faces.js');
+            const tags = listWd14Tags({ limit, minCount, minScore });
+            res.json({ success: true, tags });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    router.get('/ai/wd14/photos', async (req, res) => {
+        try {
+            const tag = String(req.query.tag || '').trim();
+            if (!tag) return res.status(400).json({ error: 'tag query param required' });
+            const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 50));
+            const offset = Math.max(0, Number(req.query.offset) || 0);
+            const minScore = Math.max(0, Math.min(1, Number(req.query.minScore) || 0.2));
+            const { listPhotosForWd14Tag } = await import('../../core/db/faces.js');
+            const result = listPhotosForWd14Tag(tag, { limit, offset, minScore });
+            res.json({ success: true, ...result });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
     // ---- Smart albums (v1 + v2 compound rules) ------------------------------
     function _smartAlbumRuleErrorPayload(error) {
         const msg = String(error?.message || 'invalid smart album rule');

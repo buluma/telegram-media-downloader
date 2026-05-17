@@ -1590,6 +1590,45 @@ export function countUnscannedWd14({ fileTypes = ['photo'] } = {}) {
         .get(...types).n;
 }
 
+export function listWd14Tags({ minCount = 1, minScore = 0.2, limit = 500 } = {}) {
+    const db = getDb();
+    const lim = Math.max(1, Math.min(2000, Number(limit) || 500));
+    const ms = Math.max(0, Math.min(1, Number(minScore) || 0.2));
+    const mc = Math.max(1, Number(minCount) || 1);
+    return db
+        .prepare(
+            `SELECT tag, COUNT(*) AS count, ROUND(AVG(score), 4) AS avg_score
+               FROM image_tags_wd14
+              WHERE tag != '_wd14_scanned_' AND score >= ?
+              GROUP BY tag
+             HAVING COUNT(*) >= ?
+              ORDER BY COUNT(*) DESC, tag ASC
+              LIMIT ?`,
+        )
+        .all(ms, mc, lim);
+}
+
+export function listPhotosForWd14Tag(tag, { limit = 50, offset = 0, minScore = 0.2 } = {}) {
+    const db = getDb();
+    const lim = Math.max(1, Math.min(500, Number(limit) || 50));
+    const off = Math.max(0, Number(offset) || 0);
+    const ms = Math.max(0, Math.min(1, Number(minScore) || 0.2));
+    const rows = db
+        .prepare(
+            `SELECT d.*, w.score AS tag_score
+               FROM image_tags_wd14 w
+               JOIN downloads d ON d.id = w.download_id
+              WHERE w.tag = ? AND w.score >= ?
+              ORDER BY w.score DESC, d.created_at DESC
+              LIMIT ? OFFSET ?`,
+        )
+        .all(tag, ms, lim, off);
+    const total = db
+        .prepare(`SELECT COUNT(*) AS n FROM image_tags_wd14 WHERE tag = ? AND score >= ?`)
+        .get(tag, ms).n;
+    return { files: rows, total };
+}
+
 // ---- Image Text (OCR) --------------------------------------------------
 
 export function setImageText(downloadId, text, language = null, confidence = null) {
