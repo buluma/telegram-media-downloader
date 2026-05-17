@@ -2884,15 +2884,6 @@ function _renderQuickOps(status) {
                     : models.objects?.error || (models.objects?.ready ? 'Ready' : 'Not ready'),
             ),
         ];
-        if (mlSidecar.url) {
-            pills.push(
-                _featurePill(
-                    'tgdl-ml',
-                    mlSidecar.ok ? 'ready' : 'error',
-                    mlSidecar.clipModel || mlSidecar.url || 'Offline',
-                ),
-            );
-        }
         grid.innerHTML = pills.join('');
     }
     if (meta) {
