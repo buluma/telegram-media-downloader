@@ -1807,15 +1807,20 @@ server.listen(PORT, async () => {
         console.warn('[nsfw] preload-on-boot skipped:', e.message);
     }
 
-    // Auto-spawn the face-clustering Python sidecar. Fire-and-forget — the
-    // module handles three modes (docker env, operator override, local
-    // spawn) and surfaces every state transition via the `ai_faces_status`
-    // WS broadcast plus `getSidecarStatus()` for /api/ai/status.
-    import('../core/ai/faces-spawn.js')
-        .then((m) => m.startSidecar())
-        .catch((e) => {
-            console.warn('[ai-faces-spawn] boot skipped:', e?.message || e);
-        });
+    // Auto-spawn the legacy Python faces sidecar only when tgdl-ml is not
+    // the active provider. tgdl-ml handles detection via /detect so the
+    // old sidecar is redundant when it is configured.
+    import('../core/ai/tgdl-ml-client.js').then(({ isTgdlMlEnabled }) => {
+        if (isTgdlMlEnabled()) {
+            console.info('[ai-faces-spawn] tgdl-ml active — skipping legacy sidecar boot');
+            return;
+        }
+        import('../core/ai/faces-spawn.js')
+            .then((m) => m.startSidecar())
+            .catch((e) => {
+                console.warn('[ai-faces-spawn] boot skipped:', e?.message || e);
+            });
+    });
 
     // Periodic auto-cluster: re-runs DBSCAN every autoClusterIntervalMin
     // minutes when advanced.ai.autoCluster is enabled. A debounced trigger
