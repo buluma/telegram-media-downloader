@@ -232,7 +232,8 @@ def info() -> JSONResponse:
         try:
             from onnxruntime import get_available_providers
 
-            providers = list(get_available_providers())
+            _NOISY_EPS = {"AzureExecutionProvider"}
+            providers = [p for p in get_available_providers() if p not in _NOISY_EPS]
         except Exception:
             providers = []
     return JSONResponse(
