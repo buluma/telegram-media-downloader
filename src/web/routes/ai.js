@@ -282,15 +282,22 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         let url = null;
         let mode = 'unknown';
         try {
-            const facesClient = await import('../../core/ai/faces-client.js');
-            url = facesClient.getSidecarUrl() || null;
+            const { getSidecarUrl, isTgdlMlEnabled } = await import(
+                '../../core/ai/faces-client.js'
+            );
+            url = getSidecarUrl() || null;
+            if (isTgdlMlEnabled()) {
+                mode = 'tgdl-ml';
+            }
         } catch {}
-        try {
-            const facesSpawn = await import('../../core/ai/faces-spawn.js');
-            const st = facesSpawn.getSidecarStatus?.() || {};
-            url = url || st.url || null;
-            mode = st.mode || st.state || mode;
-        } catch {}
+        if (mode !== 'tgdl-ml') {
+            try {
+                const facesSpawn = await import('../../core/ai/faces-spawn.js');
+                const st = facesSpawn.getSidecarStatus?.() || {};
+                url = url || st.url || null;
+                mode = st.mode || st.state || mode;
+            } catch {}
+        }
         const info = url ? await _fetchSidecarInfo(url) : null;
         const health = url ? await _fetchSidecarHealth(url) : null;
         const isTgdlMl = info?.provider === 'tgdl-ml';
@@ -542,7 +549,32 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             // that still reads the legacy shape.
             const facesBlock = cfg.faces && typeof cfg.faces === 'object' ? cfg.faces : {};
             const sidecar = await _getAiSidecarSnapshot();
-            const mlSidecar = await _getTgdlMlSnapshot();
+            // When sidecar IS tgdl-ml, derive mlSidecar from the already-fetched
+            // sidecar data instead of making a second set of HTTP calls.
+            const mlSidecar =
+                sidecar.info?.provider === 'tgdl-ml'
+                    ? {
+                          url: sidecar.url,
+                          ok: sidecar.ok,
+                          ready: sidecar.ok,
+                          version: sidecar.version,
+                          clipModel:
+                              sidecar.info?.models?.clip || sidecar.health?.clip_model || null,
+                          ocrModel: sidecar.info?.models?.ocr || sidecar.health?.ocr_model || null,
+                          faceModel:
+                              sidecar.info?.models?.faces || sidecar.health?.face_model || null,
+                          providers: sidecar.providers,
+                          error: null,
+                          endpoints: {
+                              embedImage: !!sidecar.endpoints?.embedImage,
+                              embedText: !!sidecar.endpoints?.embedText,
+                              detect: !!sidecar.endpoints?.faces,
+                              ocr: !!sidecar.endpoints?.ocr,
+                              tag: !!sidecar.endpoints?.tag,
+                              objects: !!sidecar.endpoints?.objects,
+                          },
+                      }
+                    : await _getTgdlMlSnapshot();
             res.json({
                 success: true,
                 config: {
