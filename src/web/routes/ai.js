@@ -623,7 +623,9 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                         );
                         const id =
                             (cfg.facesModel || '').trim() ||
-                            `insightface ${preset} (Python sidecar)`;
+                            (isTgdlMlEnabled()
+                                ? `insightface ${preset} (tgdl-ml)`
+                                : `insightface ${preset} (Python sidecar)`);
                         // Live provider list — probe the running sidecar's
                         // `/info` so the dashboard's "GPU acceleration"
                         // chip reflects the actually-loaded EP, not the
