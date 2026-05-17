@@ -1432,6 +1432,19 @@ export function getTagDetails(tag, { limit = 20 } = {}) {
         .prepare('SELECT AVG(score) AS avg_score, COUNT(*) AS count FROM image_tags WHERE tag = ?')
         .get(safeTag);
 
+    // Total unique photos across all sources
+    const totalCount = db
+        .prepare(
+            `SELECT COUNT(*) AS n FROM (
+            SELECT download_id FROM image_tags WHERE tag = ?
+            UNION
+            SELECT download_id FROM image_tags_wd14 WHERE tag = ?
+            UNION
+            SELECT download_id FROM image_objects WHERE object = ?
+        )`,
+        )
+        .get(safeTag, safeTag, safeTag).n;
+
     // Related co-occurring tags (from CLIP image_tags)
     const related = db
         .prepare(`
@@ -1447,7 +1460,7 @@ export function getTagDetails(tag, { limit = 20 } = {}) {
 
     return {
         tag: safeTag,
-        count: clipStats.count || 0,
+        count: totalCount,
         avgScore: clipStats.avg_score ? Math.round(clipStats.avg_score * 1000) / 1000 : 0,
         sources,
         related,
