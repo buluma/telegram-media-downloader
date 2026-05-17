@@ -794,7 +794,7 @@ export function startTagsScan(cfg, onProgress, onDone, onLog) {
                     : presetLabels;
 
             const batchSize = Math.max(1, Math.min(200, Number(cfg.batchSize) || 64));
-            const concurrency = Math.max(1, Math.min(16, Number(cfg.tagConcurrency) || 4));
+            const concurrency = Math.max(1, Math.min(8, Number(cfg.tagConcurrency) || 2));
 
             // Learned at runtime: once a 403 path_not_allowed is seen, skip
             // the path attempt for every subsequent image in this scan run.

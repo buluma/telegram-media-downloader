@@ -30,7 +30,7 @@ const _peoplePhotosLimit = 50;
 let _peoplePhotoRows = [];
 let _doctorScanReady = true;
 let _peopleCache = []; // full people list (un-filtered) for client-side search
-const _peopleFilter = { query: '', unlabeledOnly: false };
+const _peopleFilter = { query: '', unlabeledOnly: false, minFaces: 1, recentFirst: false };
 let _tagListCache = [];
 let _tagSelected = '';
 let _tagFilterQuery = '';
@@ -223,6 +223,7 @@ async function _renderTagBrowser(forceReload = true) {
             }
             if (empty) empty.classList.remove('hidden');
             _tagSelected = '';
+            _renderTagDetails('');
             _tagPhotosTotal = 0;
             _tagPhotosPage = 1;
             _tagPhotosTotalPages = 1;
@@ -256,6 +257,7 @@ async function _renderTagBrowser(forceReload = true) {
                     _tagSelected = tag;
                     _ocrWordFilter = '';
                     _renderOcrChips();
+                    _renderTagDetails(tag);
                     _loadTagPhotos(tag);
                 }
             });
@@ -457,6 +459,87 @@ function _moveTagChipFocus(currentBtn, dir) {
     if (next < 0) next = list.length - 1;
     if (next >= list.length) next = 0;
     list[next]?.focus();
+}
+
+/**
+ * Fetch and render tag details panel (count, avg score, sources,
+ * related tags). Hidden when tag is null/empty.
+ */
+async function _renderTagDetails(tag) {
+    const panel = $('#ai-tag-details');
+    if (!panel) return;
+    if (!tag) {
+        panel.classList.add('hidden');
+        return;
+    }
+    try {
+        const r = await api.get(`/api/ai/tags/details?tag=${encodeURIComponent(tag)}`);
+        if (!r.success || !r.details) {
+            panel.classList.add('hidden');
+            return;
+        }
+        panel.classList.remove('hidden');
+        const d = r.details;
+
+        const nameEl = $('#ai-tag-details-name');
+        if (nameEl) nameEl.textContent = d.tag;
+
+        const metaEl = $('#ai-tag-details-meta');
+        if (metaEl) {
+            const pct = d.avgScore ? Math.round(d.avgScore * 100) : 0;
+            metaEl.textContent = `${d.count.toLocaleString()} photos \u00b7 avg confidence ${pct}%`;
+        }
+
+        // Source badges
+        const sourcesEl = $('#ai-tag-details-sources');
+        if (sourcesEl) {
+            const labels = { clip: 'CLIP', wd14: 'WD14', objects: 'Objects' };
+            sourcesEl.innerHTML = (Array.isArray(d.sources) ? d.sources : [])
+                .map(
+                    (s) =>
+                        `<span class="inline-block rounded px-1.5 py-0.5 border text-[9px] font-medium leading-none ${s.source === 'clip' ? 'border-green-500/30 bg-green-500/10 text-green-200' : s.source === 'wd14' ? 'border-purple-500/30 bg-purple-500/10 text-purple-200' : 'border-blue-500/30 bg-blue-500/10 text-blue-200'}">${escapeHtml(labels[s.source] || s.source)} \u00b7 ${s.count.toLocaleString()}</span>`,
+                )
+                .join('');
+        }
+
+        // Related tags (clickable)
+        const relatedEl = $('#ai-tag-details-related');
+        if (relatedEl) {
+            const related = Array.isArray(d.related) ? d.related.slice(0, 12) : [];
+            if (related.length) {
+                relatedEl.innerHTML = `Related: ${related
+                    .map(
+                        (r) =>
+                            `<button type="button" class="ai-related-tag-link text-tg-blue hover:underline inline" data-tag="${escapeHtml(r.tag)}">${escapeHtml(r.tag)}</button>`,
+                    )
+                    .join(', ')}`;
+                relatedEl.querySelectorAll('.ai-related-tag-link').forEach((btn) => {
+                    btn.addEventListener('click', () => {
+                        const t = btn.dataset.tag;
+                        if (t) _selectTagChip(t);
+                    });
+                });
+            } else {
+                relatedEl.textContent = '';
+            }
+        }
+    } catch (e) {
+        console.warn('tag details:', e);
+        panel.classList.add('hidden');
+    }
+}
+
+/** Programmatically select and click a tag chip by tag name */
+function _selectTagChip(tag) {
+    const chips = $('#ai-tag-chips');
+    if (!chips) return;
+    const btn = Array.from(chips.querySelectorAll('.tag-chip')).find(
+        (el) => el.dataset.tag === tag,
+    );
+    if (btn) {
+        btn.click();
+        btn.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
 }
 
 // ---- Objects browser ----------------------------------------------------
@@ -800,6 +883,7 @@ async function _applyTagMerge(tag1, tag2) {
 async function _renderSmartAlbums() {
     const list = $('#ai-smart-albums-list');
     if (!list) return;
+    _renderSmartAlbumsRuntime().catch(() => {});
     try {
         const r = await api.get('/api/ai/smart-albums');
         const albums = Array.isArray(r?.albums) ? r.albums : [];
@@ -867,6 +951,46 @@ async function _renderSmartAlbums() {
         });
     } catch (e) {
         list.innerHTML = `<p class="text-[11px] text-red-300 text-center py-3">Failed: ${escapeHtml(e?.message || 'unknown')}</p>`;
+    }
+}
+
+async function _renderSmartAlbumsRuntime() {
+    const el = $('#ai-smart-albums-runtime');
+    if (!el) return;
+    try {
+        const r = await api.get('/api/ai/smart-albums/runtime');
+        if (!r?.success) throw new Error(r?.error || 'runtime failed');
+        const cfg = r.config || {};
+        const rt = r.runtime || {};
+        const mode = cfg.enabled === false ? 'disabled' : `every ${cfg.refreshIntervalMin || 15}m`;
+        const last = rt.lastRunAt ? new Date(rt.lastRunAt).toLocaleString() : 'never';
+        const state = rt.running ? 'running' : 'idle';
+        const lastInfo = rt.lastRunAt
+            ? ` · last: ${last} (${rt.lastAlbums || 0} albums, ${rt.lastMatched || 0} matches)`
+            : '';
+        const err = rt.lastError ? ` · error: ${rt.lastError}` : '';
+        el.textContent = `Auto rebuild: ${mode} · state: ${state}${lastInfo}${err}`;
+    } catch (e) {
+        el.textContent = 'Auto rebuild: unavailable';
+    }
+}
+
+async function _rebuildAllSmartAlbums() {
+    const btn = $('#ai-smart-albums-rebuild-all');
+    if (btn) btn.disabled = true;
+    try {
+        const r = await api.post('/api/ai/smart-albums/rebuild-all', {});
+        if (!r.success) throw new Error(r.error || 'rebuild-all failed');
+        if (r.skipped) {
+            showToast(`Skipped: ${r.reason || 'already running'}`, 'info');
+        } else {
+            showToast(`Rebuilt ${r.rebuilt || 0} albums (${r.matched || 0} matches)`, 'success');
+        }
+        await _renderSmartAlbums();
+    } catch (e) {
+        showToast(`Rebuild-all failed: ${e?.data?.error || e?.message || 'unknown'}`, 'error');
+    } finally {
+        if (btn) btn.disabled = false;
     }
 }
 
@@ -1132,6 +1256,89 @@ async function _deleteSmartAlbum(id) {
 
 /** Current parsed rule from the NL builder, or null. */
 let _nlAlbumRule = null;
+let _nlAlbumPreviewTotal = null;
+
+function _renderNlPreviewCount(total, label = 'Preview matches') {
+    const el = $('#ai-album-nl-preview-count');
+    if (!el) return;
+    if (total == null || Number.isNaN(Number(total))) {
+        el.classList.add('hidden');
+        el.textContent = '';
+        return;
+    }
+    el.classList.remove('hidden');
+    el.textContent = `${label}: ${Number(total).toLocaleString()}`;
+}
+
+async function _previewNlAlbumRule(rule) {
+    const r = await api.post('/api/ai/smart-albums/preview', { rule, limit: 1, offset: 0 });
+    if (!r?.success) throw new Error(r?.error || 'preview failed');
+    _nlAlbumPreviewTotal = Number(r.total) || 0;
+    return _nlAlbumPreviewTotal;
+}
+
+function _applyCommonNlRuleFixes(rule) {
+    if (!rule || typeof rule !== 'object') return rule;
+    const out = JSON.parse(JSON.stringify(rule));
+
+    const mapFileType = (v) => {
+        const ft = String(v || '')
+            .trim()
+            .toLowerCase();
+        if (ft === 'image') return 'photo';
+        if (ft === 'images') return 'photo';
+        if (ft === 'videos') return 'video';
+        if (ft === 'audios') return 'audio';
+        return ft;
+    };
+
+    const fixSubRule = (sr) => {
+        if (!sr || typeof sr !== 'object') return sr;
+        if (sr.type === 'text_contains' && !sr.substring && sr.text) {
+            sr.substring = String(sr.text);
+            delete sr.text;
+        }
+        if (sr.type === 'semantic' && (sr.minScore == null || Number.isNaN(Number(sr.minScore)))) {
+            sr.minScore = 0;
+        }
+        if (
+            sr.type === 'tags_contains' &&
+            (sr.minScore == null || Number.isNaN(Number(sr.minScore)))
+        ) {
+            sr.minScore = 0;
+        }
+        if (sr.type === 'people_count' && (sr.min == null || Number(sr.min) < 0)) {
+            sr.min = 1;
+        }
+        if (sr.type === 'file_type') {
+            if (!sr.fileType && sr.typeName) sr.fileType = sr.typeName;
+            sr.fileType = mapFileType(sr.fileType);
+        }
+        return sr;
+    };
+
+    if (out.type === 'compound') {
+        if (Array.isArray(out.all)) out.all = out.all.map(fixSubRule);
+        if (Array.isArray(out.any)) out.any = out.any.map(fixSubRule);
+        return out;
+    }
+
+    // Wrap a single leaf rule into compound for compatibility with v2 flow.
+    const leafTypes = new Set([
+        'tags_contains',
+        'people_count',
+        'semantic',
+        'objects',
+        'text_contains',
+        'date',
+        'file_type',
+    ]);
+    if (leafTypes.has(String(out.type || '').trim())) {
+        return { type: 'compound', all: [fixSubRule(out)], sort: 'score_desc' };
+    }
+
+    return out;
+}
 
 /** Parse the NL description via the LLM provider and show a preview. */
 async function _parseAlbumWithAi() {
@@ -1155,6 +1362,8 @@ async function _parseAlbumWithAi() {
     if (status) status.textContent = '\u2022 waiting for model';
     actions?.classList.add('hidden');
     _nlAlbumRule = null;
+    _nlAlbumPreviewTotal = null;
+    _renderNlPreviewCount(null);
 
     try {
         const r = await api.post('/api/ai/smart-albums/parse', { description });
@@ -1168,14 +1377,52 @@ async function _parseAlbumWithAi() {
         _nlAlbumRule = r.rule;
         preview.classList.remove('text-red-400');
         preview.textContent = JSON.stringify(r.rule, null, 2);
-        if (status) status.textContent = '\u2713 Parsed';
+
+        try {
+            const total = await _previewNlAlbumRule(_nlAlbumRule);
+            _renderNlPreviewCount(total);
+            if (status)
+                status.textContent = `\u2713 Parsed · preview ${total.toLocaleString()} matches`;
+        } catch (e) {
+            _renderNlPreviewCount(null);
+            if (status) status.textContent = '\u2713 Parsed · preview unavailable';
+        }
+
         actions?.classList.remove('hidden');
     } catch (e) {
-        preview.textContent = `Error: ${e?.message || 'unknown'}`;
+        _renderNlPreviewCount(null);
+        preview.textContent = `Error: ${e?.data?.error || e?.message || 'unknown'}`;
         preview.classList.add('text-red-400');
         if (status) status.textContent = 'Failed';
     } finally {
         btn.disabled = false;
+    }
+}
+
+async function _fixNlRuleAndPreview() {
+    const preview = $('#ai-album-nl-preview');
+    const status = $('#ai-album-nl-status');
+    if (!_nlAlbumRule) {
+        showToast('Parse a description first.', 'info');
+        return;
+    }
+    _nlAlbumRule = _applyCommonNlRuleFixes(_nlAlbumRule);
+    if (preview) {
+        preview.classList.remove('text-red-400');
+        preview.textContent = JSON.stringify(_nlAlbumRule, null, 2);
+    }
+    try {
+        const total = await _previewNlAlbumRule(_nlAlbumRule);
+        _renderNlPreviewCount(total, 'Preview matches (after fix)');
+        if (status) status.textContent = `\u2713 Fixed · preview ${total.toLocaleString()} matches`;
+        showToast('Applied recommended rule fixes', 'success');
+    } catch (e) {
+        _renderNlPreviewCount(null);
+        if (status) status.textContent = '\u2713 Fixed · preview unavailable';
+        showToast(
+            `Preview failed after fix: ${e?.data?.error || e?.message || 'unknown'}`,
+            'error',
+        );
     }
 }
 
@@ -1187,7 +1434,9 @@ async function _createAlbumFromNl() {
     }
 
     // Prompt for a name
-    const name = prompt('Album name:', 'Smart album');
+    const suggested =
+        _nlAlbumPreviewTotal != null ? `Smart album (${_nlAlbumPreviewTotal})` : 'Smart album';
+    const name = prompt('Album name:', suggested);
     if (!name || !name.trim()) return;
 
     try {
@@ -1200,13 +1449,16 @@ async function _createAlbumFromNl() {
         await _renderSmartAlbums();
         _clearAlbumNlBuilder();
     } catch (e) {
-        showToast(`Create failed: ${e?.data?.error || e?.message || 'unknown'}`, 'error');
+        const details = e?.data?.details?.section ? ` (${e.data.details.section})` : '';
+        showToast(`Create failed${details}: ${e?.data?.error || e?.message || 'unknown'}`, 'error');
     }
 }
 
 /** Reset the NL builder inputs. */
 function _clearAlbumNlBuilder() {
     _nlAlbumRule = null;
+    _nlAlbumPreviewTotal = null;
+    _renderNlPreviewCount(null);
     const input = $('#ai-album-nl-input');
     const preview = $('#ai-album-nl-preview');
     const status = $('#ai-album-nl-status');
@@ -1487,6 +1739,8 @@ async function _renderEmbeddingsStatus() {
         const r = await api.get('/api/ai/embeddings/stats');
         const total = r?.total ?? 0;
         const models = Array.isArray(r?.models) ? r.models : [];
+        const configuredModel = r?.configuredModel || '';
+        const staleRows = Number(r?.staleRows || 0);
 
         if (summary) {
             summary.textContent = total > 0 ? `${total} indexed` : 'No embeddings';
@@ -1501,6 +1755,12 @@ async function _renderEmbeddingsStatus() {
                 modelEl.textContent = `Models: ${models.map((m) => `${m.model} (${m.count})`).join(', ')}`;
             } else {
                 modelEl.textContent = 'No embedding model active — run a re-index first.';
+            }
+            if (configuredModel) {
+                modelEl.textContent += ` • configured: ${configuredModel}`;
+            }
+            if (staleRows > 0) {
+                modelEl.textContent += ` • stale rows: ${staleRows}`;
             }
         }
     } catch (e) {
@@ -1603,8 +1863,8 @@ function _renderSearchResults(results, query, modalities, grid, meta) {
                  src="/api/thumbs/${encodeURIComponent(res.id)}?w=320" alt=""
                  onerror="this.style.display='none'">
             <span class="hidden sm:block absolute top-1 right-1 px-1.5 py-0.5 text-[10px] font-mono rounded bg-tg-blue/85 text-white tabular-nums">${String(Math.round(res.score * 100)).padStart(2)}%</span>
-            <span class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 group-focus:opacity-100 transition flex items-end p-2 pointer-events-none">
-                <span class="text-[11px] text-white truncate w-full text-left">${escapeHtml(res.fileName || '')}</span>
+            <span class="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 group-focus:opacity-100 transition flex items-end p-1.5 pointer-events-none overflow-hidden">
+                <span class="text-[10px] text-white/90 truncate w-full text-left leading-tight">${_formatMatchExplanations(res.explanations)}</span>
             </span>
         </button>`,
         )
@@ -1616,7 +1876,12 @@ function _renderSearchResults(results, query, modalities, grid, meta) {
             Array.isArray(modalities) && modalities.length
                 ? ` \u2014 via ${modalities.join(', ')}`
                 : '';
-        meta.innerHTML = `${results.length} results for &quot;${escapeHtml(query)}&quot;${mods}`;
+        // Show how many results have explanations
+        const withExpl = results.filter(
+            (r) => Array.isArray(r.explanations) && r.explanations.length,
+        ).length;
+        const explSuffix = withExpl > 0 ? ` \u2022 ${withExpl} with match details` : '';
+        meta.innerHTML = `${results.length} results for &quot;${escapeHtml(query)}&quot;${mods}${explSuffix}`;
     }
 
     // Wire click events — open media viewer against this grid's data
@@ -1626,6 +1891,28 @@ function _renderSearchResults(results, query, modalities, grid, meta) {
             if (Number.isFinite(idx)) _openSearchLightbox(tile, idx);
         });
     });
+}
+
+/**
+ * Format match explanations into a compact single-line string.
+ * E.g. "semantic 92% · tags 74% · filename 30%"
+ */
+function _formatMatchExplanations(explanations) {
+    if (!Array.isArray(explanations) || !explanations.length) return '';
+    const labels = {
+        semantic: 'semantic',
+        tags: 'tags',
+        objects: 'objects',
+        people: 'people',
+        text: 'OCR',
+        filename: 'filename',
+    };
+    return explanations
+        .map((e) => {
+            const name = labels[e.source] || e.source;
+            return `${name} ${Math.round(e.score * 100)}%`;
+        })
+        .join(' \u00b7 ');
 }
 
 /**
@@ -1659,10 +1946,13 @@ function _openSearchLightbox(tile, startIndex) {
         metaRender: (file) => {
             const row = file?._searchRow;
             const score = row?.score ? Math.round(row.score * 100) : 0;
-            return `<span class="inline-flex items-center gap-2">
+            const expl = Array.isArray(row?.explanations) ? row.explanations : [];
+            const explStr = expl.length ? ` \u2022 ${_formatMatchExplanations(expl)}` : '';
+            return `<span class="inline-flex items-center gap-2 flex-wrap">
                 <span class="inline-block w-2.5 h-2.5 rounded-full bg-tg-blue"></span>
                 <span>Search: &quot;${escapeHtml(query)}&quot;</span>
                 <span class="font-mono tabular-nums">${score}%</span>
+                ${explStr ? `<span class="text-[10px] text-tg-textSecondary">${explStr}</span>` : ''}
             </span>`;
         },
     });
@@ -1737,8 +2027,18 @@ async function _runUnifiedQuery() {
         albumBtn.classList.add('opacity-50');
     }
 
+    // Gather active source filters
+    const activeSources = [];
+    const chips = document.querySelectorAll('.ai-source-chip[data-active="1"]');
+    chips.forEach((chip) => activeSources.push(chip.dataset.source));
+
     try {
-        const qs = new URLSearchParams({ q: query, topK: '50' }).toString();
+        const params = { q: query, topK: '50' };
+        const totalSourceChips = document.querySelectorAll('.ai-source-chip[data-source]').length;
+        if (activeSources.length && activeSources.length < Math.max(1, totalSourceChips)) {
+            params.sources = activeSources.join(',');
+        }
+        const qs = new URLSearchParams(params).toString();
         const r = await api.get('/api/ai/search?' + qs);
         if (!r.success) {
             grid.classList.remove('hidden');
@@ -1873,6 +2173,9 @@ function _bindOnce() {
     // immediately without waiting for a full re-scan.
     $('#ai-recluster-btn')?.addEventListener('click', _recluster);
     $('#ai-copy-diagnostics-btn')?.addEventListener('click', _copyAiDiagnostics);
+    // Scanner card action buttons — delegated listener on the container
+    // so it survives innerHTML swaps on every status refresh.
+    $('#ai-scanner-cards')?.addEventListener('click', _onScannerCardClick);
 
     // Master + auto toggles — both live as labelled rows in the Face
     // clustering settings section. Click-anywhere on the toggle flips
@@ -2112,6 +2415,14 @@ function _bindOnce() {
         _peopleFilter.unlabeledOnly = !!e.target.checked;
         _renderPeopleGrid();
     });
+    $('#ai-people-min-faces')?.addEventListener('change', (e) => {
+        _peopleFilter.minFaces = Number(e.target.value) || 1;
+        _renderPeopleGrid();
+    });
+    $('#ai-people-recent')?.addEventListener('change', (e) => {
+        _peopleFilter.recentFirst = !!e.target.checked;
+        _renderPeopleGrid();
+    });
     $('#ai-people-refresh-btn')?.addEventListener('click', () => _loadPeople());
 
     // Objects browser — backfill + refresh + pagination.
@@ -2167,10 +2478,15 @@ function _bindOnce() {
         _loadTagPhotoPage();
     });
     $('#ai-tag-create-album')?.addEventListener('click', () => _createSmartAlbum(_tagSelected));
+    $('#ai-tag-details-album-btn')?.addEventListener('click', () =>
+        _createSmartAlbum(_tagSelected),
+    );
     $('#ai-tag-suggestions-refresh')?.addEventListener('click', () => _renderTagSuggestions());
     $('#ai-smart-albums-refresh')?.addEventListener('click', () => _renderSmartAlbums());
+    $('#ai-smart-albums-rebuild-all')?.addEventListener('click', () => _rebuildAllSmartAlbums());
     $('#ai-album-nl-parse-btn')?.addEventListener('click', _parseAlbumWithAi);
     $('#ai-album-nl-create-btn')?.addEventListener('click', _createAlbumFromNl);
+    $('#ai-album-nl-fix-btn')?.addEventListener('click', _fixNlRuleAndPreview);
     $('#ai-album-nl-cancel-btn')?.addEventListener('click', _clearAlbumNlBuilder);
     $('#ai-smart-albums-add')?.addEventListener('click', () => _createSmartAlbum());
     $('#ai-smart-album-prev-btn')?.addEventListener('click', () => {
@@ -2271,6 +2587,21 @@ function _bindOnce() {
     $('#ai-query-album-btn')?.addEventListener('click', _createAlbumFromUnifiedQuery);
     $('#ai-query-input')?.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') _runUnifiedQuery();
+    });
+    // Source chips — toggle active state on click
+    $('#ai-query-sources')?.addEventListener('click', (e) => {
+        const chip = e.target.closest('.ai-source-chip');
+        if (!chip) return;
+        const active = chip.dataset.active === '1';
+        chip.dataset.active = active ? '0' : '1';
+        chip.classList.toggle('opacity-40', active);
+        chip.classList.toggle('border-tg-border/20', active);
+        chip.classList.toggle('border-tg-blue/40', !active);
+        // Refire the search if there's already a result visible
+        const grid = $('#ai-query-grid');
+        if (grid && !grid.classList.contains('hidden') && grid.dataset.searchQuery) {
+            _runUnifiedQuery();
+        }
     });
 
     // WebSocket — scan events for all capabilities.
@@ -2666,6 +2997,338 @@ async function _copyAiDiagnostics() {
     }
 }
 
+/**
+ * Scanner card definitions — one per feature.
+ * Each entry maps status API fields to card content.
+ */
+const _SCANNER_CARD_DEFS = [
+    {
+        feature: 'faces',
+        label: 'Faces',
+        icon: 'ri-user-smile-line',
+        color: 'text-tg-blue',
+        enabledKey: 'faceClustering',
+        sidecarEndpoint: 'faces',
+        modelKey: 'faces',
+        countKey: 'withFaces',
+        scanBtnId: 'ai-scan-btn',
+        cancelBtnId: 'ai-cancel-btn',
+        estimateKey: null,
+        settingsPaneId: 'ai-pane-faces',
+        configSummary: (cfg, _models) => {
+            const det = cfg.facesDetectorModel || 'buffalo_l';
+            return `${det} · ε=${cfg.facesEpsilon || 0.5} · minPts=${cfg.facesMinPoints || 3}`;
+        },
+    },
+    {
+        feature: 'tags',
+        label: 'CLIP Tags',
+        icon: 'ri-price-tag-3-line',
+        color: 'text-tg-orange',
+        enabledKey: null, // uses models.tags.enabled
+        sidecarEndpoint: 'tag',
+        modelKey: 'tags',
+        countKey: 'withTags',
+        scanBtnId: 'ai-tags-scan-btn',
+        cancelBtnId: 'ai-tags-cancel-btn',
+        estimateKey: 'aiTags',
+        settingsPaneId: 'ai-pane-tags',
+        configSummary: (_cfg, models) => {
+            const m = models.tags || {};
+            const vs = m.vocabularySize || '';
+            return `${m.id || 'clip-vit-base-patch32'}${vs ? ' · vocab=' + vs : ''}`;
+        },
+    },
+    {
+        feature: 'wd14',
+        label: 'WD14 Tags',
+        icon: 'ri-hashtag-line',
+        color: 'text-purple-400',
+        enabledKey: null, // cfg.wd14Tagging !== false
+        sidecarEndpoint: null, // always requires sidecar url
+        modelKey: 'wd14',
+        countKey: 'withWd14Tags',
+        scanBtnId: null, // shares objects scan button
+        cancelBtnId: null,
+        estimateKey: 'aiWd14',
+        settingsPaneId: 'ai-pane-objects',
+        configSummary: (_cfg, _models) => 'SmilingWolf wd-v1-4-vit-tagger-v2',
+    },
+    {
+        feature: 'ocr',
+        label: 'OCR',
+        icon: 'ri-file-text-line',
+        color: 'text-teal-400',
+        enabledKey: 'imageOcr',
+        sidecarEndpoint: 'ocr',
+        modelKey: 'ocr',
+        countKey: 'withText',
+        scanBtnId: 'ai-ocr-scan-btn',
+        cancelBtnId: 'ai-ocr-cancel-btn',
+        estimateKey: 'aiOcr',
+        settingsPaneId: 'ai-pane-ocr',
+        configSummary: (cfg, _models) => {
+            return cfg.imageOcr ? 'enabled' : 'disabled';
+        },
+    },
+    {
+        feature: 'objects',
+        label: 'Objects',
+        icon: 'ri-search-eye-line',
+        color: 'text-emerald-400',
+        enabledKey: null, // uses models.objects.enabled
+        sidecarEndpoint: 'objects',
+        modelKey: 'objects',
+        countKey: 'withObjects',
+        scanBtnId: 'ai-objects-scan-btn',
+        cancelBtnId: 'ai-objects-cancel-btn',
+        estimateKey: 'aiObjects',
+        settingsPaneId: 'ai-pane-objects',
+        configSummary: (_cfg, _models) => {
+            const m = _models.objects || {};
+            return m.ready ? 'ready' : m.error || 'not ready';
+        },
+    },
+];
+
+/**
+ * Render per-scanner cards into #ai-scanner-cards.
+ * Shows coverage, readiness, last-scan, and quick actions.
+ */
+function _renderScannerCards(status) {
+    const container = $('#ai-scanner-cards');
+    if (!container) return;
+    const cfg = status.config || {};
+    const counts = status.counts || {};
+    const scans = status.scans || {};
+    const models = status.models || {};
+    const sidecar = status.sidecar || {};
+    const trackers = status.trackers || {};
+    const totalEligible = Number(counts.totalEligible) || 0;
+    const now = Date.now();
+
+    container.innerHTML = _SCANNER_CARD_DEFS
+        .map((def) => {
+            const model = models[def.modelKey] || {};
+            const scanState = scans[def.feature] || {};
+            const tracker = trackers[def.estimateKey] || {};
+            const running = !!scanState.running;
+
+            // Enabled: check config key or model.enabled
+            let enabled = true;
+            if (def.enabledKey !== null) {
+                enabled = cfg[def.enabledKey] === true;
+            } else if (model.enabled !== undefined) {
+                enabled = model.enabled === true;
+            } else if (def.feature === 'wd14') {
+                enabled = cfg.wd14Tagging !== false;
+            }
+
+            // Readiness
+            const modelReady =
+                model.loaded === true || model.ready === true || model.ready === undefined;
+            const sidecarOk = !!sidecar.url;
+            const hasEndpoint =
+                def.sidecarEndpoint === null
+                    ? sidecarOk
+                    : !!sidecar.endpoints?.[def.sidecarEndpoint];
+            const readiness = !sidecarOk
+                ? 'offline'
+                : !enabled
+                  ? 'disabled'
+                  : def.sidecarEndpoint !== null && !hasEndpoint
+                    ? 'missing'
+                    : modelReady
+                      ? 'ready'
+                      : 'unready';
+
+            // Coverage
+            const doneCount = Number(counts[def.countKey]) || 0;
+            const pct = totalEligible
+                ? Math.min(100, Math.round((doneCount / totalEligible) * 100))
+                : 0;
+
+            // Last scan / finished timestamp
+            const finishedAt = scanState.finishedAt || tracker.finishedAt || 0;
+            const lastScanStr = finishedAt ? _timeAgo(finishedAt, now) : 'never';
+
+            // Failed / skipped / errors from tracker progress
+            const progress = tracker.progress || {};
+            const failedCount = Number(progress.failed || scanState.failed || 0);
+            const skippedCount = Number(progress.skipped || scanState.skipped || 0);
+            const hasErrors = !!scanState.error || !!tracker.error;
+
+            // Build action buttons
+            const actionsHtml = [];
+            if (def.scanBtnId) {
+                const scanDisabled = running || readiness === 'offline' || readiness === 'missing';
+                actionsHtml.push(
+                    `<button type="button" class="tg-btn text-[10px] px-2 py-1 inline-flex items-center gap-1 ai-scanner-action"` +
+                        ` data-feature="${def.feature}" data-action="scan"` +
+                        (scanDisabled ? ' disabled' : '') +
+                        ` title="${scanDisabled ? 'Cannot scan — ' + readiness : 'Scan ' + def.label.toLowerCase()}">` +
+                        `<i class="${running ? 'ri-loader-4-line animate-spin' : 'ri-play-fill'}"></i>` +
+                        `<span>${running ? 'Running' : 'Scan'}</span></button>`,
+                );
+            }
+            if (def.cancelBtnId && running) {
+                actionsHtml.push(
+                    `<button type="button" class="tg-btn-secondary text-[10px] px-2 py-1 inline-flex items-center gap-1 ai-scanner-action"` +
+                        ` data-feature="${def.feature}" data-action="cancel" title="Cancel ${def.label} scan">` +
+                        `<i class="ri-stop-circle-line"></i><span>Cancel</span></button>`,
+                );
+            }
+            if (hasErrors && !running) {
+                actionsHtml.push(
+                    `<button type="button" class="tg-btn-secondary text-[10px] px-2 py-1 inline-flex items-center gap-1 text-yellow-200 ai-scanner-action"` +
+                        ` data-feature="${def.feature}" data-action="retry" title="Retry failed items for ${def.label}">` +
+                        `<i class="ri-refresh-line"></i><span>Retry</span></button>`,
+                );
+            }
+
+            // Readiness pill
+            const readinessPill = _readinessPill(readiness);
+
+            return `<div class="ai-scanner-card bg-tg-panel rounded-xl p-3 border border-tg-border/30">
+    <div class="flex items-start justify-between gap-2">
+        <div class="min-w-0 flex items-center gap-1.5">
+            <i class="${def.icon} ${def.color}"></i>
+            <span class="text-xs font-medium text-tg-text">${escapeHtml(def.label)}</span>
+            <span class="shrink-0">${readinessPill}</span>
+        </div>
+        <div class="flex items-center gap-1 shrink-0 flex-wrap justify-end">
+            ${actionsHtml.join('')}
+        </div>
+    </div>
+    <div class="mt-2">
+        <div class="flex justify-between text-[10px] text-tg-textSecondary">
+            <span>${escapeHtml(doneCount.toLocaleString())} / ${escapeHtml(totalEligible.toLocaleString())} indexed</span>
+            <span class="tabular-nums">${pct}%</span>
+        </div>
+        <div class="h-1.5 bg-tg-bg/60 rounded overflow-hidden mt-0.5" role="progressbar" aria-valuenow="${doneCount}" aria-valuemin="0" aria-valuemax="${totalEligible || 1}">
+            <div class="h-full ${pct >= 100 ? 'bg-green-500' : running ? 'bg-tg-blue' : pct > 0 ? 'bg-tg-blue/70' : 'bg-tg-bg'}" style="width:${Math.max(pct, running ? 2 : 0)}%"></div>
+        </div>
+    </div>
+    <div class="flex items-center gap-2 mt-1.5 text-[10px] text-tg-textSecondary flex-wrap">
+        ${failedCount > 0 ? `<span class="text-red-300" title="Failed rows"><i class="ri-close-circle-line"></i> ${failedCount.toLocaleString()} failed</span>` : ''}
+        ${skippedCount > 0 ? `<span title="Skipped rows"><i class="ri-skip-forward-line"></i> ${skippedCount.toLocaleString()} skipped</span>` : ''}
+        ${hasErrors && !failedCount && !skippedCount ? `<span class="text-red-300"><i class="ri-error-warning-line"></i> error</span>` : ''}
+        <span class="ml-auto" title="Last scan"><i class="ri-time-line"></i> ${lastScanStr}</span>
+    </div>
+    <div class="flex items-center gap-2 mt-1.5 text-[9px]">
+        <span class="text-tg-textSecondary truncate flex-1" title="${escapeHtml(def.configSummary(cfg, models))}">
+            ${escapeHtml(def.configSummary(cfg, models))}
+        </span>
+        ${def.settingsPaneId ? `<button type="button" class="ai-scanner-action text-tg-blue hover:underline shrink-0" data-feature="${def.feature}" data-action="settings">Settings</button>` : ''}
+        ${hasErrors && !running ? `<button type="button" class="ai-scanner-action text-red-300 hover:underline shrink-0" data-feature="${def.feature}" data-action="view-failures">Failures</button>` : ''}
+    </div>
+</div>`;
+        })
+        .join('');
+}
+
+/**
+ * Delegated click handler for scanner card action buttons.
+ * Bound once in _bindOnce so it survives repeated innerHTML swaps.
+ */
+function _onScannerCardClick(e) {
+    const btn = e.target.closest('.ai-scanner-action');
+    if (!btn) return;
+    // Disabled buttons don't fire click events in the browser, but
+    // double-check as a safety net.
+    if (btn.disabled) return;
+    const feature = btn.dataset.feature;
+    const action = btn.dataset.action;
+    if (action === 'scan') {
+        _triggerScannerScan(feature);
+    } else if (action === 'cancel') {
+        _triggerScannerCancel(feature);
+    } else if (action === 'retry') {
+        _triggerScannerRetry(feature);
+    } else if (action === 'settings') {
+        _scrollToSettings(feature);
+    } else if (action === 'view-failures') {
+        _showScannerFailures(feature);
+    }
+}
+
+/** Small pill for one of: ready, offline, disabled, missing, unready */
+function _readinessPill(state) {
+    const map = {
+        ready: 'border-green-500/30 bg-green-500/10 text-green-200',
+        offline: 'border-red-500/30 bg-red-500/10 text-red-200',
+        disabled: 'border-tg-border/30 bg-tg-bg/30 text-tg-textSecondary',
+        missing: 'border-yellow-500/30 bg-yellow-500/10 text-yellow-200',
+        unready: 'border-yellow-500/30 bg-yellow-500/10 text-yellow-200',
+    };
+    const cls = map[state] || map.disabled;
+    const label =
+        {
+            ready: 'Ready',
+            offline: 'Offline',
+            disabled: 'Off',
+            missing: 'No endpoint',
+            unready: 'Not ready',
+        }[state] || state;
+    return `<span class="inline-block rounded px-1.5 py-0.5 border text-[9px] font-medium leading-none ${cls}">${label}</span>`;
+}
+
+/** Human-friendly relative time */
+function _timeAgo(ts, now) {
+    const diff = (now || Date.now()) - ts;
+    if (diff < 60000) return 'just now';
+    if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+    return `${Math.floor(diff / 86400000)}d ago`;
+}
+
+/**
+ * Trigger a scanner scan for the given feature.
+ * Calls _startScan directly instead of going through the DOM button,
+ * which avoids the disabled-button-doesn't-click problem.
+ */
+function _triggerScannerScan(feature) {
+    _startScan(feature);
+}
+
+function _triggerScannerCancel(feature) {
+    const def = _SCANNER_CARD_DEFS.find((d) => d.feature === feature);
+    if (!def) return;
+    if (def.feature === 'faces') {
+        _cancelScan('faces');
+    } else {
+        const btn = def.cancelBtnId ? $(def.cancelBtnId) : null;
+        if (btn && !btn.disabled) btn.click();
+    }
+}
+
+function _triggerScannerRetry(feature) {
+    // For now, clicking retry fires the scan — the scan-runner skips
+    // already-processed rows and retries failed ones automatically.
+    _triggerScannerScan(feature);
+    showToast(`Retrying ${feature} scan…`, 'info');
+}
+
+/** Scroll to the settings pane for a given feature */
+function _scrollToSettings(feature) {
+    const def = _SCANNER_CARD_DEFS.find((d) => d.feature === feature);
+    if (!def?.settingsPaneId) return;
+    const el = $(def.settingsPaneId);
+    if (el) {
+        el.open = true; // open the <details> accordion
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+}
+
+/** Show the issues/failures card by scrolling to it */
+function _showScannerFailures(feature) {
+    const card = $('#ai-issues-card');
+    if (card) {
+        card.classList.remove('hidden');
+        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+}
+
 function _renderStatus(status) {
     if (!status) return;
     const cfg = status.config || {};
@@ -2677,6 +3340,7 @@ function _renderStatus(status) {
     // empty path silently dropped the chip during partial rollouts).
     _renderSidecarBadge(status);
     _renderQuickOps(status);
+    _renderScannerCards(status);
 
     // Progress + scan buttons. Cancel is always rendered and just
     // toggles its disabled state; the thumbs page uses the same
@@ -3830,6 +4494,55 @@ function _onScanDone(feature, msg) {
     if (feature === 'objects') _renderObjectsBrowser();
 }
 
+/**
+ * Show merge suggestions — large unnamed clusters that likely
+ * represent real people who should be named.
+ */
+function _renderPeopleSuggestions(people) {
+    const section = $('#ai-people-suggestions');
+    const list = $('#ai-people-suggestions-list');
+    const count = $('#ai-people-suggestions-count');
+    if (!section || !list) return;
+
+    // Find unnamed clusters with >= 3 faces (likely real people)
+    const suggestions = (Array.isArray(people) ? people : [])
+        .filter((p) => !p.label && Number(p.face_count) >= 3)
+        .sort((a, b) => (b.face_count || 0) - (a.face_count || 0))
+        .slice(0, 8);
+
+    if (!suggestions.length) {
+        section.classList.add('hidden');
+        return;
+    }
+    section.classList.remove('hidden');
+    if (count)
+        count.textContent = `\u2014 ${suggestions.length} unnamed clusters with \u2265 3 faces`;
+
+    list.innerHTML = suggestions
+        .map(
+            (p) =>
+                `<button type="button" class="tg-btn-input text-[10px] px-2 py-1 inline-flex items-center gap-1 rounded-full ai-people-suggestion" data-person="${p.id}">
+                    <i class="ri-user-question-line"></i>
+                    <span>Person #${p.id}</span>
+                    <span class="tabular-nums text-tg-textSecondary">${p.face_count} faces</span>
+                </button>`,
+        )
+        .join('');
+
+    list.querySelectorAll('.ai-people-suggestion').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const pid = Number(btn.dataset.person);
+            // Scope to the people grid so we never resolve back to this
+            // suggestion chip (it also carries data-person).
+            const tile = document.querySelector(`#ai-people-grid [data-person="${pid}"]`);
+            if (tile) {
+                tile.click();
+                tile.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+        });
+    });
+}
+
 // ---- People (face clusters) ----------------------------------------------
 
 async function _loadPeople() {
@@ -3855,14 +4568,20 @@ function _renderPeopleGrid() {
     // search).
     const q = _peopleFilter.query;
     const unlabeled = _peopleFilter.unlabeledOnly;
-    const filtered = _peopleCache.filter((p) => {
+    const minFaces = Number(_peopleFilter.minFaces) || 1;
+    const recentFirst = _peopleFilter.recentFirst === true;
+    let filtered = _peopleCache.filter((p) => {
         if (unlabeled && p.label) return false;
+        if (Number(p.face_count) < minFaces) return false;
         if (q) {
             const hay = `${p.label || ''} ${p.id}`.toLowerCase();
             if (!hay.includes(q)) return false;
         }
         return true;
     });
+    if (recentFirst) {
+        filtered = filtered.slice().sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
+    }
 
     if (count) {
         count.textContent = filtered.length
@@ -3879,6 +4598,9 @@ function _renderPeopleGrid() {
     }
     empty?.classList.add('hidden');
     grid.innerHTML = filtered.map(_personTile).join('');
+
+    // Merge suggestions — show large unnamed clusters that should be named
+    _renderPeopleSuggestions(_peopleCache);
     grid.querySelectorAll('[data-person]').forEach((b) => {
         b.addEventListener('click', () => {
             _selectedPerson = Number(b.dataset.person);
@@ -3935,17 +4657,19 @@ function _personTile(p) {
         imgHtml = `<i class="ri-user-line text-xl text-tg-textSecondary/40"></i>`;
     }
 
+    const updatedStr = p.updated_at ? _timeAgo(p.updated_at) : '';
+
     return `<button type="button" data-person="${p.id}" data-name="${safeName}"
         class="flex flex-col items-center gap-1.5 px-1 py-2 rounded-xl active:scale-95 transition-all group text-center select-none ${selectedCls} ${dimCls}"
         aria-pressed="${Number(p.id) === Number(_selectedPerson) ? 'true' : 'false'}"
-        title="${safeName} · ${faceCount} ${escapeHtml(i18nT('maintenance.ai.faces_short', 'faces'))}">
+        title="${safeName} · ${faceCount} ${escapeHtml(i18nT('maintenance.ai.faces_short', 'faces'))}${updatedStr ? ' · ' + updatedStr : ''}">
         <div class="w-[60px] h-[60px] rounded-full overflow-hidden flex items-center justify-center bg-tg-bg/40 flex-shrink-0">
             ${imgHtml}
         </div>
         <div class="w-full min-w-0 space-y-0.5">
             <div class="ai-person-name text-[10.5px] font-medium text-tg-text leading-tight line-clamp-2 break-words px-0.5">${safeName}</div>
             <div class="text-[10px] text-tg-textSecondary tabular-nums">
-                ${faceCount}
+                ${faceCount}${updatedStr ? ` · ${updatedStr}` : ''}
             </div>
         </div>
     </button>`;

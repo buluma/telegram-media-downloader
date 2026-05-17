@@ -220,6 +220,26 @@ export function createConfigRouter({
                                 ...inc.ai.faces,
                             };
                         }
+                        if (
+                            inc.ai?.semanticSearch &&
+                            typeof inc.ai.semanticSearch === 'object' &&
+                            !Array.isArray(inc.ai.semanticSearch)
+                        ) {
+                            merged.semanticSearch = {
+                                ...((cur.ai || {}).semanticSearch || {}),
+                                ...inc.ai.semanticSearch,
+                            };
+                        }
+                        if (
+                            inc.ai?.smartAlbums &&
+                            typeof inc.ai.smartAlbums === 'object' &&
+                            !Array.isArray(inc.ai.smartAlbums)
+                        ) {
+                            merged.smartAlbums = {
+                                ...((cur.ai || {}).smartAlbums || {}),
+                                ...inc.ai.smartAlbums,
+                            };
+                        }
                         return merged;
                     })(),
                     // Seekbar subsystem — sprite-sheet generator for the video
@@ -336,13 +356,28 @@ export function createConfigRouter({
                 if (!ns.fileTypes.length) ns.fileTypes = NSFW_DEFAULTS.fileTypes.slice();
 
                 // AI subsystem (semantic search + auto-tag + face clustering).
-                // All values are config-driven — same posture as NSFW. Master
-                // switch defaults OFF; sub-feature toggles default ON so once
-                // an operator flips master to true they get all three out of
-                // the box.
+                // All values are config-driven — same posture as NSFW.
                 const ai = merged.ai;
                 ai.enabled = ai.enabled === true;
-                ai.semanticSearch = ai.semanticSearch !== false;
+                // Backward-compat: old config used boolean `semanticSearch`.
+                // New shape is object `{ enabled, embedOnDownload, batchSize }`.
+                if (typeof ai.semanticSearch === 'boolean') {
+                    ai.semanticSearch = {
+                        enabled: ai.semanticSearch,
+                        embedOnDownload: false,
+                        batchSize: 32,
+                    };
+                } else if (!ai.semanticSearch || typeof ai.semanticSearch !== 'object') {
+                    ai.semanticSearch = {
+                        enabled: false,
+                        embedOnDownload: false,
+                        batchSize: 32,
+                    };
+                } else {
+                    ai.semanticSearch.enabled = ai.semanticSearch.enabled === true;
+                    ai.semanticSearch.embedOnDownload = ai.semanticSearch.embedOnDownload === true;
+                    ai.semanticSearch.batchSize = clampInt(ai.semanticSearch.batchSize, 1, 512, 32);
+                }
                 ai.autoTags = ai.autoTags !== false;
                 ai.faceClustering = ai.faceClustering !== false;
                 ai.model =
@@ -436,6 +471,24 @@ export function createConfigRouter({
                 ai.autoScanIntervalMs = clampInt(ai.autoScanIntervalMs, 5_000, 3_600_000, 60_000);
                 ai.autoScanBatchSize = clampInt(ai.autoScanBatchSize, 1, 200, 10);
                 ai.autoScanQueueCeiling = clampInt(ai.autoScanQueueCeiling, 1, 200, 50);
+
+                // Smart albums controls.
+                if (!ai.smartAlbums || typeof ai.smartAlbums !== 'object') {
+                    ai.smartAlbums = {
+                        enabled: true,
+                        refreshIntervalMin: 15,
+                        allowLlmRules: false,
+                    };
+                } else {
+                    ai.smartAlbums.enabled = ai.smartAlbums.enabled !== false;
+                    ai.smartAlbums.refreshIntervalMin = clampInt(
+                        ai.smartAlbums.refreshIntervalMin,
+                        1,
+                        1440,
+                        15,
+                    );
+                    ai.smartAlbums.allowLlmRules = ai.smartAlbums.allowLlmRules === true;
+                }
 
                 const r = merged.diskRotator;
                 r.sweepBatch = clampInt(r.sweepBatch, 1, 1000, 50);

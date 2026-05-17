@@ -76,7 +76,7 @@ Example:
 ```txt
 AI Sidecar: Ready
 URL: http://127.0.0.1:8011
-Version: 0.3.1
+Version: 0.3.2
 Mode: local python / docker / override
 Uptime: 2h 14m
 ```
@@ -608,7 +608,7 @@ Should return:
     "state": "ready",
     "url": "http://127.0.0.1:8011",
     "mode": "python",
-    "version": "0.3.1",
+    "version": "0.3.2",
     "uptimeMs": 123456,
     "capabilities": {
       "faces": true,
@@ -681,7 +681,7 @@ Recommended shape:
 ```json
 {
   "service": "tgdl-faces",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "schema": 2,
   "platform": "darwin/arm64",
   "python": "3.14.5",

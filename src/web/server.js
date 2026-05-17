@@ -38,6 +38,7 @@ import { purgeNonStandardThumbs } from '../core/thumbs.js';
 import {
     setBroadcast as setSeekbarBroadcast,
     startSidecar as startSeekbarSidecar,
+    stopSidecar as stopSeekbarSidecar,
 } from '../core/seekbar/spawn.js';
 import { preloadClassifier as nsfwPreloadClassifier } from '../core/nsfw.js';
 // Search + Auto-tag + vector index were removed in this release. Stubs
@@ -1889,6 +1890,20 @@ async function gracefulShutdown(signal) {
         getDiskRotator()?.stop();
     } catch (e) {
         console.warn('[shutdown] rotator.stop:', e.message);
+    }
+
+    // Stop both sidecars so hot-reload / restarts don't leave orphan
+    // workers behind.
+    try {
+        stopSeekbarSidecar?.();
+    } catch (e) {
+        console.warn('[shutdown] seekbar-sidecar.stop:', e.message);
+    }
+    try {
+        const facesSpawn = await import('../core/ai/faces-spawn.js');
+        facesSpawn?.stopSidecar?.();
+    } catch (e) {
+        console.warn('[shutdown] ai-faces-sidecar.stop:', e.message);
     }
 
     // Stop the monitor + its keep-alive ping.

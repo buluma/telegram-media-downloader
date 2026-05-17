@@ -1401,6 +1401,72 @@ export function listPhotosForTag(tag, { limit = 50, offset = 0 } = {}) {
  * @param {number} minImagesPerTag - Exclude tags appearing in fewer than N images (default 2)
  * @returns {Array} Suggested tag merges
  */
+/**
+ * Return details for a single tag: count, average score, source(s),
+ * and related co-occurring tags.
+ */
+export function getTagDetails(tag, { limit = 20 } = {}) {
+    const db = getDb();
+    const safeTag = String(tag || '');
+    if (!safeTag) return null;
+
+    // Determine source(s) — check which tables contain this tag
+    const sources = [];
+    const clipCount = db
+        .prepare('SELECT COUNT(*) AS n FROM image_tags WHERE tag = ?')
+        .get(safeTag).n;
+    if (clipCount > 0) sources.push({ source: 'clip', count: clipCount });
+
+    const wd14Count = db
+        .prepare('SELECT COUNT(*) AS n FROM image_tags_wd14 WHERE tag = ?')
+        .get(safeTag).n;
+    if (wd14Count > 0) sources.push({ source: 'wd14', count: wd14Count });
+
+    const objCount = db
+        .prepare('SELECT COUNT(*) AS n FROM image_objects WHERE object = ?')
+        .get(safeTag).n;
+    if (objCount > 0) sources.push({ source: 'objects', count: objCount });
+
+    // Average score from CLIP (if available)
+    const clipStats = db
+        .prepare('SELECT AVG(score) AS avg_score, COUNT(*) AS count FROM image_tags WHERE tag = ?')
+        .get(safeTag);
+
+    // Total unique photos across all sources
+    const totalCount = db
+        .prepare(
+            `SELECT COUNT(*) AS n FROM (
+            SELECT download_id FROM image_tags WHERE tag = ?
+            UNION
+            SELECT download_id FROM image_tags_wd14 WHERE tag = ?
+            UNION
+            SELECT download_id FROM image_objects WHERE object = ?
+        )`,
+        )
+        .get(safeTag, safeTag, safeTag).n;
+
+    // Related co-occurring tags (from CLIP image_tags)
+    const related = db
+        .prepare(`
+        SELECT t2.tag, COUNT(*) AS together, AVG(t2.score) AS avg_score
+          FROM image_tags t1
+          JOIN image_tags t2 ON t1.download_id = t2.download_id AND t2.tag != t1.tag
+         WHERE t1.tag = ? AND t2.tag != '_scanned_'
+         GROUP BY t2.tag
+         ORDER BY together DESC, avg_score DESC
+         LIMIT ?
+    `)
+        .all(safeTag, Math.max(1, Math.min(100, Number(limit) || 20)));
+
+    return {
+        tag: safeTag,
+        count: totalCount,
+        avgScore: clipStats.avg_score ? Math.round(clipStats.avg_score * 1000) / 1000 : 0,
+        sources,
+        related,
+    };
+}
+
 export function getTagCooccurrenceSuggestions({
     minCooccurrenceRate = 0.6,
     minImagesPerTag = 2,
@@ -2241,7 +2307,24 @@ function _matchTagsContains(tag, minScore) {
  */
 function _matchEmbedding(queryEmbedding, minScore) {
     const db = getDb();
-    const rows = db.prepare(`SELECT download_id, embedding FROM image_embeddings`).all();
+
+    // Model hygiene: never mix semantic scores across different embedding
+    // models. Use the most common stored model as the active one.
+    const modelRow = db
+        .prepare(
+            `SELECT model, COUNT(*) AS cnt
+               FROM image_embeddings
+              GROUP BY model
+              ORDER BY cnt DESC
+              LIMIT 1`,
+        )
+        .get();
+    const activeModel = modelRow?.model || null;
+    const rows = activeModel
+        ? db
+              .prepare(`SELECT download_id, embedding FROM image_embeddings WHERE model = ?`)
+              .all(activeModel)
+        : db.prepare(`SELECT download_id, embedding FROM image_embeddings`).all();
 
     const q =
         queryEmbedding instanceof Float32Array ? queryEmbedding : Float32Array.from(queryEmbedding);
@@ -2268,6 +2351,81 @@ function _matchEmbedding(queryEmbedding, minScore) {
         }
     }
     return matches;
+}
+
+/**
+ * Preview a smart-album rule without persisting anything.
+ * Returns paged matching files + total count, mirroring listSmartAlbumItems.
+ */
+export async function previewSmartAlbumRule(rule, { limit = 50, offset = 0 } = {}) {
+    const db = getDb();
+    const lim = Math.max(1, Math.min(500, Number(limit) || 50));
+    const off = Math.max(0, Number(offset) || 0);
+    const normalized = _normalizeSmartAlbumRule(rule || {});
+
+    // Precompute embeddings for semantic sub-rules.
+    const embCache = new Map();
+    if (normalized.type === 'compound') {
+        await _precomputeSemanticEmbeddings(normalized, embCache);
+    }
+
+    let ids = [];
+    if (normalized.type === 'tags_contains') {
+        ids = [..._matchTagsContains(normalized.tag, normalized.minScore)];
+    } else if (normalized.type === 'compound') {
+        ids = _matchCompound(normalized, embCache);
+    }
+
+    if (!ids.length) {
+        return { total: 0, files: [], rule: normalized };
+    }
+
+    // Materialise matched IDs into a temp table so pagination stays in SQL.
+    // This avoids giant `IN (...)` statements and sidesteps SQLite's host
+    // parameter limits on broad rules.
+    const uniqIds = [
+        ...new Set(ids.map((n) => Number(n)).filter((n) => Number.isFinite(n) && n > 0)),
+    ];
+    if (!uniqIds.length) return { total: 0, files: [], rule: normalized };
+
+    const tmpTable = `tmp_preview_ids_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    db.exec(`CREATE TEMP TABLE ${tmpTable} (id INTEGER PRIMARY KEY)`);
+    try {
+        const CHUNK = 500;
+        const tx = db.transaction((arr) => {
+            for (let i = 0; i < arr.length; i += CHUNK) {
+                const chunk = arr.slice(i, i + CHUNK);
+                const placeholders = chunk.map(() => '(?)').join(',');
+                db.prepare(`INSERT OR IGNORE INTO ${tmpTable} (id) VALUES ${placeholders}`).run(
+                    ...chunk,
+                );
+            }
+        });
+        tx(uniqIds);
+
+        const total =
+            db
+                .prepare(
+                    `SELECT COUNT(*) AS n
+                       FROM downloads d
+                       JOIN ${tmpTable} t ON t.id = d.id`,
+                )
+                .get()?.n || 0;
+
+        const files = db
+            .prepare(
+                `SELECT d.*
+                   FROM downloads d
+                   JOIN ${tmpTable} t ON t.id = d.id
+                  ORDER BY d.created_at DESC, d.id DESC
+                  LIMIT ? OFFSET ?`,
+            )
+            .all(lim, off);
+
+        return { total, files, rule: normalized };
+    } finally {
+        db.exec(`DROP TABLE IF EXISTS ${tmpTable}`);
+    }
 }
 
 export function listSmartAlbumItems(id, { limit = 50, offset = 0 } = {}) {

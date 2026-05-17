@@ -22,8 +22,8 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 
-const SIDECAR_VERSION = '0.3.1';
-const GH_BASE = `https://github.com/botnick/telegram-media-downloader/releases/download/seekbar-v${SIDECAR_VERSION}`;
+const SIDECAR_VERSION = '0.3.2';
+const GH_BASE = `https://github.com/buluma/telegram-media-downloader/releases/download/seekbar-v${SIDECAR_VERSION}`;
 
 function platformSlug() {
     const platMap = { win32: 'win', linux: 'linux', darwin: 'mac' };

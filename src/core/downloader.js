@@ -366,6 +366,11 @@ export class DownloadManager extends EventEmitter {
 
         // Dedup check (Memory + Active)
         if (this.active.has(key)) return false;
+        // Also dedupe against queued jobs. Without this, the same
+        // (groupId,messageId) can be enqueued multiple times before the
+        // first copy is written to DB, causing concurrent workers to race
+        // on the same `.part` path.
+        if (this._jobs.has(key)) return false;
 
         // Check DB
         if (this.isDownloaded(job.groupId, job.message.id)) return false;
@@ -629,6 +634,14 @@ export class DownloadManager extends EventEmitter {
                 continue;
             }
 
+            // Belt-and-braces dedupe: if another worker already picked the
+            // same key, put this copy back and let the first one finish.
+            if (this.active.has(job.key)) {
+                this.queue.push(job);
+                await this.sleep(100);
+                continue;
+            }
+
             this.active.set(job.key, { ...job, workerId: id, progress: 0, startedAt: Date.now() });
             this._jobs.delete(job.key);
             this.emit('start', job);
@@ -721,6 +734,13 @@ export class DownloadManager extends EventEmitter {
 
             // 5. Execute Download
             try {
+                // Always start from a clean temp path. We don't depend on
+                // gramJS resume semantics here; stale/truncated `.part` files
+                // can cause immediate "0-byte success" on some media.
+                try {
+                    if (existsSync(partPath)) await fs.unlink(partPath);
+                } catch {}
+
                 let prevBytes = 0n;
                 let prevTs = Date.now();
                 // Use the client that captured this job (poll/handler/resolver)

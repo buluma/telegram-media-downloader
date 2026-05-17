@@ -47,8 +47,8 @@ const DATA_DIR = process.env.TGDL_DATA_DIR
  * on next boot — the matching GitHub Release `seekbar-v<VER>` must exist
  * with `tgdl-seekbar-<platform>-<arch>.tar.gz` assets attached.
  */
-export const SIDECAR_VERSION = '0.3.1';
-const GH_RELEASE_BASE = `https://github.com/botnick/telegram-media-downloader/releases/download/seekbar-v${SIDECAR_VERSION}`;
+export const SIDECAR_VERSION = '0.3.2';
+const GH_RELEASE_BASE = `https://github.com/buluma/telegram-media-downloader/releases/download/seekbar-v${SIDECAR_VERSION}`;
 const DOWNLOAD_CONNECT_TIMEOUT_MS = 30_000;
 const DOWNLOAD_REDIRECT_LIMIT = 5;
 
@@ -65,6 +65,7 @@ let _child = null;
 let _broadcast = null;
 let _startingPromise = null;
 let _stopped = false;
+let _shutdownHooksWired = false;
 
 export function setBroadcast(fn) {
     _broadcast = typeof fn === 'function' ? fn : null;
@@ -487,6 +488,8 @@ async function _connectRemote(url, token) {
  * times concurrently; returns the in-flight promise.
  */
 export async function startSidecar() {
+    _wireShutdownHooks();
+    _stopped = false;
     if (_startingPromise) return _startingPromise;
     _startingPromise = (async () => {
         try {
@@ -529,5 +532,16 @@ export function stopSidecar() {
         } catch {}
         _child = null;
     }
-    _setState({ ok: false, mode: 'stopped', error: null, pid: null });
+    // Reset client target so no stale URL/token survives a restart.
+    setSidecarUrl('', '');
+    _setState({ ok: false, mode: 'stopped', error: null, pid: null, url: '' });
+}
+
+function _wireShutdownHooks() {
+    if (_shutdownHooksWired) return;
+    _shutdownHooksWired = true;
+    const stop = () => stopSidecar();
+    process.once('beforeExit', stop);
+    process.once('SIGTERM', stop);
+    process.once('SIGINT', stop);
 }

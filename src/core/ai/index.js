@@ -36,6 +36,15 @@ function _f32ToBlob(f) {
     return Buffer.from(new Uint8Array(f.buffer, f.byteOffset, f.byteLength));
 }
 
+function _resolveClipModelId(cfg = {}) {
+    return (
+        String(cfg?.searchModel || '').trim() ||
+        String(cfg?.model || '').trim() ||
+        String(cfg?.clipModel || '').trim() ||
+        'Xenova/clip-vit-base-patch32'
+    );
+}
+
 // better-sqlite3 throws "This database connection is busy executing a
 // query" when a write hits the same connection while a `.iterate()`
 // from another caller (cluster sweep / dedup / integrity walk) is open.
@@ -243,9 +252,9 @@ async function _drainBg() {
                 const r = await _clientEmbedImage(abs);
                 if (r?.embedding?.length) {
                     imageEmbedding = Float32Array.from(r.embedding);
-                    // Derive model id from the sidecar CLIP model.
-                    // Falls back to the default repo id if unavailable.
-                    embeddingModel = cfg.clipModel || 'Xenova/clip-vit-base-patch32';
+                    // Keep model id aligned with semantic-search config.
+                    // Prefer searchModel/model over legacy clipModel key.
+                    embeddingModel = _resolveClipModelId(cfg);
                 }
             } catch {
                 /* sidecar unavailable or non-image — skip silently */

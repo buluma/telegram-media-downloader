@@ -3271,6 +3271,14 @@
                         </div>
                     </section>
 
+                    <!-- Scanner cards — per-feature status cards showing
+                         coverage, readiness, and quick actions for every
+                         AI scanner (Faces, CLIP Tags, WD14, OCR, Objects).
+                         Rendered by _renderScannerCards() in JS. -->
+                    <section id="ai-scanner-cards" class="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
+                        <!-- each card is a <div class="ai-scanner-card"> rendered by JS -->
+                    </section>
+
                     <!-- System health — collapsed by default. Summary
                          line in the <summary> reflects the worst-state
                          check (all OK / N warnings / N failing). Each
@@ -3359,6 +3367,31 @@
                                     disabled>
                                 <i class="ri-album-add-line"></i>
                                 <span data-i18n="maintenance.ai.unified.create_album">Create album</span>
+                            </button>
+                        </div>
+                        <!-- Source toggle chips — let the user filter which
+                             modalities the search queries. All enabled by
+                             default. Each is a data-source-* button that
+                             _runUnifiedQuery reads. -->
+                        <div id="ai-query-sources" class="flex items-center gap-1.5 flex-wrap mt-1.5">
+                            <span class="text-[10px] text-tg-textSecondary mr-0.5">Sources:</span>
+                            <button type="button" class="ai-source-chip tg-btn-secondary text-[10px] px-2 py-0.5 inline-flex items-center gap-1 rounded-full" data-source="semantic" data-active="1">
+                                <i class="ri-brain-line"></i><span>Semantic</span>
+                            </button>
+                            <button type="button" class="ai-source-chip tg-btn-secondary text-[10px] px-2 py-0.5 inline-flex items-center gap-1 rounded-full" data-source="tags" data-active="1">
+                                <i class="ri-price-tag-3-line"></i><span>Tags</span>
+                            </button>
+                            <button type="button" class="ai-source-chip tg-btn-secondary text-[10px] px-2 py-0.5 inline-flex items-center gap-1 rounded-full" data-source="people" data-active="1">
+                                <i class="ri-group-line"></i><span>People</span>
+                            </button>
+                            <button type="button" class="ai-source-chip tg-btn-secondary text-[10px] px-2 py-0.5 inline-flex items-center gap-1 rounded-full" data-source="objects" data-active="1">
+                                <i class="ri-box-3-line"></i><span>Objects</span>
+                            </button>
+                            <button type="button" class="ai-source-chip tg-btn-secondary text-[10px] px-2 py-0.5 inline-flex items-center gap-1 rounded-full" data-source="text" data-active="1">
+                                <i class="ri-file-text-line"></i><span>OCR</span>
+                            </button>
+                            <button type="button" class="ai-source-chip tg-btn-secondary text-[10px] px-2 py-0.5 inline-flex items-center gap-1 rounded-full" data-source="filename" data-active="1">
+                                <i class="ri-file-search-line"></i><span>Filename</span>
                             </button>
                         </div>
                         <div id="ai-query-meta" class="text-[10.5px] text-tg-textSecondary mt-1 hidden"></div>
@@ -3738,10 +3771,30 @@
                                 <input id="ai-people-unlabeled" type="checkbox" class="accent-tg-blue">
                                 <span data-i18n="maintenance.ai.people.unlabeled_only">Unlabeled only</span>
                             </label>
+                            <select id="ai-people-min-faces" class="tg-input text-[10px] py-1 w-28" title="Minimum face count">
+                                <option value="1">≥ 1 face</option>
+                                <option value="2">≥ 2 faces</option>
+                                <option value="5">≥ 5 faces</option>
+                                <option value="10">≥ 10 faces</option>
+                            </select>
+                            <label class="inline-flex items-center gap-1 text-[11px] text-tg-textSecondary cursor-pointer select-none">
+                                <input id="ai-people-recent" type="checkbox" class="accent-tg-blue">
+                                <span>Recent first</span>
+                            </label>
                             <button id="ai-people-refresh-btn" type="button" class="tg-btn-secondary text-[11px] px-2 py-1 inline-flex items-center gap-1"
                                 title="Refresh the people grid">
                                 <i class="ri-refresh-line"></i>
                             </button>
+                        </div>
+                        <!-- Merge suggestions — large unnamed clusters that likely
+                             represent real people who should be named. -->
+                        <div id="ai-people-suggestions" class="hidden mb-3 bg-tg-bg/30 rounded-lg p-2.5 border border-yellow-500/20">
+                            <div class="flex items-center gap-1.5 mb-1.5">
+                                <i class="ri-lightbulb-flash-line text-yellow-300 text-xs"></i>
+                                <span class="text-[10.5px] font-medium text-tg-text">Merge suggestions</span>
+                                <span id="ai-people-suggestions-count" class="text-[10px] text-tg-textSecondary"></span>
+                            </div>
+                            <div id="ai-people-suggestions-list" class="flex flex-wrap gap-1.5"></div>
                         </div>
                         <div id="ai-people-empty" class="hidden text-center py-8 text-sm text-tg-textSecondary">
                             <i class="ri-user-search-line text-3xl block mb-2 text-tg-textSecondary/60"></i>
@@ -3810,6 +3863,23 @@
                                 <button id="ai-tag-ocr-clear" type="button" class="text-[10px] text-tg-blue hover:underline ml-auto hidden" data-i18n="maintenance.ai.tags.ocr_clear">Clear filter</button>
                             </div>
                             <div id="ai-tag-ocr-chips" class="flex flex-wrap gap-1.5"></div>
+                        </div>
+                        <!-- Tag details panel — shown when a tag is selected.
+                             Populated by _renderTagDetails(). -->
+                        <div id="ai-tag-details" class="hidden bg-tg-bg/30 rounded-lg p-3 mb-3 border border-tg-border/30">
+                            <div class="flex items-start justify-between gap-2 flex-wrap mb-1.5">
+                                <div class="min-w-0">
+                                    <div id="ai-tag-details-name" class="text-sm font-medium text-tg-text"></div>
+                                    <div id="ai-tag-details-meta" class="text-[10px] text-tg-textSecondary mt-0.5"></div>
+                                </div>
+                                <div id="ai-tag-details-actions" class="flex items-center gap-1.5 shrink-0">
+                                    <button id="ai-tag-details-album-btn" type="button" class="tg-btn text-[10px] px-2 py-1 inline-flex items-center gap-1">
+                                        <i class="ri-album-add-line"></i><span>Create album</span>
+                                    </button>
+                                </div>
+                            </div>
+                            <div id="ai-tag-details-sources" class="flex items-center gap-1.5 flex-wrap mb-1.5"></div>
+                            <div id="ai-tag-details-related" class="text-[10.5px] text-tg-textSecondary"></div>
                         </div>
                         <section class="bg-tg-panel rounded-xl p-3">
                             <div id="ai-tag-photos" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2 max-h-[70vh] overflow-y-auto pr-1">
@@ -3998,15 +4068,19 @@
                         </summary>
                         <div class="flex items-start justify-between gap-3 flex-wrap mb-2">
                             <p class="text-[11px] text-tg-textSecondary mt-0.5 min-w-0">Rule-based collections. v1 supports tag rules; v2 adds compound rules with people, date, semantic search, and more.</p>
-                            <div class="flex items-center gap-1.5">
+                            <div class="flex items-center gap-1.5 flex-wrap justify-end">
                                 <button id="ai-smart-albums-add" type="button" class="tg-btn text-xs px-2.5 py-1 inline-flex items-center gap-1">
                                     <i class="ri-add-line"></i><span>Add</span>
+                                </button>
+                                <button id="ai-smart-albums-rebuild-all" type="button" class="tg-btn-secondary text-xs px-2.5 py-1 inline-flex items-center gap-1">
+                                    <i class="ri-hammer-line"></i><span>Rebuild all</span>
                                 </button>
                                 <button id="ai-smart-albums-refresh" type="button" class="tg-btn-secondary text-xs px-2.5 py-1 inline-flex items-center gap-1">
                                     <i class="ri-refresh-line"></i><span>Refresh</span>
                                 </button>
                             </div>
                         </div>
+                        <p id="ai-smart-albums-runtime" class="text-[10px] text-tg-textSecondary mb-2"></p>
 
                         <!-- Natural-language album builder (v2) -->
                         <div class="bg-tg-bg/30 rounded-lg p-2.5 mb-3">
@@ -4025,10 +4099,14 @@
                                         </button>
                                         <span id="ai-album-nl-status" class="text-[10px] text-tg-textSecondary hidden"></span>
                                     </div>
+                                    <div id="ai-album-nl-preview-count" class="text-[10px] text-tg-textSecondary hidden"></div>
                                     <pre id="ai-album-nl-preview" class="bg-tg-bg/60 rounded p-2 text-[10px] font-mono whitespace-pre-wrap leading-snug max-h-48 overflow-auto hidden"></pre>
-                                    <div id="ai-album-nl-actions" class="flex items-center gap-2 hidden">
+                                    <div id="ai-album-nl-actions" class="flex items-center gap-2 hidden flex-wrap">
                                         <button id="ai-album-nl-create-btn" type="button" class="tg-btn text-xs px-3 py-1.5 inline-flex items-center gap-1">
                                             <i class="ri-album-add-line"></i><span>Create album with this rule</span>
+                                        </button>
+                                        <button id="ai-album-nl-fix-btn" type="button" class="tg-btn-secondary text-xs px-3 py-1.5 inline-flex items-center gap-1">
+                                            <i class="ri-magic-line"></i><span>Apply recommended fixes</span>
                                         </button>
                                         <button id="ai-album-nl-cancel-btn" type="button" class="tg-btn-secondary text-xs px-3 py-1.5">Clear</button>
                                     </div>

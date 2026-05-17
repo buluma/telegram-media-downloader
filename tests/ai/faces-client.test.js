@@ -44,7 +44,7 @@ describe('health() — basic + enriched fields', () => {
         client.setSidecarUrl('http://host:8011');
         const body = {
             ok: true,
-            version: '0.1.0',
+            version: '0.3.2',
             model: 'buffalo_l',
             dim: 512,
             ready: true,
