@@ -1086,6 +1086,10 @@ export function startObjectDetectionScan(cfg, onProgress, onDone, onLog) {
         'objects',
         cfg,
         async (state, signal, bump, log) => {
+            if (isTgdlMlEnabled()) {
+                log('info', 'objects scan: not supported by tgdl-ml — skipping');
+                return;
+            }
             const sidecarUrl = getSidecarUrl();
             if (!sidecarUrl) {
                 throw new Error(
@@ -1255,6 +1259,10 @@ export function startWd14Scan(cfg, onProgress, onDone, onLog) {
                 return;
             }
 
+            if (isTgdlMlEnabled()) {
+                log('info', 'wd14 scan: not supported by tgdl-ml — skipping');
+                return;
+            }
             const sidecarUrl = getSidecarUrl();
             if (!sidecarUrl) {
                 throw new Error(
