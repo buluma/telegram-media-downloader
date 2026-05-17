@@ -3014,6 +3014,7 @@ const _SCANNER_CARD_DEFS = [
         sidecarEndpoint: 'faces',
         modelKey: 'faces',
         countKey: 'withFaces',
+        countLabel: 'with faces',
         scanBtnId: 'ai-scan-btn',
         cancelBtnId: 'ai-cancel-btn',
         estimateKey: null,
@@ -3209,7 +3210,7 @@ function _renderScannerCards(status) {
     </div>
     <div class="mt-2">
         <div class="flex justify-between text-[10px] text-tg-textSecondary">
-            <span>${escapeHtml(doneCount.toLocaleString())} / ${escapeHtml(totalEligible.toLocaleString())} indexed</span>
+            <span>${escapeHtml(doneCount.toLocaleString())} / ${escapeHtml(totalEligible.toLocaleString())} ${def.countLabel || 'indexed'}</span>
             <span class="tabular-nums">${pct}%</span>
         </div>
         <div class="h-1.5 bg-tg-bg/60 rounded overflow-hidden mt-0.5" role="progressbar" aria-valuenow="${doneCount}" aria-valuemin="0" aria-valuemax="${totalEligible || 1}">
