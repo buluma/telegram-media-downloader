@@ -812,6 +812,20 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         }
     });
 
+    router.get('/ai/ocr/photos', async (req, res) => {
+        try {
+            const word = String(req.query.word || '').trim();
+            if (!word) return res.status(400).json({ error: 'word query param required' });
+            const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 50));
+            const offset = Math.max(0, Number(req.query.offset) || 0);
+            const { listPhotosForOcrWord } = await import('../../core/db/faces.js');
+            const result = listPhotosForOcrWord(word, { limit, offset });
+            res.json({ success: true, ...result });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
     // ---- Smart albums (v1 + v2 compound rules) ------------------------------
     function _smartAlbumRuleErrorPayload(error) {
         const msg = String(error?.message || 'invalid smart album rule');

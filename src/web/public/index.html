@@ -3970,6 +3970,42 @@
                         </div>
                     </details>
 
+                    <!-- OCR word browser — mirrors tag browser, driven by listOcrWords / listPhotosForOcrWord. -->
+                    <details id="ai-ocr-browser" class="hidden bg-tg-panel rounded-xl p-4 mb-3 group">
+                        <summary class="cursor-pointer list-none flex items-center justify-between gap-2 mb-1">
+                            <h3 class="text-tg-text text-sm font-medium flex items-center gap-2">
+                                <i class="ri-arrow-right-s-line text-tg-textSecondary text-xs transition-transform group-open:rotate-90"></i>
+                                <i class="ri-text-snippet text-tg-blue"></i>
+                                <span>OCR word browser</span>
+                                <span id="ai-ocr-browser-count" class="text-[10.5px] text-tg-textSecondary"></span>
+                            </h3>
+                        </summary>
+                        <div class="flex items-start justify-between gap-3 flex-wrap mb-3">
+                            <p class="text-[11px] text-tg-textSecondary min-w-0">Browse photos by extracted text word. Requires text extraction to have been run.</p>
+                            <button id="ai-ocr-browser-refresh" type="button" class="tg-btn-secondary text-xs px-2.5 py-1 inline-flex items-center gap-1">
+                                <i class="ri-refresh-line"></i><span>Refresh</span>
+                            </button>
+                        </div>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
+                            <input id="ai-ocr-browser-filter" type="search" class="tg-input text-xs" placeholder="Filter words…">
+                        </div>
+                        <div id="ai-ocr-browser-chips" class="flex flex-wrap gap-1.5 mb-3"></div>
+                        <section class="bg-tg-panel rounded-xl p-3">
+                            <div id="ai-ocr-word-selected-label" class="text-[11px] font-medium text-tg-textSecondary mb-2 hidden"></div>
+                            <div id="ai-ocr-word-photos" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2 max-h-[70vh] overflow-y-auto pr-1">
+                                <p class="text-[11px] text-tg-textSecondary col-span-full text-center py-6">Select a word above to browse photos.</p>
+                            </div>
+                            <div class="mt-3 flex items-center justify-between gap-3 flex-wrap">
+                                <div id="ai-ocr-word-page-info" class="text-xs text-tg-textSecondary"></div>
+                                <div class="flex items-center gap-1.5">
+                                    <button id="ai-ocr-word-prev-btn" type="button" class="tg-btn-secondary text-xs px-3 py-1.5">Prev</button>
+                                    <button id="ai-ocr-word-next-btn" type="button" class="tg-btn-secondary text-xs px-3 py-1.5">Next</button>
+                                </div>
+                            </div>
+                        </section>
+                        <p id="ai-ocr-browser-empty" class="text-[11px] text-tg-textSecondary text-center py-3 hidden">No OCR words yet — run text extraction first.</p>
+                    </details>
+
                     <details id="ai-smart-albums" class="bg-tg-panel rounded-xl p-4 mb-3 group">
                         <summary class="cursor-pointer list-none flex items-center justify-between gap-2 mb-1">
                             <h3 class="text-tg-text text-sm font-medium flex items-center gap-2">

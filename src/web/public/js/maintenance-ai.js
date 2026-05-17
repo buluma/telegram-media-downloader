@@ -32,6 +32,8 @@ const aiStore = createStore({
     // Smart albums panel selection
     smartAlbumSelected: null,
     smartAlbumSelectedName: '',
+    // OCR word browser selection
+    ocrWordSelected: '',
 });
 let _peoplePhotosPage = 1;
 let _peoplePhotosTotal = 0;
@@ -56,6 +58,13 @@ let _smartAlbumItemsTotal = 0;
 let _smartAlbumItemsTotalPages = 1;
 const _smartAlbumItemsLimit = 50;
 let _smartAlbumCurrentRows = [];
+let _ocrBrowserCache = []; // full word list for client-side filter
+let _ocrBrowserFilterQuery = '';
+let _ocrWordPhotosPage = 1;
+let _ocrWordPhotosTotal = 0;
+let _ocrWordPhotosTotalPages = 1;
+const _ocrWordPhotosLimit = 50;
+let _ocrWordCurrentRows = [];
 const LS_FACES_COLLAPSED = 'tgdl.ai.faces.collapsed';
 const LS_TAGS_COLLAPSED = 'tgdl.ai.tags.collapsed';
 const LS_PEOPLE_COLLAPSED = 'tgdl.ai.people.collapsed';
@@ -444,6 +453,180 @@ function _syncTagPager() {
     if (createBtn) createBtn.disabled = !hasTag;
     if (prevBtn) prevBtn.disabled = !hasTag || _tagPhotosPage <= 1;
     if (nextBtn) nextBtn.disabled = !hasTag || _tagPhotosPage >= _tagPhotosTotalPages;
+}
+
+// ---- OCR word browser -------------------------------------------------------
+
+async function _renderOcrBrowser() {
+    const section = $('#ai-ocr-browser');
+    if (!section) return;
+    try {
+        const r = await api.get('/api/ai/ocr/words?limit=500&minCount=1&minLength=3');
+        if (!r?.success) return;
+        _ocrBrowserCache = r.words || [];
+        const count = _ocrBrowserCache.length;
+        const countEl = $('#ai-ocr-browser-count');
+        if (countEl) countEl.textContent = count ? `${count.toLocaleString()} words` : '';
+        const emptyEl = $('#ai-ocr-browser-empty');
+        if (emptyEl) emptyEl.classList.toggle('hidden', count > 0);
+        if (count > 0) section.classList.remove('hidden');
+        _renderOcrBrowserChips();
+    } catch (e) {
+        console.warn('ocr/browser:', e);
+    }
+}
+
+function _renderOcrBrowserChips() {
+    const chips = $('#ai-ocr-browser-chips');
+    if (!chips) return;
+    const q = _ocrBrowserFilterQuery.toLowerCase();
+    const visible = q
+        ? _ocrBrowserCache.filter((w) => w.word.toLowerCase().includes(q))
+        : _ocrBrowserCache;
+    const selected = aiStore.get('ocrWordSelected');
+    chips.innerHTML = visible
+        .map(
+            (w) =>
+                `<button type="button" class="tg-btn-input text-[10px] px-2 py-0.5 inline-flex items-center gap-1 ocr-word-chip${selected === w.word ? ' active' : ''}" data-ocr-word="${escapeHtml(w.word)}">
+                    <span>${escapeHtml(w.word)}</span>
+                    <span class="opacity-60">${w.count}</span>
+                </button>`,
+        )
+        .join('');
+    chips.querySelectorAll('.ocr-word-chip').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const word = btn.dataset.ocrWord;
+            if (!word) return;
+            if (aiStore.get('ocrWordSelected') !== word) {
+                _ocrWordPhotosPage = 1;
+                aiStore.set('ocrWordSelected', word); // watcher fires _loadOcrWordPhotos
+            } else {
+                _ocrWordPhotosPage = 1;
+                _loadOcrWordPhotos(word);
+            }
+        });
+    });
+}
+
+async function _loadOcrWordPhotos(word) {
+    _ocrWordPhotosPage = 1;
+    _ocrWordCurrentRows = [];
+    _ocrWordPhotosTotal = 0;
+    _ocrWordPhotosTotalPages = 1;
+    const label = $('#ai-ocr-word-selected-label');
+    if (label) {
+        label.textContent = `Photos containing "${word}"`;
+        label.classList.remove('hidden');
+    }
+    _renderOcrBrowserChips();
+    await _loadOcrWordPhotoPage();
+}
+
+async function _loadOcrWordPhotoPage() {
+    const word = aiStore.get('ocrWordSelected');
+    if (!word) return;
+    const grid = $('#ai-ocr-word-photos');
+    if (!grid) return;
+    const offset = Math.max(0, (_ocrWordPhotosPage - 1) * _ocrWordPhotosLimit);
+    try {
+        const r = await api.get(
+            `/api/ai/ocr/photos?word=${encodeURIComponent(word)}&limit=${_ocrWordPhotosLimit}&offset=${offset}`,
+        );
+        if (!r?.success) {
+            grid.innerHTML = `<p class="text-[11px] text-tg-textSecondary col-span-full text-center py-6">Failed to load photos.</p>`;
+            return;
+        }
+        _ocrWordCurrentRows = r.files || [];
+        _ocrWordPhotosTotal = r.total || 0;
+        _ocrWordPhotosTotalPages = Math.max(
+            1,
+            Math.ceil(_ocrWordPhotosTotal / _ocrWordPhotosLimit),
+        );
+        _syncOcrWordPager();
+        if (!_ocrWordCurrentRows.length) {
+            grid.innerHTML = `<p class="text-[11px] text-tg-textSecondary col-span-full text-center py-6">No photos found for "${escapeHtml(word)}".</p>`;
+            return;
+        }
+        grid.innerHTML = _ocrWordCurrentRows.map((f, i) => _renderOcrWordPhotoTile(f, i)).join('');
+        _wireOcrWordPhotoClicks();
+    } catch (e) {
+        grid.innerHTML = `<p class="text-[11px] text-tg-textSecondary col-span-full text-center py-6">Error: ${escapeHtml(e?.message || e)}</p>`;
+    }
+}
+
+function _syncOcrWordPager() {
+    const pageInfo = $('#ai-ocr-word-page-info');
+    const prevBtn = $('#ai-ocr-word-prev-btn');
+    const nextBtn = $('#ai-ocr-word-next-btn');
+    const hasWord = !!aiStore.get('ocrWordSelected');
+    if (pageInfo) {
+        pageInfo.textContent = hasWord
+            ? `Page ${_ocrWordPhotosPage} / ${_ocrWordPhotosTotalPages} · ${_ocrWordPhotosTotal.toLocaleString()} photos`
+            : '';
+    }
+    if (prevBtn) prevBtn.disabled = !hasWord || _ocrWordPhotosPage <= 1;
+    if (nextBtn) nextBtn.disabled = !hasWord || _ocrWordPhotosPage >= _ocrWordPhotosTotalPages;
+}
+
+function _renderOcrWordPhotoTile(file, index) {
+    const thumb = `/api/thumbs/${encodeURIComponent(file.id)}?w=320`;
+    const ocrSnippet = file.ocr_text ? String(file.ocr_text).slice(0, 100).trim() : '';
+    return `<button type="button" data-ocr-tile-index="${index}" data-id="${file.id}"
+            class="nsfw-tile group relative aspect-square rounded-md overflow-hidden bg-tg-bg/40 focus:outline-none focus:ring-2 focus:ring-tg-blue">
+        <img loading="lazy" decoding="async"
+             class="absolute inset-0 w-full h-full object-cover"
+             src="${escapeHtml(thumb)}" alt=""
+             onerror="this.style.display='none'">
+        ${ocrSnippet ? `<span class="absolute bottom-1 left-1 right-1 px-1.5 py-0.5 text-[9px] leading-tight rounded bg-black/60 text-white/80 truncate">${escapeHtml(ocrSnippet)}</span>` : ''}
+        <span class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 group-focus:opacity-100 transition flex items-end p-2 pointer-events-none">
+            <span class="text-[11px] text-white truncate w-full text-left">${escapeHtml(file.file_name || '')}</span>
+        </span>
+    </button>`;
+}
+
+function _wireOcrWordPhotoClicks() {
+    const grid = $('#ai-ocr-word-photos');
+    if (!grid) return;
+    grid.querySelectorAll('[data-ocr-tile-index]').forEach((tile) => {
+        if (tile.dataset.wired) return;
+        tile.dataset.wired = '1';
+        tile.addEventListener('click', () => {
+            const idx = Number(tile.dataset.ocrTileIndex);
+            if (Number.isFinite(idx)) _openOcrWordLightbox(idx);
+        });
+    });
+}
+
+function _ocrWordRowToViewerFile(row) {
+    const sizeMb = row.file_size ? (row.file_size / (1024 * 1024)).toFixed(1) : '0';
+    return {
+        fullPath: row.file_path || '',
+        type: row.file_type === 'video' ? 'videos' : 'images',
+        name: row.file_name || '',
+        sizeFormatted: `${sizeMb} MB`,
+        modified: row.created_at || Date.now(),
+        _ocrRow: row,
+    };
+}
+
+function _ocrWordReviewMetaFor(file) {
+    const snippet = String(file._ocrRow?.ocr_text || '')
+        .slice(0, 80)
+        .trim();
+    return snippet
+        ? `<span class="inline-flex items-center gap-2">
+               <i class="ri-file-text-line text-tg-blue"></i>
+               <span class="truncate max-w-[200px]">${escapeHtml(snippet)}</span>
+           </span>`
+        : '';
+}
+
+function _openOcrWordLightbox(startIndex) {
+    if (!_ocrWordCurrentRows.length) return;
+    openMediaViewerForReview(_ocrWordCurrentRows.map(_ocrWordRowToViewerFile), startIndex, {
+        actions: [],
+        metaRender: _ocrWordReviewMetaFor,
+    });
 }
 
 function _moveTagChipFocus(currentBtn, dir) {
@@ -1944,6 +2127,7 @@ export async function refreshStatus() {
             });
         _renderTagBrowser().catch(() => {});
         _renderTagSuggestions().catch(() => {});
+        _renderOcrBrowser().catch(() => {});
         _renderSmartAlbums().catch(() => {});
         _renderLlmStatus().catch(() => {});
         _renderEmbeddingsStatus().catch(() => {});
@@ -2209,6 +2393,22 @@ function _bindOnce() {
         _createSmartAlbum(aiStore.get('tagSelected')),
     );
     $('#ai-tag-suggestions-refresh')?.addEventListener('click', () => _renderTagSuggestions());
+    $('#ai-ocr-browser-refresh')?.addEventListener('click', () => _renderOcrBrowser());
+    $('#ai-ocr-browser-filter')?.addEventListener('input', (e) => {
+        _ocrBrowserFilterQuery = String(e.target?.value || '');
+        _renderOcrBrowserChips();
+    });
+    $('#ai-ocr-word-prev-btn')?.addEventListener('click', () => {
+        if (!aiStore.get('ocrWordSelected') || _ocrWordPhotosPage <= 1) return;
+        _ocrWordPhotosPage -= 1;
+        _loadOcrWordPhotoPage();
+    });
+    $('#ai-ocr-word-next-btn')?.addEventListener('click', () => {
+        if (!aiStore.get('ocrWordSelected') || _ocrWordPhotosPage >= _ocrWordPhotosTotalPages)
+            return;
+        _ocrWordPhotosPage += 1;
+        _loadOcrWordPhotoPage();
+    });
     $('#ai-smart-albums-refresh')?.addEventListener('click', () => _renderSmartAlbums());
     $('#ai-smart-albums-rebuild-all')?.addEventListener('click', () => _rebuildAllSmartAlbums());
     $('#ai-album-nl-parse-btn')?.addEventListener('click', _parseAlbumWithAi);
@@ -2387,6 +2587,11 @@ function _bindOnce() {
             _renderTagDetails(tag).catch(() => {});
             _loadTagPhotos(tag);
         }
+    });
+
+    // OCR browser — word chip selection drives photo grid reactively.
+    aiStore.watch('ocrWordSelected', (word) => {
+        if (word) _loadOcrWordPhotos(word);
     });
 }
 

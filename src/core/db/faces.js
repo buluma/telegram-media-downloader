@@ -1675,6 +1675,27 @@ export function listOcrWords({ minLength = 3, minCount = 1, limit = 100 } = {}) 
         .map(([word, cnt]) => ({ word, cnt }));
 }
 
+export function listPhotosForOcrWord(word, { limit = 50, offset = 0 } = {}) {
+    const db = getDb();
+    const lim = Math.max(1, Math.min(500, Number(limit) || 50));
+    const off = Math.max(0, Number(offset) || 0);
+    const pattern = `%${String(word).toLowerCase()}%`;
+    const rows = db
+        .prepare(
+            `SELECT d.*, it.text AS ocr_text
+               FROM image_text it
+               JOIN downloads d ON d.id = it.download_id
+              WHERE LOWER(it.text) LIKE ?
+              ORDER BY d.created_at DESC
+              LIMIT ? OFFSET ?`,
+        )
+        .all(pattern, lim, off);
+    const total = db
+        .prepare(`SELECT COUNT(*) AS n FROM image_text WHERE LOWER(text) LIKE ?`)
+        .get(pattern).n;
+    return { files: rows, total };
+}
+
 // ---- Smart Albums --------------------------------------------------------
 
 /**
