@@ -2997,9 +2997,9 @@ function _featurePill(label, state, detail = '') {
               : state === 'warn'
                 ? 'ri-error-warning-line'
                 : 'ri-close-circle-line';
-    return `<div class="rounded-md border ${tone} px-2 py-1.5 min-w-0">
+    return `<div class="rounded-md border ${tone} px-2 py-1.5 min-w-0 flex items-center justify-between gap-2 flex-wrap mb-2">
         <div class="flex items-center gap-1.5 text-[11px] font-medium"><i class="${icon}"></i><span>${escapeHtml(label)}</span></div>
-        <div class="text-[10px] opacity-80 truncate mt-0.5" title="${escapeHtml(detail)}">${escapeHtml(detail || (state === 'ready' ? 'Ready' : state))}</div>
+        <div class="text-[10px] opacity-80 truncate" title="${escapeHtml(detail)}">${escapeHtml(detail || (state === 'ready' ? 'Ready' : state))}</div>
     </div>`;
 }
 
