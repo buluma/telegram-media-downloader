@@ -23,7 +23,7 @@
 
 import fs from 'fs';
 import { Transform } from 'stream';
-import { BackupProvider, optionalDepError } from './base.js';
+import { BackupProvider, optionalDepError, openReadStream } from './base.js';
 import { encryptStream } from '../encryption.js';
 
 const SINGLE_SHOT_LIMIT = 150 * 1024 * 1024;
@@ -246,7 +246,7 @@ export class DropboxProvider extends BackupProvider {
         // Build a transformed stream and pump it in DEFAULT_CHUNK_BYTES
         // slices. We start a session on the first chunk, append on the
         // middle ones, finish on the last — matching Dropbox's protocol.
-        const stream = this._buildTransformedStream(localPath, opts, ctx);
+        const stream = await this._buildTransformedStream(localPath, opts, ctx);
         let sessionId = null;
         let offset = 0;
         let lastChunk = null;
@@ -328,8 +328,8 @@ export class DropboxProvider extends BackupProvider {
     }
 
     /** Build the read stream + apply encryption / progress transforms. */
-    _buildTransformedStream(localPath, opts, ctx) {
-        let body = fs.createReadStream(localPath);
+    async _buildTransformedStream(localPath, opts, ctx) {
+        let body = await openReadStream(localPath);
         if (opts?.encryptKey) {
             body = body.pipe(encryptStream(opts.encryptKey));
         }
@@ -357,7 +357,7 @@ export class DropboxProvider extends BackupProvider {
     }
 
     async _streamToBuffer(localPath, opts, ctx) {
-        const stream = this._buildTransformedStream(localPath, opts, ctx);
+        const stream = await this._buildTransformedStream(localPath, opts, ctx);
         const chunks = [];
         for await (const c of stream) {
             if (ctx?.signal?.aborted) throw new Error('aborted');

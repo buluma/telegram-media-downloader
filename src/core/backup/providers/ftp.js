@@ -20,7 +20,7 @@
 
 import fs from 'fs';
 import { Transform } from 'stream';
-import { BackupProvider, optionalDepError } from './base.js';
+import { BackupProvider, optionalDepError, openReadStream } from './base.js';
 import { encryptStream } from '../encryption.js';
 
 const DEFAULT_TIMEOUT_MS =
@@ -198,7 +198,7 @@ export class FtpProvider extends BackupProvider {
             // so subsequent absolute paths resolve from the root.
             await client.cd('/');
 
-            let body = fs.createReadStream(localPath);
+            let body = await openReadStream(localPath);
             if (opts?.encryptKey) {
                 body = body.pipe(encryptStream(opts.encryptKey));
             }

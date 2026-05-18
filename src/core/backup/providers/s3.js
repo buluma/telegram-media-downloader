@@ -24,7 +24,7 @@ import {
     ListObjectsV2Command,
 } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
-import { BackupProvider } from './base.js';
+import { BackupProvider, openReadStream } from './base.js';
 import { encryptStream } from '../encryption.js';
 
 export class S3Provider extends BackupProvider {
@@ -142,7 +142,7 @@ export class S3Provider extends BackupProvider {
     async upload(localPath, remotePath, opts, ctx) {
         const Key = this._key(remotePath);
         const ContentType = _guessContentType(remotePath);
-        let body = fs.createReadStream(localPath);
+        let body = await openReadStream(localPath);
         if (opts?.encryptKey) {
             body = body.pipe(encryptStream(opts.encryptKey));
         }

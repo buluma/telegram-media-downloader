@@ -1,3 +1,5 @@
+import fs from 'fs';
+
 // Provider interface — JSDoc shape only; no runtime enforcement.
 //
 // Implementing a new provider:
@@ -147,6 +149,27 @@ export class BackupProvider {
     async close() {
         /* default: nothing to do */
     }
+}
+
+/**
+ * Opens a ReadStream and waits for the file descriptor to be ready before
+ * returning it. Converts the stream `error` event into a promise rejection
+ * so callers can catch ENOENT with try/catch rather than it becoming an
+ * uncaught exception (which happens when the error fires after async work
+ * between stream creation and first read).
+ *
+ * @param {string} localPath
+ * @returns {Promise<import('fs').ReadStream>}
+ */
+export function openReadStream(localPath) {
+    return new Promise((resolve, reject) => {
+        const s = fs.createReadStream(localPath);
+        s.once('open', () => resolve(s));
+        s.once('error', (err) => {
+            s.destroy();
+            reject(err);
+        });
+    });
 }
 
 /**

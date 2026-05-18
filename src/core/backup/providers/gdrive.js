@@ -26,7 +26,7 @@
 import fs from 'fs';
 import path from 'path';
 import { Transform } from 'stream';
-import { BackupProvider, optionalDepError } from './base.js';
+import { BackupProvider, optionalDepError, openReadStream } from './base.js';
 import { encryptStream } from '../encryption.js';
 
 const APP_PROPERTY_KEY = 'tgdl-backup';
@@ -273,7 +273,7 @@ export class GoogleDriveProvider extends BackupProvider {
         const name = path.posix.basename(norm);
         const parentId = await this._ensurePathFolders(dir === '.' ? '' : dir);
 
-        let body = fs.createReadStream(localPath);
+        let body = await openReadStream(localPath);
         if (opts?.encryptKey) {
             body = body.pipe(encryptStream(opts.encryptKey));
         }

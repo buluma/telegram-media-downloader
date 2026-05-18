@@ -14,7 +14,7 @@ import fs from 'fs';
 import path from 'path';
 import { Transform } from 'stream';
 import SftpClient from 'ssh2-sftp-client';
-import { BackupProvider } from './base.js';
+import { BackupProvider, openReadStream } from './base.js';
 import { encryptStream } from '../encryption.js';
 
 export class SftpProvider extends BackupProvider {
@@ -122,7 +122,7 @@ export class SftpProvider extends BackupProvider {
             /* exists */
         }
 
-        let body = fs.createReadStream(localPath);
+        let body = await openReadStream(localPath);
         if (opts?.encryptKey) {
             body = body.pipe(encryptStream(opts.encryptKey));
         }
