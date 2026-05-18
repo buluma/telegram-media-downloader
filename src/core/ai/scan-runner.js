@@ -645,7 +645,12 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                             );
                         }
                     }
-                    _safeSetIndexed(row.id, log);
+                    // Only stamp when detection actually ran. null + file present
+                    // means the service was unavailable — leave ai_indexed_at NULL
+                    // so the next scan retries when the service recovers.
+                    if (!fileStillExists || detected !== null) {
+                        _safeSetIndexed(row.id, log);
+                    }
                     state.scanned += 1;
                     bump();
                 }
