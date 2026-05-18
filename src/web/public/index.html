@@ -169,6 +169,8 @@
 
 <body class="h-screen overflow-hidden" data-role="">
 
+    <a href="#content-area" class="skip-to-content">Skip to content</a>
+
     <!-- Offline / server-unreachable banner. Hidden by default; shown by
          statusbar.js when the WS stays disconnected for >5 s. -->
     <div id="offline-banner" class="hidden fixed top-0 inset-x-0 z-[200] flex items-center justify-between gap-3 px-4 py-2 bg-amber-500/90 backdrop-blur-sm text-white text-xs font-medium shadow-lg" role="alert" aria-live="assertive">
@@ -564,7 +566,7 @@
                                 <i class="ri-history-line text-tg-blue"></i>
                                 <span data-i18n="backfill.modal.title">Backfill history</span>
                             </h4>
-                            <div class="grid grid-cols-6 gap-1 text-[11px]">
+                            <div class="grid grid-cols-3 sm:grid-cols-6 gap-1 text-[11px]">
                                 <button class="tg-btn-secondary py-1 px-1" data-history-limit="5" data-i18n="backfill.preset.last_5">5</button>
                                 <button class="tg-btn-secondary py-1 px-1" data-history-limit="10" data-i18n="backfill.preset.last_10">10</button>
                                 <button class="tg-btn-secondary py-1 px-1" data-history-limit="100" data-i18n="backfill.preset.last_100">100</button>
@@ -621,13 +623,23 @@
                                 <i class="ri-alert-line"></i>
                                 <span data-i18n="group.data.actions">Danger zone</span>
                             </h4>
-                            <div class="grid grid-cols-2 gap-1.5">
-                                <button id="group-data-delete-files-btn" type="button" class="px-2 py-1.5 rounded bg-tg-orange/15 hover:bg-tg-orange/25 text-tg-orange text-[11px] font-medium inline-flex items-center justify-center gap-1 transition-colors">
-                                    <i class="ri-eraser-line"></i><span data-i18n="group.data.delete_files">Delete files</span>
+                            <div class="space-y-1.5">
+                                <!-- Delete files only — keeps group config, re-download is possible. -->
+                                <button id="group-data-delete-files-btn" type="button" class="w-full px-2 py-1.5 rounded bg-tg-orange/15 hover:bg-tg-orange/25 text-tg-orange text-[11px] font-medium inline-flex items-center justify-center gap-1 transition-colors">
+                                    <i class="ri-eraser-line"></i><span data-i18n="group.data.delete_files">Delete files only</span>
                                 </button>
-                                <button id="group-data-purge-btn" type="button" class="px-2 py-1.5 rounded bg-red-500/20 hover:bg-red-500/30 text-red-300 text-[11px] font-medium inline-flex items-center justify-center gap-1 transition-colors">
-                                    <i class="ri-delete-bin-line"></i><span data-i18n="group.data.wipe_all">Wipe all</span>
-                                </button>
+                                <!-- Wipe all — hidden behind disclosure so a mis-tap on
+                                     "Delete files" can't accidentally hit "Wipe all" too.
+                                     The confirmSheet inside the click handler is a second gate. -->
+                                <details class="group/wipe">
+                                    <summary class="text-[11px] text-tg-textSecondary hover:text-red-400 cursor-pointer list-none flex items-center gap-1 transition-colors select-none">
+                                        <i class="ri-arrow-right-s-line transition-transform group-open/wipe:rotate-90"></i>
+                                        <span data-i18n="group.data.wipe_reveal">Show destructive action…</span>
+                                    </summary>
+                                    <button id="group-data-purge-btn" type="button" class="mt-1.5 w-full px-2 py-1.5 rounded bg-red-500/20 hover:bg-red-500/30 text-red-300 text-[11px] font-medium inline-flex items-center justify-center gap-1 transition-colors">
+                                        <i class="ri-delete-bin-line"></i><span data-i18n="group.data.wipe_all">Wipe all data &amp; remove group</span>
+                                    </button>
+                                </details>
                             </div>
                         </div>
                     </div>
@@ -816,7 +828,7 @@
                  so their absolute dropdown menus aren't clipped by overflow-x-auto. -->
             <div id="media-tabs" class="flex items-center border-b border-tg-border bg-tg-bg">
                 <!-- Scrollable type + pinned tabs -->
-                <div class="flex flex-1 min-w-0 px-2 overflow-x-auto">
+                <div class="flex flex-1 min-w-0 px-2 overflow-x-auto" style="mask-image: linear-gradient(to right, black calc(100% - 2rem), transparent 100%)">
                     <div class="tab-item active" data-type="all" data-i18n="viewer.tab.all">All</div>
                     <div class="tab-item" data-type="images" data-i18n="viewer.tab.images">Photos</div>
                     <div class="tab-item" data-type="videos" data-i18n="viewer.tab.videos">Videos</div>
@@ -2130,7 +2142,7 @@
                          only to the selected subset. Clear button on the
                          right exits select-mode + drops the Set. -->
                     <div id="queue-selection-bar"
-                         class="hidden fixed left-1/2 -translate-x-1/2 bottom-4 z-30 bg-tg-panel border border-tg-border shadow-lg rounded-xl px-3 py-2 flex items-center gap-2 max-w-[calc(100vw-1rem)] flex-wrap"
+                         class="hidden fixed left-1/2 -translate-x-1/2 bottom-16 md:bottom-4 z-30 bg-tg-panel border border-tg-border shadow-lg rounded-xl px-3 py-2 flex items-center gap-2 max-w-[calc(100vw-1rem)] flex-wrap"
                          role="toolbar" aria-label="Batch actions">
                         <span id="queue-selection-count" class="text-xs text-tg-text font-medium px-2 tabular-nums"></span>
                         <span class="w-px h-5 bg-tg-border"></span>
@@ -2191,7 +2203,7 @@
                              patch the matching DOM row in place (no
                              re-render) so a 1000-job queue stays smooth
                              even with dozens of concurrent downloads. -->
-                        <div id="queue-viewport" class="overflow-y-auto" style="height: calc(100vh - 280px); min-height: 320px;">
+                        <div id="queue-viewport" class="overflow-y-auto" style="height: calc(100dvh - 280px); min-height: 320px;">
                             <div id="queue-rows" class="divide-y divide-tg-border/30"></div>
                             <div id="queue-load-more" class="flex items-center justify-center py-3 text-xs text-tg-textSecondary hidden">
                                 <i class="ri-loader-4-line animate-spin mr-2"></i>
@@ -4200,7 +4212,7 @@
                              viewport on landscape mobile (a 360 px-tall
                              screen made the previous calc()+min-height
                              pair drop the bottom rows below the nav bar). -->
-                        <pre id="logs-stream" class="bg-tg-bg/60 p-3 text-[11px] font-mono whitespace-pre overflow-auto leading-snug" style="height: clamp(240px, calc(100vh - 320px), 70vh);" role="log" aria-live="polite" aria-atomic="false" aria-label="Realtime server log"></pre>
+                        <pre id="logs-stream" class="bg-tg-bg/60 p-3 text-[11px] font-mono whitespace-pre overflow-auto leading-snug" style="height: clamp(240px, calc(100dvh - 320px), 70dvh);" role="log" aria-live="polite" aria-atomic="false" aria-label="Realtime server log"></pre>
                     </section>
                 </div>
 
@@ -4948,7 +4960,7 @@
                             <i class="ri-share-line mr-2"></i><span data-i18n="viewer.video.share">Share</span>
                         </button>
                         <button id="modal-delete" onclick="confirmDeleteFile()" data-admin-only
-                            class="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg text-sm text-white flex items-center font-medium transition"
+                            class="px-4 py-2 border border-red-500/50 hover:bg-red-500/20 rounded-lg text-sm text-red-400 flex items-center font-medium transition"
                             data-i18n-title="viewer.video.delete_title" title="Delete File">
                             <i class="ri-delete-bin-line mr-2"></i><span data-i18n="viewer.video.delete">Delete</span>
                         </button>
@@ -4963,7 +4975,7 @@
     </div>
 
     <!-- Toast -->
-    <div id="toast" class="fixed bottom-20 sm:bottom-4 left-1/2 -translate-x-1/2 z-50 hidden">
+    <div id="toast" class="fixed bottom-[72px] sm:bottom-4 left-1/2 -translate-x-1/2 z-50 hidden">
         <div class="bg-tg-panel border border-tg-border rounded-lg px-4 py-3 flex items-center gap-3 shadow-xl">
             <i id="toast-icon" class="ri-check-line text-tg-green"></i>
             <span id="toast-message" class="text-tg-text text-sm"></span>

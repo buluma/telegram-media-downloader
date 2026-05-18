@@ -282,6 +282,7 @@ function _patchSelectionDom() {
 
 function renderSelectionBar() {
     const bar = document.getElementById('queue-selection-bar');
+    const fab = document.getElementById('fab');
     const counter = document.getElementById('queue-selection-count');
     if (!bar) return;
     const n = _selected.size;
@@ -290,9 +291,13 @@ function renderSelectionBar() {
     // navigation and floats over Settings / Maintenance / etc.
     if (n === 0 || !view.visible) {
         bar.classList.add('hidden');
+        if (fab) fab.style.removeProperty('visibility');
         return;
     }
     bar.classList.remove('hidden');
+    // Hide FAB while batch-selection bar is up — both are fixed bottom-right
+    // on mobile and overlap at any viewport width under ~500 px.
+    if (fab) fab.style.visibility = 'hidden';
     if (counter) {
         counter.textContent = i18nTf(
             'queue.selection.count',

@@ -2736,6 +2736,29 @@ textarea:focus {
     outline: none;
 }
 
+/* Skip-to-content link — visually hidden until focused by keyboard.
+   Ensures keyboard users can bypass sidebar nav and land directly
+   on #content-area without tabbing through every nav item first. */
+.skip-to-content {
+    position: fixed;
+    top: -100%;
+    left: 0.5rem;
+    z-index: 300;
+    padding: 0.5rem 1rem;
+    background: var(--tg-blue, #2aabee);
+    color: #fff;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    text-decoration: none;
+    transition: top 0.1s ease;
+}
+.skip-to-content:focus {
+    top: 0.5rem;
+    outline: 2px solid #fff;
+    outline-offset: 2px;
+}
+
 /* Safe-area fillers for notched displays (mobile bottom-nav). */
 .pb-safe {
     padding-bottom: env(safe-area-inset-bottom);
@@ -2993,6 +3016,16 @@ html.theme-light .chat-row .account-chip {
    /api/auth_check before any UI mounts. */
 body[data-role="guest"] [data-admin-only] {
     display: none !important;
+}
+/* Guest sessions only see Library + Settings (2 of 5 bottom-nav slots).
+   Without this, the two visible flex:1 items each stretch to 50% of the
+   nav width and look misaligned. Center them at a fixed width instead. */
+body[data-role="guest"] .bottom-nav {
+    justify-content: center;
+    gap: 1.5rem;
+}
+body[data-role="guest"] .bottom-nav-item {
+    flex: 0 0 72px;
 }
 /* Onboarding banner is admin-flow only ("paste creds → add account
    → enable group" — every step is a write a guest can't do).
