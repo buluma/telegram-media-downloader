@@ -3,6 +3,9 @@
 // resolveDestination()'s ID-resolution chain (alias → InputEntity → Entity →
 // raw -100 InputPeerChannel fallback).
 
+import fs from 'fs/promises';
+import os from 'os';
+import path from 'path';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { AutoForwarder } from '../src/core/forwarder.js';
 
@@ -66,22 +69,28 @@ describe('AutoForwarder.process — dedup skip', () => {
     });
 
     it('proceeds normally when deduped is false', async () => {
-        const client = fakeClient({
-            getInputEntity: vi.fn().mockResolvedValue('me'),
-            sendFile: vi.fn().mockResolvedValue({ id: 42 }),
-        });
-        const fwd = new AutoForwarder(client, {
-            groups: [{ id: '1', autoForward: { enabled: true, destination: 'me' } }],
-        });
-        await fwd.process({
-            groupId: '1',
-            groupName: 'g',
-            filePath: '/some/file.jpg',
-            message: {},
-            mediaType: 'photos',
-            deduped: false,
-        });
-        expect(client.sendFile).toHaveBeenCalled();
+        const tmpFile = path.join(os.tmpdir(), `fwd-test-${Date.now()}.jpg`);
+        await fs.writeFile(tmpFile, 'x');
+        try {
+            const client = fakeClient({
+                getInputEntity: vi.fn().mockResolvedValue('me'),
+                sendFile: vi.fn().mockResolvedValue({ id: 42 }),
+            });
+            const fwd = new AutoForwarder(client, {
+                groups: [{ id: '1', autoForward: { enabled: true, destination: 'me' } }],
+            });
+            await fwd.process({
+                groupId: '1',
+                groupName: 'g',
+                filePath: tmpFile,
+                message: {},
+                mediaType: 'photos',
+                deduped: false,
+            });
+            expect(client.sendFile).toHaveBeenCalled();
+        } finally {
+            await fs.unlink(tmpFile).catch(() => {});
+        }
     });
 });
 

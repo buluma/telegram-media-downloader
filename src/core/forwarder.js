@@ -95,6 +95,15 @@ export class AutoForwarder {
             // 4. Upload & Send with retry — transient errors (FLOOD_WAIT,
             // network hiccups) get up to 3 attempts with exponential backoff.
             // FLOOD_WAIT carries the required wait in seconds; respect it.
+            try {
+                await fs.access(filePath);
+            } catch {
+                logger.warn(
+                    { file: path.basename(filePath) },
+                    '⚠️  [AutoForward] File missing on disk — skipping',
+                );
+                return;
+            }
             const MAX_ATTEMPTS = 3;
             let sentMsg;
             for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
