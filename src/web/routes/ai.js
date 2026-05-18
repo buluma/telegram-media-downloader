@@ -641,6 +641,11 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                         ready: !!sidecar.url && !!sidecar.endpoints?.wd14,
                         id: 'SmilingWolf WD14 tagger',
                     },
+                    tags: {
+                        enabled: true,
+                        loaded: !!(mlSidecar.ok && mlSidecar.endpoints?.tag),
+                        id: mlSidecar.clipModel ? `CLIP ${mlSidecar.clipModel} (tgdl-ml)` : '',
+                    },
                 },
                 bgQueue: (() => {
                     try {
