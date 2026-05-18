@@ -75,7 +75,12 @@ function extForMime(mime) {
  * @returns {Promise<{mime:string|null, fileType:string|null, ext:string|null, confident:boolean}>}
  */
 export async function sniffMediaFile(absPath) {
-    const fh = await fs.open(absPath, 'r');
+    let fh;
+    try {
+        fh = await fs.open(absPath, 'r');
+    } catch {
+        return { mime: null, fileType: null, ext: null, confident: false };
+    }
     try {
         const head = Buffer.alloc(4096);
         const { bytesRead } = await fh.read(head, 0, head.length, 0);
@@ -133,7 +138,7 @@ export async function sniffMediaFile(absPath) {
         ext = extForMime(mime);
         return { mime, fileType: fileTypeForMime(mime), ext, confident };
     } finally {
-        await fh.close().catch(() => {});
+        await fh?.close().catch(() => {});
     }
 }
 
