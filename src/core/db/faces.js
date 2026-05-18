@@ -504,35 +504,6 @@ export function getUnscannedOcrBatch({ fileTypes = ['photo'], limit = 50 } = {})
         .all(...types, Math.max(1, Math.min(500, Number(limit) || 50)));
 }
 
-export function getUnscannedTagsBatch({ fileTypes = ['photo'], limit = 50 } = {}) {
-    const types = Array.isArray(fileTypes) && fileTypes.length ? fileTypes : ['photo'];
-    const placeholders = types.map(() => '?').join(',');
-    return getDb()
-        .prepare(`
-        SELECT id, group_id, group_name, file_name, file_path, file_type, file_size, created_at
-          FROM downloads
-         WHERE file_type IN (${placeholders})
-           AND id NOT IN (SELECT DISTINCT download_id FROM image_tags)
-           AND LOWER(file_name) NOT LIKE '%.webp'
-         ORDER BY created_at ASC, id ASC
-         LIMIT ?
-    `)
-        .all(...types, Math.max(1, Math.min(500, Number(limit) || 50)));
-}
-
-export function countUnscannedTags({ fileTypes = ['photo'] } = {}) {
-    const types = Array.isArray(fileTypes) && fileTypes.length ? fileTypes : ['photo'];
-    const placeholders = types.map(() => '?').join(',');
-    return getDb()
-        .prepare(`
-        SELECT COUNT(*) AS n FROM downloads
-         WHERE file_type IN (${placeholders})
-           AND id NOT IN (SELECT DISTINCT download_id FROM image_tags)
-           AND LOWER(file_name) NOT LIKE '%.webp'
-    `)
-        .get(...types).n;
-}
-
 /**
  * Counters for the Maintenance → AI page header. One COUNT per capability
  * + a totalEligible/indexed roll-up so the UI can paint progress bars
@@ -868,7 +839,7 @@ export function buildMetadataText(downloadId) {
         }
     };
 
-    // Top CLIP tags (threshold 0.2 keeps only meaningful labels)
+    // OCR-derived keyword tags (threshold 0.2 keeps only frequent tokens)
     const tags = db
         .prepare(
             `SELECT tag FROM image_tags WHERE download_id = ? AND score >= 0.2 ORDER BY score DESC LIMIT 30`,

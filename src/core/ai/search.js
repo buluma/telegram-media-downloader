@@ -3,7 +3,7 @@
  *
  * Combines five signal sources into one ranked result set:
  *   1. **Semantic** — CLIP image embedding cosine similarity (sidecar)
- *   2. **Tags** — CLIP zero-shot tag matches (image_tags table)
+ *   2. **Tags** — OCR-derived keyword matches (image_tags table) and WD14 tags (image_tags_wd14)
  *   3. **People** — labelled person matches (faces → people table)
  *   4. **Text / OCR** — OCR text substring match (image_text table)
  *   5. **Filename** — keyword match on file_name / group_name (downloads)
@@ -417,8 +417,8 @@ function _matchTextSemantic(embedding, fileTypes) {
 }
 
 /**
- * Tag matcher — find images whose CLIP or WD14 tags match any query token.
- * Queries both `image_tags` (CLIP) and `image_tags_wd14` (WD14) and returns
+ * Tag matcher — find images whose OCR-derived or WD14 tags match any query token.
+ * Queries both `image_tags` (OCR keywords) and `image_tags_wd14` (WD14) and returns
  * the highest-scoring match per download ID.
  * Returns Map<downloadId, score> where score = max matching tag score.
  */

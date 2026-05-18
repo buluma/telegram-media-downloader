@@ -19,7 +19,6 @@ import {
     _bgQueueDepths as aiBgQueueDepths,
 } from '../../core/ai/index.js';
 import {
-    startTagsScan as aiStartTagsScan,
     startOcrScan as aiStartOcrScan,
     startWd14Scan as aiStartWd14Scan,
 } from '../../core/ai/scan-runner.js';
@@ -57,7 +56,6 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
     // Provide jobTrackers-compatible access via the injected jobTrackers dep.
     function _aiTrackerFor(feature) {
         if (feature === 'faces') return jobTrackers.aiPeople;
-        if (feature === 'tags') return jobTrackers.aiTags;
         if (feature === 'ocr') return jobTrackers.aiOcr;
         if (feature === 'wd14') return jobTrackers.aiWd14;
         return null;
@@ -78,7 +76,6 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
 
     function _aiStarterFor(feature) {
         if (feature === 'faces') return aiStartFacesScan;
-        if (feature === 'tags') return aiStartTagsScan;
         if (feature === 'ocr') return aiStartOcrScan;
         if (feature === 'wd14') return aiStartWd14Scan;
         return null;
@@ -349,32 +346,8 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             samples: fkRows.slice(0, 20),
         });
 
-        const sentinelRows = db
-            .prepare(
-                `SELECT t.download_id AS id, d.file_name, d.file_path, d.file_type
-                   FROM image_tags t
-                   LEFT JOIN downloads d ON d.id = t.download_id
-                  WHERE t.tag = '_scanned_'
-                  ORDER BY t.download_id DESC
-                  LIMIT 20`,
-            )
-            .all();
-        const sentinelCount = db
-            .prepare(
-                `SELECT COUNT(DISTINCT download_id) AS n FROM image_tags WHERE tag = '_scanned_'`,
-            )
-            .get().n;
-        push({
-            type: 'clip_empty_sentinel',
-            severity: 'info',
-            title: 'CLIP rows with no returned tags',
-            count: sentinelCount,
-            detail: 'Rows stamped with _scanned_. Some are valid no-tag results; many may indicate invalid media or sidecar failures from earlier runs.',
-            samples: sentinelRows,
-        });
-
         const scanErrors = [];
-        for (const feature of ['faces', 'tags', 'ocr', 'wd14']) {
+        for (const feature of ['faces', 'ocr', 'wd14']) {
             const s = aiGetScanState(feature);
             if (s?.error) scanErrors.push({ feature, error: s.error, finishedAt: s.finishedAt });
         }
@@ -394,14 +367,6 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             title: 'AI sidecar offline',
             count: sidecar.url ? 0 : 1,
             detail: 'Sidecar-dependent scans cannot run until the sidecar is available.',
-            samples: [],
-        });
-        push({
-            type: 'clip_not_ready',
-            severity: 'warn',
-            title: 'CLIP tagger not ready',
-            count: sidecar.url && !sidecar.endpoints.tag ? 1 : 0,
-            detail: 'CLIP tag scans will be blocked until /health or /info reports clip_ready.',
             samples: [],
         });
 
@@ -498,7 +463,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             severity: 'warn',
             title: 'Photo rows that are not decodable images',
             count: invalidPhotos,
-            detail: 'These rows would fail image-only scanners such as CLIP tags or NSFW.',
+            detail: 'These rows would fail image-only scanners such as OCR or NSFW.',
             samples: invalidSamples,
         });
         push({
@@ -595,7 +560,6 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                 mlSidecar,
                 scans: {
                     faces: aiGetScanState('faces'),
-                    tags: aiGetScanState('tags'),
                     ocr: aiGetScanState('ocr'),
                     wd14: aiGetScanState('wd14'),
                 },
@@ -649,35 +613,6 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                             bundled: !cfg.facesModel,
                             providers,
                             providersRequested: String(facesBlock.providers || 'auto'),
-                        };
-                    })(),
-                    tags: await (async () => {
-                        const enabled = cfg.imageTagging === true;
-                        let loaded = false;
-                        let vocabularySize = 0;
-                        let modelId = '';
-                        try {
-                            const info = sidecar.info || sidecar.health;
-                            if (info) {
-                                if (info.provider === 'tgdl-ml') {
-                                    loaded = !!(info.endpoints?.tag ?? sidecar.endpoints?.tag);
-                                    modelId = info.models?.clip || info.clip_model || '';
-                                } else {
-                                    loaded = info.clip_ready === true;
-                                    vocabularySize = info.clip_vocabulary_size || 0;
-                                    modelId = info.clip_model || '';
-                                }
-                            }
-                        } catch {
-                            /* probe failed — leave defaults */
-                        }
-                        return {
-                            id: modelId || 'tgdl-ml:ViT-B-32__openai',
-                            dim: 512,
-                            dtype: 'fp32',
-                            enabled,
-                            loaded,
-                            vocabularySize,
                         };
                     })(),
                     ocr: await (async () => {
@@ -1133,7 +1068,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                 '- "all" = every sub-rule must match (AND).',
                 '- "any" = at least one must match (OR).',
                 '- Combine all/any for complex logic.',
-                '- "tags_contains" for CLIP tag matches — ONLY use tags from AVAILABLE TAGS list.',
+                '- "tags_contains" for OCR-derived keyword matches — ONLY use tags from AVAILABLE TAGS list.',
                 '- "people_count" for minimum people in photo.',
                 '- "semantic" for natural-language similarity (person names, moods, scenes).',
                 '- "text_contains" for OCR text search.',
@@ -1201,12 +1136,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
     });
 
     // ---- Scan controls -------------------------------------------------------
-    //
-    // Faces is the only feature left; the legacy `feature: 'embed' | 'tags'`
-    // branches have been removed. The handler still accepts a `feature`
-    // field so older clients fail with a clear `unknown feature` error
-    // rather than a silent no-op.
-    const AI_SCAN_FEATURES = new Set(['faces', 'tags', 'ocr', 'wd14']);
+    const AI_SCAN_FEATURES = new Set(['faces', 'ocr', 'wd14']);
 
     // JobTracker integration for AI scans:
     //   The scan-runner module already owns the per-feature state machine
@@ -1228,26 +1158,20 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             }
             const feature = String(req.body?.feature || '').toLowerCase();
             if (!AI_SCAN_FEATURES.has(feature)) {
-                return res.status(400).json({ error: 'feature must be embed|tags|faces' });
+                return res.status(400).json({ error: 'feature must be faces|ocr|wd14' });
             }
             if (aiIsScanRunning(feature)) {
                 return res
                     .status(409)
                     .json({ error: 'Scan already running', code: 'ALREADY_RUNNING' });
             }
-            if (['tags', 'ocr', 'wd14'].includes(feature)) {
+            if (['ocr', 'wd14'].includes(feature)) {
                 const sidecar = await _getAiSidecarSnapshot();
                 const mlOcrReady = feature === 'ocr' && isTgdlMlEnabled();
                 if (!sidecar.url && !mlOcrReady) {
                     return res.status(503).json({
                         error: 'AI sidecar is not running — start/restart the sidecar before scanning.',
                         code: 'SIDECAR_OFFLINE',
-                    });
-                }
-                if (feature === 'tags' && !sidecar.endpoints.tag) {
-                    return res.status(503).json({
-                        error: 'CLIP tagger is not ready on the sidecar.',
-                        code: 'TAGGER_NOT_READY',
                     });
                 }
                 if (feature === 'ocr' && !sidecar.endpoints.ocr && !mlOcrReady) {
@@ -1258,9 +1182,6 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                 }
             }
             // Allow request-level parameter overrides (e.g., confidence sliders)
-            if (feature === 'tags' && typeof req.body?.minScore === 'number') {
-                cfg.wd14MinScore = Math.max(0, Math.min(1, req.body.minScore));
-            }
             if (feature === 'ocr' && typeof req.body?.language === 'string') {
                 cfg.ocrLanguage = req.body.language.trim() || 'eng';
             }
@@ -1389,7 +1310,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
     router.post('/ai/scan/cancel', async (req, res) => {
         const feature = String(req.body?.feature || '').toLowerCase();
         if (!AI_SCAN_FEATURES.has(feature)) {
-            return res.status(400).json({ error: 'feature must be embed|tags|faces' });
+            return res.status(400).json({ error: 'feature must be faces|ocr|wd14' });
         }
         const ok = aiCancelScan(feature);
         // Finish any running job for this feature
@@ -1408,7 +1329,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
     router.get('/ai/scan/status', async (req, res) => {
         const feature = String(req.query?.feature || '').toLowerCase();
         if (!AI_SCAN_FEATURES.has(feature)) {
-            return res.status(400).json({ error: 'feature must be embed|tags|faces' });
+            return res.status(400).json({ error: 'feature must be faces|ocr|wd14' });
         }
         res.json({ success: true, state: aiGetScanState(feature) });
     });
@@ -2464,7 +2385,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         try {
             // Cancel any in-flight scan before nuking the artefacts.
             let cancelled = 0;
-            for (const f of ['embed', 'tags', 'faces', 'ocr', 'wd14']) {
+            for (const f of ['embed', 'faces', 'ocr', 'wd14']) {
                 if (aiCancelScan(f)) cancelled += 1;
             }
             // Settle one tick so the scan loops see the abort signal.

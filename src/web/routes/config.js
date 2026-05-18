@@ -378,16 +378,12 @@ export function createConfigRouter({
                     ai.semanticSearch.embedOnDownload = ai.semanticSearch.embedOnDownload === true;
                     ai.semanticSearch.batchSize = clampInt(ai.semanticSearch.batchSize, 1, 512, 32);
                 }
-                ai.autoTags = ai.autoTags !== false;
                 ai.faceClustering = ai.faceClustering !== false;
-                ai.model =
-                    typeof ai.model === 'string' && ai.model.trim()
-                        ? ai.model.trim()
-                        : 'Xenova/clip-vit-base-patch32';
+                ai.model = typeof ai.model === 'string' && ai.model.trim() ? ai.model.trim() : '';
                 // Per-capability overrides — string only, empty = inherit
                 // from the master `model`. Trimmed; never auto-filled so the
                 // UI can render an empty field as "inherit".
-                for (const k of ['searchModel', 'tagsModel', 'facesModel']) {
+                for (const k of ['searchModel', 'facesModel']) {
                     ai[k] = typeof ai[k] === 'string' ? ai[k].trim() : '';
                 }
                 const AI_DTYPES = new Set(['q8', 'fp16', 'fp32', 'q4']);
@@ -397,16 +393,7 @@ export function createConfigRouter({
                 ai.dtype = AI_DTYPES.has(aiDIn) ? aiDIn : 'q8';
                 ai.indexConcurrency = clampInt(ai.indexConcurrency, 1, 4, 1);
                 ai.batchSize = clampInt(ai.batchSize, 1, 200, 16);
-                ai.maxTagsPerImage = clampInt(ai.maxTagsPerImage, 1, 20, 5);
-                // tagsMode allow-list — anything off-list snaps back to 'auto'.
-                const TAGS_MODES = new Set(['auto', 'zero-shot', 'classifier']);
-                ai.tagsMode = TAGS_MODES.has(String(ai.tagsMode || '').toLowerCase())
-                    ? String(ai.tagsMode).toLowerCase()
-                    : 'auto';
                 // Float clamps via integer round-trip so the same helper applies.
-                ai.minTagScore =
-                    clampInt(Math.round((Number(ai.minTagScore) || 0.2) * 1000), 0, 1000, 200) /
-                    1000;
                 ai.facesEpsilon =
                     clampInt(Math.round((Number(ai.facesEpsilon) || 0.5) * 1000), 100, 1500, 500) /
                     1000;
@@ -416,36 +403,6 @@ export function createConfigRouter({
                     .map((s) => String(s).toLowerCase())
                     .filter((s) => AI_FILE_TYPES.includes(s));
                 if (!ai.fileTypes.length) ai.fileTypes = ['photo'];
-                // Tag labels — strip non-strings + dedup. Cap at 200 so a
-                // pasted thesaurus can't blow up tokenizer batch size.
-                ai.tagLabels = (Array.isArray(ai.tagLabels) ? ai.tagLabels : [])
-                    .map((s) => String(s).trim())
-                    .filter(Boolean);
-                ai.tagLabels = [...new Set(ai.tagLabels)].slice(0, 200);
-                if (!ai.tagLabels.length) {
-                    // Fall back to the default list if the operator wiped it
-                    // — saving an empty list would otherwise silently disable
-                    // tagging until they edited config again.
-                    ai.tagLabels = [
-                        'portrait',
-                        'landscape',
-                        'group_photo',
-                        'selfie',
-                        'food',
-                        'document',
-                        'screenshot',
-                        'meme',
-                        'logo',
-                        'indoor',
-                        'outdoor',
-                        'animal',
-                        'pet',
-                        'vehicle',
-                        'building',
-                        'art',
-                        'text',
-                    ];
-                }
                 // hfToken — string only; trim. Empty string = no token, which
                 // is the recommended default (every model is public).
                 ai.hfToken = typeof ai.hfToken === 'string' ? ai.hfToken.trim().slice(0, 200) : '';

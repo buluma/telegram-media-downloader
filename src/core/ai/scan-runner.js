@@ -34,18 +34,15 @@ import {
     setImageTags,
 } from '../db.js';
 import {
-    countUnscannedTags,
     countUnscannedWd14,
     getUnscannedOcrBatch,
-    getUnscannedTagsBatch,
     getUnscannedWd14Batch,
     setWd14Tags,
 } from '../db/faces.js';
 import { clusterFaces, computeFaceQualityScore, detectFaces } from './faces.js';
 import { resolveFacesValue } from './faces-config.js';
 import { detectFacesBatch, getSidecarUrl } from './faces-client.js';
-import { mlOcr, mlTag, isTgdlMlEnabled, getTgdlMlUrl } from './tgdl-ml-client.js';
-import { getVocabularyPreset } from './tag-vocabulary.js';
+import { mlOcr, isTgdlMlEnabled, getTgdlMlUrl } from './tgdl-ml-client.js';
 import { hasFfmpeg, resolveFfmpegBin } from '../thumbs.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -125,6 +122,7 @@ function _makeCircuitBreaker(maxFails = 5) {
 // Per-feature state.
 const _scans = {
     faces: _emptyState(),
+    ocr: _emptyState(),
     wd14: _emptyState(),
 };
 
@@ -808,213 +806,110 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
     );
 }
 
-// ---- Tags scan (CLIP-based zero-shot tagging) ---------------------------
+// ---- OCR-derived keyword tags -------------------------------------------
 
 /**
- * Start a background scan that tags every unindexed photo via the Python
- * sidecar's ``/tag`` endpoint. Single-flight — a second call while one is
- * running returns ``{ alreadyRunning: true }``.
- *
- * Tags are persisted into the ``image_tags`` table via ``setImageTags()``
- * and ``ai_indexed_at`` is stamped so the row isn't re-processed.
+ * Tokenise OCR text into keyword tags stored in `image_tags`.
+ * Returns [{tag, score}] — score is normalised word frequency (0–1).
+ * Empty text returns a single sentinel so the row isn't re-processed.
  */
-export function startTagsScan(cfg, onProgress, onDone, onLog) {
-    return _runScan(
-        'tags',
-        cfg,
-        async (state, signal, bump, log, cfg) => {
-            const fileTypes = Array.isArray(cfg.fileTypes) ? cfg.fileTypes : ['photo'];
-
-            const total = countUnscannedTags({ fileTypes });
-            state.total = total;
-            bump();
-            log('info', `tags scan: ${total} files to tag`);
-
-            if (total === 0) {
-                log('info', 'tags scan: nothing to tag');
-                return;
-            }
-
-            const useMlTag = isTgdlMlEnabled();
-            const sidecarUrl = useMlTag ? null : getSidecarUrl();
-            if (!useMlTag && !sidecarUrl) {
-                throw new Error(
-                    'No tagging provider available — cannot tag images. ' +
-                        'Start tgdl-ml or check the AI maintenance page.',
-                );
-            }
-
-            const mlTagGuard = useMlTag ? _makeCircuitBreaker() : null;
-
-            // Resolve tag vocabulary: explicit list > named preset > sidecar default.
-            const presetLabels = cfg.tagVocabularyPreset
-                ? (getVocabularyPreset(String(cfg.tagVocabularyPreset)) ?? [])
-                : [];
-            const tagLabels =
-                Array.isArray(cfg.tagLabels) && cfg.tagLabels.length
-                    ? cfg.tagLabels.filter(Boolean)
-                    : presetLabels;
-
-            const batchSize = Math.max(1, Math.min(200, Number(cfg.batchSize) || 64));
-            const concurrency = Math.max(1, Math.min(8, Number(cfg.tagConcurrency) || 2));
-
-            // Learned at runtime: once a 403 path_not_allowed is seen, skip
-            // the path attempt for every subsequent image in this scan run.
-            let skipPathMode = false;
-
-            while (!signal.aborted) {
-                const batch = getUnscannedTagsBatch({ fileTypes, limit: batchSize });
-                if (!batch.length) break;
-
-                // Process batch with a fixed-width worker pool so `concurrency`
-                // requests are in-flight to the sidecar at any given time.
-                const queue = [...batch];
-                const workers = Array.from(
-                    { length: Math.min(concurrency, queue.length) },
-                    async () => {
-                        while (queue.length && !signal.aborted) {
-                            const row = queue.shift();
-                            if (!row) break;
-                            const abs = _resolveAbs(row.file_path);
-                            let tags = [];
-                            if (abs) {
-                                try {
-                                    if (useMlTag) {
-                                        const result = await mlTagGuard(() =>
-                                            mlTag(abs, {
-                                                vocabulary: tagLabels.length
-                                                    ? tagLabels
-                                                    : undefined,
-                                            }),
-                                        );
-                                        tags = result.tags;
-                                    } else {
-                                        const result = await _tagOne(
-                                            sidecarUrl,
-                                            abs,
-                                            tagLabels,
-                                            log,
-                                            skipPathMode,
-                                        );
-                                        tags = result.tags;
-                                        if (result.pathModeDisabled) skipPathMode = true;
-                                    }
-                                } catch (e) {
-                                    if (e?.fatal) throw e;
-                                    log(
-                                        'warn',
-                                        `tagging failed for id=${row.id}: ${e?.message || e}`,
-                                    );
-                                }
-                            }
-                            // DB writes are synchronous — safe across concurrent JS tasks.
-                            _safeSetImageTagsForDownload(
-                                row.id,
-                                Array.isArray(tags) && tags.length
-                                    ? tags.map((t) => ({ tag: t.tag, score: t.score }))
-                                    : [{ tag: '_scanned_', score: 0 }],
-                                log,
-                                'tags scan',
-                            );
-                            state.scanned += 1;
-                            bump();
-                        }
-                    },
-                );
-                await Promise.all(workers);
-            }
-            log('info', `tags scan: finished — ${state.scanned} files tagged`);
-        },
-        onProgress,
-        onDone,
-        onLog,
-    );
-}
-
-/**
- * Call the Python sidecar's ``POST /tag`` for one image.
- * Returns ``[{tag, score}, …]`` or an empty array on failure.
- *
- * If ``tagLabels`` is non-empty, it overrides the sidecar's default
- * vocabulary for this request.
- */
-async function _tagOne(sidecarUrl, absPath, tagLabels, log, skipPathMode = false) {
-    const url = `${sidecarUrl.replace(/\/+$/, '')}/tag`;
-    const baseBody = {};
-    if (Array.isArray(tagLabels) && tagLabels.length) {
-        baseBody.vocabulary = tagLabels;
+function _deriveTagsFromOcrText(text) {
+    if (!text || typeof text !== 'string' || !text.trim()) {
+        return [{ tag: '_scanned_', score: 0 }];
     }
-
-    const _post = async (body) =>
-        fetch(url, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify(body),
-            signal: AbortSignal.timeout(60000),
-        });
-
-    const _b64Body = async () => {
-        const { readFile } = await import('node:fs/promises');
-        const bytes = await readFile(absPath);
-        return { ...baseBody, image_b64: bytes.toString('base64') };
-    };
-
-    try {
-        let pathModeDisabled = false;
-        let res;
-        let errBody = null;
-
-        if (skipPathMode) {
-            res = await _post(await _b64Body());
-        } else {
-            res = await _post({ ...baseBody, path: absPath });
-            if (!res.ok) errBody = await res.json().catch(() => ({}));
-            if (
-                (res.status === 403 && errBody?.code === 'path_not_allowed') ||
-                (res.status === 404 && errBody?.code === 'file_not_found')
-            ) {
-                // 403 means path mode is disabled/not allowed. 404+file_not_found
-                // can also happen for files that exist but are unreadable via
-                // path mode; fall back to base64 before treating it as a skip.
-                if (res.status === 403) pathModeDisabled = true;
-                res = await _post(await _b64Body());
-                errBody = null;
-            }
+    const STOPWORDS = new Set([
+        'the',
+        'a',
+        'an',
+        'and',
+        'or',
+        'but',
+        'in',
+        'on',
+        'at',
+        'to',
+        'for',
+        'of',
+        'with',
+        'by',
+        'from',
+        'as',
+        'is',
+        'are',
+        'was',
+        'were',
+        'be',
+        'been',
+        'being',
+        'have',
+        'has',
+        'had',
+        'do',
+        'does',
+        'did',
+        'will',
+        'would',
+        'could',
+        'should',
+        'may',
+        'might',
+        'shall',
+        'can',
+        'that',
+        'this',
+        'these',
+        'those',
+        'it',
+        'its',
+        'we',
+        'our',
+        'you',
+        'your',
+        'he',
+        'she',
+        'they',
+        'their',
+        'them',
+        'him',
+        'her',
+        'i',
+        'me',
+        'my',
+        'not',
+        'no',
+        'nor',
+        'so',
+        'yet',
+        'both',
+        'either',
+        'neither',
+        'also',
+        'just',
+        'more',
+        'than',
+        'then',
+        'when',
+        'where',
+        'who',
+        'which',
+        'what',
+        'how',
+    ]);
+    const freq = new Map();
+    for (const tok of text
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .split(/\s+/)) {
+        if (tok.length >= 3 && !STOPWORDS.has(tok)) {
+            freq.set(tok, (freq.get(tok) || 0) + 1);
         }
-
-        if (!res.ok) {
-            if (!errBody) errBody = await res.json().catch(() => ({}));
-            const code = String(errBody?.code || '');
-            const msg = `tag endpoint returned ${res.status}${code ? ` (${code})` : ''} for ${absPath}`;
-            log('warn', msg);
-            if (res.status === 404 && !code) {
-                const err = new Error(
-                    `${msg} — sidecar does not expose /tag; upgrade/restart the faces sidecar or disable CLIP tags`,
-                );
-                err.code = 'TAG_ENDPOINT_UNAVAILABLE';
-                err.fatal = true;
-                throw err;
-            }
-            if (
-                res.status === 400 ||
-                res.status === 415 ||
-                code === 'file_not_found' ||
-                code === 'image_decode_failed'
-            ) {
-                return { tags: [], pathModeDisabled };
-            }
-            const err = new Error(`${msg}: ${errBody?.error || errBody?.detail || res.statusText}`);
-            err.code = code || `HTTP_${res.status}`;
-            err.fatal = true;
-            throw err;
-        }
-        const data = await res.json();
-        return { tags: Array.isArray(data?.tags) ? data.tags : [], pathModeDisabled };
-    } catch (e) {
-        if (e?.fatal) throw e;
-        log('warn', `tag request failed for ${absPath}: ${e?.message || e}`);
-        return { tags: [], pathModeDisabled: false };
     }
+    if (!freq.size) return [{ tag: '_scanned_', score: 0 }];
+    const maxFreq = Math.max(...freq.values());
+    return Array.from(freq.entries())
+        .map(([tag, count]) => ({ tag, score: Math.min(1, count / maxFreq) }))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 50);
 }
 
 /**
@@ -1055,6 +950,7 @@ export function startOcrScan(cfg, onProgress, onDone, onLog) {
                     if (!absPath) {
                         log('warn', `ocr: file not found: ${row.file_path}`);
                         setImageText(row.id, '', null, null);
+                        _safeSetOcrTags(row.id, '', log);
                         state.scanned += 1;
                         bump();
                         continue;
@@ -1063,6 +959,7 @@ export function startOcrScan(cfg, onProgress, onDone, onLog) {
                     if (row.file_type !== 'photo') {
                         log('debug', `ocr: skipping non-photo: ${row.file_name}`);
                         setImageText(row.id, '', null, null);
+                        _safeSetOcrTags(row.id, '', log);
                         state.scanned += 1;
                         bump();
                         continue;
@@ -1082,18 +979,21 @@ export function startOcrScan(cfg, onProgress, onDone, onLog) {
                                   }),
                               )
                             : await _extractTextOne(sidecarUrl, absPath, lang, log);
+                        const text = result?.text || '';
                         // Always write a row (even empty) so the same image
                         // isn't picked up on the next batch query.
                         setImageText(
                             row.id,
-                            result?.text || '',
+                            text,
                             result?.language || null,
                             result?.confidence || null,
                         );
+                        _safeSetOcrTags(row.id, text, log);
                     } catch (e) {
                         if (e?.fatal) throw e;
                         log('warn', `ocr failed for id=${row.id}: ${e?.message || e}`);
                         setImageText(row.id, '', null, null);
+                        _safeSetOcrTags(row.id, '', log);
                     }
                     state.scanned += 1;
                     bump();
@@ -1264,14 +1164,14 @@ function _isForeignKeyError(e) {
     return /FOREIGN KEY/i.test(String(e?.message || e));
 }
 
-function _safeSetImageTagsForDownload(downloadId, tags, log, context = 'image tags') {
+function _safeSetOcrTags(downloadId, text, log) {
     try {
         clearImageTagsForDownload(downloadId);
-        setImageTags(downloadId, tags);
+        setImageTags(downloadId, _deriveTagsFromOcrText(text));
         return true;
     } catch (e) {
         if (_isForeignKeyError(e)) {
-            log('warn', `${context}: download row vanished while writing tags id=${downloadId}`);
+            log('warn', `ocr tags: download row vanished while writing tags id=${downloadId}`);
             return false;
         }
         throw e;
@@ -1319,6 +1219,6 @@ function _safeSetIndexed(downloadId, log) {
 /** For tests — clear in-memory state so the next test starts fresh. */
 export function _resetForTests() {
     _scans.faces = _emptyState();
-    _scans.tags = _emptyState();
+    _scans.ocr = _emptyState();
     _scans.wd14 = _emptyState();
 }

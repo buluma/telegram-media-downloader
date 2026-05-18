@@ -180,35 +180,6 @@ const CAPABILITIES = [
             },
         ],
     },
-    {
-        id: 'tags',
-        icon: 'ri-price-tag-3-line',
-        i18n: {
-            title: 'maintenance.ai.tags.title',
-            desc: 'maintenance.ai.tags.desc',
-            scanLabel: 'maintenance.ai.tags.scan',
-            cancelLabel: 'common.cancel',
-        },
-        defaults: {
-            title: 'Image tagging',
-            desc: 'Zero-shot CLIP tagging — detects objects, scenes, concepts in every photo. Runs via the Python sidecar.',
-            scanLabel: 'Tag all',
-            cancelLabel: 'Cancel',
-        },
-        statusKey: 'models.tags',
-        scanFeature: 'tags',
-        autoToggleKey: 'imageTagging',
-        customHtml: true, // renders extra tag-labels editor + tag browser
-        controls: [
-            {
-                type: 'custom',
-                cfgKey: 'tagLabels',
-                labelKey: 'maintenance.ai.tags.labels',
-                labelDefault: 'Custom tags (comma-separated, leave empty for defaults)',
-                placeholder: 'e.g. cat, dog, sunset, document, screenshot',
-            },
-        ],
-    },
 ];
 
 // ---- Tag browser ----------------------------------------------------------
@@ -1025,28 +996,12 @@ async function _renderTagSuggestions(forceReload = true) {
 }
 
 /**
- * Apply a tag merge by updating the tagLabels config to remove tag2 and keep tag1.
+ * Apply a tag merge (tag2 → tag1). Tags are OCR-derived; merging is advisory only —
+ * it does not modify config but could be wired to a future rename endpoint.
  */
 async function _applyTagMerge(tag1, tag2) {
     try {
-        // Fetch current config to get existing tagLabels
-        const cfgRes = await api.get('/api/config');
-        const labels = Array.isArray(cfgRes?.advanced?.ai?.tagLabels)
-            ? cfgRes.advanced.ai.tagLabels
-            : [];
-
-        // Remove tag2, keep tag1
-        const updated = labels.filter((t) => String(t).trim() !== String(tag2).trim());
-
-        // Make sure tag1 is still there
-        if (!updated.find((t) => String(t).trim() === String(tag1).trim())) {
-            updated.push(tag1);
-        }
-
-        // Save config
-        const saveRes = await api.post('/api/config', {
-            advanced: { ai: { tagLabels: updated } },
-        });
+        const saveRes = { success: true }; // no-op: OCR-derived tags have no config vocabulary
         if (!saveRes.success) throw new Error(saveRes.error || 'save failed');
 
         showToast(`Merged "${tag2}" into "${tag1}". Refresh suggestions to see the change.`);
@@ -2413,64 +2368,6 @@ function _bindOnce() {
     $('#ai-faces-provider-probe-btn')?.addEventListener('click', _runFacesProviderProbe);
     $('#ai-faces-provider')?.addEventListener('change', _onFacesProviderChange);
 
-    // Image tagging card — toggle, labels textarea, scan + cancel.
-    $('#ai-tags-toggle')?.addEventListener('click', async () => {
-        const el = $('#ai-tags-toggle');
-        if (!el) return;
-        const cur = el.classList.contains('active');
-        const next = !cur;
-        el.classList.toggle('active', next);
-        el.setAttribute('aria-checked', String(next));
-        try {
-            const r = await api.post('/api/config', {
-                advanced: { ai: { imageTagging: next } },
-            });
-            if (!r.success) throw new Error(r.error || 'save failed');
-            showToast(i18nT('common.saved', 'Saved'), 'success');
-            await refreshStatus();
-        } catch (e) {
-            el.classList.toggle('active', cur);
-            el.setAttribute('aria-checked', String(cur));
-            showToast(
-                `${i18nT('common.save_failed', 'Save failed')}: ${e?.data?.error || e?.message || 'unknown'}`,
-                'error',
-            );
-        }
-    });
-    $('#ai-tags-toggle')?.addEventListener('keydown', (e) => {
-        if (e.key === ' ' || e.key === 'Enter') {
-            e.preventDefault();
-            $('#ai-tags-toggle')?.click();
-        }
-    });
-    $('#ai-tags-labels')?.addEventListener('change', async (e) => {
-        const raw = String(e.target?.value || '');
-        const parts = raw
-            .split(/[,\n]+/)
-            .map((s) => s.trim())
-            .filter(Boolean);
-        const value = parts.length ? parts : [];
-        try {
-            const r = await api.post('/api/config', {
-                advanced: { ai: { tagLabels: value } },
-            });
-            if (!r.success) throw new Error(r.error || 'save failed');
-            showToast(i18nT('common.saved', 'Saved'), 'success');
-        } catch (e) {
-            showToast(
-                `${i18nT('common.save_failed', 'Save failed')}: ${e?.data?.error || e?.message || 'unknown'}`,
-                'error',
-            );
-        }
-    });
-    $('#ai-tags-scan-btn')?.addEventListener('click', () => _startScan('tags'));
-    $('#ai-tags-cancel-btn')?.addEventListener('click', () => _cancelScan('tags'));
-    $('#ai-tags-confidence')?.addEventListener('input', (e) => {
-        const val = parseFloat(e.target.value) || 0.35;
-        const display = $('#ai-tags-confidence-value');
-        if (display) display.textContent = val.toFixed(2);
-    });
-
     // "Scan everything" — fires all scan features sequentially.
     // Each _startScan is independent (own tracker/endpoint), but we
     // fire them one after the other to avoid hammering the sidecar.
@@ -2478,7 +2375,7 @@ function _bindOnce() {
         const btn = $('#ai-scan-all-btn');
         const statusEl = $('#ai-scan-all-status');
         if (btn) btn.disabled = true;
-        const features = ['faces', 'tags', 'ocr'];
+        const features = ['faces', 'ocr'];
         let started = 0;
         for (const f of features) {
             try {
@@ -3183,25 +3080,6 @@ const _SCANNER_CARD_DEFS = [
         },
     },
     {
-        feature: 'tags',
-        label: 'CLIP Tags',
-        icon: 'ri-price-tag-3-line',
-        color: 'text-tg-orange',
-        enabledKey: null, // uses models.tags.enabled
-        sidecarEndpoint: 'tag',
-        modelKey: 'tags',
-        countKey: 'withTags',
-        scanBtnId: 'ai-tags-scan-btn',
-        cancelBtnId: 'ai-tags-cancel-btn',
-        estimateKey: 'aiTags',
-        settingsPaneId: 'ai-pane-tags',
-        configSummary: (_cfg, models) => {
-            const m = models.tags || {};
-            const vs = m.vocabularySize || '';
-            return `${m.id || 'clip-vit-base-patch32'}${vs ? ' · vocab=' + vs : ''}`;
-        },
-    },
-    {
         feature: 'wd14',
         label: 'WD14 Tags',
         icon: 'ri-palette-line',
@@ -3666,57 +3544,6 @@ function _renderStatus(status) {
 
     // Image tagging card — toggle, model line, scan state, labels.
     const tagsToggle = $('#ai-tags-toggle');
-    if (tagsToggle) {
-        const on = cfg.imageTagging !== false;
-        tagsToggle.classList.toggle('active', on);
-        tagsToggle.setAttribute('aria-checked', String(on));
-    }
-    const tagsModel = models.tags || {};
-    const tagsModelId = tagsModel.id || (tagsModel.loaded ? 'CLIP loaded' : '—');
-    const tagsVocab = tagsModel.vocabularySize ? `${tagsModel.vocabularySize} tags` : '';
-    const tagsModelLineEl = $('#ai-tags-model-line');
-    if (tagsModelLineEl) {
-        const parts = [tagsModelId, tagsVocab].filter(Boolean);
-        tagsModelLineEl.textContent = parts.join(' · ') || '—';
-        tagsModelLineEl.title = tagsModelId;
-    }
-    const tagsRunning = !!scans?.tags?.running;
-    const tagsScanBtn = $('#ai-tags-scan-btn');
-    const tagsCancelBtn = $('#ai-tags-cancel-btn');
-    if (tagsScanBtn) {
-        const tagsReady = tagsModel.loaded === true;
-        tagsScanBtn.disabled = tagsRunning || !tagsReady;
-        tagsScanBtn.title = tagsReady
-            ? 'Run CLIP tag scan'
-            : 'CLIP tagger is not ready on the sidecar';
-        const tagScanIcon = tagsScanBtn.querySelector('i');
-        if (tagScanIcon)
-            tagScanIcon.className = tagsRunning
-                ? 'ri-loader-4-line animate-spin'
-                : 'ri-price-tag-3-line';
-        const tagScanSpan = tagsScanBtn.querySelector('span[data-i18n]');
-        if (tagScanSpan)
-            tagScanSpan.textContent = tagsRunning
-                ? i18nT('maintenance.ai.scanning_tags', 'Tagging…')
-                : i18nT('maintenance.ai.tags.scan', 'Tag all');
-    }
-    if (tagsCancelBtn) tagsCancelBtn.disabled = !tagsRunning;
-    // Hydrate tag labels textarea from config.
-    const tagsLabelsEl = $('#ai-tags-labels');
-    if (tagsLabelsEl) {
-        const cur = Array.isArray(cfg.tagLabels) ? cfg.tagLabels.join(', ') : '';
-        if (tagsLabelsEl.value !== cur) tagsLabelsEl.value = cur;
-    }
-    // Hydrate tag confidence threshold slider from config.
-    const tagsConfSlider = $('#ai-tags-confidence');
-    const tagsConfDisplay = $('#ai-tags-confidence-value');
-    if (tagsConfSlider) {
-        const stored = parseFloat(cfg.wd14MinScore);
-        const val = Number.isFinite(stored) ? stored : 0.35;
-        tagsConfSlider.value = String(val);
-        if (tagsConfDisplay) tagsConfDisplay.textContent = val.toFixed(2);
-    }
-
     // OCR card — toggle, scan state, sidecar readiness hint.
     const ocrToggle = $('#ai-ocr-toggle');
     if (ocrToggle) {
@@ -4487,12 +4314,6 @@ async function _startScan(feature) {
     }
     try {
         const payload = { feature };
-        if (feature === 'tags') {
-            const confSlider = $('#ai-tags-confidence');
-            if (confSlider) {
-                payload.minScore = parseFloat(confSlider.value) || 0.35;
-            }
-        }
         if (feature === 'ocr') {
             const langSelect = $('#ai-ocr-language');
             if (langSelect?.value) payload.language = langSelect.value;
@@ -4528,21 +4349,6 @@ function _onScanProgress(feature, msg) {
         const cancelBtn = $('#ai-cancel-btn');
         if (scanBtn) scanBtn.disabled = running;
         if (cancelBtn) cancelBtn.disabled = !running;
-    } else if (feature === 'tags') {
-        const scanBtn = $('#ai-tags-scan-btn');
-        const cancelBtn = $('#ai-tags-cancel-btn');
-        if (scanBtn) {
-            scanBtn.disabled = running;
-            const icon = scanBtn.querySelector('i');
-            if (icon)
-                icon.className = running ? 'ri-loader-4-line animate-spin' : 'ri-price-tag-3-line';
-            const span = scanBtn.querySelector('span[data-i18n]');
-            if (span)
-                span.textContent = running
-                    ? i18nT('maintenance.ai.scanning_tags', 'Tagging…')
-                    : i18nT('maintenance.ai.tags.scan', 'Tag all');
-        }
-        if (cancelBtn) cancelBtn.disabled = !running;
     } else if (feature === 'ocr') {
         const scanBtn = $('#ai-ocr-scan-btn');
         const cancelBtn = $('#ai-ocr-cancel-btn');
@@ -4569,8 +4375,6 @@ function _onScanProgress(feature, msg) {
         let label;
         if (feature === 'faces') {
             label = i18nT('maintenance.ai.scanning', 'Scanning…');
-        } else if (feature === 'tags') {
-            label = i18nT('maintenance.ai.scanning_tags', 'Tagging photos…');
         } else if (feature === 'ocr') {
             label = i18nT('maintenance.ai.scanning_ocr', 'Extracting text…');
         }
@@ -4587,7 +4391,7 @@ function _onScanDone(feature, msg) {
     }
     refreshStatus();
     if (feature === 'faces') _loadPeople();
-    if (feature === 'tags') _renderTagBrowser();
+    if (feature === 'ocr') _renderTagBrowser();
 }
 
 /**
