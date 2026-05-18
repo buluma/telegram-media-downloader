@@ -55,6 +55,7 @@ async function _fetchLatestRelease() {
         });
         if (!r.ok) return null;
         const j = await r.json();
+        if (!/^v\d/.test(j.tag_name)) return null;
         return {
             tag: j.tag_name,
             name: j.name || j.tag_name,
