@@ -709,9 +709,6 @@ function _wireWs() {
             'success',
         );
         _refreshStats();
-        try {
-            await _runScan();
-        } catch {}
     });
 
     // Verify-files-on-disk — same JobTracker contract as nsfw / thumbs.
