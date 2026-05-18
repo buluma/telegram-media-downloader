@@ -534,6 +534,7 @@ export function createMaintenanceRouter({
                 onProgress: (p) => onProgress({ ...p, running: true }),
                 signal,
             });
+            if (signal.aborted) return { ...result, cancelled: true };
             // Persist a small summary so a server restart still surfaces
             // "Last scan: 2 h ago — N duplicates" on the duplicates page
             // without having to recompute. The full duplicate-sets payload
@@ -564,6 +565,11 @@ export function createMaintenanceRouter({
             });
         }
         res.json({ success: true, started: true });
+    });
+
+    router.post('/maintenance/dedup/scan/cancel', async (req, res) => {
+        const cancelled = jobTrackers.dedupScan.cancel();
+        res.json({ success: true, cancelled });
     });
 
     // Status endpoint — returns the latest scan state including the result

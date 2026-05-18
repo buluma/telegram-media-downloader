@@ -2276,6 +2276,11 @@
                                         title="Hash every catalogued file and group byte-identical copies.">
                                     <i class="ri-search-line"></i><span data-i18n="maintenance.duplicates.scan">Scan</span>
                                 </button>
+                                <!-- Cancel button — visible only while a dedup scan is running. -->
+                                <button id="dup-scan-cancel-btn" class="tg-btn-secondary text-xs px-3 py-1.5 inline-flex items-center gap-1.5 hidden"
+                                        title="Cancel the in-progress scan">
+                                    <i class="ri-stop-circle-line"></i><span data-i18n="maintenance.dedup.cancel">Cancel</span>
+                                </button>
                             </div>
                         </div>
 

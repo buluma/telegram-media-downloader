@@ -361,6 +361,7 @@ function _applyDefaultSelection(setsSlice) {
 
 function _setScanUi(running) {
     const btn = $('dup-scan-btn');
+    const cancelBtn = $('dup-scan-cancel-btn');
     const progress = $('dup-progress');
     const bar = $('dup-progress-bar');
     const pct = $('dup-progress-pct');
@@ -375,10 +376,20 @@ function _setScanUi(running) {
                 : i18nT('maintenance.duplicates.scan', 'Scan');
         }
     }
+    if (cancelBtn) cancelBtn.classList.toggle('hidden', !running);
     if (progress) progress.classList.toggle('hidden', !running);
     if (!running) {
         if (bar) bar.style.width = '0%';
         if (pct) pct.textContent = '';
+    }
+}
+
+async function _cancelScan() {
+    try {
+        await api.post('/api/maintenance/dedup/scan/cancel', {});
+        showToast(i18nT('maintenance.dedup.cancelling', 'Cancelling…'), 'info');
+    } catch (e) {
+        showToast(e?.data?.error || e.message || 'Cancel failed', 'error');
     }
 }
 
@@ -637,6 +648,10 @@ function _wireWs() {
 
     ws.on('dedup_done', (m) => {
         _setScanUi(false);
+        if (m?.cancelled) {
+            showToast(i18nT('maintenance.dedup.cancelled', 'Scan cancelled'), 'info');
+            return;
+        }
         if (m?.error) {
             showToast(
                 i18nTf(
@@ -917,6 +932,7 @@ export function init() {
     if (!_pageWired) {
         _pageWired = true;
         $('dup-scan-btn')?.addEventListener('click', _runScan);
+        $('dup-scan-cancel-btn')?.addEventListener('click', _cancelScan);
         $('dup-delete-btn')?.addEventListener('click', _deleteSelected);
         $('dup-reindex-btn')?.addEventListener('click', _runReindex);
         $('dup-verify-btn')?.addEventListener('click', _runVerify);
