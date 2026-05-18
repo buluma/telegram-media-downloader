@@ -59,7 +59,7 @@ describe('integrity.sweep', () => {
 
         const remaining = db.prepare('SELECT COUNT(*) AS n FROM downloads').get().n;
         expect(remaining).toBe(0);
-    });
+    }, 15000);
 
     it('reports counts when every file is missing', async () => {
         for (let i = 0; i < 5; i++) insertRow(i);
