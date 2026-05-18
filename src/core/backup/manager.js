@@ -584,6 +584,12 @@ class Worker {
             }
             localPath = path.join(DOWNLOADS_DIR, downloadRow.file_path.replace(/\\/g, path.sep));
             remotePath = remotePath || _mirrorRemotePath(downloadRow);
+            try {
+                await fsp.access(localPath);
+            } catch {
+                queue.markFailed(job.id, `file missing on disk: ${downloadRow.file_path}`);
+                return;
+            }
         } else {
             queue.markFailed(job.id, 'job missing both snapshot_path and download_id');
             return;
