@@ -6,6 +6,7 @@ import { getRescueSweeper } from '../../core/rescue.js';
 import { getAutoBackfillScheduler } from '../../core/auto-backfill.js';
 import { applyShareLimits } from '../../core/share.js';
 import { getDiskRotator } from '../../core/disk-rotator.js';
+import * as integrity from '../../core/integrity.js';
 import { refreshSidecar as refreshSeekbarSidecar } from '../../core/seekbar/spawn.js';
 import { BACKPRESSURE_CAP_DEFAULT } from '../../core/constants.js';
 import { NSFW_DEFAULTS } from '../../core/nsfw.js';
