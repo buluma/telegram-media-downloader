@@ -82,6 +82,7 @@ import { createMaintenanceRouter } from './routes/maintenance.js';
 import { createClusterRouter } from './routes/cluster.js';
 import { safeResolveDownload } from './lib/resolve-download.js';
 import { createBackupRouter } from './routes/backup.js';
+import { createFilesRouter } from './routes/files.js';
 import { createShareLinksRouter } from './routes/share.js';
 import { createConfigRouter } from './routes/config.js';
 import { createGroupsRouter, spawnBackfill } from './routes/groups.js';
@@ -1494,6 +1495,7 @@ app.use(
 );
 app.use('/api', createClusterRouter({ broadcast, log }));
 app.use('/api', createBackupRouter({ log }));
+app.use('/api', createFilesRouter());
 app.use('/api', createShareLinksRouter({ log }));
 app.use(
     '/api',

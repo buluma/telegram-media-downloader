@@ -19,6 +19,7 @@ import path from 'path';
 import {
     S3Client,
     DeleteObjectCommand,
+    GetObjectCommand,
     HeadObjectCommand,
     HeadBucketCommand,
     ListObjectsV2Command,
@@ -180,6 +181,14 @@ export class S3Provider extends BackupProvider {
             etag,
             remoteId: result?.VersionId || undefined,
         };
+    }
+
+    async stream(remotePath, _ctx) {
+        const result = await this.client.send(
+            new GetObjectCommand({ Bucket: this.bucket, Key: this._key(remotePath) }),
+        );
+        // AWS SDK v3 Body is a SdkStream<Readable> — readable as-is in Node.js.
+        return result.Body;
     }
 
     async delete(remotePath, _ctx) {

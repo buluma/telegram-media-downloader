@@ -115,6 +115,11 @@ export class LocalProvider extends BackupProvider {
         };
     }
 
+    async stream(remotePath, _ctx) {
+        const target = this._resolveSafe(remotePath);
+        return fs.createReadStream(target);
+    }
+
     async delete(remotePath, _ctx) {
         const target = this._resolveSafe(remotePath);
         try {

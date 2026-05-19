@@ -20,7 +20,13 @@
 import path from 'path';
 import fs from 'fs/promises';
 import { fileURLToPath } from 'url';
-import { getTotalSizeBytes, getOldestDownloads, deleteDownloadsBy } from './db.js';
+import {
+    getTotalSizeBytes,
+    getOldestDownloads,
+    deleteDownloadsBy,
+    setDownloadEvicted,
+} from './db.js';
+import { hasMirrorDestinations } from './backup/queue.js';
 import { deferDelete } from './delete-queue.js';
 import { purgeThumbsForDownload } from './thumbs.js';
 import { purgeSeekbarForDownload } from './seekbar/index.js';
@@ -201,33 +207,40 @@ export class DiskRotator {
                 return inFlight.has(abs) || inFlight.has(`${abs}.part`);
             };
 
+            // When mirror backup destinations exist, only evict files that
+            // have a confirmed cloud copy. This prevents data loss when the
+            // cloud upload is still in progress or hasn't started yet.
+            let skipUnconfirmed = false;
+            try {
+                skipUnconfirmed = hasMirrorDestinations();
+            } catch {
+                /* non-fatal — be conservative and apply the guard */
+                skipUnconfirmed = true;
+            }
+
             outer: while (total > capBytes && safety > 0) {
-                const candidates = getOldestDownloads(batch);
+                const candidates = getOldestDownloads(batch, { skipUnconfirmed });
                 if (!candidates.length) break;
                 for (const row of candidates) {
                     if (total <= capBytes || safety <= 0) break outer;
                     if (isInFlight(row)) continue; // skip — downloader is mid-write
                     await tryUnlink(row);
-                    const removed = deleteDownloadsBy({ ids: [row.id] });
-                    if (removed > 0) {
-                        const sz = Number(row.file_size || 0);
-                        total -= sz;
-                        deleted += 1;
-                        safety -= 1;
-                        purgeThumbsForDownload(row.id).catch(() => {});
-                        purgeSeekbarForDownload(row.id).catch(() => {});
-                        try {
-                            this._broadcast({
-                                type: 'file_deleted',
-                                id: row.id,
-                                path: row.file_path || null,
-                            });
-                        } catch {}
-                    } else {
-                        // Row vanished between fetch and delete — skip and
-                        // requery so we don't loop on the same id.
-                        break;
-                    }
+                    // Mark as evicted: keep the DB row so the gallery can
+                    // show a "cloud only" badge and stream on demand.
+                    setDownloadEvicted(row.id);
+                    const sz = Number(row.file_size || 0);
+                    total -= sz;
+                    deleted += 1;
+                    safety -= 1;
+                    purgeThumbsForDownload(row.id).catch(() => {});
+                    purgeSeekbarForDownload(row.id).catch(() => {});
+                    try {
+                        this._broadcast({
+                            type: 'file_evicted',
+                            id: row.id,
+                            path: row.file_path || null,
+                        });
+                    } catch {}
                 }
             }
 

@@ -1151,3 +1151,63 @@ function _isoCompact(d) {
 export function _wake(destinationId) {
     _wakeWorker(destinationId);
 }
+
+// ---- Cloud-first stream helper -------------------------------------------
+
+/**
+ * Open a readable stream for a download's most-recently-confirmed cloud
+ * backup. Returns `{ stream, size, provider }` so the caller can pipe
+ * `stream` to the response and call `provider.close()` in a finally block.
+ * Returns `null` when:
+ *   - no confirmed backup job exists for `downloadId`
+ *   - the destination has encryption enabled (can't decrypt without key)
+ *   - the provider does not support streaming
+ *
+ * @param {number} downloadId
+ * @returns {Promise<{stream: import('stream').Readable, size: number|null, provider: object}|null>}
+ */
+export async function getCloudStream(downloadId) {
+    const row = getDb()
+        .prepare(
+            `SELECT j.id, j.remote_path, j.bytes_uploaded,
+                    d.id AS dest_id, d.provider, d.config_blob, d.encryption
+               FROM backup_jobs j
+               JOIN backup_destinations d ON d.id = j.destination_id
+              WHERE j.download_id = ?
+                AND j.confirmed_at IS NOT NULL
+              ORDER BY j.confirmed_at DESC
+              LIMIT 1`,
+        )
+        .get(Number(downloadId));
+
+    if (!row) return null;
+    if (row.encryption) return null; // encrypted at rest — can't proxy without key
+
+    const ProviderClass = PROVIDER_CLASSES[row.provider];
+    if (!ProviderClass) return null;
+
+    const shareSecret = _getShareSecret();
+    if (!shareSecret) return null;
+
+    let cfg;
+    try {
+        cfg = decryptConfig(row.config_blob, shareSecret);
+    } catch {
+        return null;
+    }
+
+    const provider = new ProviderClass();
+    const ctx = {
+        destinationId: row.dest_id,
+        log: () => {},
+        signal: new AbortController().signal,
+    };
+    await provider.init(cfg, ctx);
+
+    const stream = await provider.stream(row.remote_path, ctx);
+    if (!stream) {
+        await provider.close();
+        return null;
+    }
+    return { stream, size: row.bytes_uploaded || null, provider };
+}

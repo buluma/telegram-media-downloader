@@ -334,6 +334,16 @@ export class GoogleDriveProvider extends BackupProvider {
         };
     }
 
+    async stream(remotePath, ctx) {
+        const found = await this._findFile(remotePath);
+        if (!found) return null;
+        const res = await this._drive.files.get(
+            { fileId: found.id, alt: 'media' },
+            { responseType: 'stream' },
+        );
+        return res.data;
+    }
+
     async delete(remotePath, _ctx) {
         const found = await this._findFile(remotePath);
         if (!found) return; // idempotent

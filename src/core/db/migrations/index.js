@@ -90,6 +90,20 @@ const MIGRATIONS = [
         name: '019_peers_ws_last_seen',
         up: (db) => db.exec('ALTER TABLE peers ADD COLUMN ws_last_seen INTEGER'),
     },
+    {
+        // Timestamp set when the provider ACKs upload. Used by the eviction
+        // guard to ensure files are never deleted before a cloud copy is
+        // confirmed.
+        name: '020_backup_jobs_confirmed_at',
+        up: (db) => db.exec('ALTER TABLE backup_jobs ADD COLUMN confirmed_at INTEGER'),
+    },
+    {
+        // Timestamp set when the disk-rotator removes the local file but
+        // keeps the DB row so the gallery can show a "cloud only" badge
+        // and stream on demand.
+        name: '021_downloads_cache_evicted_at',
+        up: (db) => db.exec('ALTER TABLE downloads ADD COLUMN cache_evicted_at INTEGER'),
+    },
 ];
 
 export function runMigrations(db) {

@@ -899,8 +899,27 @@ export function getStats() {
  * Used by the disk rotator to decide whether the cap is exceeded.
  */
 export function getTotalSizeBytes() {
-    const r = getDb().prepare('SELECT COALESCE(SUM(file_size), 0) as size FROM downloads').get();
+    const r = getDb()
+        .prepare(
+            'SELECT COALESCE(SUM(file_size), 0) as size FROM downloads WHERE cache_evicted_at IS NULL',
+        )
+        .get();
     return Number(r?.size || 0);
+}
+
+/**
+ * Mark a download as cache-evicted: the local file has been removed but the
+ * DB row is preserved so the gallery can show a "cloud only" badge. Idempotent
+ * — preserves the original timestamp on subsequent calls.
+ *
+ * @param {number} id
+ */
+export function setDownloadEvicted(id) {
+    getDb()
+        .prepare(
+            'UPDATE downloads SET cache_evicted_at = COALESCE(cache_evicted_at, ?) WHERE id = ?',
+        )
+        .run(Date.now(), Number(id));
 }
 
 /**
@@ -926,19 +945,33 @@ export function softDeleteDownloads(ids) {
 }
 
 /**
- * Returns the N oldest download rows (created_at ASC), skipping pinned ones.
- * The rotator pulls from this list and deletes file + row until the cap is
- * back under the limit.
+ * Returns the N oldest download rows (created_at ASC), skipping pinned and
+ * already-evicted ones.
+ *
+ * @param {number} count
+ * @param {{skipUnconfirmed?: boolean}} [opts]
+ *   skipUnconfirmed: when true, only return downloads that have at least one
+ *   backup_jobs row with confirmed_at IS NOT NULL (eviction guard for
+ *   cloud-first mode).
  */
-export function getOldestDownloads(count = 50) {
+export function getOldestDownloads(count = 50, opts = {}) {
     const limit = Math.max(1, Math.min(10000, parseInt(count, 10) || 50));
+    const confirmedClause = opts.skipUnconfirmed
+        ? `AND EXISTS (
+               SELECT 1 FROM backup_jobs bj
+               WHERE bj.download_id = downloads.id
+                 AND bj.confirmed_at IS NOT NULL
+           )`
+        : '';
     return getDb()
-        .prepare(`
-            SELECT id, group_id, group_name, file_name, file_size, file_type, file_path, created_at, pinned
-            FROM downloads
-            WHERE COALESCE(pinned, 0) = 0
-            ORDER BY created_at ASC, id ASC
-            LIMIT ?
-        `)
+        .prepare(
+            `SELECT id, group_id, group_name, file_name, file_size, file_type, file_path, created_at, pinned
+               FROM downloads
+              WHERE COALESCE(pinned, 0) = 0
+                AND cache_evicted_at IS NULL
+                ${confirmedClause}
+              ORDER BY created_at ASC, id ASC
+              LIMIT ?`,
+        )
         .all(limit);
 }

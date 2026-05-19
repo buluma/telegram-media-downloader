@@ -145,6 +145,19 @@ export class BackupProvider {
         throw new Error('not implemented');
     }
 
+    /**
+     * Return a Node.js Readable stream for the given remote path, or null
+     * if this provider does not support on-demand streaming (the default).
+     * Callers should call provider.close() after consuming the stream.
+     *
+     * @param {string} _remotePath
+     * @param {BackupContext} _ctx
+     * @returns {Promise<import('stream').Readable|null>}
+     */
+    async stream(_remotePath, _ctx) {
+        return null;
+    }
+
     /** Free resources. Idempotent. */
     async close() {
         /* default: nothing to do */

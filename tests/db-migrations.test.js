@@ -50,6 +50,21 @@ function createTestDb() {
             paired_at INTEGER NOT NULL,
             fingerprint TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS backup_jobs (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            destination_id INTEGER NOT NULL,
+            download_id    INTEGER,
+            snapshot_path  TEXT,
+            status         TEXT    NOT NULL DEFAULT 'pending',
+            attempts       INTEGER NOT NULL DEFAULT 0,
+            max_attempts   INTEGER NOT NULL DEFAULT 5,
+            next_retry_at  INTEGER,
+            started_at     INTEGER,
+            finished_at    INTEGER,
+            bytes_uploaded INTEGER NOT NULL DEFAULT 0,
+            error          TEXT,
+            remote_path    TEXT
+        );
     `);
     return db;
 }

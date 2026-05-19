@@ -93,11 +93,13 @@ export function claim(destinationId, now = Date.now()) {
  * @param {string} [meta.remotePath] final remote path (overrides claim-time value)
  */
 export function markDone(jobId, meta = {}) {
+    const now = Date.now();
     const r = getDb()
         .prepare(`
         UPDATE backup_jobs
            SET status = 'done',
                finished_at = ?,
+               confirmed_at = ?,
                bytes_uploaded = COALESCE(?, bytes_uploaded),
                remote_path = COALESCE(?, remote_path),
                error = NULL,
@@ -105,7 +107,8 @@ export function markDone(jobId, meta = {}) {
          WHERE id = ?
     `)
         .run(
-            Date.now(),
+            now,
+            now,
             meta.bytes == null ? null : Number(meta.bytes),
             meta.remotePath || null,
             Number(jobId),
@@ -308,4 +311,15 @@ export function hasJobForDownload(destinationId, downloadId) {
     `)
         .get(Number(destinationId), Number(downloadId));
     return !!r;
+}
+
+/**
+ * True when at least one enabled backup destination in 'mirror' mode exists.
+ * The disk-rotator uses this to decide whether to apply the cloud-first
+ * eviction guard (only evict files that have a confirmed cloud copy).
+ */
+export function hasMirrorDestinations() {
+    return !!getDb()
+        .prepare(`SELECT 1 FROM backup_destinations WHERE enabled = 1 AND mode = 'mirror' LIMIT 1`)
+        .get();
 }
