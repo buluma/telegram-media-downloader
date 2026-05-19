@@ -2,6 +2,8 @@
 
 This plan hardens the lifecycle around long-running jobs, scanners, deletes, and AI sidecar services. It is written for the current SQLite + Node + Python/Go sidecar architecture, while keeping a future Postgres migration possible.
 
+**Implementation status:** Sections 1, 5, 6 (maintenance\_jobs), and 7 are complete. Sections 3, 4, 8–11 remain future work.
+
 ## Goals
 
 - Prevent destructive jobs from racing scanners.
@@ -24,7 +26,9 @@ This is an application lifecycle race, not primarily a database corruption issue
 
 ---
 
-## 1. Job/resource coordination
+## 1. Job/resource coordination ✓
+
+> **Done.** `checkJobConflict()` in `src/core/job-tracker.js` gates scanner starts and destructive job starts. `POST /ai/scan/start`, `POST /maintenance/nsfw/v2/bulk-delete`, `POST /maintenance/dedup/delete`, and `DELETE /purge/all` all check for conflicts and return `409 RESOURCE_BUSY` with the conflicting job name. Tests in `tests/maintenance.race.test.js`.
 
 ### Problem
 
@@ -209,7 +213,9 @@ FOR UPDATE SKIP LOCKED
 
 ---
 
-## 5. Soft delete before hard delete
+## 5. Soft delete before hard delete ✓
+
+> **Done.** `deleted_at` and `delete_reason` columns added via migration in `src/core/db.js`. `softDeleteDownloads(ids)` in `src/core/db/downloads.js` stamps rows idempotently. All scanner batch queries (`getUnindexedAiBatch`, `getUnscannedOcrBatch`, `getUnscannedWd14Batch`, `countUnscannedWd14`, `pageMissingSeekbarVideos`) exclude `deleted_at IS NULL`. `dedup.deleteByIds()` calls `softDeleteDownloads()` before file removal. Tests in `tests/maintenance.soft-delete.test.js`.
 
 ### Problem
 
@@ -242,7 +248,11 @@ Minimum version:
 
 ---
 
-## 6. Destructive job safety
+## 6. Destructive job safety (maintenance_jobs ✓, file safety pending)
+
+> **Done (job audit table).** `maintenance_jobs` table exists in `src/core/db.js`. `createJob`, `updateJobProgress`, `finishJob` in `src/core/ai/jobs.js` are wired into scan runs in `src/web/routes/ai.js`. `GET /api/ai/jobs` surfaces durable history. Tests in `tests/ai/jobs.test.js`.
+>
+> Remaining: DB snapshot before bulk destructive actions, per-batch audit trails.
 
 Before any destructive job:
 
@@ -283,7 +293,9 @@ CREATE TABLE IF NOT EXISTS maintenance_jobs (
 
 ---
 
-## 7. Sidecar capability/version hardening
+## 7. Sidecar capability/version hardening ✓
+
+> **Done.** `checkSidecarCapability(scanner, sidecarUrl)` in `src/core/ai/preflight.js` calls `/info`, verifies the required endpoint is present and the model is ready, and returns `{ ok, code, reason }`. Wired into `startOcrScan` and `startWd14Scan` in `src/core/ai/scan-runner.js`. Throws with `fatal: true` before any rows are touched when preflight fails. Tests in `tests/ai/preflight.test.js`.
 
 ### Problem
 
@@ -444,25 +456,25 @@ Test target behavior:
 
 ### Phase 1 — immediate hardening
 
-- Add resource conflict checks around destructive jobs and scanners.
-- Wrap all scanner DB writes with FK-safe helpers.
-- Treat sidecar `404` as fatal capability mismatch.
-- Add sidecar capability preflight before each scanner.
-- Add health endpoint for FK/integrity checks.
+- [x] Add resource conflict checks around destructive jobs and scanners.
+- [x] Wrap all scanner DB writes with FK-safe helpers.
+- [x] Treat sidecar `404` as fatal capability mismatch.
+- [x] Add sidecar capability preflight before each scanner.
+- [ ] Add health endpoint for FK/integrity checks.
 
 ### Phase 2 — lifecycle cleanup
 
-- Add `deleted_at` soft-delete flow.
-- Update scanner queries to exclude soft-deleted rows.
-- Add durable `media_scan_state` for at least AI tags and WD14.
-- Stop relying on `_scanned_` sentinels for infrastructure failures.
+- [x] Add `deleted_at` soft-delete flow.
+- [x] Update scanner queries to exclude soft-deleted rows.
+- [ ] Add durable `media_scan_state` for at least AI tags and WD14.
+- [ ] Stop relying on `_scanned_` sentinels for infrastructure failures.
 
 ### Phase 3 — observability and recovery
 
-- Add `maintenance_jobs` audit table.
-- Add scan failure UI.
-- Add stale lock recovery.
-- Add DB backup before bulk destructive actions.
+- [x] Add `maintenance_jobs` audit table.
+- [ ] Add scan failure UI.
+- [ ] Add stale lock recovery.
+- [ ] Add DB backup before bulk destructive actions.
 
 ### Phase 4 — future scalability
 
@@ -474,10 +486,10 @@ Test target behavior:
 
 ## Acceptance checklist
 
-- [ ] Bulk delete cannot hard-delete rows while incompatible scans are active.
-- [ ] Scanners never crash if a parent `downloads` row vanishes.
-- [ ] Sidecar endpoint/capability mismatch fails the job before rows are stamped scanned.
+- [x] Bulk delete cannot hard-delete rows while incompatible scans are active.
+- [x] Scanners never crash if a parent `downloads` row vanishes.
+- [x] Sidecar endpoint/capability mismatch fails the job before rows are stamped scanned.
 - [ ] Retryable infrastructure failures do not create `_scanned_` derived rows.
 - [ ] Health check reports DB integrity, scan state, and sidecar capabilities.
-- [ ] Race tests cover scanner/delete interactions.
-- [ ] Operators can see active jobs, conflicts, and failed scan reasons.
+- [x] Race tests cover scanner/delete interactions.
+- [ ] Operators can see active jobs, conflicts, and failed scan reasons (backend done; UI pending).

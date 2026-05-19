@@ -788,10 +788,10 @@ CREATE TABLE IF NOT EXISTS media_scan_state (
 
 ### Phase 4 — durable job and issue model
 
-- Add `maintenance_jobs`.
-- Add `media_scan_state`.
-- Replace `_scanned_` sentinel reliance where practical.
-- Add retryable failure handling and stale lock recovery.
+- [x] Add `maintenance_jobs` — table + `createJob`/`updateJobProgress`/`finishJob` helpers wired into scan runs; `GET /api/ai/jobs` surfaces history.
+- [ ] Add `media_scan_state` — table exists; per-scanner wiring pending.
+- [ ] Replace `_scanned_` sentinel reliance where practical.
+- [ ] Add retryable failure handling and stale lock recovery.
 
 ### Phase 5 — advanced operations
 
@@ -813,4 +813,4 @@ CREATE TABLE IF NOT EXISTS media_scan_state (
 - [ ] CLIP tags, WD14 tags, OCR, and faces are visually distinct.
 - [ ] Dangerous reset actions are per-feature and show affected row counts.
 - [ ] Search results explain why each item matched.
-- [ ] Sidecar version/capability mismatch is detected and clearly reported.
+- [x] Sidecar version/capability mismatch is detected and clearly reported — `checkSidecarCapability()` in `src/core/ai/preflight.js` fails the job server-side before any rows are touched.

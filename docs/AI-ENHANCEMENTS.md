@@ -87,9 +87,7 @@ Anthropic, or disabled.
 
 ### Current Implementation Status
 
-A local scaffold exists under `src/core/llm/`, but it is not yet wired into the
-web routes, config UI, tests, or release path. Treat it as the starting point,
-not as a shipped feature.
+The provider scaffold under `src/core/llm/` is complete and wired: provider status/probe endpoints exist at `GET /api/ai/llm/status`, and the AI runtime setup panel renders provider health in the maintenance UI. Ollama and OpenAI-compatible providers are supported. Captioning and query parsing on top of this scaffold remain future work.
 
 Expected module shape:
 
