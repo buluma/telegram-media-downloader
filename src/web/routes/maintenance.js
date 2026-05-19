@@ -81,6 +81,7 @@ import { saveConfig } from '../../config/manager.js';
 import { tgAuthErrorBody } from '../lib/tg-error.js';
 import { metrics } from '../../core/metrics.js';
 import { checkJobConflict } from '../../core/job-tracker.js';
+import { backupDb, listBackups } from '../../core/db/backup.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -502,6 +503,14 @@ export function createMaintenanceRouter({
         res.json(jobTrackers.dbVacuum.getStatus());
     });
 
+    router.get('/maintenance/db/backups', (_req, res) => {
+        try {
+            res.json({ success: true, backups: listBackups() });
+        } catch (e) {
+            res.status(500).json({ error: e?.message || String(e) });
+        }
+    });
+
     // ====== Duplicate finder (checksum-based) ==================================
     //
     // One-shot scan that:
@@ -651,6 +660,16 @@ export function createMaintenanceRouter({
         }
         const tracker = jobTrackers.dedupDelete;
         const r = tracker.tryStart(async ({ onProgress }) => {
+            onProgress({ processed: 0, total: cleanIds.length, stage: 'backup' });
+            try {
+                await backupDb('dedup-delete');
+            } catch (e) {
+                log({
+                    source: 'dedup',
+                    level: 'warn',
+                    msg: `pre-delete backup failed: ${e?.message}`,
+                });
+            }
             // Batch so progress events flush between iterations.
             const total = cleanIds.length;
             const BATCH = 50;
@@ -1816,6 +1835,16 @@ export function createMaintenanceRouter({
             const ids = await _resolveBulkIds(body);
             if (!ids.length) return { op: 'delete', deleted: 0, ids: [] };
             log({ source: 'nsfw', level: 'warn', msg: `bulk-delete starting: ${ids.length} rows` });
+            onProgress({ stage: 'backup', op: 'delete' });
+            try {
+                await backupDb('nsfw-delete');
+            } catch (e) {
+                log({
+                    source: 'nsfw',
+                    level: 'warn',
+                    msg: `pre-delete backup failed: ${e?.message}`,
+                });
+            }
             const total = ids.length;
             const BATCH = 50;
             const aggregate = { removed: 0, freedBytes: 0, missingFiles: 0 };

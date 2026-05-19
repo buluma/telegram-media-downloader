@@ -32,6 +32,10 @@ let db;
 // on every getDb() once we've done it.
 let _stateMigrationRan = false;
 
+export function getDataDir() {
+    return DATA_DIR;
+}
+
 export function getDb() {
     if (db) return db;
 

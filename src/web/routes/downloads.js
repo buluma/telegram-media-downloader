@@ -23,6 +23,7 @@ import { writeConfigAtomic } from '../lib/config-writer.js';
 import { deleteAllDownloads } from '../../core/db/groups.js';
 import { deferDelete } from '../../core/delete-queue.js';
 import { checkJobConflict } from '../../core/job-tracker.js';
+import { backupDb } from '../../core/db/backup.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1063,6 +1064,16 @@ export function createDownloadsRouter({
         }
         const tracker = jobTrackers.purgeAll;
         const r = tracker.tryStart(async ({ onProgress }) => {
+            onProgress({ processed: 0, total: 0, stage: 'backup' });
+            try {
+                await backupDb('purge-all');
+            } catch (e) {
+                log({
+                    source: 'purgeAll',
+                    level: 'warn',
+                    msg: `pre-purge backup failed: ${e?.message}`,
+                });
+            }
             let totalFiles = 0;
             const dirs = existsSync(DOWNLOADS_DIR)
                 ? readdirSync(DOWNLOADS_DIR, { withFileTypes: true })
