@@ -20,7 +20,7 @@ function makeInfoResponse(overrides = {}) {
         endpoints: {
             detect: true,
             tag: true,
-            tag_wd14: true,
+            wd14: true,
             ocr: true,
             embed_image: true,
             embed_text: true,

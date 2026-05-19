@@ -25,7 +25,7 @@ async function _fetchInfo(url) {
 
 const _REQUIRED = {
     ocr: { endpoint: 'ocr', model: 'ocr' },
-    wd14: { endpoint: 'tag_wd14', model: 'wd14' },
+    wd14: { endpoint: 'wd14', model: 'wd14' },
     clip: { endpoint: 'tag', model: 'clip' },
     faces: { endpoint: 'detect', model: 'faces' },
 };
