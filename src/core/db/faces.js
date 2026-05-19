@@ -476,6 +476,7 @@ export function getUnindexedAiBatch({ fileTypes = ['photo'], limit = 50 } = {}) 
           FROM downloads
          WHERE file_type IN (${placeholders})
            AND ai_indexed_at IS NULL
+           AND deleted_at IS NULL
          ORDER BY created_at ASC, id ASC
          LIMIT ?
     `)
@@ -497,7 +498,8 @@ export function getUnscannedOcrBatch({ fileTypes = ['photo'], limit = 50 } = {})
           FROM downloads
          WHERE file_type IN (${placeholders})
            AND id NOT IN (SELECT DISTINCT download_id FROM image_text)
-           AND LOWER(file_name) NOT LIKE '%.webp' 
+           AND LOWER(file_name) NOT LIKE '%.webp'
+           AND deleted_at IS NULL
          ORDER BY created_at ASC, id ASC
          LIMIT ?
     `)
@@ -1534,6 +1536,7 @@ export function getUnscannedWd14Batch({ fileTypes = ['photo'], limit = 50 } = {}
               WHERE file_type IN (${ph})
                 AND id NOT IN (SELECT DISTINCT download_id FROM image_tags_wd14)
                 AND LOWER(file_name) NOT LIKE '%.webp'
+                AND deleted_at IS NULL
               ORDER BY created_at ASC
               LIMIT ?`,
         )
@@ -1556,7 +1559,8 @@ export function countUnscannedWd14({ fileTypes = ['photo'] } = {}) {
                FROM downloads
               WHERE file_type IN (${ph})
                 AND id NOT IN (SELECT DISTINCT download_id FROM image_tags_wd14)
-                AND LOWER(file_name) NOT LIKE '%.webp'`,
+                AND LOWER(file_name) NOT LIKE '%.webp'
+                AND deleted_at IS NULL`,
         )
         .get(...types).n;
 }

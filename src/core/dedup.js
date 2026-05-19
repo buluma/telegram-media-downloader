@@ -21,6 +21,7 @@
 import fs from 'fs';
 import path from 'path';
 import { getDb } from './db.js';
+import { softDeleteDownloads } from './db/downloads.js';
 import { deferDelete } from './delete-queue.js';
 import { sha256OfFile, sha256OfFileViaPool } from './checksum.js';
 
@@ -251,6 +252,10 @@ export async function deleteByIds(ids) {
             .all(...slice);
         for (const r of part) rows.push(r);
     }
+
+    // Stamp deleted_at before touching disk so any in-flight scanner batch
+    // that re-reads the downloads table will skip these rows.
+    softDeleteDownloads(rows.map((r) => r.id));
 
     let freed = 0;
     let missing = 0;

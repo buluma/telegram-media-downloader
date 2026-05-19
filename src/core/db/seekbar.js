@@ -88,6 +88,7 @@ export function pageMissingSeekbarVideos({ beforeId, limit = 200 } = {}) {
          WHERE d.file_type = 'video'
            AND d.file_path IS NOT NULL
            AND s.download_id IS NULL
+           AND d.deleted_at IS NULL
            AND d.id < ?
          ORDER BY d.id DESC
          LIMIT ?

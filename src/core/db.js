@@ -180,6 +180,11 @@ function initSchema() {
         'ALTER TABLE downloads ADD COLUMN nsfw_score REAL',
         'ALTER TABLE downloads ADD COLUMN nsfw_checked_at INTEGER',
         'ALTER TABLE downloads ADD COLUMN nsfw_whitelist INTEGER DEFAULT 0',
+        // Soft-delete: rows are stamped deleted_at before file removal so
+        // in-flight scanner batches can detect and skip them before the hard
+        // DELETE runs. delete_reason documents which job triggered the delete.
+        'ALTER TABLE downloads ADD COLUMN deleted_at INTEGER',
+        'ALTER TABLE downloads ADD COLUMN delete_reason TEXT',
     ];
     for (const sql of migrations) {
         try {
@@ -191,6 +196,11 @@ function initSchema() {
     try {
         db.exec(
             'CREATE INDEX IF NOT EXISTS idx_filename_size ON downloads(group_id, file_name, file_size)',
+        );
+    } catch {}
+    try {
+        db.exec(
+            'CREATE INDEX IF NOT EXISTS idx_downloads_deleted ON downloads(deleted_at) WHERE deleted_at IS NOT NULL',
         );
     } catch {}
     // Speeds up the rescue sweeper's expired-pending scan and the per-message

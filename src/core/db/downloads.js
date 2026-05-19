@@ -866,6 +866,28 @@ export function getTotalSizeBytes() {
 }
 
 /**
+ * Stamp deleted_at on the given download ids without touching derived tables
+ * or the file on disk. Idempotent — already-deleted rows are left unchanged.
+ * Hard-delete and file removal happen in a second pass after all derived
+ * cleanup is complete.
+ *
+ * @param {number[]} ids
+ */
+export function softDeleteDownloads(ids) {
+    if (!Array.isArray(ids) || !ids.length) return;
+    const db = getDb();
+    const now = Date.now();
+    const CHUNK = 500;
+    for (let i = 0; i < ids.length; i += CHUNK) {
+        const slice = ids.slice(i, i + CHUNK);
+        const ph = slice.map(() => '?').join(',');
+        db.prepare(
+            `UPDATE downloads SET deleted_at = COALESCE(deleted_at, ?) WHERE id IN (${ph})`,
+        ).run(now, ...slice);
+    }
+}
+
+/**
  * Returns the N oldest download rows (created_at ASC), skipping pinned ones.
  * The rotator pulls from this list and deletes file + row until the cap is
  * back under the limit.
