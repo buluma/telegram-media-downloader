@@ -233,6 +233,27 @@ export function createJobTracker({ kind, broadcast, log, eventPrefix } = {}) {
     return { tryStart, cancel, getStatus, isRunning };
 }
 
+const _SCANNER_JOBS = ['aiPeople', 'aiOcr', 'aiWd14', 'aiTags', 'aiIndex'];
+const _DESTRUCTIVE_JOBS = ['nsfwBulk', 'dedupDelete', 'purgeAll'];
+
+/**
+ * Check whether starting a job of `type` would conflict with a currently
+ * running incompatible job.
+ *
+ * @param {object} jobTrackers  The shared jobTrackers object from server.js.
+ * @param {'scanner'|'destructive'} type  Type of job that wants to start.
+ * @returns {{ conflict: boolean, conflictingJob?: string }}
+ */
+export function checkJobConflict(jobTrackers, type) {
+    const toCheck = type === 'scanner' ? _DESTRUCTIVE_JOBS : _SCANNER_JOBS;
+    for (const key of toCheck) {
+        if (jobTrackers[key]?.isRunning()) {
+            return { conflict: true, conflictingJob: key };
+        }
+    }
+    return { conflict: false };
+}
+
 function _shortProgress(p) {
     if (!p || typeof p !== 'object') return '';
     const parts = [];

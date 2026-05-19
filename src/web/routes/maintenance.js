@@ -80,6 +80,7 @@ import { readConfigSafe } from '../lib/config-cache.js';
 import { saveConfig } from '../../config/manager.js';
 import { tgAuthErrorBody } from '../lib/tg-error.js';
 import { metrics } from '../../core/metrics.js';
+import { checkJobConflict } from '../../core/job-tracker.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -638,6 +639,15 @@ export function createMaintenanceRouter({
         const cleanIds = ids.map((n) => Number(n)).filter((n) => Number.isInteger(n) && n > 0);
         if (!cleanIds.length) {
             return res.status(400).json({ error: 'No valid ids supplied' });
+        }
+        const dedupConflict = checkJobConflict(jobTrackers, 'destructive');
+        if (dedupConflict.conflict) {
+            return res.status(409).json({
+                success: false,
+                code: 'RESOURCE_BUSY',
+                conflictingJob: dedupConflict.conflictingJob,
+                error: `Cannot delete — scanner '${dedupConflict.conflictingJob}' is running`,
+            });
         }
         const tracker = jobTrackers.dedupDelete;
         const r = tracker.tryStart(async ({ onProgress }) => {
@@ -1790,6 +1800,15 @@ export function createMaintenanceRouter({
     // progress; the in-flight DB tx finishes naturally.
     router.post('/maintenance/nsfw/v2/bulk-delete', async (req, res) => {
         if (!_requireConfirm(req, res)) return;
+        const nsfwConflict = checkJobConflict(jobTrackers, 'destructive');
+        if (nsfwConflict.conflict) {
+            return res.status(409).json({
+                success: false,
+                code: 'RESOURCE_BUSY',
+                conflictingJob: nsfwConflict.conflictingJob,
+                error: `Cannot delete — scanner '${nsfwConflict.conflictingJob}' is running`,
+            });
+        }
         const body = req.body || {};
         const tracker = jobTrackers.nsfwBulk;
         const r = tracker.tryStart(async ({ onProgress }) => {

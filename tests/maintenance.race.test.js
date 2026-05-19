@@ -12,7 +12,7 @@
 // failure mode without the test-fixture cost.
 
 import { describe, it, expect } from 'vitest';
-import { createJobTracker } from '../src/core/job-tracker.js';
+import { createJobTracker, checkJobConflict } from '../src/core/job-tracker.js';
 
 function flushAsync(times = 4) {
     let p = Promise.resolve();
@@ -78,6 +78,67 @@ describe('maintenance race-condition fix', () => {
         await flushAsync(20);
         await new Promise((res) => setTimeout(res, 80));
         expect(t.isRunning()).toBe(false);
+    });
+
+    it('checkJobConflict blocks scanner when destructive job is running', async () => {
+        const nsfwBulk = createJobTracker({ kind: 'nsfwBulk', broadcast: () => {} });
+        // Start and never resolve so it stays running
+        nsfwBulk.tryStart(() => new Promise(() => {}));
+        const trackers = {
+            nsfwBulk,
+            dedupDelete: createJobTracker({ kind: 'dedupDelete', broadcast: () => {} }),
+            purgeAll: createJobTracker({ kind: 'purgeAll', broadcast: () => {} }),
+            aiPeople: createJobTracker({ kind: 'aiPeople', broadcast: () => {} }),
+            aiOcr: createJobTracker({ kind: 'aiOcr', broadcast: () => {} }),
+            aiWd14: createJobTracker({ kind: 'aiWd14', broadcast: () => {} }),
+            aiTags: createJobTracker({ kind: 'aiTags', broadcast: () => {} }),
+            aiIndex: createJobTracker({ kind: 'aiIndex', broadcast: () => {} }),
+        };
+        const result = checkJobConflict(trackers, 'scanner');
+        expect(result.conflict).toBe(true);
+        expect(result.conflictingJob).toBe('nsfwBulk');
+    });
+
+    it('checkJobConflict blocks destructive job when scanner is running', async () => {
+        const aiOcr = createJobTracker({ kind: 'aiOcr', broadcast: () => {} });
+        aiOcr.tryStart(() => new Promise(() => {}));
+        const trackers = {
+            nsfwBulk: createJobTracker({ kind: 'nsfwBulk', broadcast: () => {} }),
+            dedupDelete: createJobTracker({ kind: 'dedupDelete', broadcast: () => {} }),
+            purgeAll: createJobTracker({ kind: 'purgeAll', broadcast: () => {} }),
+            aiPeople: createJobTracker({ kind: 'aiPeople', broadcast: () => {} }),
+            aiOcr,
+            aiWd14: createJobTracker({ kind: 'aiWd14', broadcast: () => {} }),
+            aiTags: createJobTracker({ kind: 'aiTags', broadcast: () => {} }),
+            aiIndex: createJobTracker({ kind: 'aiIndex', broadcast: () => {} }),
+        };
+        const result = checkJobConflict(trackers, 'destructive');
+        expect(result.conflict).toBe(true);
+        expect(result.conflictingJob).toBe('aiOcr');
+    });
+
+    it('checkJobConflict returns no conflict when nothing is running', () => {
+        const trackers = {
+            nsfwBulk: createJobTracker({ kind: 'nsfwBulk', broadcast: () => {} }),
+            dedupDelete: createJobTracker({ kind: 'dedupDelete', broadcast: () => {} }),
+            purgeAll: createJobTracker({ kind: 'purgeAll', broadcast: () => {} }),
+            aiPeople: createJobTracker({ kind: 'aiPeople', broadcast: () => {} }),
+            aiOcr: createJobTracker({ kind: 'aiOcr', broadcast: () => {} }),
+            aiWd14: createJobTracker({ kind: 'aiWd14', broadcast: () => {} }),
+            aiTags: createJobTracker({ kind: 'aiTags', broadcast: () => {} }),
+            aiIndex: createJobTracker({ kind: 'aiIndex', broadcast: () => {} }),
+        };
+        expect(checkJobConflict(trackers, 'scanner').conflict).toBe(false);
+        expect(checkJobConflict(trackers, 'destructive').conflict).toBe(false);
+    });
+
+    it('checkJobConflict tolerates missing tracker keys gracefully', () => {
+        // Partial trackers object — missing keys must not throw
+        const trackers = {
+            nsfwBulk: createJobTracker({ kind: 'nsfwBulk', broadcast: () => {} }),
+        };
+        expect(() => checkJobConflict(trackers, 'scanner')).not.toThrow();
+        expect(checkJobConflict(trackers, 'scanner').conflict).toBe(false);
     });
 
     it('progress callback merges flat fields onto the broadcast for legacy WS subs', async () => {

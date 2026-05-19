@@ -41,6 +41,7 @@ import {
 import { pregenerateAi as aiPregenerateAi } from '../../core/ai/index.js';
 import * as llm from '../../core/llm/index.js';
 import { safeResolveDownload } from '../lib/resolve-download.js';
+import { checkJobConflict } from '../../core/job-tracker.js';
 
 export function createAiRouter({ broadcast, log, jobTrackers }) {
     const router = express.Router();
@@ -1169,6 +1170,15 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                 return res
                     .status(409)
                     .json({ error: 'Scan already running', code: 'ALREADY_RUNNING' });
+            }
+            const scanConflict = checkJobConflict(jobTrackers, 'scanner');
+            if (scanConflict.conflict) {
+                return res.status(409).json({
+                    success: false,
+                    code: 'RESOURCE_BUSY',
+                    conflictingJob: scanConflict.conflictingJob,
+                    error: `Cannot start scan — destructive job '${scanConflict.conflictingJob}' is running`,
+                });
             }
             if (['ocr', 'wd14'].includes(feature)) {
                 const sidecar = await _getAiSidecarSnapshot();

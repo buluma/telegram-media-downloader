@@ -22,6 +22,7 @@ import { listPeers } from '../../core/cluster/peers.js';
 import { writeConfigAtomic } from '../lib/config-writer.js';
 import { deleteAllDownloads } from '../../core/db/groups.js';
 import { deferDelete } from '../../core/delete-queue.js';
+import { checkJobConflict } from '../../core/job-tracker.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1051,6 +1052,15 @@ export function createDownloadsRouter({
     // config + photos. Fire-and-forget via the `purgeAll` job tracker.
     // Single-flight — a second call returns 409.
     router.delete('/purge/all', async (req, res) => {
+        const conflict = checkJobConflict(jobTrackers, 'destructive');
+        if (conflict.conflict) {
+            return res.status(409).json({
+                success: false,
+                code: 'RESOURCE_BUSY',
+                conflictingJob: conflict.conflictingJob,
+                error: `Cannot purge — scanner '${conflict.conflictingJob}' is running`,
+            });
+        }
         const tracker = jobTrackers.purgeAll;
         const r = tracker.tryStart(async ({ onProgress }) => {
             let totalFiles = 0;
