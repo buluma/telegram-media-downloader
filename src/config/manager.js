@@ -1,7 +1,7 @@
 import path from 'path';
 import { EventEmitter } from 'events';
 import { fileURLToPath } from 'url';
-import { kvGet, kvSet } from '../core/db.js';
+import { kvGet, kvSet, getAllGroupConfigs, syncGroupConfigs } from '../core/db.js';
 import { BACKPRESSURE_CAP_DEFAULT } from '../core/constants.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -927,6 +927,19 @@ export function loadConfig() {
 
         const config = mergeConfig(stored);
 
+        // Overlay groups from normalized tables when populated. The normalized
+        // tables are the write-through canonical source after the first save;
+        // falling back to the KV blob groups covers fresh installs and the
+        // window between server start and the first saveConfig() call.
+        try {
+            const dbGroups = getAllGroupConfigs();
+            if (dbGroups.length > 0) {
+                config.groups = dbGroups;
+            }
+        } catch (e) {
+            // Non-fatal: normalized tables may not exist on a very old DB.
+        }
+
         // Self-Healing: if merge surfaced new defaults (e.g. a release added
         // a new advanced.* sub-section), persist the merged tree so future
         // reads skip the merge cost and the dashboard sees the up-to-date
@@ -948,6 +961,16 @@ export function saveConfig(config) {
     // pattern provided: a writer crash mid-statement rolls back, no reader
     // ever sees a half-written row.
     kvSet(KV_KEY, config);
+    // Keep normalized group tables in sync so subsequent loadConfig() reads
+    // the latest group list from the relational tables (faster, queryable).
+    if (Array.isArray(config.groups)) {
+        try {
+            syncGroupConfigs(config.groups);
+        } catch (e) {
+            // Non-fatal: log but don't break the save.
+            console.warn('[config] syncGroupConfigs failed:', e.message);
+        }
+    }
     // Notify in-process subscribers (monitor, runtime, etc). Errors in
     // listeners must not break the save itself.
     try {

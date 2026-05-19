@@ -1,4 +1,307 @@
 import { getDb } from '../db.js';
+import { kvGet } from './kv.js';
+
+// ---- Normalized group config CRUD -----------------------------------------
+
+/**
+ * @typedef {object} GroupConfigRow
+ * @property {string} id
+ * @property {string} name
+ * @property {string|null} type
+ * @property {boolean} enabled
+ * @property {import('../../config/manager.js').GroupFilters} filters
+ * @property {boolean} trackComments
+ * @property {string} rescueMode
+ * @property {import('../../config/manager.js').AutoForwardSettings} autoForward
+ * @property {{enabled: boolean, ids: number[]}} topics
+ */
+
+function _rowToGroupConfig(r) {
+    const meta = JSON.parse(r.meta_json || '{}');
+    return {
+        id: r.id,
+        name: r.name,
+        ...(r.type ? { type: r.type } : {}),
+        enabled: Boolean(r.enabled),
+        filters: {
+            photos: Boolean(r.photos ?? 1),
+            videos: Boolean(r.videos ?? 0),
+            files: Boolean(r.files ?? 1),
+            links: Boolean(r.links ?? 1),
+            voice: Boolean(r.voice ?? 1),
+            audio: Boolean(r.audio ?? 0),
+            gifs: Boolean(r.gifs ?? 0),
+            stickers: Boolean(r.stickers ?? 0),
+            urls: Boolean(r.urls ?? 1),
+        },
+        trackComments: Boolean(r.track_comments ?? 1),
+        rescueMode: r.rescue_mode || 'auto',
+        autoForward: {
+            enabled: Boolean(r.fwd_enabled ?? 0),
+            destination: r.destination || null,
+            ...(r.account_id ? { account_id: r.account_id } : {}),
+            deleteAfterForward: Boolean(r.delete_after ?? 1),
+            keepImages: Boolean(r.keep_images ?? 1),
+            keepVideos: Boolean(r.keep_videos ?? 0),
+        },
+        topics: {
+            enabled: Boolean(r.topics_enabled ?? 0),
+            ids: JSON.parse(r.topic_ids || '[]'),
+        },
+        ...meta,
+    };
+}
+
+/**
+ * Read all group configs from the normalized tables.
+ * Returns an empty array if the groups table is unpopulated.
+ *
+ * @returns {GroupConfigRow[]}
+ */
+export function getAllGroupConfigs() {
+    const db = getDb();
+    const rows = db
+        .prepare(
+            `SELECT g.id, g.name, g.type, g.enabled,
+                    f.photos, f.videos, f.files, f.links, f.voice, f.audio, f.gifs, f.stickers, f.urls,
+                    fwd.enabled AS fwd_enabled, fwd.destination, fwd.account_id,
+                    fwd.delete_after, fwd.keep_images, fwd.keep_videos,
+                    s.track_comments, s.rescue_mode, s.max_disk_mb,
+                    s.topics_enabled, s.topic_ids, s.meta_json
+               FROM groups g
+               LEFT JOIN group_filters  f   ON f.group_id   = g.id
+               LEFT JOIN group_forward  fwd ON fwd.group_id = g.id
+               LEFT JOIN group_settings s   ON s.group_id   = g.id
+              ORDER BY g.created_at ASC, g.id ASC`,
+        )
+        .all();
+    return rows.map(_rowToGroupConfig);
+}
+
+// Filter defaults mirror GROUP_DEFAULTS.filters in manager.js.
+const _FILTER_DEFAULTS = {
+    photos: 1,
+    videos: 0,
+    files: 1,
+    links: 1,
+    voice: 1,
+    audio: 0,
+    gifs: 0,
+    stickers: 0,
+    urls: 1,
+};
+function _fb(filters, key) {
+    if (!filters || !(key in filters)) return _FILTER_DEFAULTS[key];
+    return filters[key] ? 1 : 0;
+}
+
+function _upsertGroupTx(db, group) {
+    const gid = String(group.id);
+    const now = Date.now();
+    const f = group.filters;
+    const af = group.autoForward || {};
+    const topics = group.topics || {};
+
+    const metaKeys = [
+        'trackUsers',
+        'monitorAccount',
+        'ownerPeerId',
+        'forwardAccount',
+        'backupPeerId',
+        'failoverAt',
+    ];
+    const meta = {};
+    for (const k of metaKeys) {
+        if (group[k] !== undefined) meta[k] = group[k];
+    }
+
+    db.prepare(`
+        INSERT INTO groups (id, name, type, enabled, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            name       = excluded.name,
+            type       = excluded.type,
+            enabled    = excluded.enabled,
+            updated_at = excluded.updated_at
+    `).run(gid, group.name || '', group.type || null, group.enabled ? 1 : 0, now, now);
+
+    db.prepare(`
+        INSERT INTO group_filters (group_id, photos, videos, files, links, voice, audio, gifs, stickers, urls)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(group_id) DO UPDATE SET
+            photos=excluded.photos, videos=excluded.videos, files=excluded.files,
+            links=excluded.links, voice=excluded.voice, audio=excluded.audio,
+            gifs=excluded.gifs, stickers=excluded.stickers, urls=excluded.urls
+    `).run(
+        gid,
+        _fb(f, 'photos'),
+        _fb(f, 'videos'),
+        _fb(f, 'files'),
+        _fb(f, 'links'),
+        _fb(f, 'voice'),
+        _fb(f, 'audio'),
+        _fb(f, 'gifs'),
+        _fb(f, 'stickers'),
+        _fb(f, 'urls'),
+    );
+
+    db.prepare(`
+        INSERT INTO group_forward (group_id, enabled, destination, account_id, delete_after, keep_images, keep_videos)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(group_id) DO UPDATE SET
+            enabled=excluded.enabled, destination=excluded.destination,
+            account_id=excluded.account_id, delete_after=excluded.delete_after,
+            keep_images=excluded.keep_images, keep_videos=excluded.keep_videos
+    `).run(
+        gid,
+        af.enabled ? 1 : 0,
+        af.destination || null,
+        af.account_id || null,
+        af.deleteAfterForward !== false ? 1 : 0,
+        af.keepImages !== false ? 1 : 0,
+        af.keepVideos ? 1 : 0,
+    );
+
+    db.prepare(`
+        INSERT INTO group_settings (group_id, track_comments, rescue_mode, max_disk_mb, topics_enabled, topic_ids, meta_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(group_id) DO UPDATE SET
+            track_comments=excluded.track_comments, rescue_mode=excluded.rescue_mode,
+            max_disk_mb=excluded.max_disk_mb, topics_enabled=excluded.topics_enabled,
+            topic_ids=excluded.topic_ids, meta_json=excluded.meta_json
+    `).run(
+        gid,
+        group.trackComments !== false ? 1 : 0,
+        group.rescueMode || 'auto',
+        group.maxDiskMb || null,
+        topics.enabled ? 1 : 0,
+        JSON.stringify(topics.ids || []),
+        JSON.stringify(meta),
+    );
+}
+
+/**
+ * Insert or update a single group config in the normalized tables.
+ *
+ * @param {object} group - GroupConfig shape from manager.js
+ */
+export function upsertGroupConfig(group) {
+    const db = getDb();
+    db.transaction(() => _upsertGroupTx(db, group))();
+}
+
+/**
+ * Atomically sync the full group list to the normalized tables.
+ * Groups present in the DB but absent from `groups` are deleted (cascade
+ * removes their child rows).
+ *
+ * @param {object[]} groups
+ */
+export function syncGroupConfigs(groups) {
+    if (!Array.isArray(groups)) return;
+    const db = getDb();
+    const ids = groups.map((g) => String(g.id));
+    db.transaction(() => {
+        for (const g of groups) _upsertGroupTx(db, g);
+        if (ids.length > 0) {
+            const ph = ids.map(() => '?').join(',');
+            db.prepare(`DELETE FROM groups WHERE id NOT IN (${ph})`).run(...ids);
+        } else {
+            db.prepare('DELETE FROM groups').run();
+        }
+    })();
+}
+
+/**
+ * Remove a group and all its child settings rows (ON DELETE CASCADE).
+ *
+ * @param {string|number} groupId
+ */
+export function deleteGroupConfig(groupId) {
+    getDb().prepare('DELETE FROM groups WHERE id = ?').run(String(groupId));
+}
+
+/**
+ * One-shot migration helper exposed for testing. The runtime migration runs
+ * inside initSchema() in db.js; this export lets tests drive it directly
+ * against an already-initialized DB without going through initSchema again.
+ *
+ * @param {import('better-sqlite3').Database} db
+ */
+export function _migrateGroupsFromKv(db) {
+    const count = db.prepare('SELECT COUNT(*) AS n FROM groups').get().n;
+    if (count > 0) return;
+
+    let stored;
+    try {
+        stored = kvGet('config');
+    } catch {
+        return;
+    }
+
+    const kvGroups = stored?.groups;
+    if (!Array.isArray(kvGroups) || kvGroups.length === 0) return;
+
+    const now = Date.now();
+    const insGroup = db.prepare(`
+        INSERT OR IGNORE INTO groups (id, name, type, enabled, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)`);
+    const insFilters = db.prepare(`
+        INSERT OR IGNORE INTO group_filters (group_id, photos, videos, files, links, voice, audio, gifs, stickers, urls)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    const insForward = db.prepare(`
+        INSERT OR IGNORE INTO group_forward (group_id, enabled, destination, account_id, delete_after, keep_images, keep_videos)
+        VALUES (?, ?, ?, ?, ?, ?, ?)`);
+    const insSettings = db.prepare(`
+        INSERT OR IGNORE INTO group_settings (group_id, track_comments, rescue_mode, max_disk_mb, topics_enabled, topic_ids, meta_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?)`);
+
+    db.transaction(() => {
+        for (const g of kvGroups) {
+            const gid = String(g.id);
+            const f = g.filters || {};
+            const af = g.autoForward || {};
+            const topics = g.topics || {};
+            const meta = {};
+            if (g.trackUsers !== undefined) meta.trackUsers = g.trackUsers;
+            if (g.monitorAccount !== undefined) meta.monitorAccount = g.monitorAccount;
+            if (g.ownerPeerId !== undefined) meta.ownerPeerId = g.ownerPeerId;
+            if (g.forwardAccount !== undefined) meta.forwardAccount = g.forwardAccount;
+
+            insGroup.run(gid, g.name || '', g.type || null, g.enabled ? 1 : 0, now, now);
+            insFilters.run(
+                gid,
+                _fb(f, 'photos'),
+                _fb(f, 'videos'),
+                _fb(f, 'files'),
+                _fb(f, 'links'),
+                _fb(f, 'voice'),
+                _fb(f, 'audio'),
+                _fb(f, 'gifs'),
+                _fb(f, 'stickers'),
+                _fb(f, 'urls'),
+            );
+            insForward.run(
+                gid,
+                af.enabled ? 1 : 0,
+                af.destination || null,
+                af.account_id || null,
+                af.deleteAfterForward !== false ? 1 : 0,
+                af.keepImages !== false ? 1 : 0,
+                af.keepVideos ? 1 : 0,
+            );
+            insSettings.run(
+                gid,
+                g.trackComments !== false ? 1 : 0,
+                g.rescueMode || 'auto',
+                g.maxDiskMb || null,
+                topics.enabled ? 1 : 0,
+                JSON.stringify(topics.ids || []),
+                JSON.stringify(meta),
+            );
+        }
+    })();
+}
 
 /**
  * Per-group stats card backing query — single index-only scan over

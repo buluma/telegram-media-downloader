@@ -30,9 +30,10 @@ afterAll(() => {
 });
 
 beforeEach(() => {
-    // Clear the kv['config'] row + drain any listeners between tests so each
-    // case starts from a clean DEFAULT_CONFIG.
+    // Clear the kv['config'] row + normalized group tables + drain any
+    // listeners between tests so each case starts from a clean DEFAULT_CONFIG.
     dbApi.kvDelete('config');
+    db.prepare('DELETE FROM groups').run();
     manager._resetConfigBus();
 });
 
@@ -87,7 +88,8 @@ describe('config manager (kv-backed)', () => {
 
         const reloaded = manager.loadConfig();
         expect(reloaded.groups).toHaveLength(2);
-        expect(reloaded.groups.find((g) => g.id === 1).name).toBe('first-renamed');
+        // Normalized tables store ids as TEXT; use string comparison.
+        expect(reloaded.groups.find((g) => String(g.id) === '1').name).toBe('first-renamed');
     });
 
     it('watchConfig fires synchronously on saveConfig', () => {
@@ -232,5 +234,67 @@ describe('config manager (kv-backed)', () => {
         expect(merged.name).toBe('renamed');
         expect(merged.enabled).toBe(true);
         expect(cfg.groups[0].id).toBe('-100123');
+    });
+
+    it('saveConfig syncs groups to normalized tables', () => {
+        const cfg = manager.loadConfig();
+        cfg.groups = [
+            {
+                id: '-100999',
+                name: 'Sync Test',
+                enabled: true,
+                filters: {
+                    photos: true,
+                    videos: true,
+                    files: false,
+                    links: false,
+                    voice: false,
+                    audio: false,
+                    gifs: false,
+                    stickers: false,
+                    urls: false,
+                },
+                trackComments: false,
+                autoForward: {
+                    enabled: false,
+                    destination: null,
+                    deleteAfterForward: true,
+                    keepImages: true,
+                    keepVideos: false,
+                },
+            },
+        ];
+        manager.saveConfig(cfg);
+
+        const rows = db.prepare('SELECT * FROM groups').all();
+        expect(rows).toHaveLength(1);
+        expect(rows[0].id).toBe('-100999');
+        expect(rows[0].name).toBe('Sync Test');
+
+        const filters = db.prepare('SELECT * FROM group_filters WHERE group_id = ?').get('-100999');
+        expect(filters.photos).toBe(1);
+        expect(filters.videos).toBe(1);
+        expect(filters.files).toBe(0);
+    });
+
+    it('loadConfig reads groups from normalized tables when populated', () => {
+        // Pre-populate normalized tables (simulates post-migration state)
+        dbApi.kvSet('config', {
+            groups: [{ id: 'kv_group', name: 'From KV', enabled: true }],
+        });
+        // Also put data in normalized tables — should win over KV
+        dbApi.getAllGroupConfigs; // ensure tables exist
+        db.prepare(
+            `INSERT INTO groups (id, name, enabled, created_at, updated_at) VALUES ('db_group', 'From DB', 1, 1, 1)`,
+        ).run();
+        db.prepare(`INSERT INTO group_filters (group_id) VALUES ('db_group')`).run();
+        db.prepare(`INSERT INTO group_forward (group_id) VALUES ('db_group')`).run();
+        db.prepare(`INSERT INTO group_settings (group_id) VALUES ('db_group')`).run();
+
+        const cfg = manager.loadConfig();
+        // DB table wins when populated
+        expect(cfg.groups).toHaveLength(1);
+        expect(cfg.groups[0].id).toBe('db_group');
+        expect(cfg.groups[0].name).toBe('From DB');
     });
 });

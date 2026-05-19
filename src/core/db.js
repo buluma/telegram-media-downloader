@@ -629,9 +629,151 @@ function initSchema() {
         CREATE INDEX IF NOT EXISTS idx_cluster_egress_time ON cluster_egress_log(served_at);
     `);
 
+    // Normalized group config tables (v3.0). Replaces the `groups` JSON blob
+    // stored in kv['config'] with a proper relational layout so individual
+    // group settings can be queried and updated without deserialising the
+    // entire config. The child tables (group_filters, group_forward,
+    // group_settings) use ON DELETE CASCADE so deleting a group row prunes
+    // all its settings atomically. Overflow fields that don't fit a typed
+    // column (trackUsers, monitorAccount, etc.) are packed into meta_json.
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS groups (
+            id          TEXT    PRIMARY KEY,
+            name        TEXT    NOT NULL,
+            type        TEXT,
+            enabled     INTEGER NOT NULL DEFAULT 1,
+            created_at  INTEGER NOT NULL,
+            updated_at  INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS group_filters (
+            group_id    TEXT    PRIMARY KEY REFERENCES groups(id) ON DELETE CASCADE,
+            photos      INTEGER NOT NULL DEFAULT 1,
+            videos      INTEGER NOT NULL DEFAULT 0,
+            files       INTEGER NOT NULL DEFAULT 1,
+            links       INTEGER NOT NULL DEFAULT 1,
+            voice       INTEGER NOT NULL DEFAULT 1,
+            audio       INTEGER NOT NULL DEFAULT 0,
+            gifs        INTEGER NOT NULL DEFAULT 0,
+            stickers    INTEGER NOT NULL DEFAULT 0,
+            urls        INTEGER NOT NULL DEFAULT 1
+        );
+
+        CREATE TABLE IF NOT EXISTS group_forward (
+            group_id     TEXT    PRIMARY KEY REFERENCES groups(id) ON DELETE CASCADE,
+            enabled      INTEGER NOT NULL DEFAULT 0,
+            destination  TEXT,
+            account_id   TEXT,
+            delete_after INTEGER NOT NULL DEFAULT 1,
+            keep_images  INTEGER NOT NULL DEFAULT 1,
+            keep_videos  INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS group_settings (
+            group_id        TEXT    PRIMARY KEY REFERENCES groups(id) ON DELETE CASCADE,
+            track_comments  INTEGER NOT NULL DEFAULT 1,
+            rescue_mode     TEXT    NOT NULL DEFAULT 'auto',
+            max_disk_mb     INTEGER,
+            topics_enabled  INTEGER NOT NULL DEFAULT 0,
+            topic_ids       TEXT    NOT NULL DEFAULT '[]',
+            meta_json       TEXT    NOT NULL DEFAULT '{}'
+        );
+    `);
+
     // Run numbered migrations. All CREATE TABLE IF NOT EXISTS statements above
     // have completed, so every target table is guaranteed to exist.
     runMigrations(db);
+
+    // One-shot data migration: read groups from kv['config'] JSON blob and
+    // populate the normalized group tables. Skips if groups table already
+    // has rows (idempotent). Runs after runMigrations so the kv table exists.
+    try {
+        const count = db.prepare('SELECT COUNT(*) AS n FROM groups').get().n;
+        if (count === 0) {
+            const stored = kvGet('config');
+            const kvGroups = stored?.groups;
+            if (Array.isArray(kvGroups) && kvGroups.length > 0) {
+                const now = Date.now();
+                const insGroup = db.prepare(`
+                    INSERT OR IGNORE INTO groups (id, name, type, enabled, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)`);
+                const insFilters = db.prepare(`
+                    INSERT OR IGNORE INTO group_filters (group_id, photos, videos, files, links, voice, audio, gifs, stickers, urls)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+                const insForward = db.prepare(`
+                    INSERT OR IGNORE INTO group_forward (group_id, enabled, destination, account_id, delete_after, keep_images, keep_videos)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)`);
+                const insSettings = db.prepare(`
+                    INSERT OR IGNORE INTO group_settings (group_id, track_comments, rescue_mode, max_disk_mb, topics_enabled, topic_ids, meta_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)`);
+                db.transaction(() => {
+                    for (const g of kvGroups) {
+                        const gid = String(g.id);
+                        const f = g.filters || {};
+                        const af = g.autoForward || {};
+                        const topics = g.topics || {};
+                        const meta = {};
+                        const metaFields = [
+                            'trackUsers',
+                            'monitorAccount',
+                            'ownerPeerId',
+                            'forwardAccount',
+                            'backupPeerId',
+                            'failoverAt',
+                        ];
+                        for (const k of metaFields) {
+                            if (g[k] !== undefined) meta[k] = g[k];
+                        }
+                        insGroup.run(
+                            gid,
+                            g.name || '',
+                            g.type || null,
+                            g.enabled ? 1 : 0,
+                            now,
+                            now,
+                        );
+                        // Use defaults matching GROUP_DEFAULTS.filters: photos/files/links/voice/urls default true
+                        const fb = (v, d) => (v !== undefined ? (v ? 1 : 0) : d);
+                        insFilters.run(
+                            gid,
+                            fb(f.photos, 1),
+                            fb(f.videos, 0),
+                            fb(f.files, 1),
+                            fb(f.links, 1),
+                            fb(f.voice, 1),
+                            fb(f.audio, 0),
+                            fb(f.gifs, 0),
+                            fb(f.stickers, 0),
+                            fb(f.urls, 1),
+                        );
+                        insForward.run(
+                            gid,
+                            af.enabled ? 1 : 0,
+                            af.destination || null,
+                            af.account_id || null,
+                            af.deleteAfterForward !== false ? 1 : 0,
+                            af.keepImages !== false ? 1 : 0,
+                            af.keepVideos ? 1 : 0,
+                        );
+                        insSettings.run(
+                            gid,
+                            g.trackComments !== false ? 1 : 0,
+                            g.rescueMode || 'auto',
+                            g.maxDiskMb || null,
+                            topics.enabled ? 1 : 0,
+                            JSON.stringify(topics.ids || []),
+                            JSON.stringify(meta),
+                        );
+                    }
+                })();
+                // eslint-disable-next-line no-console
+                console.log(`[db] migrated ${kvGroups.length} groups from kv to normalized tables`);
+            }
+        }
+    } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn('[db] group kv migration failed (non-fatal):', e.message);
+    }
 
     // Indexes on migration-added columns. All run after runMigrations() so the
     // target columns are guaranteed to exist. CREATE INDEX IF NOT EXISTS is
@@ -698,6 +840,18 @@ function initSchema() {
         db.prepare('SELECT id, ts, peer_id, kind, detail, ok FROM cluster_audit LIMIT 0').all();
         db.prepare('SELECT id, throttle_bps FROM backup_destinations LIMIT 0').all();
         db.prepare('SELECT id, quality_score FROM faces LIMIT 0').all();
+        db.prepare(
+            'SELECT id, name, type, enabled, created_at, updated_at FROM groups LIMIT 0',
+        ).all();
+        db.prepare(
+            'SELECT group_id, photos, videos, files, links, voice, audio, gifs, stickers, urls FROM group_filters LIMIT 0',
+        ).all();
+        db.prepare(
+            'SELECT group_id, enabled, destination, account_id, delete_after, keep_images, keep_videos FROM group_forward LIMIT 0',
+        ).all();
+        db.prepare(
+            'SELECT group_id, track_comments, rescue_mode, max_disk_mb, topics_enabled, topic_ids, meta_json FROM group_settings LIMIT 0',
+        ).all();
     } catch (e) {
         throw new Error(
             `DB schema incomplete — column or table missing after migrations: ${e.message}. Inspect data/db.sqlite or restore from backup.`,
