@@ -180,6 +180,10 @@ export class AutoForwarder {
                             '⏭️  [AutoForward] Skipping delete — file shared by multiple rows',
                         );
                     } else {
+                        // 60-second grace period so the backup worker can
+                        // finish uploading before the file is removed from
+                        // disk. See docs/ROADMAP.md item 3 (Option C).
+                        await new Promise((r) => setTimeout(r, 60_000));
                         await deferDelete(filePath);
                         logger.info(
                             { file: path.basename(filePath) },

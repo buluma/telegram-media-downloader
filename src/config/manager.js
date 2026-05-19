@@ -654,6 +654,29 @@ const DEFAULT_FILTERS = {
     urls: true,
 };
 
+export const GROUP_DEFAULTS = Object.freeze({
+    filters: Object.freeze({
+        photos: true,
+        videos: false,
+        files: true,
+        links: true,
+        voice: true,
+        audio: false,
+        gifs: false,
+        stickers: false,
+        urls: true,
+    }),
+    trackComments: true,
+    autoForward: Object.freeze({
+        enabled: false,
+        destination: null,
+        deleteAfterForward: true,
+        keepImages: true,
+        keepVideos: false,
+    }),
+    rescueMode: 'auto',
+});
+
 // In-process pub/sub. Replaces the fs.watch + 100ms debounce that the old
 // JSON-file backend relied on. Every saveConfig() emits 'change' synchronously
 // after the DB row is updated, so any module that subscribed via

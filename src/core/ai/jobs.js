@@ -157,6 +157,51 @@ export function pruneJobs(keepPerFeature = 50) {
     return pruned;
 }
 
+// ---- Stale job recovery --------------------------------------------------
+
+/**
+ * Reset stale maintenance_jobs and media_scan_state rows at startup.
+ *
+ * Faces and OCR scans that crash mid-batch leave `processing` rows in
+ * media_scan_state and `running` rows in maintenance_jobs indefinitely —
+ * blocking retries and polluting the job history UI. Call once at server
+ * startup (after initDb) to recover all scanners generically.
+ *
+ * @param {import('better-sqlite3').Database} [dbArg] - optional, defaults to getDb()
+ * @param {object} [opts]
+ * @param {number} [opts.staleAfterMs=1800000] - rows locked longer than this are stale (default 30 min)
+ */
+export function recoverStaleJobs(dbArg, { staleAfterMs = 30 * 60 * 1000 } = {}) {
+    const db = dbArg || getDb();
+    const cutoff = Date.now() - staleAfterMs;
+    const now = Date.now();
+
+    const jobs = db
+        .prepare(
+            `UPDATE maintenance_jobs
+             SET status = 'failed', error = 'recovered: stale at startup', finished_at = ?
+             WHERE status = 'running' AND started_at < ?`,
+        )
+        .run(now, cutoff);
+
+    const locks = db
+        .prepare(
+            `UPDATE media_scan_state
+             SET status = 'failed', last_error = 'recovered: stale lock at startup', updated_at = ?
+             WHERE status = 'processing' AND updated_at < ?`,
+        )
+        .run(now, cutoff);
+
+    if (jobs.changes > 0 || locks.changes > 0) {
+        // eslint-disable-next-line no-console
+        console.log(
+            `[recovery] reset ${jobs.changes} stale jobs, ${locks.changes} stale scan locks`,
+        );
+    }
+
+    return { jobs: jobs.changes, locks: locks.changes };
+}
+
 // ---- Media scan state ----------------------------------------------------
 
 /**

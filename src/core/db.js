@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { runStateMigration } from './state-migration.js';
+import { runMigrations } from './db/migrations/index.js';
 import {
     kvGet,
     kvSet,
@@ -158,89 +159,6 @@ function initSchema() {
         CREATE INDEX IF NOT EXISTS idx_created_at ON downloads(created_at);
     `);
 
-    // Forward-compatible column migrations. Each ALTER is wrapped in its own
-    // try/catch so adding column N+1 doesn't get blocked by column N already
-    // existing.
-    const migrations = [
-        'ALTER TABLE downloads ADD COLUMN group_name TEXT',
-        'ALTER TABLE downloads ADD COLUMN ttl_seconds INTEGER',
-        'ALTER TABLE downloads ADD COLUMN file_hash TEXT',
-        // pinned: rows with pinned=1 are protected from auto-rotation sweeps.
-        'ALTER TABLE downloads ADD COLUMN pinned INTEGER DEFAULT 0',
-        // Rescue Mode: rows with a non-null pending_until are auto-pruned by
-        // the rescue sweeper after that timestamp UNLESS the source message
-        // was deleted on Telegram first (in which case rescued_at gets set
-        // and pending_until is cleared, keeping the file forever).
-        'ALTER TABLE downloads ADD COLUMN pending_until INTEGER',
-        'ALTER TABLE downloads ADD COLUMN rescued_at INTEGER',
-        // NSFW review (Phase 1: photos only).
-        //   nsfw_score        — REAL 0..1 from the classifier (NULL = never scanned).
-        //   nsfw_checked_at   — unix-ms of the last successful classification;
-        //                       set even when score is NULL (e.g. file missing on
-        //                       disk) so we don't keep retrying forever.
-        //   nsfw_whitelist    — admin clicked "Mark as not 18+"; persistent so
-        //                       re-scans skip the row and the review sheet
-        //                       hides it.
-        'ALTER TABLE downloads ADD COLUMN nsfw_score REAL',
-        'ALTER TABLE downloads ADD COLUMN nsfw_checked_at INTEGER',
-        'ALTER TABLE downloads ADD COLUMN nsfw_whitelist INTEGER DEFAULT 0',
-        // Soft-delete: rows are stamped deleted_at before file removal so
-        // in-flight scanner batches can detect and skip them before the hard
-        // DELETE runs. delete_reason documents which job triggered the delete.
-        'ALTER TABLE downloads ADD COLUMN deleted_at INTEGER',
-        'ALTER TABLE downloads ADD COLUMN delete_reason TEXT',
-    ];
-    for (const sql of migrations) {
-        try {
-            db.exec(sql);
-        } catch {
-            /* column already exists */
-        }
-    }
-    try {
-        db.exec(
-            'CREATE INDEX IF NOT EXISTS idx_filename_size ON downloads(group_id, file_name, file_size)',
-        );
-    } catch {}
-    try {
-        db.exec(
-            'CREATE INDEX IF NOT EXISTS idx_downloads_deleted ON downloads(deleted_at) WHERE deleted_at IS NOT NULL',
-        );
-    } catch {}
-    // Speeds up the rescue sweeper's expired-pending scan and the per-message
-    // markRescued lookup. Both are cheap CREATE-IF-NOT-EXISTS calls.
-    try {
-        db.exec(
-            'CREATE INDEX IF NOT EXISTS idx_pending_until ON downloads(pending_until) WHERE pending_until IS NOT NULL',
-        );
-    } catch {}
-    try {
-        db.exec('CREATE INDEX IF NOT EXISTS idx_group_message ON downloads(group_id, message_id)');
-    } catch {}
-    // Indexes that drive the NSFW review sheet's hot queries:
-    //   - "what's left to scan" (file_type='photo' AND nsfw_checked_at IS NULL)
-    //   - "show flagged sorted by score desc" (whitelist=0 AND score >= threshold)
-    try {
-        db.exec(
-            'CREATE INDEX IF NOT EXISTS idx_nsfw_unscanned ON downloads(file_type, nsfw_checked_at) WHERE nsfw_checked_at IS NULL',
-        );
-    } catch {}
-    try {
-        db.exec(
-            'CREATE INDEX IF NOT EXISTS idx_nsfw_review ON downloads(nsfw_score, nsfw_whitelist) WHERE nsfw_score IS NOT NULL',
-        );
-    } catch {}
-    // Tier-aware review path — covers the "rows of {file_type} not whitelisted
-    // ordered/filtered by nsfw_score" pattern that drives tier counts, the
-    // tier-list pagination, and bulk-id resolution. The leftmost column is
-    // file_type so the IN-list filter binds an index range, then whitelist=0
-    // narrows further, then nsfw_score sorts/ranges. The partial WHERE keeps
-    // the index small (rows that have never been scored aren't indexed).
-    try {
-        db.exec(
-            'CREATE INDEX IF NOT EXISTS idx_nsfw_tier ON downloads(file_type, nsfw_whitelist, nsfw_score) WHERE nsfw_score IS NOT NULL',
-        );
-    } catch {}
     // v2.15 — AI subsystem re-add (semantic search + auto-tags + face
     // clustering). Tables are opt-in; rows only land here once the operator
     // turns a capability on in `config.advanced.ai` and runs a scan. Every
@@ -309,52 +227,6 @@ function initSchema() {
         );
         CREATE INDEX IF NOT EXISTS idx_wd14_tags_tag ON image_tags_wd14(tag);
     `);
-    try {
-        db.exec('ALTER TABLE downloads ADD COLUMN ai_indexed_at INTEGER');
-    } catch {
-        /* column already present (re-run after v2.13 column drop) */
-    }
-    try {
-        db.exec(
-            'CREATE INDEX IF NOT EXISTS idx_ai_unindexed ON downloads(file_type, ai_indexed_at) WHERE ai_indexed_at IS NULL',
-        );
-    } catch {
-        /* index already present */
-    }
-    // Composite indexes for the main gallery query — covers the group filter +
-    // date sort (most common path) and the pinned-first sort (used when
-    // pinned rows exist in a group).
-    try {
-        db.exec(
-            'CREATE INDEX IF NOT EXISTS idx_gallery_group_date ON downloads(group_id, created_at DESC)',
-        );
-    } catch {}
-    try {
-        db.exec(
-            'CREATE INDEX IF NOT EXISTS idx_gallery_pinned_date ON downloads(pinned, created_at DESC)',
-        );
-    } catch {}
-    // Dedup GROUP BY + blocklist INSERT check both scan file_hash. Without
-    // this index both queries do full table scans + temp B-trees for GROUP BY.
-    try {
-        db.exec(
-            'CREATE INDEX IF NOT EXISTS idx_file_hash ON downloads(file_hash) WHERE file_hash IS NOT NULL',
-        );
-    } catch {}
-    // idx_created_at (single-column) is now covered by idx_gallery_group_date
-    // and idx_gallery_pinned_date. Drop it to reduce write overhead on inserts.
-    try {
-        db.exec('DROP INDEX IF EXISTS idx_created_at');
-    } catch {}
-    // v2.16 — faces.quality_score (Phase 2). Quality filter persists the
-    // raw detection score so the UI can show "low confidence" warnings
-    // and the operator can sort/filter by face quality if a cluster
-    // looks wrong.
-    try {
-        db.exec('ALTER TABLE faces ADD COLUMN quality_score REAL');
-    } catch {
-        /* column already present */
-    }
     // v2.16 Phase 4 — peer_face_centroids. Stores the
     // average-of-cluster face vectors that paired peers push to us.
     // The label sync flow uses this to match an incoming "Bob" centroid
@@ -475,22 +347,6 @@ function initSchema() {
         CREATE INDEX IF NOT EXISTS idx_scan_state_stale  ON media_scan_state(locked_at) WHERE locked_by IS NOT NULL;
     `);
 
-    // Smoke-test every column the rest of the code path depends on. The
-    // ALTER TABLE migrations above swallow "column already exists" so they
-    // also swallow real failures (out-of-disk, locked DB, corrupt schema).
-    // A failed migration was previously discovered at query time —
-    // halfway through a download — as a generic "no such column" runtime
-    // error. Forcing the SELECT here makes us fail at boot instead.
-    try {
-        db.prepare(
-            'SELECT pinned, pending_until, rescued_at, ttl_seconds, file_hash, nsfw_score, nsfw_checked_at, nsfw_whitelist, ai_indexed_at FROM downloads LIMIT 0',
-        ).all();
-    } catch (e) {
-        throw new Error(
-            `DB schema migration incomplete — column missing after ALTER TABLE: ${e.message}. Inspect data/db.sqlite or restore from backup.`,
-        );
-    }
-
     // Queue/Pending Table
     db.exec(`
         CREATE TABLE IF NOT EXISTS queue (
@@ -576,12 +432,6 @@ function initSchema() {
         CREATE INDEX IF NOT EXISTS idx_backup_jobs_pending ON backup_jobs(destination_id, status, next_retry_at);
         CREATE INDEX IF NOT EXISTS idx_backup_jobs_download ON backup_jobs(download_id);
     `);
-    // throttle_bps was added after the initial backup release — wrap the
-    // ALTER in try/catch so the column is present on upgrades and the
-    // CREATE-IF-NOT-EXISTS path on fresh DBs is unaffected.
-    try {
-        db.exec('ALTER TABLE backup_destinations ADD COLUMN throttle_bps INTEGER');
-    } catch {}
 
     // Generic KV blob store. Holds runtime state that used to live in
     // standalone JSON files (config.json, disk_usage.json) — single source
@@ -645,16 +495,6 @@ function initSchema() {
         );
         CREATE INDEX IF NOT EXISTS idx_update_history_status ON update_history(status, started_at);
     `);
-    // Forward-compatible column added in v2.9: per-row snapshot of the
-    // boot_instance_id at click time. Lets the boot-time finaliser detect
-    // a successful swap even when the new image carries the same semver
-    // (rebuilt `:latest` tag), since the instance_id always differs across
-    // container recreates.
-    try {
-        db.exec('ALTER TABLE update_history ADD COLUMN from_instance_id TEXT');
-    } catch {
-        /* column already exists */
-    }
 
     // Cluster mode (v2.9): peer registry + cached catalogs from remote peers
     // + audit log for cross-peer signed requests. Identity (peer_id,
@@ -744,24 +584,9 @@ function initSchema() {
         CREATE INDEX IF NOT EXISTS idx_cluster_audit_ts ON cluster_audit(ts DESC);
     `);
     // Reserved owner column on downloads — null = self peer.
-    try {
-        db.exec('ALTER TABLE downloads ADD COLUMN owner_peer_id TEXT');
-    } catch {}
 
-    // v2.10 cluster columns + tables — per-peer tokens, failover audit,
+    // v2.10 cluster tables — per-peer tokens, failover audit,
     // cross-peer-delete jobs, LAN-discovery cache, egress accounting.
-    const clusterV210Migrations = [
-        'ALTER TABLE peers ADD COLUMN shared_secret BLOB',
-        "ALTER TABLE peers ADD COLUMN role TEXT NOT NULL DEFAULT 'admin'",
-        'ALTER TABLE peers ADD COLUMN ws_last_seen INTEGER',
-    ];
-    for (const sql of clusterV210Migrations) {
-        try {
-            db.exec(sql);
-        } catch {
-            /* column already present */
-        }
-    }
     db.exec(`
         CREATE TABLE IF NOT EXISTS peer_failover_log (
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -804,17 +629,52 @@ function initSchema() {
         CREATE INDEX IF NOT EXISTS idx_cluster_egress_time ON cluster_egress_log(served_at);
     `);
 
-    // Smoke-test the new tables the same way we do for downloads: force a
-    // SELECT against every column the rest of the code path depends on so
-    // a failed CREATE TABLE surfaces at boot, not mid-request.
+    // Run numbered migrations. All CREATE TABLE IF NOT EXISTS statements above
+    // have completed, so every target table is guaranteed to exist.
+    runMigrations(db);
+
+    // Indexes on migration-added columns. All run after runMigrations() so the
+    // target columns are guaranteed to exist. CREATE INDEX IF NOT EXISTS is
+    // idempotent — safe to call on every boot.
+    db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_filename_size
+            ON downloads(group_id, file_name, file_size);
+        CREATE INDEX IF NOT EXISTS idx_downloads_deleted
+            ON downloads(deleted_at) WHERE deleted_at IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_pending_until
+            ON downloads(pending_until) WHERE pending_until IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_group_message
+            ON downloads(group_id, message_id);
+        CREATE INDEX IF NOT EXISTS idx_nsfw_unscanned
+            ON downloads(file_type, nsfw_checked_at) WHERE nsfw_checked_at IS NULL;
+        CREATE INDEX IF NOT EXISTS idx_nsfw_review
+            ON downloads(nsfw_score, nsfw_whitelist) WHERE nsfw_score IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_nsfw_tier
+            ON downloads(file_type, nsfw_whitelist, nsfw_score) WHERE nsfw_score IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_ai_unindexed
+            ON downloads(file_type, ai_indexed_at) WHERE ai_indexed_at IS NULL;
+        CREATE INDEX IF NOT EXISTS idx_gallery_group_date
+            ON downloads(group_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_gallery_pinned_date
+            ON downloads(pinned, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_file_hash
+            ON downloads(file_hash) WHERE file_hash IS NOT NULL;
+        DROP INDEX IF EXISTS idx_created_at;
+    `);
+
+    // Smoke-test every column the rest of the code path depends on so a
+    // failed migration or CREATE TABLE surfaces at boot, not mid-request.
     try {
+        db.prepare(
+            'SELECT pinned, pending_until, rescued_at, ttl_seconds, file_hash, nsfw_score, nsfw_checked_at, nsfw_whitelist, ai_indexed_at, deleted_at, delete_reason, owner_peer_id FROM downloads LIMIT 0',
+        ).all();
         db.prepare('SELECT key, value, updated_at FROM kv LIMIT 0').all();
         db.prepare(
             'SELECT token, role, issued_at, expires_at, last_seen FROM web_sessions LIMIT 0',
         ).all();
         db.prepare('SELECT id, job, created_at FROM queue_backlog LIMIT 0').all();
         db.prepare(
-            'SELECT id, from_version, to_version, started_at, finished_at, status, error_code, error_msg, backup_path, backup_bytes FROM update_history LIMIT 0',
+            'SELECT id, from_version, to_version, started_at, finished_at, status, error_code, error_msg, backup_path, backup_bytes, from_instance_id FROM update_history LIMIT 0',
         ).all();
         db.prepare(
             'SELECT id, peer_id, name, url, status, stream_mode, last_seen_at, paired_at, fingerprint, version, notes, shared_secret, role, ws_last_seen FROM peers LIMIT 0',
@@ -836,10 +696,11 @@ function initSchema() {
         ).all();
         db.prepare('SELECT peer_id, payload, cached_at FROM peer_groups LIMIT 0').all();
         db.prepare('SELECT id, ts, peer_id, kind, detail, ok FROM cluster_audit LIMIT 0').all();
-        db.prepare('SELECT owner_peer_id FROM downloads LIMIT 0').all();
+        db.prepare('SELECT id, throttle_bps FROM backup_destinations LIMIT 0').all();
+        db.prepare('SELECT id, quality_score FROM faces LIMIT 0').all();
     } catch (e) {
         throw new Error(
-            `DB schema migration incomplete — kv / web_sessions / queue_backlog / update_history / cluster tables not ready: ${e.message}`,
+            `DB schema incomplete — column or table missing after migrations: ${e.message}. Inspect data/db.sqlite or restore from backup.`,
         );
     }
 

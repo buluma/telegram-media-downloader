@@ -50,6 +50,7 @@ import { preloadClassifier as nsfwPreloadClassifier } from '../core/nsfw.js';
 // aiStartTagsScan, aiEmbedText, aiTopK, aiLoadVecOnce, AI_EMBED_DEFAULTS,
 // …) were deleted along with the routes that called them.
 import { getRescueSweeper } from '../core/rescue.js';
+import { recoverStaleJobs } from '../core/ai/jobs.js';
 import { startDrain, stopDrain } from '../core/delete-queue.js';
 import { getAutoBackfillScheduler } from '../core/auto-backfill.js';
 import * as backup from '../core/backup/index.js';
@@ -1687,6 +1688,12 @@ server.listen(PORT, async () => {
     // a slow large download would unlink the .part out from under it,
     // producing the "Downloaded file is empty (0 bytes)" failures we kept
     // seeing in the wild.
+    try {
+        recoverStaleJobs();
+    } catch (e) {
+        console.warn('[recovery] stale job recovery failed:', e.message);
+    }
+
     try {
         startDrain();
     } catch (e) {

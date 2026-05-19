@@ -3,7 +3,7 @@ import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
 import { existsSync, readdirSync, realpathSync } from 'fs';
 import express from 'express';
-import { loadConfig } from '../../config/manager.js';
+import { loadConfig, GROUP_DEFAULTS } from '../../config/manager.js';
 import { getDb } from '../../core/db.js';
 import { runtime } from '../../core/runtime.js';
 import { writeConfigAtomic } from '../lib/config-writer.js';
@@ -435,24 +435,9 @@ export function createGroupsRouter({
                     id: groupId.startsWith('-') ? parseInt(groupId) : groupId,
                     name: groupName || `Unknown`,
                     enabled: req.body.enabled ?? false,
-                    filters: {
-                        photos: true,
-                        videos: false,
-                        files: true,
-                        links: true,
-                        voice: true,
-                        gifs: false,
-                        stickers: false,
-                        urls: true,
-                    },
-                    trackComments: true,
-                    autoForward: {
-                        enabled: false,
-                        destination: null,
-                        deleteAfterForward: true,
-                        keepImages: true,
-                        keepVideos: false,
-                    },
+                    filters: { ...GROUP_DEFAULTS.filters },
+                    trackComments: GROUP_DEFAULTS.trackComments,
+                    autoForward: { ...GROUP_DEFAULTS.autoForward },
                     trackUsers: { enabled: false, users: [] },
                     topics: { enabled: false, ids: [] },
                 };

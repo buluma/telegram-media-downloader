@@ -2,7 +2,7 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs, { existsSync } from 'fs';
-import { loadConfig } from '../../config/manager.js';
+import { loadConfig, GROUP_DEFAULTS } from '../../config/manager.js';
 import { DIALOG_CACHE_TTL_MS } from '../../core/constants.js';
 import { nameLooksUnresolved } from '../lib/format.js';
 
@@ -270,24 +270,9 @@ export function createDialogsRouter({ getAccountManager, getTelegramClient }) {
                         members: d.entity?.participantsCount || null,
                         enabled: configGroup?.enabled || false,
                         inConfig: !!configGroup,
-                        filters: configGroup?.filters || {
-                            photos: true,
-                            videos: false,
-                            files: true,
-                            links: true,
-                            voice: true,
-                            gifs: false,
-                            stickers: false,
-                            urls: true,
-                        },
-                        trackComments: configGroup?.trackComments ?? true,
-                        autoForward: configGroup?.autoForward || {
-                            enabled: false,
-                            destination: null,
-                            deleteAfterForward: true,
-                            keepImages: true,
-                            keepVideos: false,
-                        },
+                        filters: configGroup?.filters || { ...GROUP_DEFAULTS.filters },
+                        trackComments: configGroup?.trackComments ?? GROUP_DEFAULTS.trackComments,
+                        autoForward: configGroup?.autoForward || { ...GROUP_DEFAULTS.autoForward },
                         photoUrl: `/api/groups/${id}/photo`,
                         accountIds: accIds,
                     };

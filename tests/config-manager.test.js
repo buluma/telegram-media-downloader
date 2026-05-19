@@ -186,6 +186,32 @@ describe('config manager (kv-backed)', () => {
         expect(cfg.advanced.ai.facesEpsilon).toBe(0.45);
     });
 
+    it('GROUP_DEFAULTS is exported and frozen', () => {
+        expect(manager.GROUP_DEFAULTS).toBeTruthy();
+        expect(Object.isFrozen(manager.GROUP_DEFAULTS)).toBe(true);
+        expect(Object.isFrozen(manager.GROUP_DEFAULTS.filters)).toBe(true);
+        expect(Object.isFrozen(manager.GROUP_DEFAULTS.autoForward)).toBe(true);
+    });
+
+    it('GROUP_DEFAULTS has expected filter values', () => {
+        const { filters } = manager.GROUP_DEFAULTS;
+        expect(filters.photos).toBe(true);
+        expect(filters.videos).toBe(false);
+        expect(filters.voice).toBe(true);
+        expect(filters.audio).toBe(false);
+        expect(filters.gifs).toBe(false);
+        expect(filters.stickers).toBe(false);
+    });
+
+    it('GROUP_DEFAULTS autoForward matches groups.js defaults', () => {
+        const af = manager.GROUP_DEFAULTS.autoForward;
+        expect(af.enabled).toBe(false);
+        expect(af.destination).toBeNull();
+        expect(af.deleteAfterForward).toBe(true);
+        expect(af.keepImages).toBe(true);
+        expect(af.keepVideos).toBe(false);
+    });
+
     it('loadConfig dedupes groups that share the same id', () => {
         // Plant a stored tree with two entries for the same Telegram id but
         // different display names — what the dashboard sees when the same

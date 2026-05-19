@@ -208,3 +208,63 @@ describe('AutoForwarder.resolveDestination — storage channel discovery', () =>
         await expect(fwd.resolveDestination('storage', client)).resolves.toBeNull();
     });
 });
+
+describe('AutoForwarder.process — 60-second delete grace period', () => {
+    it('delays deferDelete by 60s after a successful forward', async () => {
+        vi.useFakeTimers();
+        const tmpFile = path.join(os.tmpdir(), `fwd-grace-${Date.now()}.jpg`);
+        await fs.writeFile(tmpFile, 'data');
+
+        // Stub deferDelete so the test doesn't touch the real filesystem.
+        const deleteQueue = await import('../src/core/delete-queue.js');
+        const deleteSpy = vi.spyOn(deleteQueue, 'deferDelete').mockResolvedValue(undefined);
+
+        // Stub getDb so the sharedCount check doesn't need a real DB.
+        const dbModule = await import('../src/core/db.js');
+        vi.spyOn(dbModule, 'getDb').mockReturnValue({
+            prepare: () => ({ get: () => ({ n: 1 }) }),
+        });
+
+        const client = fakeClient({
+            getInputEntity: vi.fn().mockResolvedValue('me'),
+            sendFile: vi.fn().mockResolvedValue({ id: 1 }),
+        });
+        const config = {
+            groups: [
+                {
+                    id: '1',
+                    autoForward: {
+                        enabled: true,
+                        destination: 'me',
+                        deleteAfterForward: true,
+                        keepImages: false,
+                        keepVideos: false,
+                    },
+                },
+            ],
+        };
+        const fwd = new AutoForwarder(client, config);
+        const processPromise = fwd.process({
+            groupId: '1',
+            groupName: 'g',
+            filePath: tmpFile,
+            message: {},
+            mediaType: 'photos',
+            deduped: false,
+        });
+
+        // Give the sendFile mock time to resolve but stay before the 60s delay.
+        await vi.advanceTimersByTimeAsync(100);
+        expect(deleteSpy).not.toHaveBeenCalled();
+
+        // Advance past the grace period — deferDelete should now fire.
+        await vi.advanceTimersByTimeAsync(60_000);
+        await processPromise;
+
+        expect(deleteSpy).toHaveBeenCalledWith(tmpFile);
+
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+        await fs.unlink(tmpFile).catch(() => {});
+    });
+});

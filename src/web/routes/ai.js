@@ -1449,6 +1449,25 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         }
     });
 
+    router.get('/ai/scan/stale', async (_req, res) => {
+        try {
+            const { findStaleLocks } = await import('../../core/ai/jobs.js');
+            const db = getDb();
+            const staleJobs = db
+                .prepare(
+                    `SELECT id, type, feature, status, started_at
+                     FROM maintenance_jobs
+                     WHERE status = 'running' AND started_at < ?
+                     ORDER BY started_at ASC`,
+                )
+                .all(Date.now() - 30 * 60 * 1000);
+            const staleLocks = findStaleLocks(null, 30 * 60 * 1000);
+            res.json({ success: true, staleJobs, staleLocks });
+        } catch (e) {
+            res.status(500).json({ error: e?.message || String(e) });
+        }
+    });
+
     // ---- Scan failures (durable media_scan_state) ----------------------------
 
     router.get('/ai/scan/failures', (req, res) => {
