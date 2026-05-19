@@ -44,6 +44,12 @@ import { resolveFacesValue } from './faces-config.js';
 import { detectFacesBatch, getSidecarUrl } from './faces-client.js';
 import { mlOcr, isTgdlMlEnabled, getTgdlMlUrl } from './tgdl-ml-client.js';
 import { checkSidecarCapability } from './preflight.js';
+import {
+    markScanDone,
+    markScanFailed,
+    markScanSkipped,
+    recoverStaleLocks,
+} from '../db/scan-state.js';
 import { hasFfmpeg, resolveFfmpegBin } from '../thumbs.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -1069,6 +1075,10 @@ export function startWd14Scan(cfg, onProgress, onDone, onLog) {
         async (state, signal, bump, log, cfg) => {
             const fileTypes = Array.isArray(cfg.fileTypes) ? cfg.fileTypes : ['photo'];
 
+            // Release stale processing locks from any prior crash before counting.
+            const recovered = recoverStaleLocks('wd14');
+            if (recovered > 0) log('info', `wd14 scan: recovered ${recovered} stale locks`);
+
             const total = countUnscannedWd14({ fileTypes });
             state.total = total;
             bump();
@@ -1098,27 +1108,43 @@ export function startWd14Scan(cfg, onProgress, onDone, onLog) {
                 for (const row of batch) {
                     if (signal.aborted) break;
                     const abs = _resolveAbs(row.file_path);
-                    let tags = [];
-                    if (abs) {
-                        try {
-                            tags = await _tagWd14One(
-                                sidecarUrl,
-                                abs,
-                                minScore,
-                                log,
-                                isTgdlMlEnabled(),
-                            );
-                        } catch (e) {
-                            log('warn', `wd14 tagging failed for id=${row.id}: ${e?.message || e}`);
-                        }
+                    if (!abs) {
+                        // File missing on disk — write sentinel + record skip so it isn't
+                        // re-queued on every subsequent scan.
+                        setWd14Tags(row.id, []);
+                        markScanSkipped(row.id, 'wd14', 'file_missing');
+                        state.scanned += 1;
+                        bump();
+                        continue;
                     }
+
+                    let tags = null;
+                    try {
+                        tags = await _tagWd14One(sidecarUrl, abs, minScore, log, isTgdlMlEnabled());
+                    } catch (e) {
+                        log('warn', `wd14 tagging failed for id=${row.id}: ${e?.message || e}`);
+                        // Write sentinel so the row exits the batch query this scan run,
+                        // but record the failure in scan_state so "retry failed" can unblock it.
+                        setWd14Tags(row.id, []);
+                        markScanFailed(row.id, 'wd14', e?.message || String(e), e?.code || null);
+                        state.failed = (state.failed || 0) + 1;
+                        state.scanned += 1;
+                        bump();
+                        await new Promise((r) => setImmediate(r));
+                        continue;
+                    }
+
                     setWd14Tags(row.id, Array.isArray(tags) ? tags : []);
+                    markScanDone(row.id, 'wd14');
                     state.scanned += 1;
                     bump();
                     await new Promise((r) => setImmediate(r));
                 }
             }
-            log('info', `wd14 scan: finished — ${state.scanned} files tagged`);
+            log(
+                'info',
+                `wd14 scan: finished — ${state.scanned} files tagged, ${state.failed || 0} failed`,
+            );
         },
         onProgress,
         onDone,

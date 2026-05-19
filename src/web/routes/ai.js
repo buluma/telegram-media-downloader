@@ -42,6 +42,7 @@ import { pregenerateAi as aiPregenerateAi } from '../../core/ai/index.js';
 import * as llm from '../../core/llm/index.js';
 import { safeResolveDownload } from '../lib/resolve-download.js';
 import { checkJobConflict } from '../../core/job-tracker.js';
+import { getScanStateCounts, listScanFailures } from '../../core/db/scan-state.js';
 
 export function createAiRouter({ broadcast, log, jobTrackers }) {
     const router = express.Router();
@@ -475,6 +476,47 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             detail: 'File path folder does not match file_type convention.',
             samples: folderSamples,
         });
+
+        // Durable scan failures from media_scan_state (WD14 writes here on sidecar error).
+        try {
+            let totalFailed = 0;
+            const failedSamples = [];
+            for (const sc of ['wd14', 'ocr', 'faces']) {
+                const counts = getScanStateCounts(sc);
+                if (counts.failed > 0) {
+                    totalFailed += counts.failed;
+                    const samples = listScanFailures(sc, { limit: 5 });
+                    failedSamples.push(...samples.map((s) => ({ ...s, scanner: sc })));
+                }
+            }
+            push({
+                type: 'scan_failures',
+                severity: 'warn',
+                title: 'Durable scanner failures',
+                count: totalFailed,
+                detail: 'Rows that failed due to sidecar errors. Use retry-failed to re-queue them.',
+                samples: failedSamples.slice(0, 20),
+            });
+        } catch {
+            /* non-fatal */
+        }
+
+        // Soft-deleted rows still awaiting final purge.
+        try {
+            const pendingPurge = db
+                .prepare('SELECT COUNT(*) AS n FROM downloads WHERE deleted_at IS NOT NULL')
+                .get().n;
+            push({
+                type: 'pending_purge',
+                severity: 'info',
+                title: 'Soft-deleted rows awaiting purge',
+                count: pendingPurge,
+                detail: 'Rows stamped with deleted_at that have not been hard-deleted yet.',
+                samples: [],
+            });
+        } catch {
+            /* non-fatal */
+        }
 
         const data = {
             success: true,
@@ -1402,6 +1444,58 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             const released = releaseStaleLocks(scanner);
             const summary = getScanStateSummary(scanner);
             res.json({ success: true, scanner, summary, staleLocksReleased: released });
+        } catch (e) {
+            res.status(500).json({ error: e?.message || String(e) });
+        }
+    });
+
+    // ---- Scan failures (durable media_scan_state) ----------------------------
+
+    router.get('/ai/scan/failures', (req, res) => {
+        try {
+            const scanner = req.query.scanner ? String(req.query.scanner).trim() : null;
+            const limit = Math.max(1, Math.min(500, Number(req.query.limit) || 100));
+            const scanners = scanner ? [scanner] : ['wd14', 'ocr', 'faces'];
+            const byScanner = {};
+            for (const sc of scanners) {
+                byScanner[sc] = {
+                    counts: getScanStateCounts(sc),
+                    failures: listScanFailures(sc, { limit }),
+                };
+            }
+            res.json({ success: true, byScanner });
+        } catch (e) {
+            res.status(500).json({ error: e?.message || String(e) });
+        }
+    });
+
+    router.post('/ai/scan/retry-failed', async (req, res) => {
+        try {
+            const { resetScanState } = await import('../../core/db/scan-state.js');
+            const scanner = String(req.body?.scanner || '').trim();
+            if (!scanner) return res.status(400).json({ error: 'scanner required' });
+
+            const { listScanFailures: lsf } = await import('../../core/db/scan-state.js');
+            const failures = lsf(scanner, { limit: 500 });
+            const ids = failures.map((r) => r.download_id);
+            if (!ids.length) return res.json({ success: true, reset: 0 });
+
+            resetScanState(ids, scanner);
+
+            // For WD14, also clear sentinel rows so getUnscannedWd14Batch re-queues them.
+            if (scanner === 'wd14' && ids.length) {
+                const db = getDb();
+                const CHUNK = 500;
+                for (let i = 0; i < ids.length; i += CHUNK) {
+                    const slice = ids.slice(i, i + CHUNK);
+                    const ph = slice.map(() => '?').join(',');
+                    db.prepare(
+                        `DELETE FROM image_tags_wd14 WHERE tag='_wd14_scanned_' AND download_id IN (${ph})`,
+                    ).run(...slice);
+                }
+            }
+
+            res.json({ success: true, reset: ids.length, scanner });
         } catch (e) {
             res.status(500).json({ error: e?.message || String(e) });
         }
