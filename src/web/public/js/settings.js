@@ -126,6 +126,9 @@ export async function loadSettings() {
         bind('setting-max-video', dm.maxVideoSize || '');
         bind('setting-max-image', dm.maxImageSize || '');
 
+        const blockWebpEl = document.getElementById('setting-block-webp');
+        if (blockWebpEl) blockWebpEl.checked = !!dl.blockWebp;
+
         // Auto-rotate toggle (deletes oldest unpinned downloads when the cap
         // is exceeded). Toggle is local-state only; the actual sweep cadence
         // is enforced server-side by src/core/disk-rotator.js.
@@ -1483,6 +1486,7 @@ function _gatherSettingsPayload() {
             concurrent: parseInt(get('setting-concurrent')),
             retries: parseInt(get('setting-retries')),
             maxSpeed: parseInt(get('setting-max-speed')) || 0,
+            blockWebp: !!document.getElementById('setting-block-webp')?.checked,
         },
         rateLimits: { requestsPerMinute: parseInt(get('setting-rpm')) },
         pollingInterval: parseInt(get('setting-polling')),
@@ -1603,6 +1607,7 @@ export async function saveSettings() {
             concurrent: parseInt(get('setting-concurrent')),
             retries: parseInt(get('setting-retries')),
             maxSpeed: parseInt(get('setting-max-speed')) || 0,
+            blockWebp: !!document.getElementById('setting-block-webp')?.checked,
         },
         rateLimits: {
             requestsPerMinute: parseInt(get('setting-rpm')),

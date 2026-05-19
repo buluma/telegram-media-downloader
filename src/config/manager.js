@@ -25,6 +25,7 @@ const DEFAULT_CONFIG = {
         concurrent: 10,
         retries: 5,
         maxSpeed: 0, // 0 = unlimited
+        blockWebp: false,
     },
     rateLimits: {
         requestsPerMinute: 60,

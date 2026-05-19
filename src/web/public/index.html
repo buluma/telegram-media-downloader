@@ -1527,6 +1527,16 @@
                                 <input id="setting-max-speed" type="hidden" value="0">
                                 <p class="text-xs text-tg-textSecondary mt-1" data-i18n="settings.download.speed_help">Limit bandwidth usage per worker. Free-form: 0 = unlimited; type any number, pick a unit.</p>
                             </div>
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <label class="text-tg-text text-sm" data-i18n="settings.download.block_webp">Block WebP / Stickers</label>
+                                    <p class="text-xs text-tg-textSecondary mt-0.5" data-i18n="settings.download.block_webp_help">Never download .webp files or Telegram stickers, even if a group has stickers enabled.</p>
+                                </div>
+                                <label class="relative inline-flex items-center cursor-pointer ml-4 shrink-0">
+                                    <input type="checkbox" id="setting-block-webp" class="sr-only peer">
+                                    <div class="w-11 h-6 bg-tg-secondary rounded-full peer peer-checked:bg-tg-blue after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
+                                </label>
+                            </div>
                         </div>
                     </div>
 

@@ -177,6 +177,8 @@
     "settings.download.max_speed": "ความเร็วดาวน์โหลดสูงสุด",
     "settings.download.unlimited": "ไม่จำกัด",
     "settings.download.speed_help": "จำกัดการใช้ bandwidth ต่อ worker",
+    "settings.download.block_webp": "บล็อก WebP / สติกเกอร์",
+    "settings.download.block_webp_help": "ไม่ดาวน์โหลดไฟล์ .webp หรือสติกเกอร์ Telegram แม้ว่ากลุ่มจะเปิดใช้งานสติกเกอร์ไว้",
     "settings.rate.title": "Rate limit",
     "settings.rate.badge": "ป้องกันการแบน",
     "settings.rate.rpm": "คำขอต่อนาที",

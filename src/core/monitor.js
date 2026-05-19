@@ -1016,6 +1016,12 @@ export class RealtimeMonitor extends EventEmitter {
                     isAllowed = false;
                 }
 
+                // Global override: download.blockWebp suppresses webp/stickers
+                // for every group, regardless of the individual group setting.
+                if (_isBlockedByGlobalWebpRule(mediaType, this.config)) {
+                    isAllowed = false;
+                }
+
                 if (!isAllowed) {
                     // console.log(`⛔ Skipped: Media Filter [${mediaType}] is disabled for this group.`);
                     this.stats.skipped++;
@@ -1387,3 +1393,24 @@ class SpamGuard {
         }
     }
 }
+
+// ── module-level helpers exported for unit tests ─────────────────────────────
+
+/**
+ * Returns true when the global download.blockWebp flag should suppress a
+ * download of the given mediaType, regardless of the group filter setting.
+ * Only blocks 'stickers' (which includes image/webp documents).
+ */
+export function _isBlockedByGlobalWebpRule(mediaType, config) {
+    return !!(config?.download?.blockWebp && mediaType === 'stickers');
+}
+
+/**
+ * Thin wrapper so tests can call getMediaType without constructing a full
+ * RealtimeMonitor instance. Delegates to the instance method.
+ */
+export function _getMediaType(message) {
+    return _sharedMonitor.getMediaType(message);
+}
+
+const _sharedMonitor = new RealtimeMonitor(null, null, {});

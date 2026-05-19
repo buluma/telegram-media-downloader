@@ -177,6 +177,8 @@
     "settings.download.max_speed": "Max Download Speed",
     "settings.download.unlimited": "Unlimited",
     "settings.download.speed_help": "Limit bandwidth usage per worker.",
+    "settings.download.block_webp": "Block WebP / Stickers",
+    "settings.download.block_webp_help": "Never download .webp files or Telegram stickers, even if a group has stickers enabled.",
     "settings.rate.title": "Rate Limits",
     "settings.rate.badge": "Anti-Ban",
     "settings.rate.rpm": "Requests/Minute",
