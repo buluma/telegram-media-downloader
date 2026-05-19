@@ -82,6 +82,7 @@ services:
       - TGDL_ML_CLIP_MODEL=${TGDL_ML_CLIP_MODEL:-ViT-B-32__openai}
       - TGDL_ML_OCR_MODEL=${TGDL_ML_OCR_MODEL:-PP-OCRv5_mobile}
       - TGDL_ML_PROVIDER=${TGDL_ML_PROVIDER:-}
+      - TGDL_ML_TIMEOUT_MS=${TGDL_ML_TIMEOUT_MS:-}
       # Seekbar preview sidecar URL. Leave unset to let the dashboard
       # auto-spawn the bundled Go binary on a random localhost port;
       # set when running `seekbar-service/` as a separate compose
