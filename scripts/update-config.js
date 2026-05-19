@@ -1,26 +1,25 @@
 #!/usr/bin/env node
 /**
- * Update group auto-forward settings in the SQLite kv-store config.
+ * Update group settings in the SQLite kv-store config.
+ *
+ * Key prefixes:
+ *   filter.<key>=<value>   → sets g.filters[key]
+ *   <key>=<value>          → sets g.autoForward[key] (legacy default for
+ *                            deleteAfterForward / keepImages / keepVideos)
+ *                            OR g[key] directly for known top-level keys
+ *                            (trackComments, enabled, rescueMode)
  *
  * Usage:
- *   node scripts/update-config.js <group-name> <key>=<value> [<key>=<value> ...]
- *
- * Examples:
- *   # Set keepImages for all groups
- *   node scripts/update-config.js --all keepImages=true
- *
- *   # Set keepVideos=true for specific groups
- *   node scripts/update-config.js "Keyshia barbie" keepVideos=true
- *   node scripts/update-config.js "X POSES" keepVideos=true
- *
- *   # Multiple keys at once
- *   node scripts/update-config.js "X POSES" keepImages=true keepVideos=true deleteAfterForward=false
- *
- *   # List current settings
  *   node scripts/update-config.js --list
+ *   node scripts/update-config.js --all filter.videos=false filter.voice=true
+ *   node scripts/update-config.js --all trackComments=true
+ *   node scripts/update-config.js --all deleteAfterForward=true keepImages=true
+ *   node scripts/update-config.js "Group Name" keepVideos=false
  */
 
 import { getDb } from '../src/core/db.js';
+
+const TOP_LEVEL_KEYS = new Set(['trackComments', 'enabled', 'rescueMode', 'name']);
 
 const db = getDb();
 const row = db.prepare(`SELECT value FROM kv WHERE key = 'config'`).get();
@@ -35,24 +34,29 @@ function list() {
     console.log('Group settings:\n');
     for (const g of config.groups || []) {
         const af = g.autoForward || {};
+        const f = g.filters || {};
         console.log(
             `${g.name.padEnd(35)} ` +
                 `enabled=${String(g.enabled ?? true).padEnd(5)} ` +
+                `trackComments=${String(g.trackComments ?? false).padEnd(5)} ` +
                 `delete=${String(af.deleteAfterForward ?? false).padEnd(5)} ` +
                 `keepImgs=${String(af.keepImages ?? false).padEnd(5)} ` +
                 `keepVids=${String(af.keepVideos ?? false).padEnd(5)} ` +
-                `rescue=${g.rescueMode || 'auto'}`,
+                `videos=${String(f.videos ?? true).padEnd(5)} ` +
+                `voice=${String(f.voice ?? false).padEnd(5)} ` +
+                `urls=${String(f.urls ?? true).padEnd(5)}`,
         );
     }
 }
 
-// Parse args
 const args = process.argv.slice(2);
 
 if (args.length === 0 || args[0] === '--help') {
-    console.log('Usage: node scripts/update-config.js <group-name> <key>=<value> [...]');
-    console.log('       node scripts/update-config.js --all <key>=<value> [...]');
+    console.log('Usage: node scripts/update-config.js <group-name|--all> <key>=<value> [...]');
     console.log('       node scripts/update-config.js --list');
+    console.log(
+        'Key prefixes: filter.<key>=<value> sets filters; others set autoForward or top-level.',
+    );
     process.exit(0);
 }
 
@@ -80,30 +84,48 @@ if (args[0] === '--all') {
 }
 
 // Parse key=value pairs
-const updates = {};
+const filterUpdates = {};
+const afUpdates = {};
+const topUpdates = {};
+
 for (const kv of keyValues) {
-    const m = kv.match(/^(\w+)=(.*)$/);
+    const m = kv.match(/^([\w.]+)=(.*)$/);
     if (!m) {
         console.error(`Invalid key=value: ${kv}`);
         process.exit(1);
     }
-    const [, key, val] = m;
-    // Auto-convert booleans and numbers
-    if (val === 'true') updates[key] = true;
-    else if (val === 'false') updates[key] = false;
-    else if (/^\d+$/.test(val)) updates[key] = parseInt(val, 10);
-    else updates[key] = val;
+    let [, key, val] = m;
+    let parsed;
+    if (val === 'true') parsed = true;
+    else if (val === 'false') parsed = false;
+    else if (/^\d+$/.test(val)) parsed = parseInt(val, 10);
+    else parsed = val;
+
+    if (key.startsWith('filter.')) {
+        filterUpdates[key.slice(7)] = parsed;
+    } else if (TOP_LEVEL_KEYS.has(key)) {
+        topUpdates[key] = parsed;
+    } else {
+        afUpdates[key] = parsed;
+    }
 }
 
 for (const g of targetGroups) {
-    if (!g.autoForward) g.autoForward = {};
-    Object.assign(g.autoForward, updates);
-    console.log(`✓ Updated ${g.name}: ${JSON.stringify(updates)}`);
+    if (Object.keys(filterUpdates).length > 0) {
+        if (!g.filters) g.filters = {};
+        Object.assign(g.filters, filterUpdates);
+    }
+    if (Object.keys(afUpdates).length > 0) {
+        if (!g.autoForward) g.autoForward = {};
+        Object.assign(g.autoForward, afUpdates);
+    }
+    Object.assign(g, topUpdates);
+    console.log(
+        `✓ ${g.name}: filters=${JSON.stringify(filterUpdates)} af=${JSON.stringify(afUpdates)} top=${JSON.stringify(topUpdates)}`,
+    );
 }
 
-// Write back
-const stmt = db.prepare(`UPDATE kv SET value = ? WHERE key = 'config'`);
-stmt.run(JSON.stringify(config));
+db.prepare(`UPDATE kv SET value = ? WHERE key = 'config'`).run(JSON.stringify(config));
 
 console.log('\nFinal state:');
 list();

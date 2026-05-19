@@ -644,13 +644,13 @@ const DEFAULT_CONFIG = {
 
 const DEFAULT_FILTERS = {
     photos: true,
-    videos: true,
+    videos: false,
     files: true,
     links: true,
-    voice: false,
+    voice: true,
     audio: false,
     gifs: false,
-    stickers: false, // Default false for stickers
+    stickers: false,
     urls: true,
 };
 
