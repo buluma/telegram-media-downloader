@@ -789,9 +789,9 @@ CREATE TABLE IF NOT EXISTS media_scan_state (
 ### Phase 4 — durable job and issue model
 
 - [x] Add `maintenance_jobs` — table + `createJob`/`updateJobProgress`/`finishJob` helpers wired into scan runs; `GET /api/ai/jobs` surfaces history.
-- [ ] Add `media_scan_state` — table exists; per-scanner wiring pending.
-- [ ] Replace `_scanned_` sentinel reliance where practical.
-- [ ] Add retryable failure handling and stale lock recovery.
+- [x] Add `media_scan_state` — helpers in `src/core/db/scan-state.js`; wired into WD14 scan for done/failed/skipped outcomes.
+- [x] Replace `_scanned_` sentinel reliance for infrastructure failures — WD14 sidecar errors now tracked as `failed` in scan_state instead of silently marking done.
+- [x] Add retryable failure handling — `POST /api/ai/scan/retry-failed` clears sentinel + scan_state; stale lock recovery at scan start.
 
 ### Phase 5 — advanced operations
 

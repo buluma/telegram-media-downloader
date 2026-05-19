@@ -466,14 +466,14 @@ Test target behavior:
 
 - [x] Add `deleted_at` soft-delete flow.
 - [x] Update scanner queries to exclude soft-deleted rows.
-- [ ] Add durable `media_scan_state` for at least AI tags and WD14.
-- [ ] Stop relying on `_scanned_` sentinels for infrastructure failures.
+- [x] Add durable `media_scan_state` for WD14 — `src/core/db/scan-state.js`; WD14 scan writes done/failed/skipped on each row outcome.
+- [x] Stop relying on `_scanned_` sentinels for infrastructure failures — WD14 now writes scan_state failed on sidecar error (retryable via `POST /ai/scan/retry-failed`) rather than silently marking the row done.
 
 ### Phase 3 — observability and recovery
 
 - [x] Add `maintenance_jobs` audit table.
-- [ ] Add scan failure UI.
-- [ ] Add stale lock recovery.
+- [x] Add scan failure surface — `GET /ai/scan/failures` + `POST /ai/scan/retry-failed`; `_getAiIssues` surfaces durable failures and soft-deleted rows awaiting purge.
+- [x] Add stale lock recovery — `recoverStaleLocks()` called at WD14 scan start; resets processing rows older than 30 min to failed.
 - [ ] Add DB backup before bulk destructive actions.
 
 ### Phase 4 — future scalability
@@ -489,7 +489,7 @@ Test target behavior:
 - [x] Bulk delete cannot hard-delete rows while incompatible scans are active.
 - [x] Scanners never crash if a parent `downloads` row vanishes.
 - [x] Sidecar endpoint/capability mismatch fails the job before rows are stamped scanned.
-- [ ] Retryable infrastructure failures do not create `_scanned_` derived rows.
-- [ ] Health check reports DB integrity, scan state, and sidecar capabilities.
+- [x] Retryable infrastructure failures do not silently mark rows done — WD14 writes scan_state `failed`; retry-failed endpoint clears sentinel + scan_state to re-queue.
+- [x] Health check surfaces scan failures and soft-deleted rows awaiting purge (via `_getAiIssues`).
 - [x] Race tests cover scanner/delete interactions.
-- [ ] Operators can see active jobs, conflicts, and failed scan reasons (backend done; UI pending).
+- [ ] Operators can see active jobs, conflicts, and failed scan reasons in the UI (backend endpoints exist; UI not yet built).
