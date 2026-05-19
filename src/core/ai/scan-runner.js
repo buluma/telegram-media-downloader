@@ -43,6 +43,7 @@ import { clusterFaces, computeFaceQualityScore, detectFaces } from './faces.js';
 import { resolveFacesValue } from './faces-config.js';
 import { detectFacesBatch, getSidecarUrl } from './faces-client.js';
 import { mlOcr, isTgdlMlEnabled, getTgdlMlUrl } from './tgdl-ml-client.js';
+import { checkSidecarCapability } from './preflight.js';
 import { hasFfmpeg, resolveFfmpegBin } from '../thumbs.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -928,11 +929,14 @@ export function startOcrScan(cfg, onProgress, onDone, onLog) {
         async (state, signal, bump, log) => {
             const sidecarUrl = getSidecarUrl();
             const useMlOcr = isTgdlMlEnabled();
-            if (!sidecarUrl && !useMlOcr) {
-                throw new Error(
-                    'No OCR provider is available — cannot extract text. ' +
-                        'Start the Python sidecar or enable tgdl-ml.',
-                );
+            if (!useMlOcr) {
+                const preflight = await checkSidecarCapability('ocr', sidecarUrl);
+                if (!preflight.ok) {
+                    throw Object.assign(new Error(`OCR preflight failed: ${preflight.reason}`), {
+                        code: preflight.code,
+                        fatal: true,
+                    });
+                }
             }
 
             const mlOcrGuard = useMlOcr ? _makeCircuitBreaker() : null;
@@ -1076,11 +1080,12 @@ export function startWd14Scan(cfg, onProgress, onDone, onLog) {
             }
 
             const sidecarUrl = isTgdlMlEnabled() ? getTgdlMlUrl() : getSidecarUrl();
-            if (!sidecarUrl) {
-                throw new Error(
-                    'Python sidecar is not available — cannot run WD14 tagger. ' +
-                        'Check the AI maintenance page for sidecar status.',
-                );
+            const wd14Preflight = await checkSidecarCapability('wd14', sidecarUrl);
+            if (!wd14Preflight.ok) {
+                throw Object.assign(new Error(`WD14 preflight failed: ${wd14Preflight.reason}`), {
+                    code: wd14Preflight.code,
+                    fatal: true,
+                });
             }
 
             const batchSize = Math.max(1, Math.min(50, Number(cfg.batchSize) || 16));
