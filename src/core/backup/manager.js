@@ -1,3 +1,41 @@
+/**
+ * @typedef {object} BackupDestination
+ * @property {number} id
+ * @property {string} name
+ * @property {'local'|'s3'|'sftp'|'ftp'|'gdrive'|'dropbox'} provider
+ * @property {Buffer} config_blob - encrypted provider config
+ * @property {number} enabled - 1 | 0
+ * @property {number} encryption - 1 | 0
+ * @property {Buffer|null} encryption_salt
+ * @property {'mirror'|'snapshot'} mode
+ * @property {string|null} cron - cron expression for snapshot mode
+ * @property {number|null} retain_count
+ * @property {number|null} last_success_at - unix-ms
+ * @property {number|null} last_failure_at - unix-ms
+ * @property {string|null} last_error
+ * @property {number} total_bytes
+ * @property {number} total_files
+ * @property {number|null} throttle_bps - bytes per second cap; null = unlimited
+ * @property {number} created_at - unix-ms
+ */
+
+/**
+ * @typedef {object} BackupJob
+ * @property {number} id
+ * @property {number} destination_id
+ * @property {number|null} download_id
+ * @property {string|null} snapshot_path
+ * @property {'pending'|'uploading'|'done'|'failed'|'skipped'} status
+ * @property {number} attempts
+ * @property {number} max_attempts
+ * @property {number|null} next_retry_at - unix-ms
+ * @property {number|null} started_at - unix-ms
+ * @property {number|null} finished_at - unix-ms
+ * @property {number} bytes_uploaded
+ * @property {string|null} error
+ * @property {string|null} remote_path
+ */
+
 // Backup manager — owns destinations, queue workers, snapshot cron,
 // passphrase cache, and the WS broadcast surface.
 //

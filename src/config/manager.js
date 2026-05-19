@@ -642,6 +642,57 @@ const DEFAULT_CONFIG = {
     },
 };
 
+/**
+ * @typedef {object} GroupFilters
+ * @property {boolean} photos
+ * @property {boolean} videos
+ * @property {boolean} files
+ * @property {boolean} links
+ * @property {boolean} voice
+ * @property {boolean} audio
+ * @property {boolean} gifs
+ * @property {boolean} stickers
+ * @property {boolean} urls
+ */
+
+/**
+ * @typedef {object} AutoForwardSettings
+ * @property {boolean} enabled
+ * @property {string|null} destination - channel id, username, 'me', 'storage', or null
+ * @property {string|null} [account_id]
+ * @property {boolean} deleteAfterForward
+ * @property {boolean} keepImages
+ * @property {boolean} keepVideos
+ */
+
+/**
+ * @typedef {object} GroupConfig
+ * @property {string|number} id - Telegram chat id (string for -100x, int for legacy)
+ * @property {string} name
+ * @property {string} [type] - 'channel' | 'group' | 'dm'
+ * @property {boolean} enabled
+ * @property {GroupFilters} filters
+ * @property {boolean} trackComments
+ * @property {AutoForwardSettings} autoForward
+ * @property {'auto'|'on'|'off'} [rescueMode]
+ * @property {{enabled: boolean, users: string[]}} [trackUsers]
+ * @property {{enabled: boolean, ids: number[]}} [topics]
+ * @property {string} [forwardAccount]
+ */
+
+/**
+ * @typedef {object} AppConfig
+ * @property {{apiId: string, apiHash: string}} telegram
+ * @property {object[]} accounts
+ * @property {number} pollingInterval
+ * @property {GroupConfig[]} groups
+ * @property {{path: string, concurrent: number, retries: number, maxSpeed: number}} download
+ * @property {{requestsPerMinute: number, delayMs: {min: number, max: number}}} rateLimits
+ * @property {{maxTotalSize: string, autoCleanup: boolean, enabled: boolean, sweepIntervalMin: number}} diskManagement
+ * @property {{enabled: boolean, retentionHours: number, sweepIntervalMin: number}} rescue
+ * @property {object} advanced
+ */
+
 const DEFAULT_FILTERS = {
     photos: true,
     videos: false,

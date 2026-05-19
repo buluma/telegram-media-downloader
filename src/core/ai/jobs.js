@@ -1,4 +1,36 @@
 /**
+ * @typedef {object} MaintenanceJob
+ * @property {string} id
+ * @property {string} type - e.g. 'scan', 'recluster'
+ * @property {string|null} feature - 'faces' | 'wd14' | 'ocr' | 'objects'
+ * @property {'pending'|'running'|'completed'|'failed'|'cancelled'} status
+ * @property {string|null} resources
+ * @property {string} requested_by
+ * @property {string|null} request_json
+ * @property {number} total
+ * @property {number} processed
+ * @property {number} skipped
+ * @property {number} failed
+ * @property {string|null} error
+ * @property {number} started_at - unix-ms
+ * @property {number|null} finished_at - unix-ms
+ */
+
+/**
+ * @typedef {object} ScanResult
+ * @property {number} download_id
+ * @property {string} scanner - 'faces' | 'wd14' | 'ocr'
+ * @property {'pending'|'processing'|'completed'|'failed'} status
+ * @property {number} attempts
+ * @property {string|null} locked_by
+ * @property {number|null} locked_at - unix-ms
+ * @property {string|null} last_error
+ * @property {string|null} last_error_code
+ * @property {number} updated_at - unix-ms
+ * @property {number|null} completed_at - unix-ms
+ */
+
+/**
  * Durable job model for AI maintenance scans.
  *
  * Each long-running scan (faces, tags, ocr, objects, wd14) creates a

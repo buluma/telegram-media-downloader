@@ -1,5 +1,43 @@
 import { getDb } from '../db.js';
 
+/**
+ * @typedef {object} DownloadRow
+ * @property {number} id
+ * @property {string} group_id
+ * @property {string|null} group_name
+ * @property {number} message_id
+ * @property {string|null} file_name
+ * @property {number|null} file_size
+ * @property {string|null} file_type - 'photo' | 'video' | 'document' | 'audio' | 'voice' | 'gif'
+ * @property {string|null} file_path - relative path from data/downloads/
+ * @property {string} status
+ * @property {string} created_at
+ * @property {number|null} ttl_seconds
+ * @property {string|null} file_hash
+ * @property {number} pinned - 1 = pinned, 0 = not pinned
+ * @property {number|null} pending_until - unix-ms; rescue expiry or null
+ * @property {number|null} rescued_at - unix-ms set when source message was deleted
+ * @property {number|null} nsfw_score - 0..1 from classifier, null = never scanned
+ * @property {number|null} nsfw_checked_at - unix-ms of last scan
+ * @property {number} nsfw_whitelist - 1 = manually marked safe
+ * @property {number|null} deleted_at - unix-ms; soft-delete timestamp
+ * @property {string|null} delete_reason
+ * @property {number|null} ai_indexed_at - unix-ms of last AI indexing
+ * @property {string|null} owner_peer_id - null = self; peer UUID for cluster rows
+ */
+
+/**
+ * @typedef {object} DownloadInfo
+ * @property {string} filePath - absolute path to the downloaded file
+ * @property {string} fileName
+ * @property {number} size - bytes
+ * @property {string} groupId
+ * @property {string} groupName
+ * @property {object} message - raw TelegramClient message object
+ * @property {string} mediaType - 'photos' | 'videos' | 'files' | 'voice' | 'audio' | 'gifs'
+ * @property {boolean} deduped - true if this file path already existed (dedup hit)
+ */
+
 // ---- Share links ----------------------------------------------------------
 
 /**
