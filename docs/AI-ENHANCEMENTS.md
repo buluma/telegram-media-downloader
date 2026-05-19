@@ -49,20 +49,17 @@ flowchart LR
         provider[LLM Provider Abstraction]
         search[Semantic Search Engine]
         caption[Caption Generator]
-        voice[Voice Transcriber]
         smart[Smart Album Engine v2]
 
         provider --> caption
         provider --> smart
         search --> gallery[Gallery / AI UI]
-        voice --> search
         caption --> search
         smart --> gallery
     end
 
     subgraph Sidecar
         clip[CLIP tags / embeddings]
-        whisper[Whisper transcription]
         yolo[Object detection]
         tesseract[OCR]
     end
@@ -70,14 +67,11 @@ flowchart LR
     subgraph External Providers
         ollama[Ollama local]
         openai[OpenAI-compatible]
-        anthropic[Anthropic]
     end
 
     provider --> ollama
     provider --> openai
-    provider --> anthropic
     search --> clip
-    voice --> whisper
 ```
 
 ---
@@ -106,7 +100,6 @@ src/core/llm/
 ├── llm-config.js     # config/env resolution
 ├── ollama.js         # Ollama REST implementation
 ├── openai.js         # OpenAI-compatible REST implementation
-├── anthropic.js      # Anthropic REST implementation
 └── _registry.js      # Provider registry and availability probes
 ```
 
@@ -136,7 +129,7 @@ Use the existing AI namespace. Do not introduce `config.advanced.llm`.
 ```jsonc
 // config.advanced.ai.llm
 {
-  "provider": "disabled",      // "disabled" | "ollama" | "openai" | "anthropic"
+  "provider": "disabled",      // "disabled" | "ollama" | "openai"
   "ollama": {
     "baseUrl": "http://localhost:11434",
     "model": "qwen3-vl:235b-cloud"
@@ -146,10 +139,6 @@ Use the existing AI namespace. Do not introduce `config.advanced.llm`.
     "model": "gpt-4o-mini",
     "baseUrl": ""
   },
-  "anthropic": {
-    "apiKey": "",
-    "model": "claude-3-haiku-20240307"
-  },
   "defaults": {
     "temperature": 0.7,
     "maxTokens": 512
@@ -158,8 +147,7 @@ Use the existing AI namespace. Do not introduce `config.advanced.llm`.
 ```
 
 Environment overrides should follow the existing deployment style, for example
-`TGDL_LLM_PROVIDER`, `TGDL_LLM_OLLAMA_BASE_URL`, `TGDL_LLM_OPENAI_API_KEY`, and
-`TGDL_LLM_ANTHROPIC_API_KEY`.
+`TGDL_LLM_PROVIDER`, `TGDL_LLM_OLLAMA_BASE_URL`, and `TGDL_LLM_OPENAI_API_KEY`.
 
 ### Safe Next Work
 
@@ -251,66 +239,7 @@ models.
 
 ---
 
-## 3. Voice / Audio Transcription
-
-### Goal
-
-Transcribe voice messages, video notes, and audio downloads so they become
-searchable through full-text search and the future cross-modal search layer.
-
-### Recommended Path
-
-Use an optional sidecar transcription endpoint first. API transcription can be a
-fallback later, but the default should remain local/offline-friendly.
-
-```text
-POST /transcribe
-{ "path": "/data/downloads/group/audio/voice_123.ogg" }
-
-200
-{
-  "text": "Hello, I will be there in five minutes...",
-  "segments": [
-    { "start": 0.0, "end": 2.3, "text": "Hello," }
-  ],
-  "language": "en",
-  "duration": 6.8
-}
-```
-
-### Proposed Database Additions
-
-```sql
-CREATE TABLE IF NOT EXISTS audio_transcripts (
-    download_id INTEGER PRIMARY KEY,
-    transcript  TEXT NOT NULL,
-    segments    TEXT,
-    language    TEXT,
-    duration    REAL,
-    computed_at INTEGER NOT NULL,
-    FOREIGN KEY (download_id) REFERENCES downloads(id) ON DELETE CASCADE
-);
-
-CREATE VIRTUAL TABLE IF NOT EXISTS transcript_fts USING fts5(
-    transcript,
-    content='audio_transcripts',
-    content_rowid='download_id',
-    tokenize='porter unicode61'
-);
-```
-
-### Files To Add
-
-| File | Purpose |
-|---|---|
-| `src/core/ai/transcribe.js` | Transcription client and retry-safe wrapper |
-| `src/core/db/transcripts.js` | Save, fetch, coverage, and FTS helpers |
-| `faces-service/` | Optional Whisper/faster-whisper endpoint |
-| AI maintenance page | Coverage, model status, and re-transcribe action |
-
----
-
-## 4. Smart Album Engine v2
+## 3. Smart Album Engine v2
 
 ### Current v1 Behavior
 
@@ -401,14 +330,13 @@ new detached pages unless the feature needs a full gallery route.
 | Smart Albums | Current v1 tag-rule albums | Natural-language builder and compound rules |
 | OCR / Objects | Counts exist | Include in cross-modal search |
 | Semantic Search | Not exposed | Search bar, coverage count, re-index button |
-| Voice Transcription | Not exposed | Coverage, model status, transcript viewer |
 
 ### Gallery/Search Behavior
 
 A future search box should combine three layers:
 
 1. Client-side filename/group filter for immediate feedback.
-2. Full-text search over OCR/transcripts/captions.
+2. Full-text search over OCR/captions.
 3. Semantic search over image embeddings.
 
 Results should use the same photo grid and popup behavior already used by NSFW,
@@ -428,13 +356,6 @@ All new features must default to disabled or passive behavior.
     "embedOnDownload": false,
     "batchSize": 32
   },
-  "whisper": {
-    "enabled": false,
-    "provider": "sidecar",
-    "model": "base",
-    "language": null,
-    "openaiApiKey": ""
-  },
   "smartAlbums": {
     "enabled": true,
     "refreshIntervalMin": 15,
@@ -450,10 +371,6 @@ All new features must default to disabled or passive behavior.
       "apiKey": "",
       "model": "gpt-4o-mini",
       "baseUrl": ""
-    },
-    "anthropic": {
-      "apiKey": "",
-      "model": "claude-3-haiku-20240307"
     }
   }
 }
@@ -471,8 +388,7 @@ All new features must default to disabled or passive behavior.
 | 3 | Semantic embedding backfill using existing `image_embeddings` | Sidecar embedding support | Medium |
 | 4 | Search API and shared popup grid UI | Phase 3 | Medium |
 | 5 | Smart Albums v2 compound rules | Phase 3, optional Phase 1 | Medium |
-| 6 | Voice transcription tables and sidecar endpoint | Sidecar update | Medium |
-| 7 | Cross-modal result ranking | Phases 3, 5, 6 | Higher |
+| 6 | Cross-modal result ranking | Phases 3, 5 | Higher |
 
 Ship each phase independently. Existing People, Tag Browser, NSFW, and Smart
 Albums v1 must keep working if every new feature flag is disabled.
@@ -494,8 +410,7 @@ For existing installs:
 
 For Docker installs:
 
-- Existing compose files should continue to run without enabling LLM, semantic
-  search, or transcription.
+- Existing compose files should continue to run without enabling LLM or semantic search.
 - Sidecar image additions must be optional at runtime and should not require GPU.
 
 ---
@@ -507,7 +422,7 @@ For Docker installs:
 | PostgreSQL/pgvector requirement | Breaks the SQLite-first deployment model |
 | External vector DB | Adds operational cost before the library size needs it |
 | LLM-generated SQL | Unsafe and hard to validate; use generated rule JSON instead |
-| OpenAI-only embeddings/transcription | Makes self-hosted installs dependent on paid APIs |
+| OpenAI-only embeddings | Makes self-hosted installs dependent on paid APIs |
 | Replacing Smart Albums v1 | Existing tag-rule albums are useful and low-risk; extend them instead |
 
 ---
@@ -518,5 +433,5 @@ For Docker installs:
 |---|---|
 | Approximate nearest-neighbour index | Only needed when in-memory cosine becomes too slow |
 | AI deduplication | Depends on reliable embeddings first |
-| Multi-modal RAG over all media | Needs captions, OCR, transcripts, and semantic search mature first |
+| Multi-modal RAG over all media | Needs captions, OCR, and semantic search mature first |
 | Content-aware scheduling | Needs months of stable activity history and lower-priority analytics |
