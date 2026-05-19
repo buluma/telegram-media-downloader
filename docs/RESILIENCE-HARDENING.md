@@ -2,7 +2,7 @@
 
 This plan hardens the lifecycle around long-running jobs, scanners, deletes, and AI sidecar services. It is written for the current SQLite + Node + Python/Go sidecar architecture, while keeping a future Postgres migration possible.
 
-**Implementation status:** Sections 1, 5, 6 (maintenance\_jobs), and 7 are complete. Sections 3, 4, 8–11 remain future work.
+**Implementation status:** All three phases (immediate hardening, lifecycle cleanup, observability/recovery) are complete. Phase 4 (Postgres scalability) is intentionally deferred. Sections 3, 4, 8–11 describe future polish.
 
 ## Goals
 
@@ -474,7 +474,7 @@ Test target behavior:
 - [x] Add `maintenance_jobs` audit table.
 - [x] Add scan failure surface — `GET /ai/scan/failures` + `POST /ai/scan/retry-failed`; `_getAiIssues` surfaces durable failures and soft-deleted rows awaiting purge.
 - [x] Add stale lock recovery — `recoverStaleLocks()` called at WD14 scan start; resets processing rows older than 30 min to failed.
-- [ ] Add DB backup before bulk destructive actions.
+- [x] Add DB backup before bulk destructive actions — `backupDb(label)` in `src/core/db/backup.js` uses better-sqlite3 `.backup()`; wired into dedup-delete, NSFW bulk-delete, purge-all; `GET /maintenance/db/backups` lists snapshots; keeps last 5 per operation.
 
 ### Phase 4 — future scalability
 
