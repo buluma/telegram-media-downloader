@@ -54,9 +54,9 @@ function _timeoutMs() {
     return Number.isFinite(n) && n > 0 ? n : DEFAULT_TIMEOUT_MS;
 }
 
-async function _fetchWithTimeout(url, init = {}) {
+async function _fetchWithTimeout(url, init = {}, timeoutMs = _timeoutMs()) {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), _timeoutMs());
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
         return await globalThis.fetch(url, { ...init, signal: ctrl.signal });
     } finally {
@@ -64,15 +64,19 @@ async function _fetchWithTimeout(url, init = {}) {
     }
 }
 
-async function _postJson(endpoint, body) {
+async function _postJson(endpoint, body, timeoutMs = _timeoutMs()) {
     const url = getTgdlMlUrl();
     if (!url) throw new Error('tgdl-ml URL is not configured');
 
-    const res = await _fetchWithTimeout(`${url}${endpoint}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-    });
+    const res = await _fetchWithTimeout(
+        `${url}${endpoint}`,
+        {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        },
+        timeoutMs,
+    );
 
     const text = await res.text();
     let data;
@@ -140,7 +144,8 @@ export async function mlDetectBatch(absPaths, opts = {}) {
     if (Number.isFinite(Number(opts.minBoxPx))) body.min_box_px = Number(opts.minBoxPx);
     if (Array.isArray(opts.arRange)) body.ar_range = opts.arRange;
 
-    return _postJson('/detect/batch', body);
+    const batchTimeoutMs = Math.max(absPaths.length * _timeoutMs(), 120_000);
+    return _postJson('/detect/batch', body, batchTimeoutMs);
 }
 
 export async function mlOcr(absPath, opts = {}) {
