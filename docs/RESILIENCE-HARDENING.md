@@ -492,4 +492,4 @@ Test target behavior:
 - [x] Retryable infrastructure failures do not silently mark rows done — WD14 writes scan_state `failed`; retry-failed endpoint clears sentinel + scan_state to re-queue.
 - [x] Health check surfaces scan failures and soft-deleted rows awaiting purge (via `_getAiIssues`).
 - [x] Race tests cover scanner/delete interactions.
-- [ ] Operators can see active jobs, conflicts, and failed scan reasons in the UI (backend endpoints exist; UI not yet built).
+- [x] Operators can see active jobs, conflicts, and failed scan reasons in the UI — active jobs progress card, recent job history panel, retry-failed button, 409 conflict toasts, and per-scanner failure modal.

@@ -2306,6 +2306,12 @@ function _bindOnce() {
     // Scanner card action buttons — delegated listener on the container
     // so it survives innerHTML swaps on every status refresh.
     $('#ai-scanner-cards')?.addEventListener('click', _onScannerCardClick);
+    // Issues card retry buttons — delegated so it survives innerHTML swaps.
+    $('#ai-issues-card')?.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-retry-all-scanners]');
+        if (!btn) return;
+        _retryAllFailedScans();
+    });
 
     // Master + auto toggles — both live as labelled rows in the Face
     // clustering settings section. Click-anywhere on the toggle flips
@@ -3028,7 +3034,11 @@ function _renderQuickOps(status) {
                           : 'text-yellow-100';
                 const count =
                     Number(issue.count) > 1 ? ` (${Number(issue.count).toLocaleString()})` : '';
-                return `<div><span class="${sevCls} font-medium">${escapeHtml(issue.title || issue.type)}${count}:</span> <span class="text-red-100/80">${escapeHtml(String(issue.detail || ''))}</span></div>`;
+                const retryBtn =
+                    issue.type === 'scan_failures'
+                        ? ` <button type="button" class="ml-1 underline text-tg-blue hover:text-tg-blue/80 text-[10px]" data-retry-all-scanners="1">Retry all</button>`
+                        : '';
+                return `<div class="flex items-start gap-1 flex-wrap"><span><span class="${sevCls} font-medium">${escapeHtml(issue.title || issue.type)}${count}:</span> <span class="text-red-100/80">${escapeHtml(String(issue.detail || ''))}</span>${retryBtn}</span></div>`;
             })
             .join('');
     }
@@ -3331,11 +3341,40 @@ function _triggerScannerCancel(feature) {
     }
 }
 
-function _triggerScannerRetry(feature) {
-    // For now, clicking retry fires the scan — the scan-runner skips
-    // already-processed rows and retries failed ones automatically.
-    _triggerScannerScan(feature);
-    showToast(`Retrying ${feature} scan…`, 'info');
+async function _retryAllFailedScans() {
+    const scanners = ['wd14', 'ocr', 'faces'];
+    let totalReset = 0;
+    for (const sc of scanners) {
+        try {
+            const r = await api.post('/api/ai/scan/retry-failed', { scanner: sc });
+            totalReset += r.reset ?? 0;
+        } catch {
+            /* skip scanner if endpoint errors */
+        }
+    }
+    showToast(
+        totalReset > 0
+            ? `Re-queued ${totalReset.toLocaleString()} failed item${totalReset === 1 ? '' : 's'}`
+            : 'No failed items to retry',
+        totalReset > 0 ? 'success' : 'info',
+    );
+    await refreshStatus();
+}
+
+async function _triggerScannerRetry(feature) {
+    try {
+        const r = await api.post('/api/ai/scan/retry-failed', { scanner: feature });
+        const reset = r.reset ?? 0;
+        showToast(
+            reset > 0
+                ? `Re-queued ${reset.toLocaleString()} failed ${feature} item${reset === 1 ? '' : 's'}`
+                : `No failed ${feature} items to retry`,
+            reset > 0 ? 'success' : 'info',
+        );
+        if (reset > 0) _triggerScannerScan(feature);
+    } catch (e) {
+        showToast(`Retry failed: ${e?.data?.error || e?.message || 'unknown'}`, 'error');
+    }
 }
 
 /** Scroll to the settings pane for a given feature */
@@ -3349,12 +3388,108 @@ function _scrollToSettings(feature) {
     }
 }
 
-/** Show the issues/failures card by scrolling to it */
-function _showScannerFailures(feature) {
-    const card = $('#ai-issues-card');
-    if (card) {
+/** Fetch and display recent scan failures for a specific scanner */
+async function _showScannerFailures(feature) {
+    try {
+        const r = await api.get(
+            `/api/ai/scan/failures?scanner=${encodeURIComponent(feature)}&limit=20`,
+        );
+        const data = r.byScanner?.[feature];
+        if (!data) return;
+        const { counts, failures } = data;
+        const failedCount = counts?.failed ?? 0;
+        if (!failedCount && !failures?.length) {
+            showToast(`No durable failures recorded for ${feature}`, 'info');
+            return;
+        }
+        const lines = (failures || []).map((f) => {
+            const filename = f.filename
+                ? escapeHtml(f.filename.split(/[/\\]/).pop())
+                : `#${f.download_id}`;
+            const err = f.last_error ? ` — ${escapeHtml(String(f.last_error).slice(0, 80))}` : '';
+            return `<li class="truncate">${filename}${err}</li>`;
+        });
+        const moreCount = failedCount - failures.length;
+        if (moreCount > 0)
+            lines.push(
+                `<li class="text-tg-textSecondary">…and ${moreCount.toLocaleString()} more</li>`,
+            );
+        const modal = document.createElement('div');
+        modal.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4';
+        modal.innerHTML = `
+            <div class="bg-tg-panel rounded-xl p-4 max-w-lg w-full shadow-xl border border-tg-border/40 max-h-[70vh] flex flex-col">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="text-sm font-semibold text-tg-text">${escapeHtml(_scanLabel(feature))} failures (${failedCount.toLocaleString()})</h3>
+                    <button type="button" class="text-tg-textSecondary hover:text-tg-text text-lg leading-none" id="_failures-close">&times;</button>
+                </div>
+                <ul class="overflow-y-auto text-[11px] text-red-200 space-y-0.5 flex-1">${lines.join('')}</ul>
+                <div class="mt-3 flex justify-end gap-2">
+                    <button type="button" class="tg-btn-secondary text-xs px-3 py-1.5" id="_failures-retry">Retry all</button>
+                    <button type="button" class="tg-btn-secondary text-xs px-3 py-1.5" id="_failures-dismiss">Close</button>
+                </div>
+            </div>`;
+        document.body.appendChild(modal);
+        const close = () => modal.remove();
+        modal.querySelector('#_failures-close').addEventListener('click', close);
+        modal.querySelector('#_failures-dismiss').addEventListener('click', close);
+        modal.querySelector('#_failures-retry').addEventListener('click', async () => {
+            close();
+            await _triggerScannerRetry(feature);
+        });
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) close();
+        });
+    } catch (e) {
+        showToast(`Could not load ${feature} failures: ${e?.message || 'unknown'}`, 'error');
+    }
+}
+
+async function _renderRecentJobs() {
+    const card = $('#ai-recent-jobs-card');
+    const list = $('#ai-recent-jobs-list');
+    if (!card || !list) return;
+    try {
+        const r = await api.get('/api/ai/jobs?limit=10');
+        const jobs = r.jobs || [];
+        if (!jobs.length) {
+            card.classList.add('hidden');
+            return;
+        }
+        const now = Date.now();
+        const statusColor = {
+            done: 'text-green-300',
+            failed: 'text-red-300',
+            cancelled: 'text-yellow-200',
+            running: 'text-tg-blue',
+        };
+        list.innerHTML = jobs
+            .map((job) => {
+                const feature = job.feature
+                    ? escapeHtml(_scanLabel(job.feature))
+                    : escapeHtml(job.type || '—');
+                const st = job.status || 'unknown';
+                const cls = statusColor[st] || 'text-tg-textSecondary';
+                const ts = job.started_at ? _timeAgo(job.started_at, now) : '';
+                const processed = Number(job.processed) || 0;
+                const total = Number(job.total) || 0;
+                const counts = total
+                    ? `${processed.toLocaleString()} / ${total.toLocaleString()}`
+                    : processed
+                      ? `${processed.toLocaleString()} processed`
+                      : '';
+                return `<div class="flex items-center justify-between gap-2 text-[11px] py-0.5 border-b border-tg-border/20 last:border-0">
+                <span class="text-tg-text truncate">${feature}</span>
+                <span class="flex items-center gap-2 shrink-0">
+                    ${counts ? `<span class="text-tg-textSecondary tabular-nums">${counts}</span>` : ''}
+                    <span class="${cls} capitalize">${escapeHtml(st)}</span>
+                    ${ts ? `<span class="text-tg-textSecondary">${ts}</span>` : ''}
+                </span>
+            </div>`;
+            })
+            .join('');
         card.classList.remove('hidden');
-        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } catch {
+        card.classList.add('hidden');
     }
 }
 
@@ -3370,6 +3505,7 @@ function _renderStatus(status) {
     _renderSidecarBadge(status);
     _renderQuickOps(status);
     _renderScannerCards(status);
+    _renderRecentJobs();
 
     // Progress + scan buttons. Cancel is always rendered and just
     // toggles its disabled state; the thumbs page uses the same
@@ -4325,7 +4461,12 @@ async function _startScan(feature) {
         }
         showToast(i18nT('maintenance.ai.scan_started', 'Scan started'), 'success');
     } catch (e) {
-        showToast(`${i18nT('common.error', 'Error')}: ${e.message}`, 'error');
+        if (e.status === 409 && e.data?.code === 'RESOURCE_BUSY') {
+            const conflicting = e.data.conflictingJob || 'another job';
+            showToast(`Cannot start — ${conflicting} is running`, 'warn');
+        } else {
+            showToast(`${i18nT('common.error', 'Error')}: ${e.message}`, 'error');
+        }
     }
 }
 
