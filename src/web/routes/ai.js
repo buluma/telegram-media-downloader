@@ -1205,6 +1205,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                 });
             }
             const feature = String(req.body?.feature || '').toLowerCase();
+            const groupId = req.body?.groupId || null;
             if (!AI_SCAN_FEATURES.has(feature)) {
                 return res.status(400).json({ error: 'feature must be faces|ocr|wd14' });
             }
@@ -1238,9 +1239,12 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                     });
                 }
             }
-            // Allow request-level parameter overrides (e.g., confidence sliders)
+            // Allow request-level parameter overrides (e.g., confidence sliders, group filtering)
+            const scanCfg = { ...cfg };
+            if (groupId) scanCfg.groupId = groupId;
+
             if (feature === 'ocr' && typeof req.body?.language === 'string') {
-                cfg.ocrLanguage = req.body.language.trim() || 'eng';
+                scanCfg.ocrLanguage = req.body.language.trim() || 'eng';
             }
             const tracker = _aiTrackerFor(feature);
             const starter = _aiStarterFor(feature);
@@ -1257,7 +1261,9 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                             jobsMod = await import('../../core/ai/jobs.js');
                             const c = (() => {
                                 try {
-                                    return getAiCounts({ fileTypes: _facesScanFileTypes(cfg) });
+                                    return getAiCounts({
+                                        fileTypes: _facesScanFileTypes(scanCfg),
+                                    });
                                 } catch {
                                     return { totalEligible: 0 };
                                 }
@@ -1267,11 +1273,12 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                                 feature,
                                 total: c.totalEligible || 0,
                                 requestedBy: 'admin',
+                                requestJson: JSON.stringify({ groupId }),
                             });
                             log({
                                 source: 'ai',
                                 level: 'info',
-                                msg: `job ${durableJobId} created for ${feature} scan`,
+                                msg: `job ${durableJobId} created for ${feature} scan (groupId=${groupId || 'all'})`,
                             });
                         } catch (e) {
                             log({
@@ -1294,7 +1301,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
 
                         try {
                             starter(
-                                cfg,
+                                scanCfg,
                                 (p) => {
                                     // tracker.onProgress already _safeBroadcasts
                                     // `${prefix}_progress` with the merged status — a

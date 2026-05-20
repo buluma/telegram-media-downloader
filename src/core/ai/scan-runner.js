@@ -439,13 +439,16 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
             // Phase A — detect faces on every photo we haven't visited yet.
             // Visited = "ai_indexed_at IS NOT NULL"; even photos that yield
             // zero faces get stamped so the next pass doesn't re-decode.
+            const groupId = cfg.groupId || null;
             const phaseATotal = db
                 .prepare(`
                     SELECT COUNT(*) AS n FROM downloads
                      WHERE file_type IN (${fileTypes.map(() => '?').join(',')})
                        AND ai_indexed_at IS NULL
+                       AND deleted_at IS NULL
+                       ${groupId ? 'AND group_id = ?' : ''}
                 `)
-                .get(...fileTypes).n;
+                .get(...fileTypes, ...(groupId ? [String(groupId)] : [])).n;
             state.total = phaseATotal;
             bump();
             log('info', `faces scan: ${phaseATotal} photos to scan in phase A`);
@@ -475,7 +478,7 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
             let _statPhotos = 0;
             let _nextStatLog = 0;
             while (!signal.aborted) {
-                const batch = getUnindexedAiBatch({ fileTypes, limit: batchSize });
+                const batch = getUnindexedAiBatch({ fileTypes, limit: batchSize, groupId });
                 if (!batch.length) break;
                 // Partition batch: videos use per-frame single detect, images
                 // use one HTTP round-trip via /detect/batch.

@@ -3518,9 +3518,41 @@ async function openGroupSettings(groupId, groupName) {
 // Idempotent — replaces handlers via .onclick so re-opening the modal
 // for a different group always re-targets the right id.
 function _wireGroupDataActions(groupId) {
+    const scanFacesBtn = document.getElementById('group-data-scan-faces-btn');
     const delBtn = document.getElementById('group-data-delete-files-btn');
     const purgeBtn = document.getElementById('group-data-purge-btn');
     const more = document.getElementById('group-data-loadmore');
+
+    if (scanFacesBtn) {
+        scanFacesBtn.onclick = async () => {
+            const { api } = await import('./api.js');
+            const { showToast } = await import('./utils.js');
+            const label = scanFacesBtn.querySelector('span');
+            const origText = label?.textContent || '';
+            scanFacesBtn.disabled = true;
+            scanFacesBtn.classList.add('opacity-50', 'pointer-events-none');
+            if (label) label.textContent = i18nT('group.data.scan_faces_starting', 'Starting…');
+            try {
+                const res = await api.post('/api/ai/scan/start', {
+                    feature: 'faces',
+                    groupId,
+                });
+                if (res.started) {
+                    showToast(i18nT('group.data.scan_faces_started', 'Face scan started…'), 'info');
+                    if (label)
+                        label.textContent = i18nT('group.data.scan_faces_running', 'Scan running…');
+                    // Keep disabled while scan is in progress
+                    return;
+                }
+            } catch (e) {
+                showToast(e?.data?.error || e.message || 'Failed', 'error');
+            }
+            // Re-enable on error or if not started
+            scanFacesBtn.disabled = false;
+            scanFacesBtn.classList.remove('opacity-50', 'pointer-events-none');
+            if (label) label.textContent = origText;
+        };
+    }
     if (delBtn) {
         delBtn.onclick = async () => {
             const { api } = await import('./api.js');
