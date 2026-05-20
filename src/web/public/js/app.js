@@ -329,6 +329,35 @@ async function init() {
         Notifications.notifyDownloadComplete(m?.payload || m || {});
     });
 
+    ws.on('ai_people_progress', (m) => {
+        const btn = document.getElementById('group-data-scan-faces-btn');
+        if (btn) {
+            btn.disabled = true;
+            btn.classList.add('opacity-50', 'pointer-events-none');
+            const label = btn.querySelector('span');
+            if (label) {
+                const scanned = Number(m.scanned) || 0;
+                const total = Number(m.total) || 0;
+                const pct = total > 0 ? Math.min(100, Math.round((scanned / total) * 100)) : 0;
+                label.textContent = total
+                    ? i18nTf('group.data.scan_faces_running_pct', { pct }, `Scan running (${pct}%)`)
+                    : i18nT('group.data.scan_faces_running', 'Scan running…');
+            }
+        }
+    });
+
+    ws.on('ai_people_done', (m) => {
+        const btn = document.getElementById('group-data-scan-faces-btn');
+        if (btn) {
+            btn.disabled = false;
+            btn.classList.remove('opacity-50', 'pointer-events-none');
+            const label = btn.querySelector('span');
+            if (label) {
+                label.textContent = i18nT('group.data.scan_faces', 'Scan faces');
+            }
+        }
+    });
+
     // Server-side broadcast emitted by /api/groups/refresh-info (and any
     // future name-update path). Merge into the canonical name cache and
     // re-render anything that depends on a name. This is what keeps every
@@ -3524,6 +3553,33 @@ function _wireGroupDataActions(groupId) {
     const more = document.getElementById('group-data-loadmore');
 
     if (scanFacesBtn) {
+        // Hydrate active scan state when the modal settings open
+        (async () => {
+            try {
+                const { api } = await import('./api.js');
+                const status = await api.get('/api/ai/status');
+                const facesScan = status?.scans?.faces || {};
+                if (facesScan.running) {
+                    scanFacesBtn.disabled = true;
+                    scanFacesBtn.classList.add('opacity-50', 'pointer-events-none');
+                    const label = scanFacesBtn.querySelector('span');
+                    if (label) {
+                        const scanned = Number(facesScan.scanned) || 0;
+                        const total = Number(facesScan.total) || 0;
+                        const pct =
+                            total > 0 ? Math.min(100, Math.round((scanned / total) * 100)) : 0;
+                        label.textContent = total
+                            ? i18nTf(
+                                  'group.data.scan_faces_running_pct',
+                                  { pct },
+                                  `Scan running (${pct}%)`,
+                              )
+                            : i18nT('group.data.scan_faces_running', 'Scan running…');
+                    }
+                }
+            } catch {}
+        })();
+
         scanFacesBtn.onclick = async () => {
             const { api } = await import('./api.js');
             const { showToast } = await import('./utils.js');
@@ -3541,7 +3597,7 @@ function _wireGroupDataActions(groupId) {
                     showToast(i18nT('group.data.scan_faces_started', 'Face scan started…'), 'info');
                     if (label)
                         label.textContent = i18nT('group.data.scan_faces_running', 'Scan running…');
-                    // Keep disabled while scan is in progress
+                    // Keep disabled while scan is in progress (WebSocket handlers will restore it)
                     return;
                 }
             } catch (e) {
