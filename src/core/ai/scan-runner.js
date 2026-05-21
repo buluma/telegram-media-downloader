@@ -742,9 +742,15 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                 FACE_DEFAULTS.facesEpsilon, // 1.05 — must match epsForCluster fallback above
             );
             const matchEpsEnv = resolveFacesValue('labelMatchEps', facesCfg);
+            // matchEps must scale with epsilonResolved — the old formula
+            // Math.max(0.2, Math.min(0.6, eps * 0.9)) hard-capped at 0.6,
+            // which is ~3% of ε=20 (tgdl-ml scale) and silently dropped
+            // every label on re-cluster. 0.5×ε is scale-agnostic:
+            //   ε=20   → matchEps=10  (centroid must not drift > half cluster width)
+            //   ε=1.05 → matchEps≈0.53 (similar semantics at unit-sphere scale)
             const matchEps = _pickNumber(
                 [facesCfg.labelMatchEps, cfg.facesLabelMatchEps, matchEpsEnv],
-                Math.max(0.2, Math.min(0.6, epsilonResolved * 0.9)),
+                epsilonResolved * 0.5,
             );
             const labelSnapshot = (() => {
                 const out = [];
