@@ -467,20 +467,27 @@ export function unwhitelistNsfw(ids) {
  * comes later). Sorted oldest-first so a resumed scan picks up backlog
  * before newly-arrived rows.
  */
-export function getUnindexedAiBatch({ fileTypes = ['photo'], limit = 50 } = {}) {
+export function getUnindexedAiBatch({ fileTypes = ['photo'], limit = 50, groupId = null } = {}) {
     const types = Array.isArray(fileTypes) && fileTypes.length ? fileTypes : ['photo'];
     const placeholders = types.map(() => '?').join(',');
+    const params = [...types];
+
+    let where = `file_type IN (${placeholders}) AND ai_indexed_at IS NULL AND deleted_at IS NULL`;
+
+    if (groupId) {
+        where += ' AND group_id = ?';
+        params.push(String(groupId));
+    }
+
     return getDb()
         .prepare(`
         SELECT id, group_id, group_name, file_name, file_path, file_type, file_size, created_at
           FROM downloads
-         WHERE file_type IN (${placeholders})
-           AND ai_indexed_at IS NULL
-           AND deleted_at IS NULL
+         WHERE ${where}
          ORDER BY created_at ASC, id ASC
          LIMIT ?
     `)
-        .all(...types, Math.max(1, Math.min(500, Number(limit) || 50)));
+        .all(...params, Math.max(1, Math.min(500, Number(limit) || 50)));
 }
 
 export function setAiIndexedAt(downloadId, now = Date.now()) {
