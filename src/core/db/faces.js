@@ -560,16 +560,51 @@ export function getAiCounts({ fileTypes = ['photo'] } = {}) {
 // ---- Image embeddings -----------------------------------------------------
 
 export function setImageEmbedding(downloadId, embeddingBlob, model, now = Date.now()) {
-    return getDb()
-        .prepare(`
-        INSERT INTO image_embeddings (download_id, embedding, model, indexed_at)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(download_id) DO UPDATE SET
-            embedding  = excluded.embedding,
-            model      = excluded.model,
-            indexed_at = excluded.indexed_at
-    `)
-        .run(Number(downloadId), embeddingBlob, String(model), Math.floor(now)).changes;
+    const db = getDb();
+    return db.transaction(() => {
+        const changes = db
+            .prepare(`
+            INSERT INTO image_embeddings (download_id, embedding, model, indexed_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(download_id) DO UPDATE SET
+                embedding  = excluded.embedding,
+                model      = excluded.model,
+                indexed_at = excluded.indexed_at
+        `)
+            .run(Number(downloadId), embeddingBlob, String(model), Math.floor(now)).changes;
+
+        try {
+            db.prepare('DELETE FROM vec_image_embeddings WHERE download_id = ?').run(
+                BigInt(downloadId),
+            );
+        } catch {
+            const dim = embeddingBlob.byteLength / 4;
+            db.exec(
+                `CREATE VIRTUAL TABLE IF NOT EXISTS vec_image_embeddings USING vec0(download_id INTEGER PRIMARY KEY, embedding float[${dim}])`,
+            );
+        }
+
+        try {
+            db.prepare(
+                'INSERT INTO vec_image_embeddings(download_id, embedding) VALUES (?, ?)',
+            ).run(BigInt(downloadId), embeddingBlob);
+        } catch (e) {
+            if (e.message.includes('Dimension mismatch') || e.message.includes('no such table')) {
+                db.exec('DROP TABLE IF EXISTS vec_image_embeddings');
+                const dim = embeddingBlob.byteLength / 4;
+                db.exec(
+                    `CREATE VIRTUAL TABLE vec_image_embeddings USING vec0(download_id INTEGER PRIMARY KEY, embedding float[${dim}])`,
+                );
+                db.exec(
+                    `INSERT INTO vec_image_embeddings(download_id, embedding) SELECT download_id, embedding FROM image_embeddings WHERE length(embedding) = ${dim * 4}`,
+                );
+            } else {
+                throw e;
+            }
+        }
+
+        return changes;
+    })();
 }
 
 /**
@@ -694,6 +729,12 @@ export function resetAllAiData() {
     const tx = db.transaction(() => {
         const embeddings = db.prepare('DELETE FROM image_embeddings').run().changes;
         const textEmbeddings = db.prepare('DELETE FROM text_embeddings').run().changes;
+        try {
+            db.prepare('DELETE FROM vec_image_embeddings').run();
+        } catch {}
+        try {
+            db.prepare('DELETE FROM vec_text_embeddings').run();
+        } catch {}
         const tags = db.prepare('DELETE FROM image_tags').run().changes;
         const wd14Tags = db.prepare('DELETE FROM image_tags_wd14').run().changes;
         const faces = db.prepare('DELETE FROM faces').run().changes;
@@ -730,6 +771,11 @@ export function clearStaleEmbeddings(currentModelId) {
         const dropped = db
             .prepare(`DELETE FROM image_embeddings WHERE model != ?`)
             .run(modelId).changes;
+        try {
+            db.prepare(
+                `DELETE FROM vec_image_embeddings WHERE download_id NOT IN (SELECT download_id FROM image_embeddings)`,
+            ).run();
+        } catch {}
         const requeued = db
             .prepare(`
                 UPDATE downloads
@@ -751,16 +797,52 @@ export function clearStaleEmbeddings(currentModelId) {
  * the CLIP sidecar is not available.
  */
 export function setTextEmbedding(downloadId, embeddingBlob, model, now = Date.now()) {
-    return getDb()
-        .prepare(`
-        INSERT INTO text_embeddings (download_id, embedding, model, indexed_at)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(download_id) DO UPDATE SET
-            embedding  = excluded.embedding,
-            model      = excluded.model,
-            indexed_at = excluded.indexed_at
-    `)
-        .run(Number(downloadId), embeddingBlob, String(model), Math.floor(now / 1000)).changes;
+    const db = getDb();
+    return db.transaction(() => {
+        const changes = db
+            .prepare(`
+            INSERT INTO text_embeddings (download_id, embedding, model, indexed_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(download_id) DO UPDATE SET
+                embedding  = excluded.embedding,
+                model      = excluded.model,
+                indexed_at = excluded.indexed_at
+        `)
+            .run(Number(downloadId), embeddingBlob, String(model), Math.floor(now / 1000)).changes;
+
+        try {
+            db.prepare('DELETE FROM vec_text_embeddings WHERE download_id = ?').run(
+                BigInt(downloadId),
+            );
+        } catch {
+            const dim = embeddingBlob.byteLength / 4;
+            db.exec(
+                `CREATE VIRTUAL TABLE IF NOT EXISTS vec_text_embeddings USING vec0(download_id INTEGER PRIMARY KEY, embedding float[${dim}])`,
+            );
+        }
+
+        try {
+            db.prepare('INSERT INTO vec_text_embeddings(download_id, embedding) VALUES (?, ?)').run(
+                BigInt(downloadId),
+                embeddingBlob,
+            );
+        } catch (e) {
+            if (e.message.includes('Dimension mismatch') || e.message.includes('no such table')) {
+                db.exec('DROP TABLE IF EXISTS vec_text_embeddings');
+                const dim = embeddingBlob.byteLength / 4;
+                db.exec(
+                    `CREATE VIRTUAL TABLE vec_text_embeddings USING vec0(download_id INTEGER PRIMARY KEY, embedding float[${dim}])`,
+                );
+                db.exec(
+                    `INSERT INTO vec_text_embeddings(download_id, embedding) SELECT download_id, embedding FROM text_embeddings WHERE length(embedding) = ${dim * 4}`,
+                );
+            } else {
+                throw e;
+            }
+        }
+
+        return changes;
+    })();
 }
 
 /**
@@ -783,44 +865,36 @@ export function searchTextEmbeddings(queryEmbedding, opts = {}) {
     const qn = new Float32Array(q.length);
     for (let i = 0; i < q.length; i++) qn[i] = q[i] / qNorm;
 
-    let sql = `SELECT e.download_id, e.embedding FROM text_embeddings e`;
-    const params = [];
+    const qb = Buffer.from(qn.buffer);
+
+    let sql = `SELECT v.download_id AS id, 1.0 - vec_distance_cosine(v.embedding, ?) AS score
+                 FROM vec_text_embeddings v`;
+    const params = [qb];
+
     if (Array.isArray(fileTypes) && fileTypes.length) {
-        sql += ` JOIN downloads d ON d.id = e.download_id WHERE d.file_type IN (${fileTypes.map(() => '?').join(',')})`;
+        sql += ` JOIN downloads d ON d.id = v.download_id WHERE d.file_type IN (${fileTypes.map(() => '?').join(',')})`;
         params.push(...fileTypes);
     }
 
-    const heap = [];
-    for (const row of getDb()
-        .prepare(sql)
-        .iterate(...params)) {
-        if (!row.embedding?.byteLength) continue;
-        const dim = row.embedding.byteLength / 4;
-        const emb = new Float32Array(row.embedding.buffer, row.embedding.byteOffset, dim);
-        if (emb.length !== qn.length) continue;
+    sql += ` ORDER BY vec_distance_cosine(v.embedding, ?) ASC LIMIT ?`;
+    params.push(qb, topK);
 
-        let embNorm = 0;
-        for (let i = 0; i < dim; i++) embNorm += emb[i] * emb[i];
-        embNorm = Math.sqrt(embNorm) || 1;
-        let dot = 0;
-        for (let i = 0; i < dim; i++) dot += qn[i] * emb[i];
-        const score = Math.min(1, Math.max(0, dot / embNorm));
-
-        if (score < minScore) continue;
-
-        if (heap.length < topK) {
-            heap.push([-score, Number(row.download_id)]);
-            heap.sort((a, b) => a[0] - b[0]);
-        } else if (heap.length >= topK && -score < heap[topK - 1][0]) {
-            heap[topK - 1] = [-score, Number(row.download_id)];
-            heap.sort((a, b) => a[0] - b[0]);
-        }
+    const rows = [];
+    try {
+        rows.push(
+            ...getDb()
+                .prepare(sql)
+                .all(...params),
+        );
+    } catch {
+        // vec_text_embeddings might not exist if no embeddings have been stored yet
     }
-
-    return heap.map(([negScore, id]) => ({
-        id,
-        score: Math.round(-negScore * 1000) / 1000,
-    }));
+    return rows
+        .filter((r) => r.score >= minScore)
+        .map((r) => ({
+            id: Number(r.id),
+            score: Math.round(r.score * 1000) / 1000,
+        }));
 }
 
 /**

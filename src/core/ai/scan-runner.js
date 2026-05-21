@@ -44,6 +44,9 @@ import { resolveFacesValue } from './faces-config.js';
 import { detectFacesBatch, getSidecarUrl } from './faces-client.js';
 import { mlOcr, isTgdlMlEnabled, getTgdlMlUrl } from './tgdl-ml-client.js';
 import { checkSidecarCapability } from './preflight.js';
+import { getActiveProvider, generate } from '../llm/index.js';
+import { setImageText } from '../db/faces.js';
+import { readFileSync } from 'fs';
 import {
     markScanDone,
     markScanFailed,
@@ -572,6 +575,56 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                                             detectedTotal += 1;
                                         }
                                     }
+                                }
+
+                                try {
+                                    const llmStat = await getActiveProvider();
+                                    if (llmStat?.available && llmStat?.supportsVision) {
+                                        const sampleCount = Math.min(5, framePaths.length);
+                                        const step = Math.max(
+                                            1,
+                                            Math.floor(framePaths.length / sampleCount),
+                                        );
+                                        const sampledFrames = [];
+                                        for (
+                                            let i = 0;
+                                            i < framePaths.length &&
+                                            sampledFrames.length < sampleCount;
+                                            i += step
+                                        ) {
+                                            sampledFrames.push(framePaths[i]);
+                                        }
+                                        if (sampledFrames.length > 0) {
+                                            const imagesBase64 = sampledFrames.map((p) =>
+                                                readFileSync(p).toString('base64'),
+                                            );
+                                            log(
+                                                'info',
+                                                `faces scan: summarizing video id=${row.id} with ${imagesBase64.length} frames`,
+                                            );
+                                            const summary = await generate({
+                                                prompt: 'Describe what is happening in this sequence of video frames in a single concise paragraph. Focus on objects, people, actions, and scenery.',
+                                                images: imagesBase64,
+                                            });
+                                            if (summary && summary.text && summary.text.trim()) {
+                                                setImageText(
+                                                    row.id,
+                                                    summary.text.trim(),
+                                                    'video_summary',
+                                                    1.0,
+                                                );
+                                                log(
+                                                    'info',
+                                                    `faces scan: video id=${row.id} summary saved`,
+                                                );
+                                            }
+                                        }
+                                    }
+                                } catch (e) {
+                                    log(
+                                        'warn',
+                                        `faces scan: video summarization failed id=${row.id}: ${e?.message || String(e)}`,
+                                    );
                                 }
                             } finally {
                                 await _cleanupTmpFrames(framePaths);

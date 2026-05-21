@@ -347,7 +347,8 @@ function _matchSemantic(db, embedding, fileTypes) {
     const qNorm = Math.sqrt(q.reduce((a, b) => a + b * b, 0)) || 1;
     const qn = new Float32Array(q.length);
     for (let i = 0; i < q.length; i++) qn[i] = q[i] / qNorm;
-    const dim = q.length;
+
+    const qb = Buffer.from(qn.buffer);
 
     // Detect the active embedding model — use the most common one
     const modelCounts = db
@@ -357,16 +358,18 @@ function _matchSemantic(db, embedding, fileTypes) {
         .all();
     const activeModel = modelCounts.length ? modelCounts[0].model : null;
 
-    let sql = `SELECT e.download_id, e.embedding
-                 FROM image_embeddings e`;
-    const params = [];
+    let sql = `SELECT v.download_id, 1.0 - vec_distance_cosine(v.embedding, ?) AS score
+                 FROM vec_image_embeddings v`;
+    const params = [qb];
     const wheres = [];
+
     if (activeModel) {
+        sql += ` JOIN image_embeddings e ON e.download_id = v.download_id`;
         wheres.push(`e.model = ?`);
         params.push(activeModel);
     }
     if (Array.isArray(fileTypes) && fileTypes.length) {
-        sql += ` JOIN downloads d ON d.id = e.download_id`;
+        sql += ` JOIN downloads d ON d.id = v.download_id`;
         wheres.push(`d.file_type IN (${fileTypes.map(() => '?').join(',')})`);
         params.push(...fileTypes);
     }
@@ -374,23 +377,16 @@ function _matchSemantic(db, embedding, fileTypes) {
         sql += ` WHERE ${wheres.join(' AND ')}`;
     }
 
-    const rows = db.prepare(sql).all(...params);
+    let rows = [];
+    try {
+        rows = db.prepare(sql).all(...params);
+    } catch {
+        // Table might not exist yet
+    }
     const results = new Map();
 
     for (const row of rows) {
-        if (!row.embedding || !row.embedding.byteLength) continue;
-        const emb = new Float32Array(
-            row.embedding.buffer,
-            row.embedding.byteOffset,
-            row.embedding.byteLength / 4,
-        );
-        if (emb.length !== dim) continue;
-        let embNorm = 0;
-        for (let i = 0; i < dim; i++) embNorm += emb[i] * emb[i];
-        embNorm = Math.sqrt(embNorm) || 1;
-        let dot = 0;
-        for (let i = 0; i < dim; i++) dot += qn[i] * emb[i];
-        const score = Math.max(0, Math.min(1, dot / embNorm));
+        const score = Math.max(0, Math.min(1, row.score));
         if (score > 0) {
             results.set(Number(row.download_id), score);
         }

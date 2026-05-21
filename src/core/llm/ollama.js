@@ -72,7 +72,16 @@ export class OllamaProvider extends LLMProvider {
         if (systemPrompt) {
             messages.push({ role: 'system', content: systemPrompt });
         }
-        messages.push({ role: 'user', content: prompt });
+
+        let content = prompt;
+        if (opts.images && opts.images.length > 0) {
+            content = [{ type: 'text', text: prompt }];
+            for (const img of opts.images) {
+                const url = img.startsWith('data:') ? img : `data:image/jpeg;base64,${img}`;
+                content.push({ type: 'image_url', image_url: { url } });
+            }
+        }
+        messages.push({ role: 'user', content });
 
         const body = {
             model: model || this._model,

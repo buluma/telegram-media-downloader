@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import * as sqliteVec from 'sqlite-vec';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -45,6 +46,7 @@ export function getDb() {
     }
 
     db = new Database(DB_PATH);
+    sqliteVec.load(db);
 
     // Performance tuning
     db.pragma('journal_mode = WAL');
@@ -683,6 +685,42 @@ function initSchema() {
     // Run numbered migrations. All CREATE TABLE IF NOT EXISTS statements above
     // have completed, so every target table is guaranteed to exist.
     runMigrations(db);
+
+    // Populate vec0 tables from existing data if they are empty
+    try {
+        const imageEmbRow = db.prepare('SELECT embedding FROM image_embeddings LIMIT 1').get();
+        if (imageEmbRow && imageEmbRow.embedding) {
+            const dim = imageEmbRow.embedding.byteLength / 4;
+            db.exec(
+                `CREATE VIRTUAL TABLE IF NOT EXISTS vec_image_embeddings USING vec0(download_id INTEGER PRIMARY KEY, embedding float[${dim}])`,
+            );
+            const vecImageCount = db
+                .prepare('SELECT COUNT(*) AS c FROM vec_image_embeddings')
+                .get().c;
+            if (vecImageCount === 0) {
+                db.exec(
+                    `INSERT INTO vec_image_embeddings(download_id, embedding) SELECT download_id, embedding FROM image_embeddings WHERE length(embedding) = ${dim * 4}`,
+                );
+            }
+        }
+        const textEmbRow = db.prepare('SELECT embedding FROM text_embeddings LIMIT 1').get();
+        if (textEmbRow && textEmbRow.embedding) {
+            const dim = textEmbRow.embedding.byteLength / 4;
+            db.exec(
+                `CREATE VIRTUAL TABLE IF NOT EXISTS vec_text_embeddings USING vec0(download_id INTEGER PRIMARY KEY, embedding float[${dim}])`,
+            );
+            const vecTextCount = db
+                .prepare('SELECT COUNT(*) AS c FROM vec_text_embeddings')
+                .get().c;
+            if (vecTextCount === 0) {
+                db.exec(
+                    `INSERT INTO vec_text_embeddings(download_id, embedding) SELECT download_id, embedding FROM text_embeddings WHERE length(embedding) = ${dim * 4}`,
+                );
+            }
+        }
+    } catch (e) {
+        console.warn('[db] vec0 migration failed (non-fatal):', e.message);
+    }
 
     // One-shot data migration: read groups from kv['config'] JSON blob and
     // populate the normalized group tables. Skips if groups table already
