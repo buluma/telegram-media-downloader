@@ -46,7 +46,12 @@ export function getDb() {
     }
 
     db = new Database(DB_PATH);
-    sqliteVec.load(db);
+    try {
+        sqliteVec.load(db);
+    } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn('[db] sqlite-vec failed to load, AI features will be unavailable:', e.message);
+    }
 
     // Performance tuning
     db.pragma('journal_mode = WAL');
