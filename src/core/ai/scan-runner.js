@@ -39,7 +39,7 @@ import {
     getUnscannedWd14Batch,
     setWd14Tags,
 } from '../db/faces.js';
-import { clusterFaces, computeFaceQualityScore, detectFaces } from './faces.js';
+import { clusterFaces, computeFaceQualityScore, detectFaces, FACE_DEFAULTS } from './faces.js';
 import { resolveFacesValue } from './faces-config.js';
 import { detectFacesBatch, getSidecarUrl } from './faces-client.js';
 import { mlOcr, isTgdlMlEnabled, getTgdlMlUrl } from './tgdl-ml-client.js';
@@ -700,7 +700,7 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                     facesCfgForCluster.epsilon,
                     cfg.facesEpsilon,
                 ],
-                0.5,
+                FACE_DEFAULTS.facesEpsilon, // 1.05 — ArcFace 512-dim calibrated (not legacy FaceNet 0.5)
             );
             const minPointsForCluster = _pickNumber(
                 [
@@ -708,7 +708,7 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                     facesCfgForCluster.minPoints,
                     cfg.facesMinPoints,
                 ],
-                3,
+                FACE_DEFAULTS.facesMinPoints, // 2 — surfaces rarer faces (not legacy 3)
             );
             const qualityWeightedCentroid =
                 resolveFacesValue('qualityWeightedCentroid', facesCfgForCluster) === true ||
@@ -739,12 +739,18 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
             const facesCfg = cfg?.faces || {};
             const epsilonResolved = _pickNumber(
                 [resolveFacesValue('epsilon', facesCfg), facesCfg.epsilon, cfg.facesEpsilon],
-                0.5,
+                FACE_DEFAULTS.facesEpsilon, // 1.05 — must match epsForCluster fallback above
             );
             const matchEpsEnv = resolveFacesValue('labelMatchEps', facesCfg);
+            // matchEps must scale with epsilonResolved — the old formula
+            // Math.max(0.2, Math.min(0.6, eps * 0.9)) hard-capped at 0.6,
+            // which is ~3% of ε=20 (tgdl-ml scale) and silently dropped
+            // every label on re-cluster. 0.5×ε is scale-agnostic:
+            //   ε=20   → matchEps=10  (centroid must not drift > half cluster width)
+            //   ε=1.05 → matchEps≈0.53 (similar semantics at unit-sphere scale)
             const matchEps = _pickNumber(
                 [facesCfg.labelMatchEps, cfg.facesLabelMatchEps, matchEpsEnv],
-                Math.max(0.2, Math.min(0.6, epsilonResolved * 0.9)),
+                epsilonResolved * 0.5,
             );
             const labelSnapshot = (() => {
                 const out = [];

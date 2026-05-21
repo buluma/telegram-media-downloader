@@ -34,22 +34,27 @@ import { existsSync } from 'fs';
 
 import { getSidecarUrl } from './faces-client.js';
 
-// ArcFace 512-dim embeddings are L2-normalised to unit length, so the
-// Euclidean distance between two unit vectors maps to cosine similarity
-// via L2² = 2·(1 − cos). Same-person pairs typically land at L2 ≈
-// 0.3-1.0 (cos sim 0.95-0.5); different-person pairs at L2 ≈ 1.0-1.4.
-// Calibrated against real 926-photo / 689-face data (see
-// scripts/calibrate-faces-eps.js):
-//   ε=1.05 → 80 distinct clusters (peak, low false-merge risk)
-//   ε=1.10 → 79 (starting to merge — top jumps to 89)
-//   ε=1.15 → 45 (mega-merge begins — top jumps to 449 ⚠)
-//   ε=1.20 → 7  (catastrophic collapse — top is 641)
-// ε=1.05 is the production sweet spot: maximum distinct people
-// surfaced without false merges. The previous default ε=0.5 was
-// FaceNet-era (legacy face-api 128-dim) and silently kept the People
-// grid empty on ArcFace 512-dim libraries.
+// ArcFace 512-dim embedding scale depends on the backend:
+//
+// tgdl-faces sidecar (insightface direct): returns unit-sphere L2-normalised
+//   embeddings. Distances map to cosine similarity via L2²=2·(1−cos).
+//   Same-person pairs land at L2 ≈ 0.3–1.0; ε=1.05 was calibrated for
+//   this path on a 926-photo / 689-face library (scripts/calibrate-faces-eps.js).
+//
+// tgdl-ml / immich-ml (buffalo_l via immich runtime): returns embeddings at
+//   full ArcFace scale — NOT unit-normalised. Live DBSCAN sweep on 3 000
+//   faces confirms pairwise L2 distances are 14–33:
+//     ε=16 → 276 clusters / 2060 noise  / top 239
+//     ε=18 → 318 clusters / 1555 noise  / top 468
+//     ε=20 → 245 clusters / 1035 noise  / top 1088  ← sweet spot
+//     ε=22 → 111 clusters /  455 noise  / top 2212  (false-merge risk ⚠)
+//     ε=24 →  18 clusters /   98 noise  / top 2859  (mega-merge ⚠)
+//   ε=20 surfaces the most distinct people before the mega-merge begins.
+//
+// The default below targets tgdl-ml. Operators on the legacy insightface
+// sidecar should set TGDL_FACES_EPSILON=1.05 in their environment.
 export const FACE_DEFAULTS = Object.freeze({
-    facesEpsilon: 1.05, // DBSCAN radius (buffalo_l 512-dim L2-normalised ArcFace embeddings)
+    facesEpsilon: 20, // DBSCAN radius — calibrated for tgdl-ml / immich-ml buffalo_l (full ArcFace scale)
     facesMinPoints: 2, // smallest cluster we'll surface as a "person" — 2 surfaces rarer faces
     minDetectionScore: 0.3, // sidecar detector confidence floor
     inputSize: 320, // kept for backwards compat; sidecar ignores it (its own preprocessor)

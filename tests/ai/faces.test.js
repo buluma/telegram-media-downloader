@@ -135,12 +135,10 @@ describe('module surface', () => {
     });
     it('FACE_DEFAULTS is frozen', () => {
         expect(Object.isFrozen(faces.FACE_DEFAULTS)).toBe(true);
-        // ArcFace 512-dim L2-normalised: ε=1.1 + minPts=2 is the
-        // calibrated default (see scripts/calibrate-faces-eps.js).
-        // Tested on a 50-photo Telegram-library sample: ε=1.1
-        // surfaces 5+ distinct people; ε≥1.3 collapses everyone
-        // into one mega-cluster.
-        expect(faces.FACE_DEFAULTS.facesEpsilon).toBeCloseTo(1.05, 5);
+        // ε=20 is calibrated for tgdl-ml / immich-ml buffalo_l, which returns
+        // full-scale ArcFace embeddings (L2 distances 14–33, NOT unit-sphere).
+        // Legacy insightface sidecar users should set TGDL_FACES_EPSILON=1.05.
+        expect(faces.FACE_DEFAULTS.facesEpsilon).toBeCloseTo(20, 5);
         expect(faces.FACE_DEFAULTS.facesMinPoints).toBe(2);
     });
 });
