@@ -362,7 +362,7 @@ services:
   # Covers CLIP embeddings and OCR. Keep tgdl-faces enabled for /tag
   # until feature parity is complete.
   tgdl-ml:
-    image: buluma/tgdl-ml:latest
+    image: ghcr.io/buluma/tgdl-ml:latest
     # build: ./tgdl-ml
     pull_policy: always
     container_name: tgdl-ml
