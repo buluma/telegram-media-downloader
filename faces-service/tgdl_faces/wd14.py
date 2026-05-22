@@ -13,6 +13,7 @@ from __future__ import annotations
 import csv
 import logging
 import os
+import threading
 from pathlib import Path
 
 import cv2
@@ -25,6 +26,7 @@ _MODEL_AVAILABLE = None
 _MODEL_ERROR = None
 _SESSION = None
 _LABELS: list[str] | None = None
+_INIT_LOCK = threading.Lock()
 
 # ---------------------------------------------------------------------------
 # Model definition
@@ -83,37 +85,41 @@ def _init_model() -> bool:
     if _MODEL_AVAILABLE is not None:
         return _MODEL_AVAILABLE
 
-    try:
-        import onnxruntime as ort
-    except ImportError:
-        _MODEL_ERROR = "onnxruntime not installed"
-        _MODEL_AVAILABLE = False
-        return False
+    with _INIT_LOCK:
+        if _MODEL_AVAILABLE is not None:
+            return _MODEL_AVAILABLE
 
-    cache_dir = Path.home() / ".cache" / "tgdl-faces" / "wd14"
+        try:
+            import onnxruntime as ort
+        except ImportError:
+            _MODEL_ERROR = "onnxruntime not installed"
+            _MODEL_AVAILABLE = False
+            return False
 
-    try:
-        model_path = _download(_REPO, _MODEL_FILE, cache_dir)
-        tags_path = _download(_REPO, _TAGS_FILE, cache_dir)
-    except Exception as e:
-        _MODEL_ERROR = f"Failed to download WD14 model: {e}"
-        _MODEL_AVAILABLE = False
-        _LOG.warning("WD14 download failed: %s", e)
-        return False
+        cache_dir = Path.home() / ".cache" / "tgdl-faces" / "wd14"
 
-    try:
-        providers = ["CoreMLExecutionProvider", "CPUExecutionProvider"]
-        _SESSION = ort.InferenceSession(str(model_path), providers=providers)
-        _INPUT_NAME, _OUTPUT_NAME = _probe_io(_SESSION)
-        _LABELS = _load_tags(tags_path)
-        _MODEL_AVAILABLE = True
-        _LOG.info("WD14 ViT tagger v3 loaded (%d tags)", len(_LABELS))
-        return True
-    except Exception as e:
-        _MODEL_ERROR = str(e)
-        _MODEL_AVAILABLE = False
-        _LOG.warning("Failed to load WD14 model: %s", e)
-        return False
+        try:
+            model_path = _download(_REPO, _MODEL_FILE, cache_dir)
+            tags_path = _download(_REPO, _TAGS_FILE, cache_dir)
+        except Exception as e:
+            _MODEL_ERROR = f"Failed to download WD14 model: {e}"
+            _MODEL_AVAILABLE = False
+            _LOG.warning("WD14 download failed: %s", e)
+            return False
+
+        try:
+            providers = ["CoreMLExecutionProvider", "CPUExecutionProvider"]
+            _SESSION = ort.InferenceSession(str(model_path), providers=providers)
+            _INPUT_NAME, _OUTPUT_NAME = _probe_io(_SESSION)
+            _LABELS = _load_tags(tags_path)
+            _MODEL_AVAILABLE = True
+            _LOG.info("WD14 ViT tagger v3 loaded (%d tags)", len(_LABELS))
+            return True
+        except Exception as e:
+            _MODEL_ERROR = str(e)
+            _MODEL_AVAILABLE = False
+            _LOG.warning("Failed to load WD14 model: %s", e)
+            return False
 
 
 def is_ready() -> bool:
