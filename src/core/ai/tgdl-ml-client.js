@@ -1,6 +1,5 @@
 import { readFile } from 'fs/promises';
 
-const DEFAULT_TGDL_ML_URL = 'http://100.100.245.3:3800';
 const DEFAULT_CLIP_MODEL = 'ViT-B-32__openai';
 const DEFAULT_OCR_MODEL = 'PP-OCRv5_mobile';
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -20,7 +19,7 @@ export function getTgdlMlUrl() {
     const explicit = _cleanUrl(process.env.TGDL_ML_URL || '');
     if (explicit) return explicit;
 
-    return DEFAULT_TGDL_ML_URL;
+    return '';
 }
 
 export function isTgdlMlEnabled() {

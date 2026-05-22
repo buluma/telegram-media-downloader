@@ -48,6 +48,7 @@ const PROJECT_ROOT = path.resolve(__dirname, '..', '..', '..');
 const DATA_DIR = process.env.TGDL_DATA_DIR
     ? path.resolve(process.env.TGDL_DATA_DIR)
     : path.join(PROJECT_ROOT, 'data');
+const FACES_VENV_DIR = path.join(DATA_DIR, 'faces-service', 'venv');
 
 export { SIDECAR_VERSION };
 
@@ -397,15 +398,18 @@ async function _doStart() {
         if (port) {
             const downloadsDir = path.resolve(DATA_DIR, 'downloads');
             const modelsDir = path.resolve(DATA_DIR, 'faces-service', 'models');
+            const cacheDir = path.resolve(DATA_DIR, 'faces-service', 'cache');
             try {
                 await fs.mkdir(downloadsDir, { recursive: true });
                 await fs.mkdir(modelsDir, { recursive: true });
+                await fs.mkdir(cacheDir, { recursive: true });
             } catch {}
             const fallback = await _tryPythonFallback({
                 host: '127.0.0.1',
                 port,
                 allowRoots: downloadsDir,
                 modelsDir,
+                cacheDir,
             });
             if (fallback.ok) {
                 _log(
@@ -560,7 +564,7 @@ async function _spawnWithRetry(spawnFn, binPath) {
 // alternative (caching a positive result across restarts) would lock the
 // fallback to a stale Python path after the operator switched
 // interpreters.
-async function _tryPythonFallback({ host, port, allowRoots, modelsDir }) {
+async function _tryPythonFallback({ host, port, allowRoots, modelsDir, cacheDir }) {
     const facesService = path.resolve(PROJECT_ROOT, 'faces-service');
     const entrypoint = path.join(facesService, 'tgdl_faces', '__main__.py');
     if (!existsSync(entrypoint)) {
@@ -575,7 +579,15 @@ async function _tryPythonFallback({ host, port, allowRoots, modelsDir }) {
         return { ok: false, reason: 'no Python 3.10+ on PATH' };
     }
 
-    const depsOk = await _checkPythonDeps(pyBin);
+    let runPyBin = pyBin;
+    let depsOk = await _checkPythonDeps(runPyBin);
+    if (!depsOk.ok) {
+        const venvPy = await _ensureProjectVenv(pyBin);
+        if (venvPy) {
+            runPyBin = venvPy;
+            depsOk = await _checkPythonDeps(runPyBin);
+        }
+    }
     if (!depsOk.ok) {
         // Auto-install path — run `python -m tgdl_faces.install` once per
         // process so the operator never has to copy-paste a pip command.
@@ -590,9 +602,9 @@ async function _tryPythonFallback({ host, port, allowRoots, modelsDir }) {
         if (!autoInstallDisabled && !_autoInstallTried) {
             _autoInstallTried = true;
             _log('info', `Python deps missing (${depsOk.detail || '?'}) — running auto-installer`);
-            const installed = await installPythonDeps({ pyBin });
+            const installed = await installPythonDeps({ pyBin: runPyBin });
             if (installed.ok) {
-                const recheck = await _checkPythonDeps(pyBin);
+                const recheck = await _checkPythonDeps(runPyBin);
                 if (recheck.ok) {
                     _log('info', 'auto-install succeeded — proceeding with sidecar spawn');
                     // fall through to the spawn block below
@@ -630,6 +642,8 @@ async function _tryPythonFallback({ host, port, allowRoots, modelsDir }) {
         TGDL_FACES_PORT: String(port),
         TGDL_FACES_ALLOW_ROOTS: allowRoots,
         TGDL_FACES_MODELS_DIR: modelsDir,
+        MPLCONFIGDIR: path.join(cacheDir, 'matplotlib'),
+        XDG_CACHE_HOME: path.join(cacheDir, 'xdg'),
         // Forward the operator-selected insightface preset + EP hint
         // into the sidecar env so /restart actually picks up the new
         // dropdown value. Without these, the Python child re-uses its
@@ -644,7 +658,7 @@ async function _tryPythonFallback({ host, port, allowRoots, modelsDir }) {
 
     let child;
     try {
-        child = spawn(pyBin, ['-m', 'tgdl_faces'], {
+        child = spawn(runPyBin, ['-m', 'tgdl_faces'], {
             cwd: facesService,
             env,
             stdio: ['ignore', 'pipe', 'pipe'],
@@ -656,7 +670,7 @@ async function _tryPythonFallback({ host, port, allowRoots, modelsDir }) {
     if (!child || !child.pid) {
         return { ok: false, reason: 'python spawn returned no pid' };
     }
-    return { ok: true, child, mode: 'python', pyBin };
+    return { ok: true, child, mode: 'python', pyBin: runPyBin };
 }
 
 /**
@@ -665,19 +679,89 @@ async function _tryPythonFallback({ host, port, allowRoots, modelsDir }) {
  * when nothing on PATH is Python ≥ 3.10.
  */
 async function _findPython3OrAbove() {
-    const venvNames = ['.venv', 'venv'];
-    const pyName = process.platform === 'win32' ? 'python.exe' : 'python3';
-    for (const venv of venvNames) {
-        const bin = path.join(PROJECT_ROOT, 'faces-service', venv, 'bin', pyName);
-        if (existsSync(bin) && _checkPythonVersion(bin)) return bin;
-    }
-
-    const candidates = process.platform === 'win32' ? ['python', 'python3'] : ['python3', 'python'];
+    const candidates =
+        process.platform === 'win32'
+            ? [
+                  _venvPythonPath(FACES_VENV_DIR),
+                  path.join(PROJECT_ROOT, 'faces-service', '.venv', 'Scripts', 'python.exe'),
+                  'python',
+                  'python3',
+              ]
+            : [
+                  _venvPythonPath(FACES_VENV_DIR),
+                  path.join(PROJECT_ROOT, 'faces-service', '.venv', 'bin', 'python'),
+                  path.join(
+                      process.env.HOME || '',
+                      '.pyenv',
+                      'versions',
+                      '3.13.0',
+                      'bin',
+                      'python',
+                  ),
+                  path.join(
+                      process.env.HOME || '',
+                      '.pyenv',
+                      'versions',
+                      '3.12.0',
+                      'bin',
+                      'python',
+                  ),
+                  path.join(
+                      process.env.HOME || '',
+                      '.pyenv',
+                      'versions',
+                      '3.11.0',
+                      'bin',
+                      'python',
+                  ),
+                  path.join(
+                      process.env.HOME || '',
+                      '.pyenv',
+                      'versions',
+                      '3.10.0',
+                      'bin',
+                      'python',
+                  ),
+                  'python3.13',
+                  'python3.12',
+                  'python3.11',
+                  'python3.10',
+                  'python3',
+                  'python',
+              ];
     for (const bin of candidates) {
+        if (!bin) continue;
         const ok = _checkPythonVersion(bin);
         if (ok) return bin;
     }
     return null;
+}
+
+function _venvPythonPath(venvDir) {
+    return process.platform === 'win32'
+        ? path.join(venvDir, 'Scripts', 'python.exe')
+        : path.join(venvDir, 'bin', 'python');
+}
+
+async function _ensureProjectVenv(basePyBin) {
+    const venvPy = _venvPythonPath(FACES_VENV_DIR);
+    if (existsSync(venvPy) && _checkPythonVersion(venvPy)) return venvPy;
+    try {
+        await fs.mkdir(path.dirname(FACES_VENV_DIR), { recursive: true });
+    } catch {}
+    _log('info', `creating faces-service virtualenv at ${FACES_VENV_DIR}`);
+    const res = spawnSync(basePyBin, ['-m', 'venv', FACES_VENV_DIR], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 120000,
+        windowsHide: true,
+    });
+    if (res.error || res.status !== 0) {
+        const detail =
+            res.error?.message || String(res.stderr || '').trim() || `exit ${res.status}`;
+        _log('warn', `virtualenv creation failed: ${detail}`);
+        return null;
+    }
+    return existsSync(venvPy) && _checkPythonVersion(venvPy) ? venvPy : null;
 }
 
 function _checkPythonVersion(bin) {
@@ -708,7 +792,7 @@ function _checkPythonDeps(bin) {
                 ['-c', 'import fastapi, insightface, onnxruntime, cv2, numpy, PIL'],
                 {
                     stdio: ['ignore', 'pipe', 'pipe'],
-                    timeout: 10000,
+                    timeout: 60000,
                     windowsHide: true,
                 },
             );
@@ -844,8 +928,10 @@ async function _spawnAndProbe(binPath) {
     });
     const downloadsDir = path.resolve(DATA_DIR, 'downloads');
     const modelsDir = path.resolve(DATA_DIR, 'faces-service', 'models');
+    const cacheDir = path.resolve(DATA_DIR, 'faces-service', 'cache');
     await fs.mkdir(downloadsDir, { recursive: true });
     await fs.mkdir(modelsDir, { recursive: true });
+    await fs.mkdir(cacheDir, { recursive: true });
 
     const env = {
         ...process.env,
@@ -853,6 +939,8 @@ async function _spawnAndProbe(binPath) {
         TGDL_FACES_PORT: String(port),
         TGDL_FACES_ALLOW_ROOTS: downloadsDir,
         TGDL_FACES_MODELS_DIR: modelsDir,
+        MPLCONFIGDIR: path.join(cacheDir, 'matplotlib'),
+        XDG_CACHE_HOME: path.join(cacheDir, 'xdg'),
         // Same rationale as the python-fallback env above: forward the
         // operator-selected insightface preset + EP hint so the
         // prebuilt binary loads the dropdown's choice on /restart.

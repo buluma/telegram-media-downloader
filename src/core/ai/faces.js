@@ -34,29 +34,17 @@ import { existsSync } from 'fs';
 
 import { getSidecarUrl } from './faces-client.js';
 
-// ArcFace 512-dim embedding scale depends on the backend:
-//
-// tgdl-faces sidecar (insightface direct): returns unit-sphere L2-normalised
-//   embeddings. Distances map to cosine similarity via L2²=2·(1−cos).
-//   Same-person pairs land at L2 ≈ 0.3–1.0; ε=1.05 was calibrated for
-//   this path on a 926-photo / 689-face library (scripts/calibrate-faces-eps.js).
-//
-// tgdl-ml / immich-ml (buffalo_l via immich runtime): returns embeddings at
-//   full ArcFace scale — NOT unit-normalised. Live DBSCAN sweep on 3 000
-//   faces confirms pairwise L2 distances are 14–33:
-//     ε=16 → 276 clusters / 2060 noise  / top 239
-//     ε=18 → 318 clusters / 1555 noise  / top 468
-//     ε=20 → 245 clusters / 1035 noise  / top 1088  ← sweet spot
-//     ε=22 → 111 clusters /  455 noise  / top 2212  (false-merge risk ⚠)
-//     ε=24 →  18 clusters /   98 noise  / top 2859  (mega-merge ⚠)
-//   ε=20 surfaces the most distinct people before the mega-merge begins.
-//
-// The default below targets tgdl-ml. Operators on the legacy insightface
-// sidecar should set TGDL_FACES_EPSILON=1.05 in their environment.
+// ArcFace 512-dim embeddings from the InsightFace sidecar are L2-normalised
+// to unit length, so Euclidean distance maps to cosine similarity via
+// L2² = 2 * (1 - cos). Calibrated against real 926-photo / 689-face data:
+//   eps=1.05 => 80 distinct clusters (peak, low false-merge risk)
+//   eps=1.10 => 79 (starting to merge)
+//   eps=1.15 => 45 (mega-merge begins)
+//   eps=1.20 => 7  (collapsed)
 export const FACE_DEFAULTS = Object.freeze({
-    facesEpsilon: 20, // DBSCAN radius — calibrated for tgdl-ml / immich-ml buffalo_l (full ArcFace scale)
+    facesEpsilon: 1.05, // DBSCAN radius for buffalo_l L2-normalised ArcFace embeddings
     facesMinPoints: 2, // smallest cluster we'll surface as a "person" — 2 surfaces rarer faces
-    minDetectionScore: 0.3, // sidecar detector confidence floor
+    minDetectionScore: 0.5, // sidecar detector confidence floor
     inputSize: 320, // kept for backwards compat; sidecar ignores it (its own preprocessor)
     facesDetector: 'buffalo_l', // hint forwarded to the sidecar; currently single model
 });
@@ -127,10 +115,10 @@ export async function detectFaces(absPath, cfg = {}, onLog) {
  * "people" out of garbage. Three rules:
  *
  *   1. `score < minScore` — sidecar detector confidence floor.
- *      Default 0.3 — empirical for Telegram libraries; lower lets in false
+ *      Default 0.5 — empirical for buffalo_l; lower lets in false
  *      positives (textures, distant heads, partial occlusion).
  *   2. `min(w, h) < minBoxPx` — too small to embed reliably.
- *      Default 48 px — the sidecar already normalises crops, but
+ *      Default 60 px — the sidecar already normalises crops, but
  *      anything smaller has too few pixels to encode identity well.
  *   3. Aspect ratio outside [0.5, 2.0] — the detector occasionally
  *      returns very-elongated boxes from non-face textures (window
@@ -143,7 +131,7 @@ export function qualityFilter(detections, cfg = {}) {
     const minScore = Number.isFinite(cfg.minDetectionScore)
         ? cfg.minDetectionScore
         : FACE_DEFAULTS.minDetectionScore;
-    const minBoxPx = Number.isFinite(cfg.minFaceSizePx) ? cfg.minFaceSizePx : 48;
+    const minBoxPx = Number.isFinite(cfg.minFaceSizePx) ? cfg.minFaceSizePx : 60;
     return detections.filter((d) => {
         if (!d) return false;
         if (Number.isFinite(d.score) && d.score < minScore) return false;

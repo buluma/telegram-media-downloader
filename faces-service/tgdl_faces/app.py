@@ -388,12 +388,9 @@ def health() -> JSONResponse:
     clip_model = ""
     clip_vocabulary_size = 0
     if clip_ready:
-        try:
-            tagger = get_clip_tagger()
-            clip_model = tagger.model_id
-            clip_vocabulary_size = len(tagger.vocabulary)
-        except Exception:
-            pass
+        clip_model = os.environ.get(
+            "TGDL_FACES_CLIP_MODEL", "Xenova/clip-vit-base-patch32"
+        )
     elif clip_last_error() is not None:
         clip_model = "error"
 
@@ -457,12 +454,9 @@ def info() -> InfoResponse:
     clip_model = ""
     clip_vocabulary_size = 0
     if clip_ready:
-        try:
-            tagger = get_clip_tagger()
-            clip_model = tagger.model_id
-            clip_vocabulary_size = len(tagger.vocabulary)
-        except Exception:
-            pass
+        clip_model = os.environ.get(
+            "TGDL_FACES_CLIP_MODEL", "Xenova/clip-vit-base-patch32"
+        )
     elif clip_last_error() is not None:
         clip_model = "error"
 

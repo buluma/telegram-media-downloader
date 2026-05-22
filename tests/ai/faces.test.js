@@ -135,10 +135,8 @@ describe('module surface', () => {
     });
     it('FACE_DEFAULTS is frozen', () => {
         expect(Object.isFrozen(faces.FACE_DEFAULTS)).toBe(true);
-        // ε=20 is calibrated for tgdl-ml / immich-ml buffalo_l, which returns
-        // full-scale ArcFace embeddings (L2 distances 14–33, NOT unit-sphere).
-        // Legacy insightface sidecar users should set TGDL_FACES_EPSILON=1.05.
-        expect(faces.FACE_DEFAULTS.facesEpsilon).toBeCloseTo(20, 5);
+        // eps=1.05 is calibrated for InsightFace buffalo_l unit-sphere ArcFace embeddings.
+        expect(faces.FACE_DEFAULTS.facesEpsilon).toBeCloseTo(1.05, 5);
         expect(faces.FACE_DEFAULTS.facesMinPoints).toBe(2);
     });
 });
@@ -158,15 +156,15 @@ describe('qualityFilter', () => {
         const out = faces.qualityFilter([good(), good()]);
         expect(out).toHaveLength(2);
     });
-    it('drops below-threshold detection score (default 0.3)', () => {
-        // Default `FACE_DEFAULTS.minDetectionScore` is 0.3. A face with
-        // score 0.2 must be dropped; 0.85 must be kept.
-        const out = faces.qualityFilter([good({ score: 0.2 }), good()]);
+    it('drops below-threshold detection score (default 0.5)', () => {
+        // Default `FACE_DEFAULTS.minDetectionScore` is 0.5. A face with
+        // score 0.49 must be dropped; 0.85 must be kept.
+        const out = faces.qualityFilter([good({ score: 0.49 }), good()]);
         expect(out).toHaveLength(1);
         expect(out[0].score).toBe(0.85);
     });
-    it('drops too-small boxes (< 48 px min edge by default)', () => {
-        const out = faces.qualityFilter([good({ w: 30, h: 30 }), good()]);
+    it('drops too-small boxes (< 60 px min edge by default)', () => {
+        const out = faces.qualityFilter([good({ w: 59, h: 59 }), good()]);
         expect(out).toHaveLength(1);
     });
     it('drops elongated boxes (aspect outside [0.5, 2.0])', () => {

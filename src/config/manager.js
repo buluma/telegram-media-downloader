@@ -507,9 +507,9 @@ const DEFAULT_CONFIG = {
                 // ===== Detection thresholds (forwarded to sidecar) =====
                 // Detector score floor (0..1). Lower = more recall, more
                 // false positives.
-                minDetectionScore: 0.3,
+                minDetectionScore: 0.5,
                 // Reject boxes whose smaller edge is below this many pixels.
-                minFaceSizePx: 48,
+                minFaceSizePx: 80,
                 // Aspect-ratio window for valid face boxes.
                 arRange: [0.5, 2.0],
                 // Sidecar input size — bigger = better recall on small
@@ -813,16 +813,6 @@ function _mergeAi(userAi) {
         ...defaults.faces,
         ...userFaces,
     };
-
-    // Keep legacy installs on the newer, looser face thresholds. Older
-    // saved configs may have persisted the initial defaults (0.5 / 80)
-    // even when the operator never tuned them explicitly.
-    if (Number(mergedFaces.minDetectionScore) === 0.5) {
-        mergedFaces.minDetectionScore = 0.3;
-    }
-    if (Number(mergedFaces.minFaceSizePx) === 80) {
-        mergedFaces.minFaceSizePx = 48;
-    }
 
     // One-time migration: the old default was 15 s which is too short for
     // CPU-only buffalo_l inference. Any install that still has the stale

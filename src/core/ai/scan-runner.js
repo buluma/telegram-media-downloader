@@ -85,9 +85,8 @@ function _blobToF32(blob) {
 
 /**
  * Returns a wrapper that tracks consecutive network-level failures against
- * tgdl-ml. Once `maxFails` consecutive calls throw without a success in
- * between, it surfaces a fatal error that aborts the entire scan rather than
- * grinding through thousands of files each waiting up to the request timeout.
+ * an auxiliary ML service. OCR/WD14 may still use tgdl-ml when explicitly
+ * configured, but faces no longer route through it.
  *
  * "Network failure" is any error whose name is AbortError or whose message
  * contains typical fetch/TCP failure strings. HTTP 4xx/5xx from the service
@@ -473,7 +472,6 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                         .replace(/^\.?/, '.'),
                 ),
             );
-            const faceGuard = isTgdlMlEnabled() ? _makeCircuitBreaker() : null;
             let _statNull = 0;
             let _statSkip = 0;
             let _statEmpty = 0;
@@ -553,11 +551,7 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                             try {
                                 for (const frameAbs of framePaths) {
                                     if (signal.aborted) break;
-                                    const faces = faceGuard
-                                        ? await faceGuard(() =>
-                                              detectFaces(frameAbs, cfg, logEntry),
-                                          )
-                                        : await detectFaces(frameAbs, cfg, logEntry);
+                                    const faces = await detectFaces(frameAbs, cfg, logEntry);
                                     if (Array.isArray(faces) && faces.length) {
                                         for (const f of faces) {
                                             _safeInsertFace(
@@ -646,19 +640,11 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                 let batchResults = [];
                 if (imageItems.length) {
                     try {
-                        batchResults = faceGuard
-                            ? await faceGuard(() =>
-                                  detectFacesBatch(
-                                      imageItems.map((i) => i.abs),
-                                      cfg,
-                                      logEntry,
-                                  ),
-                              )
-                            : await detectFacesBatch(
-                                  imageItems.map((i) => i.abs),
-                                  cfg,
-                                  logEntry,
-                              );
+                        batchResults = await detectFacesBatch(
+                            imageItems.map((i) => i.abs),
+                            cfg,
+                            logEntry,
+                        );
                     } catch (e) {
                         if (e?.fatal) throw e;
                         log('warn', `detectFacesBatch threw: ${e?.message || e}`);
@@ -795,15 +781,9 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                 FACE_DEFAULTS.facesEpsilon, // 1.05 — must match epsForCluster fallback above
             );
             const matchEpsEnv = resolveFacesValue('labelMatchEps', facesCfg);
-            // matchEps must scale with epsilonResolved — the old formula
-            // Math.max(0.2, Math.min(0.6, eps * 0.9)) hard-capped at 0.6,
-            // which is ~3% of ε=20 (tgdl-ml scale) and silently dropped
-            // every label on re-cluster. 0.5×ε is scale-agnostic:
-            //   ε=20   → matchEps=10  (centroid must not drift > half cluster width)
-            //   ε=1.05 → matchEps≈0.53 (similar semantics at unit-sphere scale)
             const matchEps = _pickNumber(
                 [facesCfg.labelMatchEps, cfg.facesLabelMatchEps, matchEpsEnv],
-                epsilonResolved * 0.5,
+                Math.max(0.2, Math.min(0.6, epsilonResolved * 0.9)),
             );
             const labelSnapshot = (() => {
                 const out = [];

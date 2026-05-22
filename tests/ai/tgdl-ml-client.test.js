@@ -38,9 +38,9 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('getTgdlMlUrl', () => {
-    it('returns default URL when no env set', () => {
+    it('returns empty string when no env set', () => {
         clearMlEnv();
-        expect(client.getTgdlMlUrl()).toMatch(/^http:\/\/.+:3800$/);
+        expect(client.getTgdlMlUrl()).toBe('');
     });
 
     it('returns TGDL_ML_URL when set, stripping trailing slash', () => {
@@ -66,9 +66,9 @@ describe('getTgdlMlUrl', () => {
 });
 
 describe('isTgdlMlEnabled', () => {
-    it('true when no env set (default on)', () => {
+    it('false when no env set', () => {
         clearMlEnv();
-        expect(client.isTgdlMlEnabled()).toBe(true);
+        expect(client.isTgdlMlEnabled()).toBe(false);
     });
 
     it('false when TGDL_ML_ENABLED=false', () => {

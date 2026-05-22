@@ -2263,7 +2263,7 @@ export async function refreshStatus() {
         const r = await api.get('/api/ai/status');
         if (!r.success) return;
         aiStore.set('status', r);
-        api.get('/api/ai/issues')
+        api.get('/api/ai/issues?force=1')
             .then((issues) => {
                 if (!issues?.success || aiStore.get('status') !== r) return;
                 r.issues = issues;
@@ -2987,7 +2987,7 @@ function _renderQuickOps(status) {
     }
 
     const issues = [];
-    if (!sidecar.url && !mlSidecar.url)
+    if (!sidecar.url)
         issues.push({
             severity: 'error',
             title: 'Sidecar offline',

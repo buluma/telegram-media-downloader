@@ -280,17 +280,12 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             const { getSidecarUrl } = await import('../../core/ai/faces-client.js');
             url = getSidecarUrl() || null;
         } catch {}
-        if (isTgdlMlEnabled()) {
-            mode = 'tgdl-ml';
-        }
-        if (mode !== 'tgdl-ml') {
-            try {
-                const facesSpawn = await import('../../core/ai/faces-spawn.js');
-                const st = facesSpawn.getSidecarStatus?.() || {};
-                url = url || st.url || null;
-                mode = st.mode || st.state || mode;
-            } catch {}
-        }
+        try {
+            const facesSpawn = await import('../../core/ai/faces-spawn.js');
+            const st = facesSpawn.getSidecarStatus?.() || {};
+            url = url || st.url || null;
+            mode = st.mode || st.state || mode;
+        } catch {}
         const info = url ? await _fetchSidecarInfo(url) : null;
         const health = url ? await _fetchSidecarHealth(url) : null;
         const isTgdlMl = info?.provider === 'tgdl-ml';
@@ -619,9 +614,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                         );
                         const id =
                             (cfg.facesModel || '').trim() ||
-                            (isTgdlMlEnabled()
-                                ? `insightface ${preset} (tgdl-ml)`
-                                : `insightface ${preset} (Python sidecar)`);
+                            `insightface ${preset} (Python sidecar)`;
                         // Live provider list — probe the running sidecar's
                         // `/info` so the dashboard's "GPU acceleration"
                         // chip reflects the actually-loaded EP, not the
@@ -684,11 +677,15 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                         ready: !!sidecar.url && !!sidecar.endpoints?.wd14,
                         id: 'SmilingWolf WD14 tagger',
                     },
-                    tags: {
-                        enabled: true,
-                        loaded: !!(mlSidecar.ok && mlSidecar.endpoints?.tag),
-                        id: mlSidecar.clipModel ? `CLIP ${mlSidecar.clipModel} (tgdl-ml)` : '',
-                    },
+                    tags: (() => {
+                        const clipModel =
+                            sidecar.info?.clip_model || sidecar.health?.clip_model || null;
+                        return {
+                            enabled: true,
+                            loaded: !!(sidecar.ok && sidecar.endpoints?.tag),
+                            id: clipModel ? `CLIP ${clipModel} (Python sidecar)` : '',
+                        };
+                    })(),
                 },
                 bgQueue: (() => {
                     try {
@@ -2727,7 +2724,10 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
     // black-holed dep can't hang the request.
     router.get(['/ai/doctor', '/ai/health'], async (_req, res) => {
         const checks = [];
-        const mlActive = isTgdlMlEnabled();
+        // Face diagnostics always target the Python InsightFace sidecar.
+        // tgdl-ml may still be configured for other ML surfaces, but it must
+        // not hijack AI People / face clustering health.
+        const mlActive = false;
 
         if (mlActive) {
             // tgdl-ml is the active inference backend — show its health instead
