@@ -56,6 +56,16 @@ describe('checkSidecarCapability', () => {
         expect(result.ok).toBe(true);
     });
 
+    it('accepts Python sidecar tag_wd14 endpoint spelling', async () => {
+        mockFetch(
+            makeInfoResponse({
+                endpoints: { wd14: false, tag_wd14: true },
+            }),
+        );
+        const result = await checkSidecarCapability('wd14', 'http://sidecar:8017');
+        expect(result.ok).toBe(true);
+    });
+
     it('returns CAPABILITY_MISSING when endpoint is absent', async () => {
         mockFetch(makeInfoResponse({ endpoints: { ocr: false } }));
         const result = await checkSidecarCapability('ocr', 'http://sidecar:8016');

@@ -24,10 +24,10 @@ async function _fetchInfo(url) {
 }
 
 const _REQUIRED = {
-    ocr: { endpoint: 'ocr', model: 'ocr' },
-    wd14: { endpoint: 'wd14', model: 'wd14' },
-    clip: { endpoint: 'tag', model: 'clip' },
-    faces: { endpoint: 'detect', model: 'faces' },
+    ocr: { endpoints: ['ocr'], model: 'ocr' },
+    wd14: { endpoints: ['wd14', 'tag_wd14', 'tag-wd14'], model: 'wd14' },
+    clip: { endpoints: ['tag'], model: 'clip' },
+    faces: { endpoints: ['detect', 'faces'], model: 'faces' },
 };
 
 /**
@@ -57,11 +57,13 @@ export async function checkSidecarCapability(scanner, sidecarUrl) {
         };
     }
 
-    if (!info?.endpoints?.[req.endpoint]) {
+    const endpoints = info?.endpoints || {};
+    const hasEndpoint = req.endpoints.some((endpoint) => endpoints[endpoint]);
+    if (!hasEndpoint) {
         return {
             ok: false,
             code: 'CAPABILITY_MISSING',
-            reason: `Sidecar does not expose /${req.endpoint} endpoint`,
+            reason: `Sidecar does not expose /${req.endpoints[0]} endpoint`,
         };
     }
 

@@ -299,6 +299,8 @@ class InfoResponse(BaseModel):
     clip_ready: bool = False
     clip_model: str = ""
     clip_vocabulary_size: int = 0
+    endpoints: dict[str, bool] = Field(default_factory=dict)
+    models: dict[str, dict[str, bool | str]] = Field(default_factory=dict)
 
 
 # --- FastAPI app ------------------------------------------------------------
@@ -469,6 +471,33 @@ def info() -> InfoResponse:
         clip_ready=clip_ready,
         clip_model=clip_model,
         clip_vocabulary_size=clip_vocabulary_size,
+        endpoints={
+            "detect": True,
+            "detect_embed": True,
+            "detect_batch": True,
+            "tag": clip_ready,
+            "embed_image": clip_ready,
+            "embed_text": clip_ready,
+            "ocr": ocr_is_ready(),
+            "objects": detection_is_ready(),
+            "tag_wd14": True,
+            "wd14": True,
+        },
+        models={
+            "faces": {"ready": is_ready(), "id": MODEL_NAME},
+            "clip": {
+                "ready": clip_ready,
+                "id": clip_model or os.environ.get(
+                    "TGDL_FACES_CLIP_MODEL", "Xenova/clip-vit-base-patch32"
+                ),
+            },
+            "ocr": {"ready": ocr_is_ready()},
+            "objects": {"ready": detection_is_ready(), "id": "yolov8n"},
+            # WD14 loads lazily on first tag request. Advertising the endpoint
+            # here lets Node start the scan; model load/download failures are
+            # returned by POST /tag-wd14 with a stable wd14_not_ready code.
+            "wd14": {"ready": True, "id": "SmilingWolf/wd-vit-tagger-v3"},
+        },
     )
 
 
