@@ -13,8 +13,8 @@ import {
     getDb,
     insertDownload,
     isDownloaded as dbIsDownloaded,
-    kvGet,
     kvSet,
+    getTotalSizeBytes,
     pushQueueBacklog,
     popQueueBacklog,
     queueBacklogSize,
@@ -1261,13 +1261,14 @@ export class DownloadManager extends EventEmitter {
     }
 
     async getDiskUsage() {
-        if (this._diskUsageCache) return this._diskUsageCache.size;
-
+        // Keep quota enforcement aligned with the rotator and dashboard:
+        // count non-evicted download rows, not the legacy disk_usage cache.
         try {
-            const data = kvGet('disk_usage');
-            if (data && Number.isFinite(data.size)) {
-                this._diskUsageCache = { size: data.size, timestamp: Date.now() };
-                return data.size;
+            const total = getTotalSizeBytes();
+            if (Number.isFinite(total)) {
+                this._diskUsageCache = { size: total, timestamp: Date.now() };
+                this.saveDiskUsageCache();
+                return total;
             }
         } catch (e) {}
 
@@ -1309,18 +1310,25 @@ export class DownloadManager extends EventEmitter {
     }
 
     async saveDiskUsageCache() {
-        if (!this._diskUsageCache) return;
+        let size = this._diskUsageCache?.size;
+        if (!Number.isFinite(size)) {
+            try {
+                size = getTotalSizeBytes();
+            } catch {
+                return;
+            }
+        }
         try {
             kvSet('disk_usage', {
-                size: this._diskUsageCache.size,
+                size,
                 lastScan: Date.now(),
+                source: 'downloads_db',
             });
         } catch (e) {}
     }
 
     incrementDiskUsage(bytes) {
-        if (!this._diskUsageCache) this._diskUsageCache = { size: 0, timestamp: Date.now() };
-        this._diskUsageCache.size += bytes;
+        this._diskUsageCache = null;
         if (this._saveTimeout) clearTimeout(this._saveTimeout);
         this._saveTimeout = setTimeout(() => this.saveDiskUsageCache(), 10000);
     }
