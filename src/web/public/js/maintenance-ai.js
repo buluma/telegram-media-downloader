@@ -2263,7 +2263,7 @@ export async function refreshStatus() {
         const r = await api.get('/api/ai/status');
         if (!r.success) return;
         aiStore.set('status', r);
-        api.get('/api/ai/issues?force=1')
+        api.get('/api/ai/issues')
             .then((issues) => {
                 if (!issues?.success || aiStore.get('status') !== r) return;
                 r.issues = issues;

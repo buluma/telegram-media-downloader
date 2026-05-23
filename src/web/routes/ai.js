@@ -126,6 +126,36 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         return resolveClipModelId(cfg);
     }
 
+    const _AI_ROUTE_CACHE = new Map();
+    const _AI_ROUTE_INFLIGHT = new Map();
+    async function _cachedAiRoute(key, ttlMs, producer) {
+        const now = Date.now();
+        const cached = _AI_ROUTE_CACHE.get(key);
+        if (cached && now - cached.ts < ttlMs) return cached.data;
+        const inflight = _AI_ROUTE_INFLIGHT.get(key);
+        if (inflight) return inflight;
+        const start = Date.now();
+        const p = Promise.resolve()
+            .then(producer)
+            .then((data) => {
+                _AI_ROUTE_CACHE.set(key, { ts: Date.now(), data });
+                const elapsed = Date.now() - start;
+                if (elapsed > 1000) {
+                    log({
+                        source: 'ai-route',
+                        level: 'warn',
+                        msg: `${key} generated in ${elapsed}ms`,
+                    });
+                }
+                return data;
+            })
+            .finally(() => {
+                _AI_ROUTE_INFLIGHT.delete(key);
+            });
+        _AI_ROUTE_INFLIGHT.set(key, p);
+        return p;
+    }
+
     // ---- AI status -----------------------------------------------------------
     //
     // Faces-only build — the prior `/api/ai/status` payload exposed embed +
@@ -330,11 +360,23 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
 
     const _AI_ISSUES_TTL_MS = 60_000;
     const _AI_ISSUES_CACHE = { ts: 0, data: null };
+    let _AI_ISSUES_INFLIGHT = null;
     async function _getAiIssuesSnapshot({ force = false } = {}) {
         const now = Date.now();
         if (!force && _AI_ISSUES_CACHE.data && now - _AI_ISSUES_CACHE.ts < _AI_ISSUES_TTL_MS) {
             return _AI_ISSUES_CACHE.data;
         }
+        if (_AI_ISSUES_INFLIGHT) return _AI_ISSUES_INFLIGHT;
+        _AI_ISSUES_INFLIGHT = _buildAiIssuesSnapshot(now);
+        try {
+            return await _AI_ISSUES_INFLIGHT;
+        } finally {
+            _AI_ISSUES_INFLIGHT = null;
+        }
+    }
+
+    async function _buildAiIssuesSnapshot(now) {
+        const start = Date.now();
         const db = getDb();
         const issues = [];
         const push = (issue) => {
@@ -533,6 +575,14 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         };
         _AI_ISSUES_CACHE.ts = now;
         _AI_ISSUES_CACHE.data = data;
+        const elapsed = Date.now() - start;
+        if (elapsed > 1000) {
+            log({
+                source: 'ai-route',
+                level: 'warn',
+                msg: `/api/ai/issues generated in ${elapsed}ms (rows=${rows.length}, issues=${issues.length})`,
+            });
+        }
         return data;
     }
 
@@ -790,12 +840,16 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
 
     router.get('/ai/ocr/words', async (req, res) => {
         try {
-            const { listOcrWords } = await import('../../core/db/faces.js');
             const minLength = Math.max(2, Number(req.query.minLength) || 3);
             const minCount = Math.max(1, Number(req.query.minCount) || 1);
             const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 100));
-            const words = listOcrWords({ minLength, minCount, limit });
-            res.json({ success: true, words });
+            const key = `/api/ai/ocr/words:${minLength}:${minCount}:${limit}`;
+            res.json(
+                await _cachedAiRoute(key, 30_000, async () => {
+                    const { listOcrWords } = await import('../../core/db/faces.js');
+                    return { success: true, words: listOcrWords({ minLength, minCount, limit }) };
+                }),
+            );
         } catch (e) {
             res.status(500).json({ error: e.message });
         }
@@ -820,9 +874,13 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             const limit = Math.min(2000, Math.max(1, Number(req.query.limit) || 500));
             const minCount = Math.max(1, Number(req.query.minCount) || 1);
             const minScore = Math.max(0, Math.min(1, Number(req.query.minScore) || 0.2));
-            const { listWd14Tags } = await import('../../core/db/faces.js');
-            const tags = listWd14Tags({ limit, minCount, minScore });
-            res.json({ success: true, tags });
+            const key = `/api/ai/wd14/tags:${limit}:${minCount}:${minScore}`;
+            res.json(
+                await _cachedAiRoute(key, 30_000, async () => {
+                    const { listWd14Tags } = await import('../../core/db/faces.js');
+                    return { success: true, tags: listWd14Tags({ limit, minCount, minScore }) };
+                }),
+            );
         } catch (e) {
             res.status(500).json({ error: e.message });
         }
@@ -1576,25 +1634,29 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
     // endpoint — lightweight probes the AI maintenance page polls.
     router.get('/ai/llm/status', async (_req, res) => {
         try {
-            const [providers, active] = await Promise.all([
-                llm.probeProviders(),
-                llm.getActiveProvider(),
-            ]);
-            // Include the resolved config so the UI can pre-fill the
-            // inline config form without a separate /api/config call.
-            let config = {};
-            try {
-                const { loadConfig } = await import('../../config/manager.js');
-                const live = loadConfig();
-                config = maskLlmConfig(live?.advanced?.ai?.llm || {});
-            } catch {}
-            res.json({
-                success: true,
-                providers,
-                active,
-                list: llm.listProviders(),
-                config,
-            });
+            res.json(
+                await _cachedAiRoute('/api/ai/llm/status', 15_000, async () => {
+                    const [providers, active] = await Promise.all([
+                        llm.probeProviders(),
+                        llm.getActiveProvider(),
+                    ]);
+                    // Include the resolved config so the UI can pre-fill the
+                    // inline config form without a separate /api/config call.
+                    let config = {};
+                    try {
+                        const { loadConfig } = await import('../../config/manager.js');
+                        const live = loadConfig();
+                        config = maskLlmConfig(live?.advanced?.ai?.llm || {});
+                    } catch {}
+                    return {
+                        success: true,
+                        providers,
+                        active,
+                        list: llm.listProviders(),
+                        config,
+                    };
+                }),
+            );
         } catch (e) {
             res.status(500).json({ error: e?.message || String(e) });
         }
@@ -1891,25 +1953,29 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
     // Return embedding coverage stats for the AI maintenance page.
     router.get('/ai/embeddings/stats', async (_req, res) => {
         try {
-            const { listEmbeddingModels } = await import('../../core/db/faces.js');
-            const cfg = _aiCfg();
-            const configuredModel = _resolveClipModelId(cfg);
-            const models = listEmbeddingModels();
-            const totalImages = models.reduce((sum, m) => sum + m.count, 0);
-            const activeStoredModel = models.length
-                ? models.reduce((a, b) => (a.count >= b.count ? a : b)).model
-                : null;
-            const staleRows = models
-                .filter((m) => String(m.model) !== String(configuredModel))
-                .reduce((sum, m) => sum + Number(m.count || 0), 0);
-            res.json({
-                success: true,
-                total: totalImages,
-                models,
-                configuredModel,
-                activeStoredModel,
-                staleRows,
-            });
+            res.json(
+                await _cachedAiRoute('/api/ai/embeddings/stats', 30_000, async () => {
+                    const { listEmbeddingModels } = await import('../../core/db/faces.js');
+                    const cfg = _aiCfg();
+                    const configuredModel = _resolveClipModelId(cfg);
+                    const models = listEmbeddingModels();
+                    const totalImages = models.reduce((sum, m) => sum + m.count, 0);
+                    const activeStoredModel = models.length
+                        ? models.reduce((a, b) => (a.count >= b.count ? a : b)).model
+                        : null;
+                    const staleRows = models
+                        .filter((m) => String(m.model) !== String(configuredModel))
+                        .reduce((sum, m) => sum + Number(m.count || 0), 0);
+                    return {
+                        success: true,
+                        total: totalImages,
+                        models,
+                        configuredModel,
+                        activeStoredModel,
+                        staleRows,
+                    };
+                }),
+            );
         } catch (e) {
             res.status(500).json({ error: e?.message || String(e) });
         }
@@ -2189,7 +2255,10 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             const limit = Math.max(1, Math.min(500, Number(req.query?.limit) || 100));
             const offset = Math.max(0, Number(req.query?.offset) || 0);
             const scope = String(req.query?.scope || 'local').toLowerCase();
-            const local = listPeople({ limit, offset });
+            const localKey = `/api/ai/people:local:${limit}:${offset}`;
+            const local = await _cachedAiRoute(localKey, 10_000, async () =>
+                listPeople({ limit, offset }),
+            );
             if (scope !== 'federated') {
                 return res.json({ success: true, scope: 'local', ...local });
             }
@@ -2732,6 +2801,18 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
     // request. Every fetch / spawn carries a fixed-integer timeout so a
     // black-holed dep can't hang the request.
     router.get(['/ai/doctor', '/ai/health'], async (_req, res) => {
+        try {
+            res.json(
+                await _cachedAiRoute('/api/ai/doctor', 15_000, async () =>
+                    _buildAiDoctorSnapshot(),
+                ),
+            );
+        } catch (e) {
+            res.status(500).json({ error: e?.message || String(e) });
+        }
+    });
+
+    async function _buildAiDoctorSnapshot() {
         const checks = [];
         // Face diagnostics always target the Python InsightFace sidecar.
         // tgdl-ml may still be configured for other ML surfaces, but it must
@@ -3083,7 +3164,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             });
         }
 
-        res.json({ success: true, checks });
-    });
+        return { success: true, checks };
+    }
     return router;
 }
