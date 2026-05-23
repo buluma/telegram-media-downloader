@@ -20,6 +20,7 @@ import crypto from 'crypto';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { Worker } from 'worker_threads';
 
 import {
     clearImageTagsForDownload,
@@ -39,7 +40,7 @@ import {
     getUnscannedWd14Batch,
     setWd14Tags,
 } from '../db/faces.js';
-import { clusterFaces, computeFaceQualityScore, detectFaces, FACE_DEFAULTS } from './faces.js';
+import { computeFaceQualityScore, detectFaces, FACE_DEFAULTS } from './faces.js';
 import { resolveFacesValue } from './faces-config.js';
 import { detectFacesBatch, getSidecarUrl } from './faces-client.js';
 import { mlOcr, isTgdlMlEnabled, getTgdlMlUrl } from './tgdl-ml-client.js';
@@ -81,6 +82,42 @@ function _blobToF32(blob) {
     const view = new Float32Array(blob.buffer, blob.byteOffset, dim);
     out.set(view);
     return out;
+}
+
+function _runClusterWorker(faces, opts = {}) {
+    return new Promise((resolve, reject) => {
+        const embeddings = faces.map((face) => face.embedding.buffer);
+        const qualityScores = faces.map((face) => face.qualityScore);
+        const worker = new Worker(new URL('./cluster-worker.js', import.meta.url), {
+            workerData: {
+                embeddings,
+                qualityScores,
+                opts,
+            },
+            transferList: embeddings,
+        });
+        worker.once('message', (msg) => {
+            if (msg?.error) {
+                reject(new Error(msg.error));
+                return;
+            }
+            const clusters = Array.isArray(msg?.clusters)
+                ? msg.clusters.map((cluster) => ({
+                      memberIdxs: cluster.memberIdxs || [],
+                      centroid:
+                          cluster.centroid instanceof Float32Array
+                              ? cluster.centroid
+                              : new Float32Array(cluster.centroid || []),
+                      faceCount: cluster.faceCount || 0,
+                  }))
+                : [];
+            resolve({ clusters, noise: Array.isArray(msg?.noise) ? msg.noise : [] });
+        });
+        worker.once('error', reject);
+        worker.once('exit', (code) => {
+            if (code !== 0) reject(new Error(`cluster worker exited with code ${code}`));
+        });
+    });
 }
 
 /**
@@ -757,7 +794,7 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                 'info',
                 `faces scan: clustering ${faces.length} faces (eps=${epsForCluster}, minPts=${minPointsForCluster})`,
             );
-            const { clusters } = clusterFaces(faces, {
+            const { clusters } = await _runClusterWorker(faces, {
                 eps: epsForCluster,
                 minPts: minPointsForCluster,
                 qualityWeightedCentroid,
