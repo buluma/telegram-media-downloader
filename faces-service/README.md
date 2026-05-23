@@ -31,6 +31,7 @@ This README is for contributors who want to run the sidecar from source.
 | `GET` | `/providers` | — | `{ candidates[], available[], details[], recommended, current }` — onnxruntime backend probe |
 | `POST` | `/detect` | `{ path \| image_b64, min_score?, min_box_px?, ar_range? }` | `{ faces[], image_w, image_h }` |
 | `POST` | `/detect-embed` | _alias of `/detect` — same body, same response_ | — |
+| `POST` | `/cluster` | `{ faces: [{ embedding, quality_score? }], eps?, min_points?, quality_weighted_centroid? }` | `{ clusters: [{ member_idxs, centroid, face_count }], noise }` |
 
 ### Text extraction (OCR)
 

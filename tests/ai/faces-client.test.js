@@ -138,6 +138,7 @@ describe('applyFacesCfg + runtime knobs', () => {
         client.applyFacesCfg({
             healthCacheTtlMs: 1234,
             requestTimeoutMs: 9999,
+            clusterTimeoutMs: 5555,
             maxRetries: 7,
             retryBackoffMs: [10, 20, 30],
             sidecarMaxConcurrency: 4,
@@ -145,6 +146,7 @@ describe('applyFacesCfg + runtime knobs', () => {
         const k = client._runtimeKnobs();
         expect(k.healthCacheTtlMs).toBe(1234);
         expect(k.requestTimeoutMs).toBe(9999);
+        expect(k.clusterTimeoutMs).toBe(5555);
         expect(k.maxRetries).toBe(7);
         expect(k.retryBackoffMs).toEqual([10, 20, 30]);
         expect(k.sidecarMaxConcurrency).toBe(4);
@@ -171,6 +173,83 @@ describe('env auto-bootstrap (no applyFacesCfg yet)', () => {
         await client.health();
         const k = client._runtimeKnobs();
         expect(k.healthCacheTtlMs).toBe(100);
+    });
+});
+
+describe('clusterFacesRemote', () => {
+    it('posts embeddings to /cluster and parses sidecar response', async () => {
+        client.setSidecarUrl('http://host:8011');
+        let capturedBody = null;
+        vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+            capturedBody = JSON.parse(init.body);
+            expect(String(url)).toBe('http://host:8011/cluster');
+            return {
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    clusters: [
+                        {
+                            member_idxs: [0, 1],
+                            centroid: [0.05, 0],
+                            face_count: 2,
+                        },
+                    ],
+                    noise: [2],
+                }),
+            };
+        });
+        const out = await client.clusterFacesRemote(
+            [
+                { embedding: new Float32Array([0, 0]), qualityScore: 1 },
+                { embedding: new Float32Array([0.1, 0]), qualityScore: 2 },
+                { embedding: new Float32Array([5, 5]) },
+            ],
+            { eps: 0.2, minPts: 2, qualityWeightedCentroid: true },
+        );
+        expect(capturedBody.eps).toBe(0.2);
+        expect(capturedBody.min_points).toBe(2);
+        expect(capturedBody.quality_weighted_centroid).toBe(true);
+        expect(capturedBody.faces[0].embedding).toEqual([0, 0]);
+        expect(out.clusters[0].memberIdxs).toEqual([0, 1]);
+        expect(out.clusters[0].centroid).toBeInstanceOf(Float32Array);
+        expect(out.clusters[0].centroid[0]).toBeCloseTo(0.05);
+        expect(out.clusters[0].centroid[1]).toBe(0);
+        expect(out.clusters[0].faceCount).toBe(2);
+        expect(out.noise).toEqual([2]);
+    });
+
+    it('falls back to fallback URL when primary cluster fails', async () => {
+        client.setSidecarUrl('http://primary:8011');
+        client.applyFacesCfg({
+            fallbackUrl: 'http://fallback:8011',
+            primaryHealthFailures: 1,
+        });
+        const calls = [];
+        vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+            calls.push(String(url));
+            if (String(url) === 'http://primary:8011/cluster') {
+                throw new Error('primary asleep');
+            }
+            if (String(url) === 'http://fallback:8011/health') {
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({ ok: true }),
+                };
+            }
+            return {
+                ok: true,
+                status: 200,
+                json: async () => ({ clusters: [], noise: [0] }),
+            };
+        });
+        const out = await client.clusterFacesRemote([{ embedding: new Float32Array([1, 0]) }]);
+        expect(out.noise).toEqual([0]);
+        expect(calls).toEqual([
+            'http://primary:8011/cluster',
+            'http://fallback:8011/health',
+            'http://fallback:8011/cluster',
+        ]);
     });
 });
 

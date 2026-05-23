@@ -417,6 +417,7 @@ All endpoints are admin-only.
 | `GET` | `/info` | — | `{ model, dim, providers, providers_requested, det_size, platform, python, version }` |
 | `POST` | `/detect` | `{ path \| image_b64, min_score?, min_box_px?, ar_range? }` | `{ faces[], image_w, image_h }` |
 | `POST` | `/detect-embed` | _alias of `/detect`_ | — |
+| `POST` | `/cluster` | `{ faces: [{ embedding, quality_score? }], eps?, min_points?, quality_weighted_centroid? }` | `{ clusters: [{ member_idxs, centroid, face_count }], noise }` |
 
 Path mode requires the path to resolve inside `TGDL_FACES_ALLOW_ROOTS`
 (set by the spawn module to `data/downloads`). Base64 mode works without

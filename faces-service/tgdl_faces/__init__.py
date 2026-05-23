@@ -8,6 +8,7 @@ model (10MB, 512-dim ArcFace embeddings) behind a small HTTP API:
     GET  /info          — model card
     POST /detect        — detect & embed faces from a path or base64 blob
     POST /detect-embed  — alias of /detect (ergonomic name for the Node side)
+    POST /cluster       — DBSCAN over persisted face embeddings
 
 The sidecar runs co-located with the Node app:
 
@@ -28,6 +29,6 @@ dimension-agnostic, so callers see a `512`-element `embedding` instead
 of `128` and otherwise behave identically.
 """
 
-__version__ = "0.3.2"
+__version__ = "0.3.3"
 
 __all__ = ["__version__"]

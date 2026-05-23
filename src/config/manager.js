@@ -586,6 +586,9 @@ const DEFAULT_CONFIG = {
                 // Per-request hard timeout (ms). Bumps for slow CPUs /
                 // first-call model load on Pi.
                 requestTimeoutMs: 60000,
+                // Whole-library clustering timeout (ms). Reclustering can
+                // legitimately run for minutes on a remote Mac sidecar.
+                clusterTimeoutMs: 300000,
                 // POST retry count on 5xx / network errors.
                 maxRetries: 3,
                 // Linear backoff between retry attempts (ms).

@@ -151,6 +151,32 @@ def test_info_returns_model_and_dim(client) -> None:
     assert isinstance(payload["providers"], list)
     assert len(payload["providers"]) >= 1
     assert "version" in payload
+    assert payload["endpoints"]["cluster"] is True
+
+
+def test_cluster_groups_nearby_embeddings_and_noise(client) -> None:
+    resp = client.post(
+        "/cluster",
+        json={
+            "eps": 0.2,
+            "min_points": 2,
+            "faces": [
+                {"embedding": [0.0, 0.0], "quality_score": 1.0},
+                {"embedding": [0.1, 0.0], "quality_score": 3.0},
+                {"embedding": [5.0, 5.0], "quality_score": 1.0},
+            ],
+            "quality_weighted_centroid": True,
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["noise"] == [2]
+    assert len(body["clusters"]) == 1
+    cluster = body["clusters"][0]
+    assert cluster["member_idxs"] == [0, 1]
+    assert cluster["face_count"] == 2
+    assert cluster["centroid"][0] == pytest.approx(0.075)
+    assert cluster["centroid"][1] == pytest.approx(0.0)
 
 
 # ---- tests: /detect input validation -------------------------------------

@@ -42,7 +42,7 @@ import {
 } from '../db/faces.js';
 import { computeFaceQualityScore, detectFaces, FACE_DEFAULTS } from './faces.js';
 import { resolveFacesValue } from './faces-config.js';
-import { detectFacesBatch, getSidecarUrl } from './faces-client.js';
+import { clusterFacesRemote, detectFacesBatch, getSidecarUrl } from './faces-client.js';
 import { mlOcr, isTgdlMlEnabled, getTgdlMlUrl } from './tgdl-ml-client.js';
 import { checkSidecarCapability } from './preflight.js';
 import { getActiveProvider, generate } from '../llm/index.js';
@@ -794,11 +794,26 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                 'info',
                 `faces scan: clustering ${faces.length} faces (eps=${epsForCluster}, minPts=${minPointsForCluster})`,
             );
-            const { clusters } = await _runClusterWorker(faces, {
+            const clusterOpts = {
                 eps: epsForCluster,
                 minPts: minPointsForCluster,
                 qualityWeightedCentroid,
-            });
+            };
+            let clusterResult = null;
+            if (getSidecarUrl()) {
+                log('info', 'faces scan: attempting sidecar clustering');
+                try {
+                    clusterResult = await clusterFacesRemote(faces, clusterOpts, log);
+                } catch (e) {
+                    log('warn', `faces scan: sidecar clustering failed: ${e?.message || e}`);
+                    clusterResult = null;
+                }
+            }
+            if (!clusterResult) {
+                log('info', 'faces scan: sidecar clustering unavailable — using Node worker');
+                clusterResult = await _runClusterWorker(faces, clusterOpts);
+            }
+            const { clusters } = clusterResult;
             await new Promise((r) => setImmediate(r));
 
             // Snapshot every labelled centroid BEFORE wiping people. The

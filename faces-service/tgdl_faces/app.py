@@ -12,6 +12,7 @@ Endpoints (see ``docs/AI.md`` on the Node side for the full contract):
   refactored without breaking the other.
 * ``POST /detect/batch`` — batch version of ``/detect``; one round-trip
   for multiple files. Returns ``{results: [{file, faces?, error?}]}``.
+* ``POST /cluster`` — DBSCAN over already-computed face embeddings.
 
 Error payload shape (used by every non-2xx response):
 
@@ -181,6 +182,29 @@ class BatchDetectResponse(BaseModel):
     results: list[BatchDetectItem]
 
 
+class ClusterFaceInput(BaseModel):
+    embedding: list[float] = Field(..., min_length=1)
+    quality_score: float | None = Field(default=None, ge=0.0)
+
+
+class ClusterRequest(BaseModel):
+    faces: list[ClusterFaceInput]
+    eps: float = Field(default=1.05, gt=0.0)
+    min_points: int = Field(default=2, ge=2)
+    quality_weighted_centroid: bool = False
+
+
+class ClusterItem(BaseModel):
+    member_idxs: list[int]
+    centroid: list[float]
+    face_count: int
+
+
+class ClusterResponse(BaseModel):
+    clusters: list[ClusterItem]
+    noise: list[int]
+
+
 class TagRequest(BaseModel):
     """Body for ``/tag`` — zero-shot CLIP tagging.
 
@@ -270,6 +294,7 @@ class HealthOk(BaseModel):
     ocr_error: str | None = None
     detection_ready: bool = False
     detection_error: str | None = None
+    cluster_ready: bool = True
 
 
 class HealthErr(BaseModel):
@@ -285,6 +310,7 @@ class HealthErr(BaseModel):
     ocr_error: str | None = None
     detection_ready: bool = False
     detection_error: str | None = None
+    cluster_ready: bool = True
 
 
 class InfoResponse(BaseModel):
@@ -475,6 +501,7 @@ def info() -> InfoResponse:
             "detect": True,
             "detect_embed": True,
             "detect_batch": True,
+            "cluster": True,
             "tag": clip_ready,
             "embed_image": clip_ready,
             "embed_text": clip_ready,
@@ -493,6 +520,7 @@ def info() -> InfoResponse:
             },
             "ocr": {"ready": ocr_is_ready()},
             "objects": {"ready": detection_is_ready(), "id": "yolov8n"},
+            "cluster": {"ready": True, "id": "dbscan"},
             # WD14 loads lazily on first tag request. Advertising the endpoint
             # here lets Node start the scan; model load/download failures are
             # returned by POST /tag-wd14 with a stable wd14_not_ready code.
@@ -741,6 +769,140 @@ def detect_batch(body: Annotated[BatchDetectRequest, ...]) -> JSONResponse:
     return JSONResponse(
         status_code=status.HTTP_200_OK,
         content=BatchDetectResponse(results=results).model_dump(),
+    )
+
+
+def _cluster_centroid(
+    points: np.ndarray,
+    member_idxs: list[int],
+    quality_scores: np.ndarray | None = None,
+) -> list[float]:
+    member_points = points[np.asarray(member_idxs, dtype=np.int64)]
+    if quality_scores is not None:
+        weights = quality_scores[np.asarray(member_idxs, dtype=np.int64)]
+        weights = np.where(np.isfinite(weights) & (weights > 0), weights, 1.0)
+        total = float(np.sum(weights))
+        if total <= 0:
+            weights = np.ones(len(member_idxs), dtype=np.float32)
+            total = float(len(member_idxs))
+        centroid = np.sum(member_points * weights[:, None], axis=0) / total
+    else:
+        centroid = np.mean(member_points, axis=0)
+    return centroid.astype(np.float32, copy=False).tolist()
+
+
+def _dbscan(points: np.ndarray, eps: float, min_points: int) -> tuple[list[int], int]:
+    count = int(points.shape[0])
+    labels = [-2] * count  # -2 = unvisited, -1 = noise, >=0 = cluster id
+    cluster_id = -1
+    norms = np.einsum("ij,ij->i", points, points)
+    eps_sq = float(eps) * float(eps)
+
+    def region_query(idx: int) -> list[int]:
+        distances_sq = norms + norms[idx] - (2.0 * (points @ points[idx]))
+        return [
+            int(i)
+            for i in np.flatnonzero(distances_sq <= eps_sq)
+            if int(i) != idx
+        ]
+
+    for idx in range(count):
+        if labels[idx] != -2:
+            continue
+        neighbors = region_query(idx)
+        if len(neighbors) + 1 < min_points:
+            labels[idx] = -1
+            continue
+        cluster_id += 1
+        labels[idx] = cluster_id
+        stack = list(neighbors)
+        while stack:
+            neighbor_idx = stack.pop(0)
+            if labels[neighbor_idx] == -1:
+                labels[neighbor_idx] = cluster_id
+            if labels[neighbor_idx] != -2:
+                continue
+            labels[neighbor_idx] = cluster_id
+            sub = region_query(neighbor_idx)
+            if len(sub) + 1 >= min_points:
+                for candidate in sub:
+                    if labels[candidate] == -2:
+                        stack.append(candidate)
+
+    return labels, cluster_id + 1
+
+
+@app.post("/cluster")
+def cluster(body: Annotated[ClusterRequest, ...]) -> JSONResponse:
+    """DBSCAN face embeddings and return cluster member indices.
+
+    This deliberately accepts embeddings rather than file paths. Detection
+    remains sidecar-owned, while Node stays the source of truth for which DB
+    rows participate in the re-cluster.
+    """
+    if not body.faces:
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content=ClusterResponse(clusters=[], noise=[]).model_dump(),
+        )
+
+    dim = len(body.faces[0].embedding)
+    if dim <= 0 or any(len(face.embedding) != dim for face in body.faces):
+        return _error(
+            "all embeddings must be non-empty and have the same dimension",
+            code="bad_request",
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        points = np.asarray([face.embedding for face in body.faces], dtype=np.float32)
+    except Exception as exc:
+        return _error(
+            f"invalid embeddings: {type(exc).__name__}: {exc}",
+            code="bad_request",
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+
+    labels, cluster_count = _dbscan(
+        points,
+        eps=float(body.eps),
+        min_points=max(2, int(body.min_points)),
+    )
+
+    groups: dict[int, list[int]] = {i: [] for i in range(cluster_count)}
+    noise: list[int] = []
+    for idx, label in enumerate(labels):
+        if label < 0:
+            noise.append(idx)
+        else:
+            groups.setdefault(label, []).append(idx)
+
+    quality_scores = None
+    if body.quality_weighted_centroid:
+        quality_scores = np.asarray(
+            [
+                float(face.quality_score)
+                if face.quality_score is not None and np.isfinite(face.quality_score)
+                else 1.0
+                for face in body.faces
+            ],
+            dtype=np.float32,
+        )
+
+    clusters = [
+        ClusterItem(
+            member_idxs=member_idxs,
+            centroid=_cluster_centroid(points, member_idxs, quality_scores),
+            face_count=len(member_idxs),
+        )
+        for member_idxs in groups.values()
+        if member_idxs
+    ]
+    clusters.sort(key=lambda item: item.face_count, reverse=True)
+
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content=ClusterResponse(clusters=clusters, noise=noise).model_dump(),
     )
 
 

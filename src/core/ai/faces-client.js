@@ -32,6 +32,7 @@ const HEALTH_CACHE_TTL_MS_DEFAULT = 5000;
 // CPU-only buffalo_l inference can take 5-30 s per image on slow hardware;
 // 60 s gives headroom without hanging the scan loop forever on a dead sidecar.
 const REQUEST_TIMEOUT_MS_DEFAULT = 60000;
+const CLUSTER_TIMEOUT_MS_DEFAULT = 300000;
 const MAX_RETRIES_DEFAULT = 3;
 const RETRY_BACKOFF_MS_DEFAULT = [300, 600, 1200];
 
@@ -41,6 +42,7 @@ const RETRY_BACKOFF_MS_DEFAULT = [300, 600, 1200];
 //     before spawn has run (e.g. AI maintenance card during cold boot).
 let _healthCacheTtlMs = HEALTH_CACHE_TTL_MS_DEFAULT;
 let _requestTimeoutMs = REQUEST_TIMEOUT_MS_DEFAULT;
+let _clusterTimeoutMs = CLUSTER_TIMEOUT_MS_DEFAULT;
 let _maxRetries = MAX_RETRIES_DEFAULT;
 let _retryBackoffMs = RETRY_BACKOFF_MS_DEFAULT.slice();
 let _maxConcurrency = 0; // 0 = unlimited
@@ -74,6 +76,9 @@ export function applyFacesCfg(cfg = {}) {
     }
     if (Number.isFinite(cfg.requestTimeoutMs) && cfg.requestTimeoutMs > 0) {
         _requestTimeoutMs = cfg.requestTimeoutMs | 0;
+    }
+    if (Number.isFinite(cfg.clusterTimeoutMs) && cfg.clusterTimeoutMs > 0) {
+        _clusterTimeoutMs = cfg.clusterTimeoutMs | 0;
     }
     if (Number.isFinite(cfg.maxRetries) && cfg.maxRetries >= 0) {
         _maxRetries = cfg.maxRetries | 0;
@@ -116,6 +121,8 @@ function _bootstrapFromEnv() {
     if (Number.isFinite(ttl) && ttl >= 0) _healthCacheTtlMs = ttl | 0;
     const to = probe('requestTimeoutMs');
     if (Number.isFinite(to) && to > 0) _requestTimeoutMs = to | 0;
+    const cto = probe('clusterTimeoutMs');
+    if (Number.isFinite(cto) && cto > 0) _clusterTimeoutMs = cto | 0;
     const mr = probe('maxRetries');
     if (Number.isFinite(mr) && mr >= 0) _maxRetries = mr | 0;
     const bo = probe('retryBackoffMs');
@@ -265,6 +272,7 @@ async function _probeEndpoint(role, { bypassCache = false } = {}) {
                 detSize: Number.isFinite(body?.det_size) ? body.det_size : null,
                 platform: typeof body?.platform === 'string' ? body.platform : null,
                 python: typeof body?.python === 'string' ? body.python : null,
+                clusterReady: body?.cluster_ready !== false,
             };
             lastErr = null;
             break;
@@ -542,6 +550,85 @@ export async function detectFacesBatch(absPaths, cfg = {}, onLog = null) {
     return output;
 }
 
+/**
+ * Cluster already-persisted face embeddings via the sidecar.
+ *
+ * Returns ``{clusters, noise}`` on success, or ``null`` when the endpoint is
+ * unavailable so callers can fall back to the local worker thread.
+ */
+export async function clusterFacesRemote(faces, opts = {}, onLog = null) {
+    _bootstrapFromEnv();
+    if (!Array.isArray(faces) || !faces.length) {
+        return { clusters: [], noise: [] };
+    }
+    const selected = await _selectEndpoint({ probe: false });
+    if (!selected?.endpoint?.url) return null;
+
+    const body = {
+        faces: faces.map((face) => ({
+            embedding: Array.from(face.embedding || []),
+            quality_score: Number.isFinite(face.qualityScore) ? face.qualityScore : null,
+        })),
+        eps: Number.isFinite(opts.eps) ? opts.eps : 1.05,
+        min_points: Number.isFinite(opts.minPts) ? opts.minPts : 2,
+        quality_weighted_centroid: opts.qualityWeightedCentroid === true,
+    };
+
+    const first = await _clusterInner(selected.endpoint, body, onLog);
+    if (first || selected.endpoint.role !== 'primary' || !_fallbackUrl) {
+        return first;
+    }
+    _primaryFailCount++;
+    const fallback = await _selectEndpoint({ fallbackOnly: true });
+    if (!fallback?.value?.ok || !fallback?.endpoint?.url) return null;
+    _log(
+        onLog,
+        'warn',
+        `primary sidecar cluster failed; retrying on fallback ${fallback.endpoint.url}`,
+    );
+    return _clusterInner(fallback.endpoint, body, onLog);
+}
+
+async function _clusterInner(endpoint, body, onLog) {
+    let res;
+    try {
+        res = await _fetchWithTimeout(
+            `${endpoint.url}/cluster`,
+            {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify(body),
+            },
+            _clusterTimeoutMs,
+        );
+    } catch (e) {
+        _log(onLog, 'warn', `sidecar cluster network error: ${e?.message || e}`);
+        return null;
+    }
+    if (!res.ok) {
+        _log(onLog, 'warn', `sidecar cluster returned ${res.status}`);
+        return null;
+    }
+    let parsed;
+    try {
+        parsed = await res.json();
+    } catch (e) {
+        _log(onLog, 'warn', `sidecar cluster invalid JSON: ${e?.message || e}`);
+        return null;
+    }
+    const clusters = Array.isArray(parsed?.clusters)
+        ? parsed.clusters.map((cluster) => ({
+              memberIdxs: Array.isArray(cluster.member_idxs) ? cluster.member_idxs : [],
+              centroid: new Float32Array(cluster.centroid || []),
+              faceCount: Number.isFinite(cluster.face_count) ? cluster.face_count : 0,
+          }))
+        : [];
+    return {
+        clusters,
+        noise: Array.isArray(parsed?.noise) ? parsed.noise : [],
+    };
+}
+
 async function _detectInner(absPath, pathBody, baseBody, endpoint, onLog) {
     const url = endpoint.url;
     // Path mode first. If the sidecar rejects with `path_not_allowed`
@@ -696,7 +783,7 @@ async function _postWithRetry(url, body, onLog) {
 }
 
 /** fetch() with a hard timeout via AbortController. */
-async function _fetchWithTimeout(url, init = {}) {
+async function _fetchWithTimeout(url, init = {}, timeoutMs = _requestTimeoutMs) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => {
         try {
@@ -704,7 +791,7 @@ async function _fetchWithTimeout(url, init = {}) {
         } catch {
             /* AbortController.abort() never throws but defend anyway */
         }
-    }, _requestTimeoutMs);
+    }, timeoutMs);
     try {
         return await globalThis.fetch(url, { ...init, signal: ctrl.signal });
     } finally {
@@ -763,6 +850,7 @@ export function _resetForTests() {
     _healthCache = { primary: null, fallback: null };
     _healthCacheTtlMs = HEALTH_CACHE_TTL_MS_DEFAULT;
     _requestTimeoutMs = REQUEST_TIMEOUT_MS_DEFAULT;
+    _clusterTimeoutMs = CLUSTER_TIMEOUT_MS_DEFAULT;
     _maxRetries = MAX_RETRIES_DEFAULT;
     _retryBackoffMs = RETRY_BACKOFF_MS_DEFAULT.slice();
     _maxConcurrency = 0;
@@ -775,6 +863,7 @@ export function _runtimeKnobs() {
     return {
         healthCacheTtlMs: _healthCacheTtlMs,
         requestTimeoutMs: _requestTimeoutMs,
+        clusterTimeoutMs: _clusterTimeoutMs,
         maxRetries: _maxRetries,
         retryBackoffMs: _retryBackoffMs.slice(),
         sidecarMaxConcurrency: _maxConcurrency,
