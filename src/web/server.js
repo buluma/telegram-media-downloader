@@ -251,7 +251,7 @@ function startEventLoopWatchdog() {
 
     const warnMs = Math.max(500, Number(process.env.TGDL_EVENT_LOOP_WARN_MS) || 2500);
     const exitMs = Math.max(warnMs, Number(process.env.TGDL_EVENT_LOOP_EXIT_MS) || 15000);
-    const sustainedSamples = Math.max(1, Number(process.env.TGDL_EVENT_LOOP_EXIT_SAMPLES) || 3);
+    const sustainedSamples = Math.max(1, Number(process.env.TGDL_EVENT_LOOP_EXIT_SAMPLES) || 1);
     const intervalMs = Math.max(1000, Number(process.env.TGDL_EVENT_LOOP_INTERVAL_MS) || 5000);
     const histogram = monitorEventLoopDelay({ resolution: 20 });
     let badSamples = 0;
