@@ -47,8 +47,16 @@ let _maxConcurrency = 0; // 0 = unlimited
 let _inflight = 0;
 let _envBootstrapped = false;
 
-let _sidecarUrl = '';
-let _healthCache = null; // { value, expiresAt }
+let _primaryUrl = '';
+let _fallbackUrl = '';
+let _activeRole = 'primary'; // primary | fallback
+let _primaryPathMode = true;
+let _fallbackPathMode = true;
+let _primaryHealthFailures = 3;
+let _primaryRecoverySuccesses = 2;
+let _primaryFailCount = 0;
+let _primaryRecoveryCount = 0;
+let _healthCache = { primary: null, fallback: null }; // role -> { value, expiresAt }
 
 /**
  * Apply a resolved faces config snapshot to the client's runtime knobs.
@@ -79,6 +87,21 @@ export function applyFacesCfg(cfg = {}) {
     if (Number.isFinite(cfg.sidecarMaxConcurrency) && cfg.sidecarMaxConcurrency >= 0) {
         _maxConcurrency = cfg.sidecarMaxConcurrency | 0;
     }
+    if (typeof cfg.fallbackUrl === 'string') {
+        setFallbackSidecarUrl(cfg.fallbackUrl);
+    }
+    if (typeof cfg.primaryPathMode === 'boolean') {
+        _primaryPathMode = cfg.primaryPathMode;
+    }
+    if (typeof cfg.fallbackPathMode === 'boolean') {
+        _fallbackPathMode = cfg.fallbackPathMode;
+    }
+    if (Number.isFinite(cfg.primaryHealthFailures) && cfg.primaryHealthFailures > 0) {
+        _primaryHealthFailures = cfg.primaryHealthFailures | 0;
+    }
+    if (Number.isFinite(cfg.primaryRecoverySuccesses) && cfg.primaryRecoverySuccesses > 0) {
+        _primaryRecoverySuccesses = cfg.primaryRecoverySuccesses | 0;
+    }
     _envBootstrapped = true;
 }
 
@@ -99,6 +122,18 @@ function _bootstrapFromEnv() {
     if (Array.isArray(bo) && bo.length) _retryBackoffMs = bo;
     const mc = probe('sidecarMaxConcurrency');
     if (Number.isFinite(mc) && mc >= 0) _maxConcurrency = mc | 0;
+    const fallbackUrl = probe('fallbackUrl');
+    if (typeof fallbackUrl === 'string') setFallbackSidecarUrl(fallbackUrl);
+    const primaryPathMode = probe('primaryPathMode');
+    if (typeof primaryPathMode === 'boolean') _primaryPathMode = primaryPathMode;
+    const fallbackPathMode = probe('fallbackPathMode');
+    if (typeof fallbackPathMode === 'boolean') _fallbackPathMode = fallbackPathMode;
+    const failCount = probe('primaryHealthFailures');
+    if (Number.isFinite(failCount) && failCount > 0) _primaryHealthFailures = failCount | 0;
+    const recoveryCount = probe('primaryRecoverySuccesses');
+    if (Number.isFinite(recoveryCount) && recoveryCount > 0) {
+        _primaryRecoverySuccesses = recoveryCount | 0;
+    }
 }
 
 /**
@@ -111,15 +146,46 @@ function _bootstrapFromEnv() {
  * doesn't see a stale "down" / "up" answer from the previous sidecar.
  */
 export function setSidecarUrl(url) {
-    const next = typeof url === 'string' ? url.trim().replace(/\/+$/, '') : '';
-    if (next === _sidecarUrl) return;
-    _sidecarUrl = next;
-    _healthCache = null;
+    const next = _normaliseUrl(url);
+    if (next === _primaryUrl) return;
+    _primaryUrl = next;
+    _activeRole = next ? 'primary' : _fallbackUrl ? 'fallback' : 'primary';
+    _primaryFailCount = 0;
+    _primaryRecoveryCount = 0;
+    _healthCache = { primary: null, fallback: null };
+}
+
+/** Optional secondary sidecar URL used when the primary is unavailable. */
+export function setFallbackSidecarUrl(url) {
+    const next = _normaliseUrl(url);
+    if (next === _fallbackUrl) return;
+    _fallbackUrl = next;
+    if (!_primaryUrl && next) _activeRole = 'fallback';
+    if (_activeRole === 'fallback' && !next) _activeRole = _primaryUrl ? 'primary' : 'fallback';
+    _primaryRecoveryCount = 0;
+    _healthCache.fallback = null;
 }
 
 /** Current InsightFace sidecar URL or null when none is configured. */
 export function getSidecarUrl() {
-    return _sidecarUrl || null;
+    return _activeEndpoint()?.url || null;
+}
+
+/** Current primary/fallback routing state for status endpoints and tests. */
+export function getSidecarRoutingStatus() {
+    const primary = _endpoint('primary');
+    const fallback = _endpoint('fallback');
+    return {
+        active: _activeEndpoint(),
+        activeRole: _activeEndpoint()?.role || null,
+        primary,
+        fallback,
+        failoverEnabled: !!(primary?.url && fallback?.url),
+        primaryFailCount: _primaryFailCount,
+        primaryRecoveryCount: _primaryRecoveryCount,
+        primaryHealthFailures: _primaryHealthFailures,
+        primaryRecoverySuccesses: _primaryRecoverySuccesses,
+    };
 }
 
 const HEALTH_PROBE_TIMEOUT_MS = 5000;
@@ -141,11 +207,18 @@ const HEALTH_PROBE_RETRIES = 3;
  */
 export async function health() {
     _bootstrapFromEnv();
-    const url = getSidecarUrl();
-    if (!url) return { ok: false, error: 'sidecar_url_unset' };
+    const selected = await _selectEndpoint();
+    if (!selected?.endpoint?.url) return { ok: false, error: 'sidecar_url_unset' };
+    return selected.value;
+}
+
+async function _probeEndpoint(role, { bypassCache = false } = {}) {
+    const endpoint = _endpoint(role);
+    if (!endpoint?.url) return { ok: false, error: 'sidecar_url_unset', role };
     const now = Date.now();
-    if (_healthCache && _healthCache.expiresAt > now) {
-        return _healthCache.value;
+    const cached = _healthCache[role];
+    if (!bypassCache && cached && cached.expiresAt > now) {
+        return cached.value;
     }
     let value;
     let lastErr = null;
@@ -155,7 +228,7 @@ export async function health() {
             const timer = setTimeout(() => ctrl.abort(), HEALTH_PROBE_TIMEOUT_MS);
             let res;
             try {
-                res = await globalThis.fetch(`${url}/health`, {
+                res = await globalThis.fetch(`${endpoint.url}/health`, {
                     method: 'GET',
                     signal: ctrl.signal,
                 });
@@ -174,6 +247,9 @@ export async function health() {
             const body = await res.json();
             value = {
                 ok: body?.ok === true,
+                role,
+                url: endpoint.url,
+                pathMode: endpoint.pathMode,
                 version: body?.version ?? null,
                 model: body?.model ?? null,
                 dim: body?.dim ?? null,
@@ -197,10 +273,87 @@ export async function health() {
         }
     }
     if (value === undefined) {
-        value = { ok: false, error: lastErr?.message || String(lastErr) };
+        value = {
+            ok: false,
+            role,
+            url: endpoint.url,
+            pathMode: endpoint.pathMode,
+            error: lastErr?.message || String(lastErr),
+        };
     }
-    _healthCache = { value, expiresAt: now + _healthCacheTtlMs };
+    _healthCache[role] = { value, expiresAt: now + _healthCacheTtlMs };
     return value;
+}
+
+async function _selectEndpoint({ fallbackOnly = false, probe = true } = {}) {
+    if (fallbackOnly) {
+        const endpoint = _endpoint('fallback');
+        if (!endpoint?.url)
+            return { endpoint: null, value: { ok: false, error: 'fallback_url_unset' } };
+        const value = await _probeEndpoint('fallback', { bypassCache: true });
+        if (value.ok) _activeRole = 'fallback';
+        return { endpoint, value };
+    }
+
+    const primary = _endpoint('primary');
+    const fallback = _endpoint('fallback');
+    if (!primary?.url && !fallback?.url) {
+        return { endpoint: null, value: { ok: false, error: 'sidecar_url_unset' } };
+    }
+    if (!primary?.url) {
+        _activeRole = 'fallback';
+        if (!probe) return { endpoint: fallback, value: { ok: true } };
+        const value = await _probeEndpoint('fallback');
+        return { endpoint: fallback, value };
+    }
+    if (!fallback?.url) {
+        _activeRole = 'primary';
+        if (!probe) return { endpoint: primary, value: { ok: true } };
+        const value = await _probeEndpoint('primary');
+        return { endpoint: primary, value };
+    }
+    if (!probe) {
+        const endpoint = _activeEndpoint() || primary;
+        return { endpoint, value: { ok: true } };
+    }
+
+    if (_activeRole === 'fallback') {
+        const fallbackValue = await _probeEndpoint('fallback');
+        const primaryValue = await _probeEndpoint('primary', { bypassCache: true });
+        if (primaryValue.ok) {
+            _primaryRecoveryCount++;
+            _primaryFailCount = 0;
+            if (_primaryRecoveryCount >= _primaryRecoverySuccesses) {
+                _activeRole = 'primary';
+                return { endpoint: primary, value: primaryValue };
+            }
+        } else {
+            _primaryRecoveryCount = 0;
+        }
+        if (fallbackValue.ok) return { endpoint: fallback, value: fallbackValue };
+        if (primaryValue.ok) {
+            _activeRole = 'primary';
+            return { endpoint: primary, value: primaryValue };
+        }
+        return { endpoint: fallback, value: fallbackValue };
+    }
+
+    const primaryValue = await _probeEndpoint('primary');
+    if (primaryValue.ok) {
+        _primaryFailCount = 0;
+        _primaryRecoveryCount = 0;
+        return { endpoint: primary, value: primaryValue };
+    }
+    _primaryFailCount++;
+    _primaryRecoveryCount = 0;
+    if (_primaryFailCount >= _primaryHealthFailures) {
+        const fallbackValue = await _probeEndpoint('fallback', { bypassCache: true });
+        if (fallbackValue.ok) {
+            _activeRole = 'fallback';
+            return { endpoint: fallback, value: fallbackValue };
+        }
+    }
+    return { endpoint: primary, value: primaryValue };
 }
 
 /**
@@ -216,8 +369,8 @@ export async function health() {
  */
 export async function detectFaces(absPath, cfg = {}, onLog = null) {
     _bootstrapFromEnv();
-    const url = getSidecarUrl();
-    if (!url) {
+    const selected = await _selectEndpoint({ probe: false });
+    if (!selected?.endpoint?.url) {
         _log(onLog, 'warn', 'sidecar URL unset — detectFaces returning null');
         return null;
     }
@@ -242,7 +395,19 @@ export async function detectFaces(absPath, cfg = {}, onLog = null) {
     }
     _inflight++;
     try {
-        return await _detectInner(absPath, pathBody, baseBody, url, onLog);
+        const first = await _detectInner(absPath, pathBody, baseBody, selected.endpoint, onLog);
+        if (first !== null || selected.endpoint.role !== 'primary' || !_fallbackUrl) {
+            return first;
+        }
+        _primaryFailCount++;
+        const fallback = await _selectEndpoint({ fallbackOnly: true });
+        if (!fallback?.value?.ok || !fallback?.endpoint?.url) return first;
+        _log(
+            onLog,
+            'warn',
+            `primary sidecar failed for ${absPath}; retrying on fallback ${fallback.endpoint.url}`,
+        );
+        return await _detectInner(absPath, pathBody, baseBody, fallback.endpoint, onLog);
     } finally {
         _inflight = Math.max(0, _inflight - 1);
     }
@@ -265,10 +430,13 @@ export async function detectFaces(absPath, cfg = {}, onLog = null) {
 export async function detectFacesBatch(absPaths, cfg = {}, onLog = null) {
     _bootstrapFromEnv();
     if (!absPaths.length) return [];
-    const url = getSidecarUrl();
-    if (!url) {
+    const selected = await _selectEndpoint({ probe: false });
+    if (!selected?.endpoint?.url) {
         _log(onLog, 'warn', 'sidecar URL unset — detectFacesBatch returning nulls');
         return absPaths.map(() => null);
+    }
+    if (!selected.endpoint.pathMode) {
+        return Promise.all(absPaths.map((p) => detectFaces(p, cfg, onLog)));
     }
 
     const facesCfg = cfg?.faces || cfg || {};
@@ -288,7 +456,7 @@ export async function detectFacesBatch(absPaths, cfg = {}, onLog = null) {
         const ctrl = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), batchTimeoutMs);
         try {
-            batchRes = await globalThis.fetch(`${url}/detect/batch`, {
+            batchRes = await globalThis.fetch(`${selected.endpoint.url}/detect/batch`, {
                 method: 'POST',
                 headers: { 'content-type': 'application/json' },
                 body: JSON.stringify(body),
@@ -299,11 +467,35 @@ export async function detectFacesBatch(absPaths, cfg = {}, onLog = null) {
         }
     } catch (e) {
         _log(onLog, 'warn', `detectFacesBatch: network error — ${e?.message || e}`);
+        if (selected.endpoint.role === 'primary' && _fallbackUrl) {
+            _primaryFailCount++;
+            const fallback = await _selectEndpoint({ fallbackOnly: true });
+            if (fallback?.value?.ok && fallback?.endpoint?.url) {
+                _log(
+                    onLog,
+                    'warn',
+                    `primary batch sidecar failed; retrying ${absPaths.length} files on fallback ${fallback.endpoint.url}`,
+                );
+                return detectFacesBatch(absPaths, cfg, onLog);
+            }
+        }
         return absPaths.map(() => null);
     }
 
     if (!batchRes.ok) {
         _log(onLog, 'warn', `detectFacesBatch: sidecar returned ${batchRes.status}`);
+        if (selected.endpoint.role === 'primary' && _fallbackUrl && batchRes.status >= 500) {
+            _primaryFailCount++;
+            const fallback = await _selectEndpoint({ fallbackOnly: true });
+            if (fallback?.value?.ok && fallback?.endpoint?.url) {
+                _log(
+                    onLog,
+                    'warn',
+                    `primary batch sidecar returned ${batchRes.status}; retrying on fallback ${fallback.endpoint.url}`,
+                );
+                return detectFacesBatch(absPaths, cfg, onLog);
+            }
+        }
         return absPaths.map(() => null);
     }
 
@@ -350,29 +542,40 @@ export async function detectFacesBatch(absPaths, cfg = {}, onLog = null) {
     return output;
 }
 
-async function _detectInner(absPath, pathBody, baseBody, url, onLog) {
+async function _detectInner(absPath, pathBody, baseBody, endpoint, onLog) {
+    const url = endpoint.url;
     // Path mode first. If the sidecar rejects with `path_not_allowed`
     // (Docker sandbox, or operator chose strict allow-roots), fall back
     // to b64. The fallback only fires on that explicit 403 — other
     // errors flow through retry / null.
     let res;
-    try {
-        res = await _postWithRetry(`${url}/detect`, pathBody, onLog);
-    } catch (e) {
-        _log(onLog, 'warn', `detect path-mode failed for ${absPath}: ${e?.message || e}`);
-        return null;
+    if (endpoint.pathMode) {
+        try {
+            res = await _postWithRetry(`${url}/detect`, pathBody, onLog);
+        } catch (e) {
+            _log(onLog, 'warn', `detect path-mode failed for ${absPath}: ${e?.message || e}`);
+            return null;
+        }
     }
 
-    if (res && res.status === 403) {
+    if (!endpoint.pathMode || (res && res.status === 403)) {
         let code = null;
-        try {
-            const body = await res.clone().json();
-            code = body?.code || null;
-        } catch {
-            /* body may not be JSON; treat as generic 403 */
+        if (res) {
+            try {
+                const body = await res.clone().json();
+                code = body?.code || null;
+            } catch {
+                /* body may not be JSON; treat as generic 403 */
+            }
         }
-        if (code === 'path_not_allowed') {
-            _log(onLog, 'info', `path mode rejected for ${absPath}; falling back to b64`);
+        if (!endpoint.pathMode || code === 'path_not_allowed') {
+            _log(
+                onLog,
+                'info',
+                endpoint.pathMode
+                    ? `path mode rejected for ${absPath}; falling back to b64`
+                    : `path mode disabled for ${endpoint.role} sidecar; using b64 for ${absPath}`,
+            );
             let bytes;
             try {
                 bytes = await fs.readFile(absPath);
@@ -516,6 +719,23 @@ function _pickNumber(candidates, fallback) {
     return fallback;
 }
 
+function _normaliseUrl(url) {
+    return typeof url === 'string' ? url.trim().replace(/\/+$/, '') : '';
+}
+
+function _endpoint(role) {
+    if (role === 'fallback') {
+        return _fallbackUrl
+            ? { role: 'fallback', url: _fallbackUrl, pathMode: _fallbackPathMode }
+            : null;
+    }
+    return _primaryUrl ? { role: 'primary', url: _primaryUrl, pathMode: _primaryPathMode } : null;
+}
+
+function _activeEndpoint() {
+    return _endpoint(_activeRole) || _endpoint('primary') || _endpoint('fallback');
+}
+
 function _sleep(ms) {
     return new Promise((r) => setTimeout(r, ms));
 }
@@ -531,8 +751,16 @@ function _log(onLog, level, msg) {
 
 /** Test-only: clear cached URL + health probe so each spec starts fresh. */
 export function _resetForTests() {
-    _sidecarUrl = '';
-    _healthCache = null;
+    _primaryUrl = '';
+    _fallbackUrl = '';
+    _activeRole = 'primary';
+    _primaryPathMode = true;
+    _fallbackPathMode = true;
+    _primaryHealthFailures = 3;
+    _primaryRecoverySuccesses = 2;
+    _primaryFailCount = 0;
+    _primaryRecoveryCount = 0;
+    _healthCache = { primary: null, fallback: null };
     _healthCacheTtlMs = HEALTH_CACHE_TTL_MS_DEFAULT;
     _requestTimeoutMs = REQUEST_TIMEOUT_MS_DEFAULT;
     _maxRetries = MAX_RETRIES_DEFAULT;
@@ -550,6 +778,10 @@ export function _runtimeKnobs() {
         maxRetries: _maxRetries,
         retryBackoffMs: _retryBackoffMs.slice(),
         sidecarMaxConcurrency: _maxConcurrency,
+        primaryPathMode: _primaryPathMode,
+        fallbackPathMode: _fallbackPathMode,
+        primaryHealthFailures: _primaryHealthFailures,
+        primaryRecoverySuccesses: _primaryRecoverySuccesses,
     };
 }
 
@@ -569,26 +801,33 @@ export function hasEmbeddingProvider() {
  * Returns ``{ embedding: number[], dim: number }`` or throws.
  */
 export async function embedImage(absPath) {
-    const url = getSidecarUrl();
+    _bootstrapFromEnv();
+    const selected = await _selectEndpoint({ probe: false });
+    const endpoint = selected?.endpoint;
+    const url = endpoint?.url;
     if (!url) throw new Error('sidecar URL not configured');
 
     // Path mode first — fast path for local installs.
     let res;
-    try {
-        res = await _postWithRetry(url + '/embed-image', { path: absPath });
-    } catch (e) {
-        throw new Error(`embed-image path-mode failed: ${e?.message || e}`);
+    if (endpoint.pathMode) {
+        try {
+            res = await _postWithRetry(url + '/embed-image', { path: absPath });
+        } catch (e) {
+            throw new Error(`embed-image path-mode failed: ${e?.message || e}`);
+        }
     }
 
     // If sidecar can't read the path (Docker sandbox / strict allow_roots),
     // fall back to base64 mode.
-    if (res && res.status === 403) {
+    if (!endpoint.pathMode || (res && res.status === 403)) {
         let code = null;
-        try {
-            const body = await res.clone().json();
-            code = body?.code || null;
-        } catch {}
-        if (code === 'path_not_allowed') {
+        if (res) {
+            try {
+                const body = await res.clone().json();
+                code = body?.code || null;
+            } catch {}
+        }
+        if (!endpoint.pathMode || code === 'path_not_allowed') {
             const maxBytes = 20 * 1024 * 1024; // 20 MB safety limit
             const stat = await fs.stat(absPath);
             if (stat.size > maxBytes) {

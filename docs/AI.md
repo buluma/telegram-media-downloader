@@ -236,6 +236,11 @@ should read the nested path.
 |---|---|---|---|
 | `backend` | `TGDL_FACES_BACKEND` | `sidecar` | `sidecar` or `disabled` — kill switch for the spawn path |
 | `sidecarUrl` | `TGDL_FACES_SIDECAR_URL` | `''` | Operator override URL; empty = compose env or local auto-spawn |
+| `fallbackUrl` | `TGDL_FACES_FALLBACK_URL` | `''` | Secondary sidecar URL used when the primary health probe fails repeatedly |
+| `primaryPathMode` | `TGDL_FACES_PRIMARY_PATH_MODE` | `true` | Whether the primary sidecar can read app filesystem paths; set `false` for remote Mac/CoreML sidecars |
+| `fallbackPathMode` | `TGDL_FACES_FALLBACK_PATH_MODE` | `true` | Whether the fallback sidecar can read app filesystem paths |
+| `primaryHealthFailures` | `TGDL_FACES_PRIMARY_HEALTH_FAILURES` | `3` | Consecutive primary health failures before switching to fallback |
+| `primaryRecoverySuccesses` | `TGDL_FACES_PRIMARY_RECOVERY_SUCCESSES` | `2` | Consecutive primary health successes before switching back from fallback |
 | `autoDownload` | `TGDL_FACES_AUTO_DOWNLOAD` | `true` | `false` refuses to fetch the binary (offline mode) |
 | `minDetectionScore` | `TGDL_FACES_MIN_DETECTION_SCORE` | `0.5` | Detector score floor (0–1) |
 | `minFaceSizePx` | `TGDL_FACES_MIN_FACE_SIZE_PX` | `80` | Reject boxes smaller than this on the shorter edge |

@@ -162,6 +162,11 @@ describe('env map completeness', () => {
         for (const k of [
             'backend',
             'sidecarUrl',
+            'fallbackUrl',
+            'primaryPathMode',
+            'fallbackPathMode',
+            'primaryHealthFailures',
+            'primaryRecoverySuccesses',
             'autoDownload',
             'providers',
             'detSize',

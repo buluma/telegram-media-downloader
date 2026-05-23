@@ -53,11 +53,27 @@ const NUMBER_KEYS = new Set([
     'downloadRedirectCap',
     'videoFrameIntervalSec',
     'videoMaxFrames',
+    'primaryHealthFailures',
+    'primaryRecoverySuccesses',
 ]);
 
-const BOOL_KEYS = new Set(['autoDownload', 'federate', 'includeVideos', 'qualityWeightedCentroid']);
+const BOOL_KEYS = new Set([
+    'autoDownload',
+    'federate',
+    'includeVideos',
+    'qualityWeightedCentroid',
+    'primaryPathMode',
+    'fallbackPathMode',
+]);
 
-const STRING_KEYS = new Set(['backend', 'sidecarUrl', 'detectorModel', 'providers', 'detector']);
+const STRING_KEYS = new Set([
+    'backend',
+    'sidecarUrl',
+    'fallbackUrl',
+    'detectorModel',
+    'providers',
+    'detector',
+]);
 
 // Keys whose value is an array of numbers parsed from comma- or
 // colon-separated env strings.
@@ -71,6 +87,11 @@ const STRING_ARRAY_KEYS = new Set(['fileTypes', 'downloadMirrors', 'excludeExten
 const ENV_MAP = Object.freeze({
     backend: 'TGDL_FACES_BACKEND',
     sidecarUrl: 'TGDL_FACES_SIDECAR_URL',
+    fallbackUrl: 'TGDL_FACES_FALLBACK_URL',
+    primaryPathMode: 'TGDL_FACES_PRIMARY_PATH_MODE',
+    fallbackPathMode: 'TGDL_FACES_FALLBACK_PATH_MODE',
+    primaryHealthFailures: 'TGDL_FACES_PRIMARY_HEALTH_FAILURES',
+    primaryRecoverySuccesses: 'TGDL_FACES_PRIMARY_RECOVERY_SUCCESSES',
     autoDownload: 'TGDL_FACES_AUTO_DOWNLOAD',
     minDetectionScore: 'TGDL_FACES_MIN_DETECTION_SCORE',
     minFaceSizePx: 'TGDL_FACES_MIN_FACE_SIZE_PX',

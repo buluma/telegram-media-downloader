@@ -276,9 +276,17 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
     async function _getAiSidecarSnapshot() {
         let url = null;
         let mode = 'unknown';
+        let routing = null;
         try {
-            const { getSidecarUrl } = await import('../../core/ai/faces-client.js');
+            const {
+                getSidecarUrl,
+                getSidecarRoutingStatus,
+                health: clientHealth,
+            } = await import('../../core/ai/faces-client.js');
+            await clientHealth();
             url = getSidecarUrl() || null;
+            routing = getSidecarRoutingStatus?.() || null;
+            if (routing?.activeRole) mode = routing.activeRole;
         } catch {}
         try {
             const facesSpawn = await import('../../core/ai/faces-spawn.js');
@@ -313,6 +321,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             platform: info?.platform || health?.platform || null,
             python: info?.python || health?.python || null,
             providers: info?.providers || health?.providers_resolved || null,
+            routing,
             info,
             health,
             endpoints,

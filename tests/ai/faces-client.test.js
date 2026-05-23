@@ -4,6 +4,9 @@
 // knobs so a future refactor can't silently drop them.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 import * as client from '../../src/core/ai/faces-client.js';
 
@@ -103,6 +106,30 @@ describe('health() — basic + enriched fields', () => {
         await client.health();
         // 3 calls but only 1 fetch because of the 5 s cache.
         expect(fetchSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('fails over to fallback URL after primary health failures', async () => {
+        client.setSidecarUrl('http://primary:8011');
+        client.applyFacesCfg({
+            fallbackUrl: 'http://fallback:8011',
+            primaryHealthFailures: 1,
+            primaryRecoverySuccesses: 1,
+        });
+        vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+            if (String(url).startsWith('http://primary:8011')) {
+                throw new Error('primary asleep');
+            }
+            return {
+                ok: true,
+                status: 200,
+                json: async () => ({ ok: true, version: 'fallback' }),
+            };
+        });
+        const h = await client.health();
+        expect(h.ok).toBe(true);
+        expect(h.role).toBe('fallback');
+        expect(client.getSidecarUrl()).toBe('http://fallback:8011');
+        expect(client.getSidecarRoutingStatus().activeRole).toBe('fallback');
     });
 });
 
@@ -231,5 +258,76 @@ describe('detectFaces retry behaviour', () => {
             faces: { arRange: [0.7, 1.4] },
         });
         expect(capturedBody.ar_range).toEqual([0.7, 1.4]);
+    });
+
+    it('sends b64 directly when primary path mode is disabled', async () => {
+        const dir = await mkdtemp(join(tmpdir(), 'tgdl-faces-client-'));
+        const file = join(dir, 'x.jpg');
+        await writeFile(file, Buffer.from('fake-image'));
+        try {
+            client.setSidecarUrl('http://primary:8011');
+            client.applyFacesCfg({ primaryPathMode: false });
+            let capturedBody = null;
+            vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+                capturedBody = JSON.parse(init.body);
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({ faces: [], image_w: 100, image_h: 100 }),
+                };
+            });
+            const out = await client.detectFaces(file, {});
+            expect(out).toEqual([]);
+            expect(capturedBody.path).toBeUndefined();
+            expect(capturedBody.image_b64).toBe(Buffer.from('fake-image').toString('base64'));
+        } finally {
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
+    it('retries on fallback URL when primary detect fails', async () => {
+        client.setSidecarUrl('http://primary:8011');
+        client.applyFacesCfg({
+            fallbackUrl: 'http://fallback:8011',
+            primaryHealthFailures: 1,
+            maxRetries: 1,
+        });
+        const calls = [];
+        vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init = {}) => {
+            calls.push(String(url));
+            if (String(url) === 'http://primary:8011/detect') {
+                throw new Error('primary asleep');
+            }
+            if (String(url) === 'http://fallback:8011/health') {
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({ ok: true }),
+                };
+            }
+            return {
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    faces: [
+                        {
+                            x: 1,
+                            y: 2,
+                            w: 3,
+                            h: 4,
+                            score: 0.9,
+                            embedding: new Array(512).fill(0.2),
+                        },
+                    ],
+                }),
+            };
+        });
+        const out = await client.detectFaces('/tmp/x.jpg', {});
+        expect(out).toHaveLength(1);
+        expect(calls).toEqual([
+            'http://primary:8011/detect',
+            'http://fallback:8011/health',
+            'http://fallback:8011/detect',
+        ]);
     });
 });

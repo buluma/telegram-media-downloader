@@ -498,6 +498,21 @@ const DEFAULT_CONFIG = {
                 // falls back to compose env (`FACES_SERVICE_URL`) or local
                 // auto-spawn — alias of the legacy `facesServiceUrl` key.
                 sidecarUrl: '',
+                // Optional secondary sidecar URL used when the primary
+                // health probe fails repeatedly. Intended for Mac-first
+                // CoreML primary + always-on Heimdal Docker CPU fallback.
+                fallbackUrl: '',
+                // Whether the sidecar can read the app's filesystem paths.
+                // Remote sidecars should set primaryPathMode=false so the
+                // client sends image bytes directly instead of first trying
+                // a doomed path-mode request.
+                primaryPathMode: true,
+                fallbackPathMode: true,
+                // Fail over after this many consecutive primary health
+                // failures; switch back after this many successful primary
+                // recovery probes while fallback is active.
+                primaryHealthFailures: 3,
+                primaryRecoverySuccesses: 2,
                 // When false, the spawn module refuses to auto-download
                 // the PyInstaller binary; operators must drop the binary
                 // at `data/faces-service/bin/` themselves. Required for
