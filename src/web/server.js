@@ -9,6 +9,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { WebSocketServer } from 'ws';
 import { createServer } from 'http';
+import { monitorEventLoopDelay } from 'perf_hooks';
 import fs from 'fs/promises';
 import fsSync, { existsSync } from 'fs';
 import path from 'path';
@@ -241,6 +242,61 @@ server.requestTimeout = 120_000;
 // accepts every connection including unauthenticated ones.
 const wss = new WebSocketServer({ noServer: true });
 const clients = new Set();
+const activeRequests = new Map();
+let nextRequestId = 1;
+
+function startEventLoopWatchdog() {
+    const enabled = process.env.TGDL_EVENT_LOOP_WATCHDOG !== '0';
+    if (!enabled) return null;
+
+    const warnMs = Math.max(500, Number(process.env.TGDL_EVENT_LOOP_WARN_MS) || 2500);
+    const exitMs = Math.max(warnMs, Number(process.env.TGDL_EVENT_LOOP_EXIT_MS) || 15000);
+    const sustainedSamples = Math.max(1, Number(process.env.TGDL_EVENT_LOOP_EXIT_SAMPLES) || 3);
+    const intervalMs = Math.max(1000, Number(process.env.TGDL_EVENT_LOOP_INTERVAL_MS) || 5000);
+    const histogram = monitorEventLoopDelay({ resolution: 20 });
+    let badSamples = 0;
+    histogram.enable();
+
+    const summarizeRequests = () =>
+        Array.from(activeRequests.values())
+            .sort((a, b) => a.startedAt - b.startedAt)
+            .slice(0, 8)
+            .map((r) => ({
+                ageMs: Date.now() - r.startedAt,
+                method: r.method,
+                url: r.url,
+            }));
+
+    const timer = setInterval(() => {
+        const maxMs = histogram.max / 1e6;
+        const meanMs = histogram.mean / 1e6;
+        histogram.reset();
+        if (!Number.isFinite(maxMs) || maxMs < warnMs) {
+            badSamples = 0;
+            return;
+        }
+
+        badSamples += maxMs >= exitMs ? 1 : 0;
+        const payload = {
+            maxMs: Math.round(maxMs),
+            meanMs: Number.isFinite(meanMs) ? Math.round(meanMs) : null,
+            activeRequests: activeRequests.size,
+            oldestRequests: summarizeRequests(),
+            resourceUsage: process.resourceUsage?.(),
+            activeResources: process.getActiveResourcesInfo?.(),
+        };
+        console.warn('[watchdog] event loop stall', JSON.stringify(payload));
+
+        if (maxMs >= exitMs && badSamples >= sustainedSamples) {
+            console.error('[watchdog] sustained event loop stall, exiting for supervisor restart');
+            setTimeout(() => process.exit(1), 250).unref();
+        }
+    }, intervalMs);
+    timer.unref();
+    return { timer, histogram };
+}
+
+const eventLoopWatchdog = startEventLoopWatchdog();
 
 function parseCookieHeader(header) {
     const out = {};
@@ -351,6 +407,18 @@ if (_trustProxyRaw === undefined) {
         /^\d+$/.test(_trustProxyRaw) ? parseInt(_trustProxyRaw, 10) : _trustProxyRaw,
     );
 }
+
+app.use((req, res, next) => {
+    const id = nextRequestId++;
+    activeRequests.set(id, {
+        method: req.method,
+        url: req.originalUrl || req.url,
+        startedAt: Date.now(),
+    });
+    res.on('finish', () => activeRequests.delete(id));
+    res.on('close', () => activeRequests.delete(id));
+    next();
+});
 
 // Force HTTPS — opt-in via config.web.forceHttps (default off, plain HTTP).
 // Skips localhost so it doesn't lock you out of local dev. `req.secure`
@@ -1905,6 +1973,10 @@ async function gracefulShutdown(signal) {
     } catch (e) {
         console.warn('[shutdown] seekbar-sidecar.stop:', e.message);
     }
+    try {
+        if (eventLoopWatchdog?.timer) clearInterval(eventLoopWatchdog.timer);
+        eventLoopWatchdog?.histogram?.disable?.();
+    } catch {}
     try {
         const facesSpawn = await import('../core/ai/faces-spawn.js');
         facesSpawn?.stopSidecar?.();
