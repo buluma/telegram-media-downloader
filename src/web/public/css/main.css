@@ -2872,6 +2872,41 @@ textarea:focus {
     padding: 0 4px;
     font-size: 10px;
 }
+#groups-list .sidebar-group-section {
+    padding: 4px 6px 8px;
+}
+#groups-list .sidebar-group-section + .sidebar-group-section {
+    border-top: 1px solid var(--tg-border, rgba(255, 255, 255, 0.08));
+}
+#groups-list .sidebar-group-section-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    padding: 7px 3px 5px;
+    color: var(--tg-textSecondary, #8b9baa);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    border-radius: 6px;
+    transition:
+        background-color 160ms ease,
+        color 160ms ease;
+}
+#groups-list .sidebar-group-section-title:hover {
+    background: var(--tg-hover, #2b5278);
+    color: var(--tg-text, #f5f7fb);
+}
+#groups-list .sidebar-group-section-chevron {
+    font-size: 14px;
+    line-height: 1;
+    transition: transform 160ms ease;
+}
+#groups-list .sidebar-group-section-title[aria-expanded="false"] .sidebar-group-section-chevron {
+    transform: rotate(-90deg);
+}
 #groups-list .chat-row .avatar,
 #groups-list .chat-row .avatar img {
     width: 32px;

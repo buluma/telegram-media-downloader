@@ -119,6 +119,7 @@ export function createDownloadsRouter({
                             ? cfg?.type || dialogsTypeFor(parentGroupId)
                             : cfg?.type || dialogsTypeFor(r.group_id),
                         totalFiles: r.count,
+                        totalSize: Number(r.size) || 0,
                         sizeFormatted: formatBytes(r.size || 0),
                         photoUrl: hasPhoto
                             ? `/photos/${isCommentGroup ? parentGroupId : r.group_id}.jpg`

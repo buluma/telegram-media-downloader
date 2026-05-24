@@ -1210,8 +1210,9 @@ function renderGroupsList() {
             ...g,
             downloadId: String(g.id),
             totalFiles: 0,
+            totalSize: 0,
             sizeFormatted: '0 B',
-            type: 'config',
+            rowSource: 'config',
         });
     });
 
@@ -1221,7 +1222,9 @@ function renderGroupsList() {
         if (map.has(key)) {
             const existing = map.get(key);
             existing.totalFiles = d.totalFiles;
+            existing.totalSize = Number(d.totalSize) || 0;
             existing.sizeFormatted = d.sizeFormatted;
+            existing.type = existing.type || d.type || null;
             existing.downloadId = d.id;
         } else {
             map.set(key, {
@@ -1229,13 +1232,15 @@ function renderGroupsList() {
                 id: d.id,
                 downloadId: d.id,
                 totalFiles: d.totalFiles,
+                totalSize: Number(d.totalSize) || 0,
                 sizeFormatted: d.sizeFormatted,
-                type: 'folder',
+                type: d.type || 'folder',
+                rowSource: 'folder',
             });
         }
     });
 
-    const sorted = Array.from(map.values());
+    const sorted = Array.from(map.values()).sort(_compareSidebarGroups);
 
     if (sorted.length === 0) {
         list.innerHTML = renderEmptyState({
@@ -1253,67 +1258,96 @@ function renderGroupsList() {
 
     state.activeRings = state.activeRings || new Set();
     let needsResolve = false;
-    const html = sorted
-        .map((g) => {
-            const id = String(g.downloadId || g.id || g.name);
-            // Route every render through the canonical lookup so a name set by
-            // the WS `groups_refreshed` handler propagates without a reload.
-            const canonical = getGroupName(id, {
-                fallback: i18nT('groups.unknown_chat', 'Unknown chat'),
-            });
-            // Did the canonical lookup fall through to the placeholder? If so,
-            // surface the friendly "Resolving…" subtitle and trigger a one-shot
-            // refresh-info below.
-            const stillUnresolved =
-                isUnresolvedName(g.name, id) && !state.groupNameCache?.get?.(id);
-            if (stillUnresolved) needsResolve = true;
-            // Federated sidebar (Layer 1): foreign rows carry `peerId` + `peerName`.
-            // Subtitle becomes "from {peer}" instead of the file count, since
-            // we don't have peer-side counts cached locally; cog is suppressed
-            // (foreign groups can't be edited from this peer's dashboard —
-            // the click navigates to the per-group view filtered to that peer).
-            const isForeign = !!g.peerId;
-            const subtitle = isForeign
-                ? i18nTf(
-                      'sidebar.group.peer_badge',
-                      { peer: g.peerName || g.peerId.slice(0, 12) },
-                      `from ${g.peerName || g.peerId.slice(0, 12)}`,
-                  )
-                : stillUnresolved
-                  ? i18nTf(
-                        'groups.resolving',
-                        { count: g.totalFiles || 0 },
-                        `Resolving… · ${g.totalFiles || 0} files`,
-                    )
-                  : i18nTf(
-                        'groups.files_size',
-                        { count: g.totalFiles || 0, size: g.sizeFormatted || '0 B' },
-                        `${g.totalFiles || 0} files · ${g.sizeFormatted || '0 B'}`,
-                    );
-            const ring = !isForeign && state.activeRings.has(id) ? 'downloading' : null;
-            // Monitor toggle — only meaningful for own (non-foreign) groups
-            // that are actually in `state.groups` (config-defined). Folder-
-            // only rows have no monitor state to toggle.
-            const cfgGroup = isForeign
-                ? null
-                : (state.groups || []).find((cg) => String(cg.id) === id);
-            const monitorEnabled = cfgGroup ? cfgGroup.enabled !== false : null;
-            return renderChatRow({
-                id,
-                name: canonical,
-                subtitle,
-                avatarType: g.type,
-                avatarRing: ring,
-                avatarDot: ring ? 'monitor' : null,
-                time: g.lastDownloadAt ? formatRelativeTime(g.lastDownloadAt) : '',
-                selected: state.currentGroupId === id,
-                cog: !isForeign, // foreign groups are read-only; hide the cog
-                monitorEnabled, // 1-click ▶/⏸ toggle when this is a config group
-                peerId: g.peerId || null,
-                peerName: g.peerName || null,
-                // Don't ship the (possibly stale) raw name through the dataset —
-                // click handlers re-resolve from the canonical store.
-            });
+    const html = _groupSidebarRowsByType(sorted)
+        .map(({ type, rows }) => {
+            const totalSize = rows.reduce((sum, g) => sum + (Number(g.totalSize) || 0), 0);
+            const collapsed = _isSidebarGroupTypeCollapsed(type);
+            const sectionHtml = `
+                <div class="sidebar-group-section" data-sidebar-group-section="${escapeHtml(type)}">
+                    <button class="sidebar-group-section-title" type="button"
+                            data-action="sidebar-type-toggle"
+                            data-sidebar-type="${escapeHtml(type)}"
+                            aria-expanded="${collapsed ? 'false' : 'true'}">
+                        <span class="inline-flex items-center gap-1.5 min-w-0">
+                            <i class="ri-arrow-down-s-line sidebar-group-section-chevron" aria-hidden="true"></i>
+                            <span class="truncate">${escapeHtml(_sidebarGroupTypeLabel(type))}</span>
+                        </span>
+                        <span class="tabular-nums">${escapeHtml(formatBytes(totalSize))}</span>
+                    </button>
+                    <div class="sidebar-group-section-body${collapsed ? ' hidden' : ''}">
+                        ${rows
+                            .map((g) => {
+                                const id = String(g.downloadId || g.id || g.name);
+                                // Route every render through the canonical lookup so a name set by
+                                // the WS `groups_refreshed` handler propagates without a reload.
+                                const canonical = getGroupName(id, {
+                                    fallback: i18nT('groups.unknown_chat', 'Unknown chat'),
+                                });
+                                // Did the canonical lookup fall through to the placeholder? If so,
+                                // surface the friendly "Resolving…" subtitle and trigger a one-shot
+                                // refresh-info below.
+                                const stillUnresolved =
+                                    isUnresolvedName(g.name, id) &&
+                                    !state.groupNameCache?.get?.(id);
+                                if (stillUnresolved) needsResolve = true;
+                                // Federated sidebar (Layer 1): foreign rows carry `peerId` + `peerName`.
+                                // Subtitle becomes "from {peer}" instead of the file count, since
+                                // we don't have peer-side counts cached locally; cog is suppressed
+                                // (foreign groups can't be edited from this peer's dashboard —
+                                // the click navigates to the per-group view filtered to that peer).
+                                const isForeign = !!g.peerId;
+                                const subtitle = isForeign
+                                    ? i18nTf(
+                                          'sidebar.group.peer_badge',
+                                          { peer: g.peerName || g.peerId.slice(0, 12) },
+                                          `from ${g.peerName || g.peerId.slice(0, 12)}`,
+                                      )
+                                    : stillUnresolved
+                                      ? i18nTf(
+                                            'groups.resolving',
+                                            { count: g.totalFiles || 0 },
+                                            `Resolving… · ${g.totalFiles || 0} files`,
+                                        )
+                                      : i18nTf(
+                                            'groups.files_size',
+                                            {
+                                                count: g.totalFiles || 0,
+                                                size: g.sizeFormatted || '0 B',
+                                            },
+                                            `${g.totalFiles || 0} files · ${g.sizeFormatted || '0 B'}`,
+                                        );
+                                const ring =
+                                    !isForeign && state.activeRings.has(id) ? 'downloading' : null;
+                                // Monitor toggle — only meaningful for own (non-foreign) groups
+                                // that are actually in `state.groups` (config-defined). Folder-
+                                // only rows have no monitor state to toggle.
+                                const cfgGroup = isForeign
+                                    ? null
+                                    : (state.groups || []).find((cg) => String(cg.id) === id);
+                                const monitorEnabled = cfgGroup ? cfgGroup.enabled !== false : null;
+                                return renderChatRow({
+                                    id,
+                                    name: canonical,
+                                    subtitle,
+                                    avatarType: g.type,
+                                    avatarRing: ring,
+                                    avatarDot: ring ? 'monitor' : null,
+                                    time: g.lastDownloadAt
+                                        ? formatRelativeTime(g.lastDownloadAt)
+                                        : '',
+                                    selected: state.currentGroupId === id,
+                                    cog: !isForeign, // foreign groups are read-only; hide the cog
+                                    monitorEnabled, // 1-click ▶/⏸ toggle when this is a config group
+                                    peerId: g.peerId || null,
+                                    peerName: g.peerName || null,
+                                    // Don't ship the (possibly stale) raw name through the dataset —
+                                    // click handlers re-resolve from the canonical store.
+                                });
+                            })
+                            .join('')}
+                    </div>
+                </div>`;
+            return sectionHtml;
         })
         .join('');
 
@@ -1338,6 +1372,12 @@ function renderGroupsList() {
     if (needsResolve && !state._resolvingGroups) {
         _triggerGroupsRefreshInfo();
     }
+
+    list.querySelectorAll('[data-action="sidebar-type-toggle"]').forEach((el) => {
+        if (el.dataset.bound === '1') return;
+        el.dataset.bound = '1';
+        el.addEventListener('click', () => _toggleSidebarGroupType(el));
+    });
 
     // Event delegation — click opens the group viewer; click on the
     // cog button opens Group Settings instead. Names are re-resolved
@@ -1421,6 +1461,86 @@ function renderGroupsList() {
             }
         });
     });
+}
+
+function _sidebarGroupType(g) {
+    const type = String(g?.type || '').toLowerCase();
+    if (type === 'channel') return 'channel';
+    if (type === 'group' || type === 'supergroup') return 'group';
+    if (type === 'user') return 'user';
+    if (type === 'bot') return 'bot';
+    return 'other';
+}
+
+function _sidebarGroupTypeLabel(type) {
+    const labels = {
+        channel: i18nT('sidebar.group_type.channel', 'Channels'),
+        group: i18nT('sidebar.group_type.group', 'Groups'),
+        user: i18nT('sidebar.group_type.user', 'Direct messages'),
+        bot: i18nT('sidebar.group_type.bot', 'Bots'),
+        other: i18nT('sidebar.group_type.other', 'Other'),
+    };
+    return labels[type] || labels.other;
+}
+
+function _sidebarTypeRank(type) {
+    return { channel: 0, group: 1, user: 2, bot: 3, other: 4 }[type] ?? 4;
+}
+
+function _sidebarGroupTypeStorageKey(type) {
+    return `tgdl.sidebar.groupType.${type}.collapsed`;
+}
+
+function _isSidebarGroupTypeCollapsed(type) {
+    try {
+        return localStorage.getItem(_sidebarGroupTypeStorageKey(type)) === '1';
+    } catch {
+        return false;
+    }
+}
+
+function _setSidebarGroupTypeCollapsed(type, collapsed) {
+    try {
+        localStorage.setItem(_sidebarGroupTypeStorageKey(type), collapsed ? '1' : '0');
+    } catch {
+        /* private mode */
+    }
+}
+
+function _toggleSidebarGroupType(btn) {
+    const section = btn.closest('.sidebar-group-section');
+    const body = section?.querySelector('.sidebar-group-section-body');
+    const type = btn.dataset.sidebarType || section?.dataset.sidebarGroupSection || 'other';
+    if (!section || !body) return;
+    const collapsed = !body.classList.contains('hidden');
+    body.classList.toggle('hidden', collapsed);
+    btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    _setSidebarGroupTypeCollapsed(type, collapsed);
+}
+
+function _compareSidebarGroups(a, b) {
+    const typeDiff =
+        _sidebarTypeRank(_sidebarGroupType(a)) - _sidebarTypeRank(_sidebarGroupType(b));
+    if (typeDiff) return typeDiff;
+    const sizeDiff = (Number(b?.totalSize) || 0) - (Number(a?.totalSize) || 0);
+    if (sizeDiff) return sizeDiff;
+    const filesDiff = (Number(b?.totalFiles) || 0) - (Number(a?.totalFiles) || 0);
+    if (filesDiff) return filesDiff;
+    return String(a?.name || a?.id || '').localeCompare(String(b?.name || b?.id || ''), undefined, {
+        sensitivity: 'base',
+    });
+}
+
+function _groupSidebarRowsByType(rows) {
+    const buckets = new Map();
+    for (const row of rows) {
+        const type = _sidebarGroupType(row);
+        if (!buckets.has(type)) buckets.set(type, []);
+        buckets.get(type).push(row);
+    }
+    return Array.from(buckets.entries())
+        .sort(([a], [b]) => _sidebarTypeRank(a) - _sidebarTypeRank(b))
+        .map(([type, rows]) => ({ type, rows }));
 }
 
 function normalize(str) {
@@ -3221,12 +3341,24 @@ function filterSidebarGroups(rawQuery) {
     const rows = list.querySelectorAll('.chat-row');
     if (!q) {
         rows.forEach((r) => r.classList.remove('hidden'));
+        _syncSidebarGroupSectionVisibility(list);
         return;
     }
     rows.forEach((r) => {
         const name = (r.querySelector('.row-title-name')?.textContent || '').toLowerCase();
         const id = (r.dataset.id || '').toLowerCase();
         r.classList.toggle('hidden', !(name.includes(q) || id.includes(q)));
+    });
+    _syncSidebarGroupSectionVisibility(list);
+}
+
+function _syncSidebarGroupSectionVisibility(list = document.getElementById('groups-list')) {
+    if (!list) return;
+    list.querySelectorAll('.sidebar-group-section').forEach((section) => {
+        const hasVisibleRows = Array.from(section.querySelectorAll('.chat-row')).some(
+            (row) => !row.classList.contains('hidden') && row.style.display !== 'none',
+        );
+        section.classList.toggle('hidden', !hasVisibleRows);
     });
 }
 
@@ -4320,13 +4452,15 @@ function setupEventListeners() {
     // AI is disabled or unconfigured — operator stays in groups filter.
     document.getElementById('search-input')?.addEventListener('input', (e) => {
         const query = e.target.value.trim().toLowerCase();
-        document.querySelectorAll('#groups-list .chat-row').forEach((item) => {
+        const list = document.getElementById('groups-list');
+        list?.querySelectorAll('.chat-row').forEach((item) => {
             const id = item.dataset?.id || '';
             const canonical = id ? getGroupName(id, { fallback: '' }) : '';
             const text = (canonical || item.textContent || '').toLowerCase();
             const idMatch = id && id.toLowerCase().includes(query);
-            item.style.display = !query || text.includes(query) || idMatch ? '' : 'none';
+            item.classList.toggle('hidden', !(!query || text.includes(query) || idMatch));
         });
+        _syncSidebarGroupSectionVisibility(list);
     });
     document.getElementById('search-input')?.addEventListener('keydown', async (e) => {
         if (e.key !== 'Enter') return;
