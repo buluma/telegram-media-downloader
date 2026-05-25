@@ -840,12 +840,56 @@ function initSchema() {
             ON downloads(file_type, ai_indexed_at) WHERE ai_indexed_at IS NULL;
         CREATE INDEX IF NOT EXISTS idx_gallery_group_date
             ON downloads(group_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_gallery_group_type_date
+            ON downloads(group_id, file_type, created_at DESC, id DESC);
+        CREATE INDEX IF NOT EXISTS idx_gallery_type_date
+            ON downloads(file_type, created_at DESC, id DESC);
         CREATE INDEX IF NOT EXISTS idx_gallery_pinned_date
             ON downloads(pinned, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_video_filepath
+            ON downloads(file_type, id DESC) WHERE file_type = 'video' AND file_path IS NOT NULL;
         CREATE INDEX IF NOT EXISTS idx_file_hash
             ON downloads(file_hash) WHERE file_hash IS NOT NULL;
         DROP INDEX IF EXISTS idx_created_at;
     `);
+
+    try {
+        db.exec(`
+            CREATE VIRTUAL TABLE IF NOT EXISTS downloads_fts USING fts5(
+                file_name, group_name,
+                content='downloads',
+                content_rowid='id'
+            );
+        `);
+        const ftsCount = Number(
+            db.prepare('SELECT COUNT(*) AS n FROM downloads_fts').get()?.n || 0,
+        );
+        if (ftsCount === 0) {
+            const dlCount = Number(db.prepare('SELECT COUNT(*) AS n FROM downloads').get()?.n || 0);
+            if (dlCount > 0) {
+                db.exec(`
+                    INSERT INTO downloads_fts(rowid, file_name, group_name)
+                    SELECT id, COALESCE(file_name, ''), COALESCE(group_name, '') FROM downloads;
+                `);
+            }
+        }
+        db.exec(`
+            CREATE TRIGGER IF NOT EXISTS downloads_fts_insert AFTER INSERT ON downloads BEGIN
+                INSERT INTO downloads_fts(rowid, file_name, group_name)
+                VALUES (new.id, COALESCE(new.file_name, ''), COALESCE(new.group_name, ''));
+            END;
+            CREATE TRIGGER IF NOT EXISTS downloads_fts_delete AFTER DELETE ON downloads BEGIN
+                INSERT INTO downloads_fts(downloads_fts, rowid, file_name, group_name)
+                VALUES ('delete', old.id, COALESCE(old.file_name, ''), COALESCE(old.group_name, ''));
+            END;
+            CREATE TRIGGER IF NOT EXISTS downloads_fts_update AFTER UPDATE OF file_name, group_name ON downloads BEGIN
+                INSERT INTO downloads_fts(downloads_fts, rowid, file_name, group_name)
+                VALUES ('delete', old.id, COALESCE(old.file_name, ''), COALESCE(old.group_name, ''));
+                INSERT INTO downloads_fts(rowid, file_name, group_name)
+                VALUES (new.id, COALESCE(new.file_name, ''), COALESCE(new.group_name, ''));
+            END;
+        `);
+    } catch {}
 
     // Smoke-test every column the rest of the code path depends on so a
     // failed migration or CREATE TABLE surfaces at boot, not mid-request.

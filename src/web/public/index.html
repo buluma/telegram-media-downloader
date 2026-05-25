@@ -196,15 +196,6 @@
                     class="md:hidden w-10 h-10 flex items-center justify-center rounded-full hover:bg-tg-hover">
                     <i class="ri-arrow-left-line text-xl text-tg-textSecondary"></i>
                 </button>
-                <div class="flex-1 relative">
-                    <input type="search" id="search-input" name="q" role="searchbox"
-                        autocomplete="off" spellcheck="false"
-                        data-form-type="other"
-                        data-lpignore="true" data-1p-ignore="true" data-bwignore="true"
-                        data-i18n-placeholder="sidebar.search" placeholder="Search"
-                        class="tg-input pl-10 py-2 text-sm">
-                    <i class="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-tg-textSecondary"></i>
-                </div>
             </div>
 
             <!-- Navigation -->
@@ -212,26 +203,34 @@
                  redundant entry-point to the same #/viewer page (the
                  "All Media" card below + the bottom-nav "Library" item
                  already cover it). -->
-            <nav class="border-b border-tg-border/40 py-1">
-                <div class="nav-item flex items-center gap-2.5 px-3 py-1.5 cursor-pointer hover:bg-tg-hover" data-page="groups" data-admin-only
+            <nav class="border-b border-tg-border/40 px-2 py-2 flex flex-col gap-0.5">
+                <div class="nav-item flex items-center gap-2.5 px-2.5 py-2 rounded-lg cursor-pointer hover:bg-tg-hover transition-colors" data-page="groups" data-admin-only
                     onclick="navigateTo('groups')">
-                    <i class="ri-group-line text-base text-tg-textSecondary"></i>
-                    <span class="text-tg-text text-sm" data-i18n="nav.groups">Groups</span>
+                    <div class="w-7 h-7 rounded-md bg-blue-500/10 flex items-center justify-center flex-shrink-0">
+                        <i class="ri-group-line text-sm text-blue-400"></i>
+                    </div>
+                    <span class="text-tg-text text-sm font-medium" data-i18n="nav.groups">Groups</span>
                 </div>
-                <div class="nav-item flex items-center gap-2.5 px-3 py-1.5 cursor-pointer hover:bg-tg-hover" data-page="backfill" data-admin-only
+                <div class="nav-item flex items-center gap-2.5 px-2.5 py-2 rounded-lg cursor-pointer hover:bg-tg-hover transition-colors" data-page="backfill" data-admin-only
                     onclick="navigateTo('backfill')">
-                    <i class="ri-history-line text-base text-tg-textSecondary"></i>
-                    <span class="text-tg-text text-sm" data-i18n="nav.backfill">Backfill</span>
+                    <div class="w-7 h-7 rounded-md bg-purple-500/10 flex items-center justify-center flex-shrink-0">
+                        <i class="ri-history-line text-sm text-purple-400"></i>
+                    </div>
+                    <span class="text-tg-text text-sm font-medium" data-i18n="nav.backfill">Backfill</span>
                 </div>
-                <div class="nav-item flex items-center gap-2.5 px-3 py-1.5 cursor-pointer hover:bg-tg-hover" data-page="queue" data-admin-only
+                <div class="nav-item flex items-center gap-2.5 px-2.5 py-2 rounded-lg cursor-pointer hover:bg-tg-hover transition-colors" data-page="queue" data-admin-only
                     onclick="navigateTo('queue')">
-                    <i class="ri-download-cloud-2-line text-base text-tg-textSecondary"></i>
-                    <span class="text-tg-text text-sm" data-i18n="nav.queue">Queue</span>
+                    <div class="w-7 h-7 rounded-md bg-green-500/10 flex items-center justify-center flex-shrink-0">
+                        <i class="ri-download-cloud-2-line text-sm text-green-400"></i>
+                    </div>
+                    <span class="text-tg-text text-sm font-medium" data-i18n="nav.queue">Queue</span>
                 </div>
-                <div class="nav-item flex items-center gap-2.5 px-3 py-1.5 cursor-pointer hover:bg-tg-hover" data-page="settings"
+                <div class="nav-item flex items-center gap-2.5 px-2.5 py-2 rounded-lg cursor-pointer hover:bg-tg-hover transition-colors" data-page="settings"
                     onclick="navigateTo('settings')">
-                    <i class="ri-settings-3-line text-base text-tg-textSecondary"></i>
-                    <span class="text-tg-text text-sm" data-i18n="nav.settings">Settings</span>
+                    <div class="w-7 h-7 rounded-md bg-gray-500/10 flex items-center justify-center flex-shrink-0">
+                        <i class="ri-settings-3-line text-sm text-gray-400"></i>
+                    </div>
+                    <span class="text-tg-text text-sm font-medium" data-i18n="nav.settings">Settings</span>
                 </div>
                 <!-- Maintenance — single sidebar row that opens a hub
                      page with a card grid for every tool. v2.6
@@ -239,10 +238,12 @@
                      mobile + desktop, so they collapse into one entry.
                      Power users keep the deep links —
                      /maintenance/duplicates etc. still resolve directly. -->
-                <div class="nav-item flex items-center gap-2.5 px-3 py-1.5 cursor-pointer hover:bg-tg-hover" data-page="maintenance" data-admin-only
+                <div class="nav-item flex items-center gap-2.5 px-2.5 py-2 rounded-lg cursor-pointer hover:bg-tg-hover transition-colors" data-page="maintenance" data-admin-only
                     onclick="navigateTo('maintenance')">
-                    <i class="ri-tools-line text-base text-tg-textSecondary"></i>
-                    <span class="text-tg-text text-sm" data-i18n="nav.maintenance.section">Maintenance</span>
+                    <div class="w-7 h-7 rounded-md bg-amber-500/10 flex items-center justify-center flex-shrink-0">
+                        <i class="ri-tools-line text-sm text-amber-400"></i>
+                    </div>
+                    <span class="text-tg-text text-sm font-medium" data-i18n="nav.maintenance.section">Maintenance</span>
                 </div>
                 <!-- Hidden anchors so existing inline-onclick deep-links
                      (settings.js maint cards) keep working without code
@@ -307,9 +308,12 @@
                                     cover LastPass / 1Password / Bitwarden variants explicitly.
                                   - `spellcheck="false"` keeps the red squiggle out of group names.
                             -->
+                            <input type="text" name="prevent_autofill" autocomplete="username"
+                                tabindex="-1" aria-hidden="true"
+                                style="position:absolute;width:0;height:0;overflow:hidden;opacity:0;pointer-events:none">
                             <input type="search" id="sidebar-groups-search" name="filter"
                                 role="searchbox"
-                                autocomplete="off"
+                                autocomplete="nope"
                                 spellcheck="false"
                                 data-form-type="other"
                                 data-lpignore="true"
@@ -327,24 +331,11 @@
                 </div>
             </div>
 
-            <!-- Footer Stats + sign-out — stats on top, full-width sign-out
-                 button below. The sign-out routes through `confirmSheet` to
+            <!-- Footer sign-out. The sign-out routes through `confirmSheet` to
                  guard against fat-finger taps; same endpoint as the deeper
                  "Settings → Privacy & Net → Security" button so both surfaces
                  drop the same session token. -->
             <div class="border-t border-tg-border/40 bg-tg-bg">
-                <div class="hidden px-3 py-2 items-center justify-between text-[11px] gap-2">
-                    <span class="flex items-center gap-1 min-w-0">
-                        <i class="ri-hard-drive-2-line text-tg-textSecondary text-sm" aria-hidden="true"></i>
-                        <span class="text-tg-textSecondary" data-i18n="sidebar.disk">Disk</span>
-                        <span id="disk-usage" class="text-tg-text tabular-nums truncate">--</span>
-                    </span>
-                    <span class="flex items-center gap-1 min-w-0">
-                        <i class="ri-file-list-2-line text-tg-textSecondary text-sm" aria-hidden="true"></i>
-                        <span class="text-tg-textSecondary" data-i18n="sidebar.files">Files</span>
-                        <span id="total-files" class="text-tg-text tabular-nums truncate">--</span>
-                    </span>
-                </div>
                 <button id="sidebar-logout-btn" type="button"
                     class="w-full px-3 py-1.5 flex items-center justify-center gap-1.5 text-xs font-medium text-tg-red hover:text-white hover:bg-tg-red/80 transition-colors border-t border-tg-border/30"
                     data-i18n-aria-label="sidebar.signout" aria-label="Sign out of dashboard"
@@ -1075,8 +1066,11 @@
                         <div class="relative">
                             <i
                                 class="ri-search-line absolute left-3 top-1/2 transform -translate-y-1/2 text-tg-textSecondary"></i>
+                            <input type="text" name="prevent_autofill_2" autocomplete="username"
+                                tabindex="-1" aria-hidden="true"
+                                style="position:absolute;width:0;height:0;overflow:hidden;opacity:0;pointer-events:none">
                             <input type="search" id="groups-search" name="filter" role="searchbox"
-                                autocomplete="off" spellcheck="false"
+                                autocomplete="nope" spellcheck="false"
                                 data-form-type="other"
                                 data-lpignore="true" data-1p-ignore="true" data-bwignore="true"
                                 class="w-full bg-tg-panel border border-tg-border rounded-lg pl-10 pr-4 py-2 text-tg-text focus:ring-1 focus:ring-tg-blue focus:border-tg-blue outline-none"
@@ -4644,20 +4638,46 @@
     </div>
 
     <!-- Status bar -->
-    <footer id="status-bar" data-admin-only class="hidden md:flex fixed bottom-0 left-0 right-0 bg-tg-sidebar border-t border-tg-border px-3 py-1.5 text-xs items-center gap-3 overflow-x-auto z-40" role="status" aria-live="polite">
-        <span class="flex items-center gap-1.5">
-            <span id="status-dot" class="w-2 h-2 rounded-full bg-gray-500"></span>
+    <footer id="status-bar" class="status-bar flex fixed left-0 right-0 bg-tg-sidebar border-t border-tg-border px-3 py-1 md:py-1.5 text-xs items-center gap-2 md:gap-3 overflow-x-auto z-40" role="status" aria-live="polite">
+        <span class="status-chip">
+            <i class="ri-file-3-line text-tg-textSecondary" aria-hidden="true"></i>
+            <span class="status-chip-val" id="status-files">0</span>
+        </span>
+        <span class="status-chip">
+            <i class="ri-hard-drive-2-line text-tg-textSecondary" aria-hidden="true"></i>
+            <span class="status-chip-val" id="status-disk">0 B</span>
+        </span>
+        <span class="status-chip" id="status-groups-chip">
+            <i class="ri-folder-3-line text-tg-textSecondary" aria-hidden="true"></i>
+            <span class="status-chip-val" id="status-groups">0</span>
+        </span>
+
+        <span class="hidden md:inline text-tg-textSecondary/40 select-none" data-admin-only aria-hidden="true">|</span>
+
+        <span class="flex items-center gap-1.5 status-chip" data-admin-only>
+            <span id="status-dot" class="w-2 h-2 rounded-full bg-gray-500 shrink-0"></span>
             <span id="status-state" class="text-tg-textSecondary" data-i18n="status.idle">Idle</span>
         </span>
-        <span class="text-tg-textSecondary">·</span>
-        <span class="text-tg-textSecondary"><span data-i18n="status.queue">Queue:</span> <span id="status-queue" class="text-tg-text">0</span></span>
-        <span class="text-tg-textSecondary"><span data-i18n="status.active">Active:</span> <span id="status-active" class="text-tg-text">0</span></span>
-        <span class="text-tg-textSecondary"><span data-i18n="status.files">Files:</span> <span id="status-files" class="text-tg-text">0</span></span>
-        <span class="text-tg-textSecondary"><span data-i18n="status.disk">Disk:</span> <span id="status-disk" class="text-tg-text">0 B</span></span>
-        <span class="ml-auto text-tg-textSecondary"><span id="status-ws" class="inline-block w-2 h-2 rounded-full bg-gray-500 mr-1"></span>WS</span>
-        <a id="status-update-badge" class="hidden text-[10px] px-1.5 py-0.5 rounded bg-tg-blue/15 text-tg-blue hover:bg-tg-blue/25 font-medium whitespace-nowrap" target="_blank" rel="noopener"></a>
-        <button id="status-update-dismiss" type="button" class="hidden text-[10px] text-tg-textSecondary/70 hover:text-tg-text px-1" title="Dismiss this update notice" aria-label="Dismiss update notice">×</button>
-        <a id="status-version" class="text-[10px] text-tg-textSecondary/70 hover:text-tg-text font-mono whitespace-nowrap" href="https://github.com/buluma/telegram-media-downloader" target="_blank" rel="noopener" title="Build version (commit SHA + build time)"></a>
+        <span class="status-chip hidden md:inline-flex" data-admin-only>
+            <i class="ri-download-cloud-2-line text-tg-textSecondary" aria-hidden="true"></i>
+            <span class="text-tg-textSecondary" data-i18n="status.queue">Q:</span>
+            <span class="status-chip-val" id="status-queue">0</span>
+        </span>
+        <span class="status-chip hidden md:inline-flex" data-admin-only>
+            <i class="ri-loader-2-line text-tg-textSecondary" aria-hidden="true"></i>
+            <span class="text-tg-textSecondary" data-i18n="status.active">A:</span>
+            <span class="status-chip-val" id="status-active">0</span>
+        </span>
+
+        <span class="ml-auto flex items-center gap-2" data-admin-only>
+            <span class="status-chip hidden md:inline-flex" title="WebSocket connection">
+                <span id="status-ws" class="inline-block w-2 h-2 rounded-full bg-gray-500"></span>
+                <span class="text-tg-textSecondary">WS</span>
+            </span>
+            <a id="status-update-badge" class="hidden text-[10px] px-1.5 py-0.5 rounded bg-tg-blue/15 text-tg-blue hover:bg-tg-blue/25 font-medium whitespace-nowrap" target="_blank" rel="noopener"></a>
+            <button id="status-update-dismiss" type="button" class="hidden text-[10px] text-tg-textSecondary/70 hover:text-tg-text px-1" title="Dismiss this update notice" aria-label="Dismiss update notice">×</button>
+            <a id="status-version" class="hidden md:inline text-[10px] text-tg-textSecondary/70 hover:text-tg-text font-mono whitespace-nowrap" href="https://github.com/buluma/telegram-media-downloader" target="_blank" rel="noopener" title="Build version (commit SHA + build time)"></a>
+        </span>
     </footer>
 
     <!-- Media Modal -->
@@ -4708,6 +4728,22 @@
                 <div id="video-tap-layer" class="absolute inset-0 z-10"></div>
 
                 <video id="modal-video" class="max-w-full max-h-full object-contain w-full h-full relative z-0" playsinline></video>
+
+                <!-- Double-tap seek overlays (YouTube-style visual feedback). -->
+                <div id="video-seek-back-overlay"
+                    class="absolute left-0 top-0 w-1/2 h-full flex items-center justify-center z-[15] pointer-events-none opacity-0 transition-opacity duration-200">
+                    <div class="flex flex-col items-center gap-1 text-white">
+                        <i class="ri-rewind-mini-line text-4xl"></i>
+                        <span id="video-seek-back-label" class="text-sm font-medium">5s</span>
+                    </div>
+                </div>
+                <div id="video-seek-fwd-overlay"
+                    class="absolute right-0 top-0 w-1/2 h-full flex items-center justify-center z-[15] pointer-events-none opacity-0 transition-opacity duration-200">
+                    <div class="flex flex-col items-center gap-1 text-white">
+                        <i class="ri-speed-mini-line text-4xl"></i>
+                        <span id="video-seek-fwd-label" class="text-sm font-medium">5s</span>
+                    </div>
+                </div>
 
                 <!-- Center play button — only visible while the video is paused. -->
                 <button id="video-center-play"
@@ -4818,6 +4854,16 @@
                             class="w-10 h-10 rounded-full hover:bg-white/10 flex items-center justify-center text-white transition shrink-0"
                             data-i18n-aria-label="viewer.video.play" aria-label="Play">
                             <i class="ri-play-fill text-2xl"></i>
+                        </button>
+                        <button id="video-skip-back"
+                            class="w-9 h-9 rounded-full hover:bg-white/10 flex items-center justify-center text-white/85 hover:text-white transition shrink-0"
+                            data-i18n-title="viewer.video.skip_back" title="Skip back">
+                            <i class="ri-rewind-mini-line text-lg"></i>
+                        </button>
+                        <button id="video-skip-fwd"
+                            class="w-9 h-9 rounded-full hover:bg-white/10 flex items-center justify-center text-white/85 hover:text-white transition shrink-0"
+                            data-i18n-title="viewer.video.skip_fwd" title="Skip forward">
+                            <i class="ri-speed-mini-line text-lg"></i>
                         </button>
                         <button id="video-mute-btn"
                             class="text-white/90 hover:text-white w-9 h-9 flex items-center justify-center rounded hover:bg-white/10 shrink-0"

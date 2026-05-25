@@ -470,18 +470,64 @@ export function getDownloads(groupId, limit = 50, offset = 0, type = 'all', opts
 export function searchDownloads(query, opts = {}) {
     const limit = Math.max(1, Math.min(500, parseInt(opts.limit, 10) || 50));
     const offset = Math.max(0, parseInt(opts.offset, 10) || 0);
-    const q = `%${String(query || '').trim()}%`;
+    const raw = String(query || '').trim();
+    if (!raw) return { files: [], total: 0 };
+
+    const db = getDb();
+    const ftsQuery = raw
+        .replace(/['"]/g, '')
+        .split(/\s+/)
+        .filter(Boolean)
+        .map((t) => `"${t}"*`)
+        .join(' ');
+
+    if (ftsQuery) {
+        try {
+            const groupFilter = opts.groupId ? ' AND d.group_id = ?' : '';
+            const params = [ftsQuery, ...(opts.groupId ? [String(opts.groupId)] : [])];
+            const rows = db
+                .prepare(
+                    `SELECT d.*, ss.duration_sec
+                       FROM downloads d
+                       LEFT JOIN seekbar_sprites ss ON ss.download_id = d.id
+                       INNER JOIN downloads_fts fts ON fts.rowid = d.id
+                      WHERE downloads_fts MATCH ?${groupFilter}
+                      ORDER BY fts.rank
+                      LIMIT ? OFFSET ?`,
+                )
+                .all(...params, limit, offset);
+            const total = db
+                .prepare(
+                    `SELECT COUNT(*) AS c
+                       FROM downloads d
+                       INNER JOIN downloads_fts fts ON fts.rowid = d.id
+                      WHERE downloads_fts MATCH ?${groupFilter}`,
+                )
+                .get(...params).c;
+            return { files: rows, total };
+        } catch {
+            /* FTS5 unavailable or query unsupported; fall back to LIKE. */
+        }
+    }
+
+    const q = `%${raw}%`;
     const params = [q, q];
-    let where = '(file_name LIKE ? OR group_name LIKE ?)';
+    let where = '(d.file_name LIKE ? OR d.group_name LIKE ?)';
     if (opts.groupId) {
-        where += ' AND group_id = ?';
+        where += ' AND d.group_id = ?';
         params.push(String(opts.groupId));
     }
-    const rows = getDb()
-        .prepare(`SELECT * FROM downloads WHERE ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`)
+    const rows = db
+        .prepare(
+            `SELECT d.*, ss.duration_sec
+               FROM downloads d
+               LEFT JOIN seekbar_sprites ss ON ss.download_id = d.id
+              WHERE ${where}
+              ORDER BY d.created_at DESC LIMIT ? OFFSET ?`,
+        )
         .all(...params, limit, offset);
-    const total = getDb()
-        .prepare(`SELECT COUNT(*) as c FROM downloads WHERE ${where}`)
+    const total = db
+        .prepare(`SELECT COUNT(*) as c FROM downloads d WHERE ${where}`)
         .get(...params).c;
     return { files: rows, total };
 }

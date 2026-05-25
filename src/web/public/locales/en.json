@@ -473,6 +473,8 @@
     "viewer.video.share": "Share",
     "viewer.video.share_title": "Create a share link — friends can open the file without logging in",
     "viewer.video.speed": "Speed",
+    "viewer.video.skip_back": "Skip back",
+    "viewer.video.skip_fwd": "Skip forward",
     "viewer.video.pip": "PiP",
     "viewer.video.fullscreen": "Fullscreen",
     "viewer.video.play": "Play",

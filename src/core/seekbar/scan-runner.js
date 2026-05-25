@@ -16,15 +16,22 @@
  * returns), process them, then ask for the next page.
  */
 
-import { getDb, countVideoDownloads, pageMissingSeekbarVideos, pageSeekbarSprites } from '../db.js';
+import {
+    getDb,
+    countVideoDownloads,
+    pageMissingSeekbarVideos,
+    pageSeekbarSprites,
+    upsertSeekbarSprite,
+} from '../db.js';
 import { generateForDownload, getSeekbarConfig } from './generator.js';
 
 const PAGE_SIZE = 100;
-const YIELD_EVERY = 5;
+const DEFAULT_CONCURRENCY = 6;
 const PROGRESS_EVERY_MS = 1000;
 
 export async function buildAllSeekbar({ onProgress, signal } = {}) {
     const cfg = getSeekbarConfig();
+    const concurrency = Math.max(1, Math.min(16, Number(cfg.concurrency) || DEFAULT_CONCURRENCY));
     const total = countVideoDownloads();
     let processed = 0;
     let generated = 0;
@@ -50,6 +57,53 @@ export async function buildAllSeekbar({ onProgress, signal } = {}) {
 
     emit('start');
 
+    const markTerminal = (row, reason) => {
+        try {
+            upsertSeekbarSprite({
+                downloadId: row.id,
+                spritePath: '',
+                metaPath: '',
+                durationSec: null,
+                frames: 0,
+                cols: 0,
+                rows: 0,
+                tileW: 0,
+                tileH: 0,
+                intervalSec: null,
+                format: reason,
+                bytes: 0,
+                sourceSize: Number(row.file_size) || null,
+                sourceMtime: null,
+                generatedAt: Date.now(),
+            });
+        } catch {}
+    };
+
+    const processOne = async (row) => {
+        try {
+            const meta = await generateForDownload(row, cfg, {
+                overwrite: 'if-changed',
+                signal,
+                sync: true,
+            });
+            if (meta && !meta.pending && !meta.skipped) generated++;
+            else {
+                skipped++;
+                if (meta?.skipped) markTerminal(row, meta.skipped);
+            }
+        } catch (e) {
+            errored++;
+            if (
+                /does not contain any stream|no video stream|Invalid data found|Invalid NAL|moov atom not found/i.test(
+                    e?.message || '',
+                )
+            ) {
+                markTerminal(row, 'failed');
+            }
+        }
+        processed++;
+    };
+
     let cursor = Number.MAX_SAFE_INTEGER;
     // Outer loop: each iteration pulls a page of IDs synchronously (the
     // DB statement opens + closes within this call, so the connection is
@@ -59,19 +113,13 @@ export async function buildAllSeekbar({ onProgress, signal } = {}) {
         if (signal?.aborted) break;
         const rows = pageMissingSeekbarVideos({ beforeId: cursor, limit: PAGE_SIZE });
         if (!rows.length) break;
-        for (const row of rows) {
+        for (let i = 0; i < rows.length; i += concurrency) {
             if (signal?.aborted) break;
-            try {
-                const meta = await generateForDownload(row, cfg, { overwrite: 'if-changed' });
-                if (meta) generated++;
-                else skipped++;
-            } catch (_e) {
-                errored++;
-            }
-            processed++;
-            cursor = Number(row.id) || cursor;
+            const batch = rows.slice(i, i + concurrency);
+            await Promise.all(batch.map(processOne));
+            cursor = Number(batch[batch.length - 1].id) || cursor;
             const now = Date.now();
-            if (processed % YIELD_EVERY === 0 || now - lastEmit >= PROGRESS_EVERY_MS) {
+            if (now - lastEmit >= PROGRESS_EVERY_MS) {
                 lastEmit = now;
                 emit('progress');
                 await new Promise((r) => setImmediate(r));

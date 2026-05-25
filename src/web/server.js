@@ -533,12 +533,26 @@ app.use(
                 'object-src': ["'none'"],
                 'frame-src': ["'self'"],
                 'frame-ancestors': ["'self'"],
+                'upgrade-insecure-requests': null,
             },
         },
         crossOriginEmbedderPolicy: false,
         crossOriginResourcePolicy: { policy: 'same-origin' },
     }),
 );
+
+app.use(async (req, res, next) => {
+    try {
+        const config = await readConfigSafe();
+        if (config.web?.forceHttps && req.secure) {
+            const csp = res.getHeader('Content-Security-Policy');
+            if (csp && !String(csp).includes('upgrade-insecure-requests')) {
+                res.setHeader('Content-Security-Policy', `${csp};upgrade-insecure-requests`);
+            }
+        }
+    } catch {}
+    next();
+});
 
 // HTTP caching policy. Browsers (and intermediaries like Cloudflare) will
 // happily serve a 200 from disk for several seconds even on responses with

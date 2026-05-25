@@ -586,9 +586,16 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                         if (framePaths.length) {
                             _safeDeleteFaces(row.id, log);
                             try {
-                                for (const frameAbs of framePaths) {
+                                const faceResults = await detectFacesBatch(
+                                    framePaths,
+                                    cfg,
+                                    logEntry,
+                                );
+                                for (let i = 0; i < framePaths.length; i++) {
                                     if (signal.aborted) break;
-                                    const faces = await detectFaces(frameAbs, cfg, logEntry);
+                                    const faces =
+                                        faceResults[i] ??
+                                        (await detectFaces(framePaths[i], cfg, logEntry));
                                     if (Array.isArray(faces) && faces.length) {
                                         for (const f of faces) {
                                             _safeInsertFace(

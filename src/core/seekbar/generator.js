@@ -249,7 +249,8 @@ async function _runSpriteFfmpeg({ srcAbs, dstAbs, plan, cfg }) {
 /**
  * Generate the sprite + JSON for one downloads.id. Returns the metadata
  * row that was written to `seekbar_sprites`, or null if the source
- * couldn't be processed (file missing, ffprobe failed, …).
+ * couldn't be processed, or `{ skipped: reason }` when the scan should
+ * persist a terminal skip reason so future backfills do not retry it forever.
  *
  * `opts.overwrite` controls deterministic skipping:
  *   'never'      — never regenerate; if sprite + JSON exist, return null
@@ -266,7 +267,7 @@ export async function generateForDownload(row, cfg = null, opts = {}) {
     const conf = { ...(cfg || getSeekbarConfig()) };
     const overwrite = opts.overwrite || 'if-changed';
     const srcAbs = _resolveDownloadAbs(row.file_path);
-    if (!srcAbs) return null;
+    if (!srcAbs) return { skipped: 'missing' };
 
     const sourceStat = (() => {
         try {
@@ -292,6 +293,25 @@ export async function generateForDownload(row, cfg = null, opts = {}) {
                 prior.source_mtime === sourceStat.mtime &&
                 prior.frames > 0
             ) {
+                try {
+                    upsertSeekbarSprite({
+                        downloadId: id,
+                        spritePath: dstAbs,
+                        metaPath: metaAbs,
+                        durationSec: prior.duration_sec ?? null,
+                        frames: prior.frames,
+                        cols: prior.cols ?? 0,
+                        rows: prior.rows ?? 0,
+                        tileW: prior.tile_w ?? 0,
+                        tileH: prior.tile_h ?? null,
+                        intervalSec: prior.interval_sec ?? null,
+                        format: prior.format || format,
+                        bytes: prior.bytes ?? null,
+                        sourceSize: sourceStat.size,
+                        sourceMtime: sourceStat.mtime,
+                        generatedAt: prior.generated_at ?? Date.now(),
+                    });
+                } catch {}
                 return null;
             }
         } catch {
@@ -300,7 +320,7 @@ export async function generateForDownload(row, cfg = null, opts = {}) {
     }
 
     const duration = await _ffprobeDuration(srcAbs);
-    if (!duration) return null;
+    if (!duration) return { skipped: 'no_duration' };
 
     const plan = planSprite(duration, conf);
     await _ensureSeekbarDir();
@@ -397,6 +417,12 @@ export async function generateForDownload(row, cfg = null, opts = {}) {
             return null;
         }
     })();
+    if (!spriteSize) {
+        try {
+            await fs.unlink(dstAbs);
+        } catch {}
+        throw new Error('does not contain any stream (0-byte sprite)');
+    }
 
     const meta = {
         version: 1,
