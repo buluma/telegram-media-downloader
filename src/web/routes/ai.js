@@ -128,6 +128,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
 
     const _AI_ROUTE_CACHE = new Map();
     const _AI_ROUTE_INFLIGHT = new Map();
+    const _AI_ROUTE_SLOW_WARN_MS = 5000;
     async function _cachedAiRoute(key, ttlMs, producer) {
         const now = Date.now();
         const cached = _AI_ROUTE_CACHE.get(key);
@@ -140,7 +141,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             .then((data) => {
                 _AI_ROUTE_CACHE.set(key, { ts: Date.now(), data });
                 const elapsed = Date.now() - start;
-                if (elapsed > 1000) {
+                if (elapsed > _AI_ROUTE_SLOW_WARN_MS) {
                     log({
                         source: 'ai-route',
                         level: 'warn',
@@ -359,23 +360,27 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
     }
 
     const _AI_ISSUES_TTL_MS = 60_000;
-    const _AI_ISSUES_CACHE = { ts: 0, data: null };
-    let _AI_ISSUES_INFLIGHT = null;
-    async function _getAiIssuesSnapshot({ force = false } = {}) {
+    const _AI_ISSUES_CACHE = new Map();
+    const _AI_ISSUES_INFLIGHT = new Map();
+    async function _getAiIssuesSnapshot({ force = false, full = false } = {}) {
         const now = Date.now();
-        if (!force && _AI_ISSUES_CACHE.data && now - _AI_ISSUES_CACHE.ts < _AI_ISSUES_TTL_MS) {
-            return _AI_ISSUES_CACHE.data;
+        const key = full ? 'full' : 'quick';
+        const cached = _AI_ISSUES_CACHE.get(key);
+        if (!force && cached?.data && now - cached.ts < _AI_ISSUES_TTL_MS) {
+            return cached.data;
         }
-        if (_AI_ISSUES_INFLIGHT) return _AI_ISSUES_INFLIGHT;
-        _AI_ISSUES_INFLIGHT = _buildAiIssuesSnapshot(now);
+        const inflight = _AI_ISSUES_INFLIGHT.get(key);
+        if (inflight) return inflight;
+        const p = _buildAiIssuesSnapshot(now, { full });
+        _AI_ISSUES_INFLIGHT.set(key, p);
         try {
-            return await _AI_ISSUES_INFLIGHT;
+            return await p;
         } finally {
-            _AI_ISSUES_INFLIGHT = null;
+            _AI_ISSUES_INFLIGHT.delete(key);
         }
     }
 
-    async function _buildAiIssuesSnapshot(now) {
+    async function _buildAiIssuesSnapshot(now, { full = false } = {}) {
         const start = Date.now();
         const db = getDb();
         const issues = [];
@@ -418,110 +423,114 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             samples: [],
         });
 
-        const { sniffMediaFile } = await import('../../core/media-sniff.js');
-        const rows = db
-            .prepare(
-                `SELECT id, file_name, file_type, file_path, file_size
-                   FROM downloads
-                  WHERE file_path IS NOT NULL
-                  ORDER BY id DESC
-                  LIMIT 20000`,
-            )
-            .all();
-        let missing = 0;
-        let mislabeled = 0;
-        let invalidPhotos = 0;
-        let folderMismatch = 0;
-        const missingSamples = [];
-        const mislabeledSamples = [];
-        const invalidSamples = [];
-        const folderSamples = [];
-        const expectedFolderFor = (ft) =>
-            ft === 'photo'
-                ? 'images'
-                : ft === 'video'
-                  ? 'videos'
-                  : ft === 'audio'
-                    ? 'audio'
-                    : 'documents';
-        for (const row of rows) {
-            const fp = String(row.file_path || '').replace(/\\/g, '/');
-            if (fp.startsWith('_clusterref/')) continue;
-            const abs = _resolveAiPath(fp);
-            if (!abs) {
-                missing += 1;
-                if (missingSamples.length < 20) missingSamples.push(row);
-                continue;
-            }
-            const parts = fp.split('/');
-            const folder = parts.length >= 3 ? parts[1] : '';
-            const expectedFolder = expectedFolderFor(row.file_type);
-            if (folder && expectedFolder && folder !== expectedFolder) {
-                folderMismatch += 1;
-                if (folderSamples.length < 20)
-                    folderSamples.push({ ...row, folder, expectedFolder });
-            }
-            try {
-                const sniff = await sniffMediaFile(abs);
-                if (sniff.fileType && sniff.fileType !== row.file_type) {
-                    mislabeled += 1;
-                    if (mislabeledSamples.length < 20) {
-                        mislabeledSamples.push({
-                            ...row,
-                            actualType: sniff.fileType,
-                            mime: sniff.mime,
-                        });
+        let scannedRows = 0;
+        if (full) {
+            const { sniffMediaFile } = await import('../../core/media-sniff.js');
+            const rows = db
+                .prepare(
+                    `SELECT id, file_name, file_type, file_path, file_size
+                       FROM downloads
+                      WHERE file_path IS NOT NULL
+                      ORDER BY id DESC
+                      LIMIT 20000`,
+                )
+                .all();
+            scannedRows = rows.length;
+            let missing = 0;
+            let mislabeled = 0;
+            let invalidPhotos = 0;
+            let folderMismatch = 0;
+            const missingSamples = [];
+            const mislabeledSamples = [];
+            const invalidSamples = [];
+            const folderSamples = [];
+            const expectedFolderFor = (ft) =>
+                ft === 'photo'
+                    ? 'images'
+                    : ft === 'video'
+                      ? 'videos'
+                      : ft === 'audio'
+                        ? 'audio'
+                        : 'documents';
+            for (const row of rows) {
+                const fp = String(row.file_path || '').replace(/\\/g, '/');
+                if (fp.startsWith('_clusterref/')) continue;
+                const abs = _resolveAiPath(fp);
+                if (!abs) {
+                    missing += 1;
+                    if (missingSamples.length < 20) missingSamples.push(row);
+                    continue;
+                }
+                const parts = fp.split('/');
+                const folder = parts.length >= 3 ? parts[1] : '';
+                const expectedFolder = expectedFolderFor(row.file_type);
+                if (folder && expectedFolder && folder !== expectedFolder) {
+                    folderMismatch += 1;
+                    if (folderSamples.length < 20)
+                        folderSamples.push({ ...row, folder, expectedFolder });
+                }
+                try {
+                    const sniff = await sniffMediaFile(abs);
+                    if (sniff.fileType && sniff.fileType !== row.file_type) {
+                        mislabeled += 1;
+                        if (mislabeledSamples.length < 20) {
+                            mislabeledSamples.push({
+                                ...row,
+                                actualType: sniff.fileType,
+                                mime: sniff.mime,
+                            });
+                        }
+                    }
+                    if (
+                        row.file_type === 'photo' &&
+                        sniff.mime &&
+                        !String(sniff.mime).startsWith('image/')
+                    ) {
+                        invalidPhotos += 1;
+                        if (invalidSamples.length < 20)
+                            invalidSamples.push({ ...row, mime: sniff.mime });
+                    }
+                } catch (e) {
+                    if (row.file_type === 'photo') {
+                        invalidPhotos += 1;
+                        if (invalidSamples.length < 20)
+                            invalidSamples.push({ ...row, error: e?.message || String(e) });
                     }
                 }
-                if (
-                    row.file_type === 'photo' &&
-                    sniff.mime &&
-                    !String(sniff.mime).startsWith('image/')
-                ) {
-                    invalidPhotos += 1;
-                    if (invalidSamples.length < 20)
-                        invalidSamples.push({ ...row, mime: sniff.mime });
-                }
-            } catch (e) {
-                if (row.file_type === 'photo') {
-                    invalidPhotos += 1;
-                    if (invalidSamples.length < 20)
-                        invalidSamples.push({ ...row, error: e?.message || String(e) });
-                }
             }
+            push({
+                type: 'missing_files',
+                severity: 'warn',
+                title: 'Database rows with missing files',
+                count: missing,
+                detail: 'Rows in downloads point at files that are not present on disk.',
+                samples: missingSamples,
+            });
+            push({
+                type: 'mislabeled_media',
+                severity: 'warn',
+                title: 'Mislabeled media rows',
+                count: mislabeled,
+                detail: 'The stored file_type does not match the bytes on disk.',
+                samples: mislabeledSamples,
+            });
+            push({
+                type: 'invalid_photos',
+                severity: 'warn',
+                title: 'Photo rows that are not decodable images',
+                count: invalidPhotos,
+                detail: 'These rows would fail image-only scanners such as OCR or NSFW.',
+                samples: invalidSamples,
+            });
+            push({
+                type: 'folder_mismatch',
+                severity: 'info',
+                title: 'Rows in unexpected media folders',
+                count: folderMismatch,
+                detail: 'File path folder does not match file_type convention.',
+                samples: folderSamples,
+            });
         }
-        push({
-            type: 'missing_files',
-            severity: 'warn',
-            title: 'Database rows with missing files',
-            count: missing,
-            detail: 'Rows in downloads point at files that are not present on disk.',
-            samples: missingSamples,
-        });
-        push({
-            type: 'mislabeled_media',
-            severity: 'warn',
-            title: 'Mislabeled media rows',
-            count: mislabeled,
-            detail: 'The stored file_type does not match the bytes on disk.',
-            samples: mislabeledSamples,
-        });
-        push({
-            type: 'invalid_photos',
-            severity: 'warn',
-            title: 'Photo rows that are not decodable images',
-            count: invalidPhotos,
-            detail: 'These rows would fail image-only scanners such as OCR or NSFW.',
-            samples: invalidSamples,
-        });
-        push({
-            type: 'folder_mismatch',
-            severity: 'info',
-            title: 'Rows in unexpected media folders',
-            count: folderMismatch,
-            detail: 'File path folder does not match file_type convention.',
-            samples: folderSamples,
-        });
 
         // Durable scan failures from media_scan_state (WD14 writes here on sidecar error).
         try {
@@ -568,19 +577,19 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             success: true,
             generatedAt: now,
             ttlMs: _AI_ISSUES_TTL_MS,
-            scannedRows: rows.length,
+            mode: full ? 'full' : 'quick',
+            scannedRows,
             total: issues.length,
             counts: Object.fromEntries(issues.map((i) => [i.type, i.count])),
             issues,
         };
-        _AI_ISSUES_CACHE.ts = now;
-        _AI_ISSUES_CACHE.data = data;
+        _AI_ISSUES_CACHE.set(full ? 'full' : 'quick', { ts: now, data });
         const elapsed = Date.now() - start;
-        if (elapsed > 1000) {
+        if (elapsed > _AI_ROUTE_SLOW_WARN_MS) {
             log({
                 source: 'ai-route',
                 level: 'warn',
-                msg: `/api/ai/issues generated in ${elapsed}ms (rows=${rows.length}, issues=${issues.length})`,
+                msg: `/api/ai/issues generated in ${elapsed}ms (mode=${data.mode}, rows=${scannedRows}, issues=${issues.length})`,
             });
         }
         return data;
@@ -768,7 +777,8 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
     router.get('/ai/issues', async (req, res) => {
         try {
             const force = req.query.force === '1' || req.query.refresh === '1';
-            res.json(await _getAiIssuesSnapshot({ force }));
+            const full = req.query.full === '1' || req.query.mode === 'full';
+            res.json(await _getAiIssuesSnapshot({ force, full }));
         } catch (e) {
             res.status(500).json({ error: e?.message || String(e), code: 'AI_ISSUES_FAILED' });
         }
