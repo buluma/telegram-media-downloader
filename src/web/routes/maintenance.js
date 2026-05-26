@@ -32,7 +32,10 @@ import {
     refreshSidecar as refreshSeekbarSidecar,
     SIDECAR_VERSION as SEEKBAR_SIDECAR_VERSION,
 } from '../../core/seekbar/spawn.js';
-import { probeHwaccel as probeSeekbarHwaccel } from '../../core/seekbar/client.js';
+import {
+    probeHwaccel as probeSeekbarHwaccel,
+    stats as getSeekbarSidecarStats,
+} from '../../core/seekbar/client.js';
 import { getSeekbarSprite } from '../../core/db/seekbar.js';
 import {
     clearNsfwBlocklist,
@@ -1132,6 +1135,31 @@ export function createMaintenanceRouter({
             const stats = getSeekbarCacheStats();
             const sidecar = getSeekbarSidecarStatus();
             res.json({ success: true, sidecar, ffmpegAvailable: hasFfmpeg(), ...stats });
+        } catch (e) {
+            res.status(500).json({ error: e?.message || String(e) });
+        }
+    });
+
+    router.get('/maintenance/seekbar/queue/stats', async (req, res) => {
+        try {
+            const build = jobTrackers.seekbarBuild.getStatus();
+            const rebuild = jobTrackers.seekbarRebuild.getStatus();
+            const running = Boolean(build.running || rebuild.running);
+            let sidecarStats = null;
+            if (getSeekbarSidecarStatus()?.ok) {
+                try {
+                    sidecarStats = await getSeekbarSidecarStats();
+                } catch {}
+            }
+            const cache = getSeekbarCacheStats();
+            res.json({
+                success: true,
+                running,
+                queued: Number(sidecarStats?.queued || 0),
+                processing: Number(sidecarStats?.processing || 0),
+                completed: Number(sidecarStats?.completed ?? cache.count ?? 0),
+                failed: Number(sidecarStats?.failed || 0),
+            });
         } catch (e) {
             res.status(500).json({ error: e?.message || String(e) });
         }

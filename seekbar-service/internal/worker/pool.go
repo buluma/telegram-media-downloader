@@ -68,7 +68,7 @@ type SpriteMeta struct {
 
 // ProgressFunc is called after each completed/failed job so the host
 // process (or SSE/WS relay) can report % completion.
-type ProgressFunc func(done, total, generated, errored int)
+type ProgressFunc func(done, total, generated, errored, queued int)
 
 // Pool manages concurrent sprite workers.
 type Pool struct {
@@ -84,8 +84,8 @@ type Pool struct {
 	genErr  int32
 	running int32
 
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
 	onProgress ProgressFunc
 }
 
@@ -105,13 +105,39 @@ func (p *Pool) Submit(j *Job) {
 	defer p.mu.Unlock()
 	j.Status = "pending"
 	j.CreatedAt = time.Now().UnixMilli()
-	p.queue = append(p.queue, j)
+	if j.Priority == 0 {
+		insertAt := len(p.queue)
+		for i, q := range p.queue {
+			if q.Priority > 0 {
+				insertAt = i
+				break
+			}
+		}
+		p.queue = append(p.queue, nil)
+		copy(p.queue[insertAt+1:], p.queue[insertAt:])
+		p.queue[insertAt] = j
+	} else {
+		p.queue = append(p.queue, j)
+	}
 	p.total++
 }
 
-// Start launches worker goroutines. Call Stop or cancel the parent ctx
-// to drain.
-func (p *Pool) Start(ctx context.Context) {
+func (p *Pool) Cancel(id string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, j := range p.queue {
+		if j.ID == id && j.Status == "pending" {
+			j.Status = "cancelled"
+			j.FinishedAt = time.Now().UnixMilli()
+			return true
+		}
+	}
+	return false
+}
+
+// Start launches worker goroutines. Call Stop or cancel the parent ctx to drain.
+// It returns the resolved hwaccel backend so callers can expose it in health.
+func (p *Pool) Start(ctx context.Context) ffmpeg.HWAccelBackend {
 	// Resolve hwaccel once at boot rather than per-job.
 	hwa, err := ffmpeg.Resolve(ctx, p.cfg.FFmpeg.Path, p.cfg.FFmpeg.HWAccel, p.cfg.FFmpeg.VAAPIDevice)
 	if err != nil {
@@ -120,6 +146,8 @@ func (p *Pool) Start(ctx context.Context) {
 	p.hwArgs = ffmpeg.Args(hwa, p.cfg.FFmpeg.VAAPIDevice)
 	if len(p.hwArgs) > 0 {
 		p.log.Info("hwaccel active", "backend", string(hwa))
+	} else {
+		p.log.Info("hwaccel not available, using CPU decode")
 	}
 
 	ctx, p.cancel = context.WithCancel(ctx)
@@ -131,6 +159,7 @@ func (p *Pool) Start(ctx context.Context) {
 		p.wg.Add(1)
 		go p.worker(ctx)
 	}
+	return hwa
 }
 
 // Stop signals cancellation and waits for in-flight jobs to finish.
@@ -141,8 +170,19 @@ func (p *Pool) Stop() {
 	p.wg.Wait()
 }
 
-// Stats returns a snapshot of the pool progress.
-func (p *Pool) Stats() (total, done, genOk, genErr, queued int) {
+// Stats returns a snapshot of pool counters.
+func (p *Pool) Stats() (queued, processing, completed, failed int) {
+	p.mu.Lock()
+	queued = len(p.queue)
+	p.mu.Unlock()
+	return queued,
+		int(atomic.LoadInt32(&p.running)),
+		int(atomic.LoadInt32(&p.genOk)),
+		int(atomic.LoadInt32(&p.genErr))
+}
+
+// LegacyStats returns the previous tuple for CLI/progress callers.
+func (p *Pool) LegacyStats() (total, done, genOk, genErr, queued int) {
 	p.mu.Lock()
 	queued = len(p.queue)
 	total = p.total
@@ -159,8 +199,12 @@ func (p *Pool) next() *Job {
 	}
 	j := p.queue[0]
 	p.queue = p.queue[1:]
-	j.Status = "running"
-	j.StartedAt = time.Now().UnixMilli()
+	if j.Status != "cancelled" {
+		j.Status = "running"
+		j.StartedAt = time.Now().UnixMilli()
+	} else {
+		j.FinishedAt = time.Now().UnixMilli()
+	}
 	return j
 }
 
@@ -182,12 +226,25 @@ func (p *Pool) worker(ctx context.Context) {
 				continue
 			}
 		}
+		if j.Status == "cancelled" {
+			d := int(atomic.AddInt32(&p.done, 1))
+			if p.onProgress != nil {
+				p.mu.Lock()
+				q := len(p.queue)
+				p.mu.Unlock()
+				p.onProgress(d, p.total, int(atomic.LoadInt32(&p.genOk)), int(atomic.LoadInt32(&p.genErr)), q)
+			}
+			continue
+		}
 		atomic.AddInt32(&p.running, 1)
 		p.processJob(ctx, j)
 		atomic.AddInt32(&p.running, -1)
 		d := int(atomic.AddInt32(&p.done, 1))
 		if p.onProgress != nil {
-			p.onProgress(d, p.total, int(atomic.LoadInt32(&p.genOk)), int(atomic.LoadInt32(&p.genErr)))
+			p.mu.Lock()
+			q := len(p.queue)
+			p.mu.Unlock()
+			p.onProgress(d, p.total, int(atomic.LoadInt32(&p.genOk)), int(atomic.LoadInt32(&p.genErr)), q)
 		}
 	}
 }

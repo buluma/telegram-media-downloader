@@ -22,6 +22,7 @@ import { existsSync } from 'fs';
 import fs from 'fs/promises';
 
 import {
+    countVideoDownloads,
     countSeekbarSprites,
     deleteSeekbarSprite,
     getSeekbarSprite,
@@ -169,6 +170,7 @@ export async function purgeSeekbarForDownload(downloadId) {
 export function getSeekbarCacheStats() {
     return {
         count: countSeekbarSprites(),
+        totalVideos: countVideoDownloads(),
         bytes: sumSeekbarBytes(),
     };
 }

@@ -516,6 +516,10 @@ export function createConfigRouter({
                 sk.sidecarUrl = typeof sk.sidecarUrl === 'string' ? sk.sidecarUrl.trim() : '';
                 sk.apiToken =
                     typeof sk.apiToken === 'string' ? sk.apiToken.trim().slice(0, 256) : '';
+                sk.sidecarPathFrom =
+                    typeof sk.sidecarPathFrom === 'string' ? sk.sidecarPathFrom.trim() : '';
+                sk.sidecarPathTo =
+                    typeof sk.sidecarPathTo === 'string' ? sk.sidecarPathTo.trim() : '';
 
                 newConfig.advanced = merged;
             }

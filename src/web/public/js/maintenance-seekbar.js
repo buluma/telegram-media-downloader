@@ -15,6 +15,7 @@ import { formatBytes, showToast } from './utils.js';
 import { ws } from './ws.js';
 
 let _wsWired = false;
+let _buttonsWired = false;
 let _running = false;
 let _initDone = false;
 
@@ -50,6 +51,7 @@ export async function init() {
         _refreshHealth(),
         _recoverBuildState(),
         _syncToggleState(),
+        _refreshQueueStats(),
     ]);
 }
 
@@ -125,8 +127,11 @@ async function _syncToggleState() {
 }
 
 function _wireButtons() {
+    if (_buttonsWired) return;
+    _buttonsWired = true;
     document.getElementById('seekbar-scan-btn')?.addEventListener('click', () => _startScan());
     document.getElementById('seekbar-cancel-btn')?.addEventListener('click', () => _cancelScan());
+    document.getElementById('seekbar-scan-cta')?.addEventListener('click', () => _startScan());
     document.getElementById('seekbar-wipe-btn')?.addEventListener('click', () => _wipeCache());
     document
         .getElementById('seekbar-restart-btn')
@@ -146,14 +151,16 @@ async function _startScan() {
         if (r?.started) {
             _setBuildUi(true);
             showToast(i18nT('maintenance.seekbar.scan_started', 'Scan started'));
-        } else if (r?.code === 'ALREADY_RUNNING') {
+        }
+    } catch (e) {
+        if (e?.status === 409 || e?.data?.code === 'ALREADY_RUNNING') {
             showToast(
                 i18nT('maintenance.seekbar.already_running', 'A scan is already running'),
                 'info',
             );
             _setBuildUi(true);
+            return;
         }
-    } catch (e) {
         showToast(e?.data?.error || e?.message || 'Failed to start scan', 'error');
     }
 }
@@ -239,13 +246,36 @@ function _renderHwaccelChips(r) {
 async function _refreshStats() {
     const r = await _safeGet('/api/maintenance/seekbar/stats');
     if (!r) return;
-    document.getElementById('seekbar-kpi-indexed').textContent = Number(
-        r.count || 0,
-    ).toLocaleString();
+    const count = Number(r.count || 0);
+    const total = Number(r.totalVideos || 0);
+    document.getElementById('seekbar-kpi-indexed').textContent = count.toLocaleString();
     document.getElementById('seekbar-kpi-disk').textContent = formatBytes(r.bytes || 0);
-    document.getElementById('seekbar-kpi-ffmpeg').textContent = r.ffmpegAvailable
-        ? i18nT('maintenance.seekbar.ffmpeg.ok', 'available')
-        : i18nT('maintenance.seekbar.ffmpeg.missing', 'missing');
+    const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+    const covEl = document.getElementById('seekbar-kpi-coverage');
+    if (covEl) covEl.textContent = total > 0 ? `${pct}%` : '—';
+    const wrap = document.getElementById('seekbar-coverage-wrap');
+    const bar = document.getElementById('seekbar-coverage-bar');
+    const label = document.getElementById('seekbar-coverage-label');
+    const cta = document.getElementById('seekbar-scan-cta');
+    if (wrap && bar && label) {
+        wrap.classList.remove('hidden');
+        bar.style.width = `${pct}%`;
+        bar.className = `h-full transition-all duration-500 rounded-full ${pct >= 100 ? 'bg-tg-green' : pct >= 50 ? 'bg-tg-blue' : 'bg-yellow-400'}`;
+        label.textContent =
+            total > 0
+                ? `${count.toLocaleString()} / ${total.toLocaleString()} videos have previews`
+                : i18nT('maintenance.seekbar.coverage.none', 'No videos yet');
+        if (cta) cta.classList.toggle('hidden', pct >= 100 || total === 0);
+    }
+    const ffmpegLine = document.getElementById('seekbar-ffmpeg-line');
+    const ffmpegVal = document.getElementById('seekbar-kpi-ffmpeg');
+    if (ffmpegLine && ffmpegVal) {
+        ffmpegLine.classList.remove('hidden');
+        ffmpegVal.textContent = r.ffmpegAvailable
+            ? i18nT('maintenance.seekbar.ffmpeg.ok', 'available')
+            : i18nT('maintenance.seekbar.ffmpeg.missing', 'missing');
+        ffmpegVal.className = `font-mono ${r.ffmpegAvailable ? 'text-tg-green' : 'text-red-400'}`;
+    }
     if (r.sidecar) _renderSidecarStatus(r.sidecar);
 }
 
@@ -277,6 +307,7 @@ function _setBuildUi(running) {
     if (scan) scan.disabled = running;
     if (cancel) cancel.disabled = !running;
     if (progress) progress.classList.toggle('hidden', !running);
+    _refreshQueueStats().catch(() => {});
 }
 
 function _onProgress(p) {
@@ -304,6 +335,7 @@ function _onDone(p) {
     _setBuildUi(false);
     _refreshStats().catch(() => {});
     _refreshLastBuild().catch(() => {});
+    _refreshQueueStats().catch(() => {});
     if (p?.cancelled) {
         showToast(i18nT('maintenance.seekbar.cancelled', 'Scan cancelled'));
     } else {
@@ -317,6 +349,39 @@ function _onDone(p) {
             ),
             errored ? 'warning' : 'success',
         );
+    }
+}
+
+async function _refreshQueueStats() {
+    const r = await _safeGet('/api/maintenance/seekbar/queue/stats');
+    if (!r) return;
+    const running = Boolean(r.running);
+    const set = (id, val) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = val != null ? Number(val).toLocaleString() : '—';
+    };
+    document.getElementById('seekbar-queue-idle-badge')?.classList.toggle('hidden', running);
+    document.getElementById('seekbar-queue-live-badge')?.classList.toggle('hidden', !running);
+    document.getElementById('seekbar-queue-active')?.classList.toggle('hidden', !running);
+    document.getElementById('seekbar-queue-idle-line')?.classList.toggle('hidden', running);
+
+    if (running) {
+        set('seekbar-queue-queued', r.queued);
+        set('seekbar-queue-processing', r.processing);
+        set('seekbar-queue-completed', r.completed);
+        set('seekbar-queue-failed', r.failed);
+        return;
+    }
+    const idleLine = document.getElementById('seekbar-queue-idle-line');
+    if (idleLine) {
+        const total = Number(r.completed || 0);
+        idleLine.textContent =
+            total > 0
+                ? `${total.toLocaleString()} sprites generated · no scan running`
+                : i18nT(
+                      'maintenance.seekbar.queue.idle_none',
+                      'No sprites yet — click Scan now to generate previews for your library.',
+                  );
     }
 }
 

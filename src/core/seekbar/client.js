@@ -28,6 +28,13 @@ async function _fetch(path, opts = {}) {
     if (!_baseUrl) throw new Error('seekbar sidecar URL not configured');
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), opts.timeoutMs || 120_000);
+    if (opts.signal) {
+        if (opts.signal.aborted) {
+            ctrl.abort();
+        } else {
+            opts.signal.addEventListener('abort', () => ctrl.abort(), { once: true });
+        }
+    }
     try {
         const r = await fetch(_baseUrl + path, {
             ...opts,
@@ -50,14 +57,22 @@ async function _fetch(path, opts = {}) {
 }
 
 export async function health() {
-    return _fetch('/health', { method: 'GET', timeoutMs: 5_000 });
+    let lastErr = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+            return await _fetch('/health', { method: 'GET', timeoutMs: 5_000 });
+        } catch (e) {
+            lastErr = e;
+        }
+    }
+    return { ok: false, error: lastErr?.message || String(lastErr) };
 }
 
 /**
  * Submit one video. The Go service returns the metadata row (or a
  * pending stub when `async:true`).
  */
-export async function submitOne({ videoId, srcPath, priority = 1, async = false }) {
+export async function submitOne({ videoId, srcPath, priority = 1, async = false, signal = null }) {
     return _fetch('/v1/sprite', {
         method: 'POST',
         body: JSON.stringify({
@@ -69,6 +84,7 @@ export async function submitOne({ videoId, srcPath, priority = 1, async = false 
         // Long timeout for sync mode — a 30-min clip can take a while
         // on a Pi class device even with hwaccel.
         timeoutMs: 10 * 60_000,
+        signal,
     });
 }
 

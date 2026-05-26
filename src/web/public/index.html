@@ -2678,6 +2678,10 @@
                                 <div id="seekbar-kpi-indexed" class="text-xl font-semibold text-tg-text tabular-nums">—</div>
                             </div>
                             <div class="bg-tg-bg/40 rounded-lg p-3">
+                                <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.seekbar.kpi.coverage">Coverage</div>
+                                <div id="seekbar-kpi-coverage" class="text-xl font-semibold text-tg-green tabular-nums">—</div>
+                            </div>
+                            <div class="bg-tg-bg/40 rounded-lg p-3">
                                 <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.seekbar.kpi.disk">Disk usage</div>
                                 <div id="seekbar-kpi-disk" class="text-xl font-semibold text-tg-blue tabular-nums">—</div>
                             </div>
@@ -2685,10 +2689,21 @@
                                 <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.seekbar.kpi.last_scan">Last scan</div>
                                 <div id="seekbar-kpi-last" class="text-xs text-tg-text tabular-nums leading-tight pt-1">—</div>
                             </div>
-                            <div class="bg-tg-bg/40 rounded-lg p-3">
-                                <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.seekbar.kpi.ffmpeg">ffmpeg</div>
-                                <div id="seekbar-kpi-ffmpeg" class="text-xs text-tg-text tabular-nums leading-tight pt-1">—</div>
+                        </div>
+                        <div id="seekbar-coverage-wrap" class="hidden mt-3">
+                            <div class="flex items-center justify-between gap-2 mb-1">
+                                <span id="seekbar-coverage-label" class="text-[11px] text-tg-textSecondary tabular-nums">—</span>
+                                <button id="seekbar-scan-cta" type="button" class="tg-btn-secondary text-[11px] px-2 py-0.5 inline-flex items-center gap-1">
+                                    <i class="ri-play-fill"></i><span data-i18n="maintenance.seekbar.scan_missing">Scan missing</span>
+                                </button>
                             </div>
+                            <div class="h-2 bg-tg-bg/60 rounded-full overflow-hidden">
+                                <div id="seekbar-coverage-bar" class="h-full bg-tg-blue transition-all duration-500 rounded-full" style="width:0%"></div>
+                            </div>
+                            <p id="seekbar-ffmpeg-line" class="hidden mt-1 text-[10.5px] text-tg-textSecondary">
+                                <span data-i18n="maintenance.seekbar.kpi.ffmpeg">ffmpeg</span>:
+                                <span id="seekbar-kpi-ffmpeg" class="font-mono">—</span>
+                            </p>
                         </div>
                     </section>
 
@@ -2738,6 +2753,38 @@
                         </dl>
                         <p id="seekbar-health-error" class="hidden mt-2 text-[11px] text-red-400 font-mono break-all"></p>
                     </details>
+
+                    <section id="seekbar-queue-card" class="bg-tg-panel rounded-xl px-3 py-2 mb-3">
+                        <div class="flex items-center justify-between gap-2 flex-wrap">
+                            <div class="flex items-center gap-1.5 min-w-0">
+                                <i class="ri-list-check-2 text-tg-blue text-xs"></i>
+                                <span class="text-tg-text text-xs font-medium" data-i18n="maintenance.seekbar.queue.title">Generation activity</span>
+                            </div>
+                            <span id="seekbar-queue-idle-badge" class="text-[10.5px] text-tg-textSecondary">idle</span>
+                            <span id="seekbar-queue-live-badge" class="hidden text-[10.5px] text-tg-green inline-flex items-center gap-1">
+                                <i class="ri-loader-4-line animate-spin"></i><span>live</span>
+                            </span>
+                        </div>
+                        <div id="seekbar-queue-active" class="hidden mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+                            <div class="bg-tg-bg/40 rounded-lg p-2">
+                                <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary">Queued</div>
+                                <div id="seekbar-queue-queued" class="text-lg font-semibold text-tg-text tabular-nums">—</div>
+                            </div>
+                            <div class="bg-tg-bg/40 rounded-lg p-2">
+                                <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary">Processing</div>
+                                <div id="seekbar-queue-processing" class="text-lg font-semibold text-tg-blue tabular-nums">—</div>
+                            </div>
+                            <div class="bg-tg-bg/40 rounded-lg p-2">
+                                <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary">Completed</div>
+                                <div id="seekbar-queue-completed" class="text-lg font-semibold text-tg-green tabular-nums">—</div>
+                            </div>
+                            <div class="bg-tg-bg/40 rounded-lg p-2">
+                                <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary">Failed</div>
+                                <div id="seekbar-queue-failed" class="text-lg font-semibold text-red-400 tabular-nums">—</div>
+                            </div>
+                        </div>
+                        <p id="seekbar-queue-idle-line" class="mt-2 text-[11px] text-tg-textSecondary">—</p>
+                    </section>
 
                     <!-- Sprite settings — flat layout, all controls at
                          the same depth like the AI faces card. Master

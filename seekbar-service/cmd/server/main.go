@@ -53,9 +53,11 @@ func main() {
 	defer cancel()
 
 	pool := worker.NewPool(cfg, log)
-	pool.Start(ctx)
+	resolvedHWA := pool.Start(ctx)
+	log.Info("hwaccel resolved", "backend", string(resolvedHWA))
 
 	srv := api.New(cfg, log, pool)
+	srv.Init(string(resolvedHWA))
 	server := &http.Server{
 		Addr:         cfg.HTTP.Listen,
 		Handler:      srv.Routes(),
@@ -76,14 +78,15 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	select {
 	case sig := <-sigCh:
-		log.Info("shutdown signal", "signal", sig.String())
+		log.Info("shutdown signal received, draining (30s)", "signal", sig.String())
 	case err := <-errCh:
 		log.Error("http listener failed", "err", err)
 	}
 
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
 	_ = server.Shutdown(shutdownCtx)
+	cancel()
 	pool.Stop()
 	log.Info("seekbar-service stopped")
 }

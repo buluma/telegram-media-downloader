@@ -152,6 +152,13 @@ const DEFAULT_CONFIG = {
             // moov, broken container, …). Persistent failures land in
             // the scan-runner errored counter.
             maxRetries: 3,
+            // Optional path rewrite for remote seekbar sidecars. The app
+            // sends paths under `sidecarPathFrom` as `sidecarPathTo`, then
+            // maps returned sprite paths back before storing DB rows.
+            sidecarUrl: '',
+            apiToken: '',
+            sidecarPathFrom: '',
+            sidecarPathTo: '',
             // Override `advanced.thumbs.hwaccel` for seekbar specifically.
             // null = inherit. Allowed values: same as thumbs.hwaccel
             // ('', 'vaapi', 'qsv', 'cuda', 'videotoolbox', 'd3d11va', 'dxva2').

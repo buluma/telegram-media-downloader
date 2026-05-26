@@ -53,6 +53,8 @@ export const SEEKBAR_DEFAULTS = Object.freeze({
     quality: 75,
     concurrency: 8,
     maxRetries: 3,
+    sidecarPathFrom: '',
+    sidecarPathTo: '',
     hwaccel: null,
 });
 
@@ -66,6 +68,28 @@ export function getSeekbarConfig() {
         /* fall through to defaults */
     }
     return { ...SEEKBAR_DEFAULTS, ...stored };
+}
+
+function _normalisePathPrefix(p) {
+    return String(p || '').replace(/\/+$/, '');
+}
+
+function _rewritePathPrefix(absPath, fromPrefix, toPrefix) {
+    const from = _normalisePathPrefix(fromPrefix);
+    const to = _normalisePathPrefix(toPrefix);
+    const value = String(absPath || '');
+    if (!from || !to) return value;
+    if (value === from) return to;
+    if (value.startsWith(`${from}/`)) return `${to}${value.slice(from.length)}`;
+    return value;
+}
+
+function _toSidecarPath(absPath, cfg) {
+    return _rewritePathPrefix(absPath, cfg.sidecarPathFrom, cfg.sidecarPathTo);
+}
+
+function _fromSidecarPath(absPath, cfg) {
+    return _rewritePathPrefix(absPath, cfg.sidecarPathTo, cfg.sidecarPathFrom);
 }
 
 function _spritePath(downloadId, format = 'webp') {
@@ -333,10 +357,12 @@ export async function generateForDownload(row, cfg = null, opts = {}) {
         try {
             const r = await sidecarSubmitOne({
                 videoId: String(id),
-                srcPath: srcAbs,
+                srcPath: _toSidecarPath(srcAbs, conf),
                 async: false,
+                signal: opts.signal || null,
             });
             if (r && r.status === 'done' && r.sprite_path) {
+                const localSpritePath = _fromSidecarPath(r.sprite_path, conf);
                 const sidecarMeta = {
                     version: 1,
                     download_id: id,
@@ -358,9 +384,9 @@ export async function generateForDownload(row, cfg = null, opts = {}) {
                 // Sidecar may write straight to its own SEEKBAR_OUTPUT_DIR.
                 // If that's the same as ours (default config forwards
                 // it), the file already lives at dstAbs; otherwise copy.
-                if (r.sprite_path !== dstAbs && existsSync(r.sprite_path)) {
+                if (localSpritePath !== dstAbs && existsSync(localSpritePath)) {
                     try {
-                        await fs.copyFile(r.sprite_path, dstAbs);
+                        await fs.copyFile(localSpritePath, dstAbs);
                     } catch {
                         /* leave sprite at sidecar path; we still record it */
                     }
@@ -368,7 +394,7 @@ export async function generateForDownload(row, cfg = null, opts = {}) {
                 await _writeAtomic(metaAbs, JSON.stringify(sidecarMeta, null, 0));
                 upsertSeekbarSprite({
                     downloadId: id,
-                    spritePath: existsSync(dstAbs) ? dstAbs : r.sprite_path,
+                    spritePath: existsSync(dstAbs) ? dstAbs : localSpritePath,
                     metaPath: metaAbs,
                     durationSec: sidecarMeta.duration_sec,
                     frames: sidecarMeta.frames,
