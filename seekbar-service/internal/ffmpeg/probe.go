@@ -52,13 +52,13 @@ func HasEncoder(ctx context.Context, ffmpegBin, encoder string) bool {
 }
 
 // Duration returns the clip's duration in seconds. ffprobe is spawned
-// with a hard 10s timeout — a broken container should never hang the
+// with a hard 30s timeout — a broken container should never hang the
 // worker.
 func Duration(ctx context.Context, probeBin, src string) (float64, error) {
 	if probeBin == "" {
 		probeBin = "ffprobe"
 	}
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, probeBin,
 		"-v", "error",

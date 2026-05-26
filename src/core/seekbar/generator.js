@@ -92,6 +92,13 @@ function _fromSidecarPath(absPath, cfg) {
     return _rewritePathPrefix(absPath, cfg.sidecarPathTo, cfg.sidecarPathFrom);
 }
 
+function _localFallbackConfig(cfg) {
+    if (cfg?.hwaccel === 'videotoolbox' && process.platform !== 'darwin') {
+        return { ...cfg, hwaccel: null };
+    }
+    return cfg;
+}
+
 function _spritePath(downloadId, format = 'webp') {
     const ext = format === 'jpeg' || format === 'jpg' ? 'jpg' : 'webp';
     return path.join(SEEKBAR_DIR, `${downloadId}.${ext}`);
@@ -424,7 +431,7 @@ export async function generateForDownload(row, cfg = null, opts = {}) {
     let lastErr = null;
     for (let attempt = 0; attempt < Math.max(1, Number(conf.maxRetries) || 1) + 1; attempt++) {
         try {
-            await _runSpriteFfmpeg({ srcAbs, dstAbs, plan, cfg: conf });
+            await _runSpriteFfmpeg({ srcAbs, dstAbs, plan, cfg: _localFallbackConfig(conf) });
             lastErr = null;
             break;
         } catch (e) {
