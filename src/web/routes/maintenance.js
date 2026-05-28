@@ -699,6 +699,12 @@ export function createMaintenanceRouter({
             try {
                 broadcast({ type: 'bulk_delete', count: cleanIds.length });
             } catch {}
+            try {
+                // The last dedup scan result contains concrete row ids. Once
+                // those rows are deleted, keeping that result makes a remounted
+                // duplicates page repaint stale rows until the next scan.
+                jobTrackers.dedupScan?.clearResult?.();
+            } catch {}
             return { ...aggregate, requested: cleanIds.length, ids: cleanIds };
         });
         if (!r.started) {

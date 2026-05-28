@@ -334,6 +334,17 @@ function _renderSets(sets) {
     _refreshSummary();
 }
 
+function _pruneDeletedRows(ids) {
+    const idSet = new Set((Array.isArray(ids) ? ids : []).map(Number).filter(Number.isFinite));
+    if (!idSet.size || !_sets.length) return;
+    const next = [];
+    for (const set of _sets) {
+        const files = (set.files || []).filter((f) => !idSet.has(Number(f.id)));
+        if (files.length > 1) next.push({ ...set, files, count: files.length });
+    }
+    _renderSets(next);
+}
+
 // Default selection: keep oldest of every set, mark rest for deletion.
 // Called per-chunk so the user can interact with the first 30 sets the
 // instant they paint.
@@ -435,14 +446,15 @@ async function _runScan() {
 async function _recoverScanState() {
     try {
         const r = await api.get('/api/maintenance/dedup/status');
-        if (r?.running) _setScanUi(true);
+        _setScanUi(!!r?.running);
         if (r?.result?.duplicateSets) _renderSets(r.result.duplicateSets);
+        else if (!r?.running) _renderSets([]);
     } catch {
         /* non-fatal */
     }
     try {
         const r = await api.get('/api/maintenance/dedup/delete/status');
-        if (r?.running) _setDeleteUi(true);
+        _setDeleteUi(!!r?.running);
     } catch {}
     try {
         const r = await api.get('/api/maintenance/reindex/status');
@@ -455,11 +467,20 @@ async function _recoverScanState() {
                 labelSpan.textContent = i18nT('maintenance.reindex.running', 'Re-indexing…');
             }
             if (progress) progress.classList.remove('hidden');
+        } else {
+            const btn = $('dup-reindex-btn');
+            const progress = $('dup-reindex-progress');
+            const labelSpan = btn?.querySelector('span[data-i18n]');
+            if (btn) btn.disabled = false;
+            if (labelSpan) {
+                labelSpan.textContent = i18nT('maintenance.reindex.button', 'Re-index from disk');
+            }
+            if (progress) progress.classList.add('hidden');
         }
     } catch {}
     try {
         const r = await api.get('/api/maintenance/files/verify/status');
-        if (r?.running) _setVerifyUi(true);
+        _setVerifyUi(!!r?.running);
     } catch {}
     _refreshStats();
 }
@@ -700,6 +721,7 @@ function _wireWs() {
         }
         const removed = m?.removed ?? m?.deleted ?? 0;
         const freed = m?.freedBytes ?? 0;
+        _pruneDeletedRows(m?.ids);
         showToast(
             i18nTf(
                 'maintenance.dedup.deleted',

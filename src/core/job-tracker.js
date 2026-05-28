@@ -18,6 +18,7 @@
 //   tracker.tryStart(runFn)   // see below — returns a 200/409 contract
 //   tracker.cancel()          // aborts the in-flight run via AbortController
 //   tracker.getStatus()       // current snapshot — feed into /status JSON
+//   tracker.clearResult()     // drop stale completed payload after external mutation
 //   tracker.isRunning()
 //
 // runFn is `async ({ onProgress, signal }) => result`. Whatever the
@@ -99,6 +100,13 @@ export function createJobTracker({ kind, broadcast, log, eventPrefix } = {}) {
 
     function isRunning() {
         return _running;
+    }
+
+    function clearResult() {
+        _state = {
+            ..._state,
+            result: null,
+        };
     }
 
     /**
@@ -230,7 +238,7 @@ export function createJobTracker({ kind, broadcast, log, eventPrefix } = {}) {
         return true;
     }
 
-    return { tryStart, cancel, getStatus, isRunning };
+    return { tryStart, cancel, clearResult, getStatus, isRunning };
 }
 
 const _SCANNER_JOBS = ['aiPeople', 'aiOcr', 'aiWd14', 'aiTags', 'aiIndex'];

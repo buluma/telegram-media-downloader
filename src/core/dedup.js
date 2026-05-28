@@ -53,12 +53,38 @@ function resolveStoredPath(stored) {
 // Catch-up dedup hashes thousands of multi-MB files in a row — route
 // them through the worker pool so a 2-hour scan doesn't pin the event
 // loop for the full duration.
-async function hashFile(absPath) {
+async function hashFile(absPath, signal) {
+    if (signal?.aborted) throw new Error('aborted');
     try {
-        return await sha256OfFileViaPool(absPath);
+        return await _abortableHash(sha256OfFileViaPool(absPath), signal);
     } catch {
-        return await sha256OfFile(absPath);
+        if (signal?.aborted) throw new Error('aborted');
+        return await _abortableHash(sha256OfFile(absPath), signal);
     }
+}
+
+function _abortableHash(promise, signal) {
+    if (!signal) return promise;
+    if (signal.aborted) return Promise.reject(new Error('aborted'));
+    promise.catch(() => {});
+    return new Promise((resolve, reject) => {
+        const onAbort = () => {
+            cleanup();
+            reject(new Error('aborted'));
+        };
+        const cleanup = () => signal.removeEventListener('abort', onAbort);
+        signal.addEventListener('abort', onAbort, { once: true });
+        promise.then(
+            (value) => {
+                cleanup();
+                resolve(value);
+            },
+            (err) => {
+                cleanup();
+                reject(err);
+            },
+        );
+    });
 }
 
 /**
@@ -141,10 +167,12 @@ export async function findDuplicates(opts = {}) {
                 continue;
             }
             try {
-                const digest = await hashFile(abs);
+                const digest = await hashFile(abs, signal);
+                if (signal?.aborted) break;
                 update.run(digest, row.id);
                 hashed++;
             } catch {
+                if (signal?.aborted) break;
                 errored++;
                 markFailed.run(row.id);
             }

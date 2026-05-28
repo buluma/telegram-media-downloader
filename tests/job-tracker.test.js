@@ -91,6 +91,21 @@ describe('createJobTracker', () => {
         expect(t.getStatus().successes).toBe(2);
     });
 
+    it('clearResult drops stale completed payload without resetting counters', async () => {
+        const t = createJobTracker({ kind: 'clearable', broadcast: () => {} });
+        t.tryStart(async () => ({ rows: [1, 2, 3] }));
+        await flushAsync(10);
+
+        expect(t.getStatus().result).toEqual({ rows: [1, 2, 3] });
+        t.clearResult();
+
+        const s = t.getStatus();
+        expect(s.result).toBeNull();
+        expect(s.running).toBe(false);
+        expect(s.successes).toBe(1);
+        expect(s.attempts).toBe(1);
+    });
+
     it('broadcasts a done event whose payload includes runFn return fields', async () => {
         const broadcasts = [];
         const t = createJobTracker({ kind: 'data', broadcast: (m) => broadcasts.push(m) });
