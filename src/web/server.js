@@ -125,7 +125,10 @@ const LOG_BUFFER_SIZE = Math.max(
     Math.min(20000, Number(process.env.TGDL_LOG_BUFFER_SIZE) || 2000),
 );
 const LOG_MSG_MAX = Math.max(256, Math.min(65536, Number(process.env.TGDL_LOG_MSG_MAX) || 8000));
-const _logBuffer = [];
+const _logBuffer = new Array(LOG_BUFFER_SIZE);
+let _logHead = 0;
+let _logCount = 0;
+
 // Strip ANSI escape sequences before storing log entries so the dashboard
 // log viewer doesn't render raw escape codes like "[32m" or "0m".
 const _ANSI_RE = /\x1b\[[0-9;]*m/g;
@@ -140,9 +143,16 @@ function _pushLogEntry(level, source, msg) {
         level,
         msg: _stripAnsi(msg).slice(0, LOG_MSG_MAX),
     };
-    _logBuffer.push(entry);
-    if (_logBuffer.length > LOG_BUFFER_SIZE) _logBuffer.shift();
+    _logBuffer[_logHead] = entry;
+    _logHead = (_logHead + 1) % LOG_BUFFER_SIZE;
+    if (_logCount < LOG_BUFFER_SIZE) _logCount++;
     return entry;
+}
+
+function _getLogs() {
+    if (_logCount === 0) return [];
+    if (_logCount < LOG_BUFFER_SIZE) return _logBuffer.slice(0, _logCount);
+    return [..._logBuffer.slice(_logHead, LOG_BUFFER_SIZE), ..._logBuffer.slice(0, _logHead)];
 }
 const _consoleTee = (level) => (args, joined) => {
     try {
@@ -1601,7 +1611,7 @@ app.get('/api/maintenance/logs/recent', async (req, res) => {
     const minLevel = req.query.level || null; // 'info'|'warn'|'error'
     const levelOrder = { info: 0, warn: 1, error: 2 };
     const minLvl = minLevel ? (levelOrder[minLevel] ?? 0) : 0;
-    const filtered = _logBuffer.filter((e) => {
+    const filtered = _getLogs().filter((e) => {
         if (sources && !sources.includes(e.source)) return false;
         if ((levelOrder[e.level] ?? 0) < minLvl) return false;
         return true;
@@ -1609,7 +1619,7 @@ app.get('/api/maintenance/logs/recent', async (req, res) => {
     res.json({
         logs: filtered.slice(-limit),
         bufferSize: LOG_BUFFER_SIZE,
-        total: _logBuffer.length,
+        total: _logCount,
     });
 });
 

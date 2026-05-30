@@ -1314,7 +1314,7 @@ export class DownloadManager extends EventEmitter {
 
     async scanDiskDeep() {
         let total = 0;
-        let visited = 0;
+        let visitsSinceYield = 0;
         const basePath = this.config.download?.path || './data/downloads';
         // Yield to the event loop every YIELD_EVERY entries so a tree with
         // hundreds of thousands of files doesn't starve WS broadcasts /
@@ -1324,16 +1324,28 @@ export class DownloadManager extends EventEmitter {
         const calculateSize = async (dir) => {
             try {
                 const entries = await fs.readdir(dir, { withFileTypes: true });
+                const files = [];
                 for (const entry of entries) {
                     const fullPath = path.join(dir, entry.name);
                     if (entry.isDirectory()) {
                         await calculateSize(fullPath);
+                        visitsSinceYield++;
                     } else {
-                        const stats = await fs.stat(fullPath);
-                        total += stats.size;
+                        files.push(fullPath);
                     }
-                    visited += 1;
-                    if (visited % YIELD_EVERY === 0) {
+                }
+
+                const BATCH_SIZE = 50;
+                for (let i = 0; i < files.length; i += BATCH_SIZE) {
+                    const batch = files.slice(i, i + BATCH_SIZE);
+                    const stats = await Promise.all(
+                        batch.map((f) => fs.stat(f).catch(() => ({ size: 0 }))),
+                    );
+                    for (const s of stats) total += s.size || 0;
+
+                    visitsSinceYield += batch.length;
+                    if (visitsSinceYield >= YIELD_EVERY) {
+                        visitsSinceYield = 0;
                         await new Promise((r) => setImmediate(r));
                     }
                 }

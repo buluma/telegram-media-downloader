@@ -7,10 +7,13 @@ import { logger, NATIVE_LOAD_FAIL, suppressNoise } from './logger.js';
 
 export class Resilience {
     constructor() {
-        this.errorLog = [];
+        this.maxLogSize = 1000;
+        this.errorLogBuffer = new Array(this.maxLogSize);
+        this.errorLogHead = 0;
+        this.errorLogCount = 0;
         this.notifier = null;
         this.nativeLoadFailWarned = false;
-        this.maxLogSize = 1000;
+        this.circuitBreakers = new Map();
     }
 
     setNotifier(notifier) {
@@ -101,8 +104,8 @@ export class Resilience {
             return { action: 'RETRY', delay: 5000 };
         }
         if (isAuth) {
-            logger.error('❌ Session Invalid. Login required.');
-            process.exit(1);
+            logger.error('❌ Session Invalid. Halting downloads. Login required.');
+            process.emit('tgdl:auth_error');
             return;
         }
 
@@ -111,18 +114,26 @@ export class Resilience {
     }
 
     logError(error, context) {
-        this.errorLog.push({
+        const entry = {
             timestamp: new Date().toISOString(),
             context,
             message: error?.message || String(error),
             stack: error?.stack,
-        });
+        };
 
-        // Ring buffer logic
-        if (this.errorLog.length > this.maxLogSize) {
-            this.errorLog.shift();
-        }
-        // Real production would append to errors.log here
+        this.errorLogBuffer[this.errorLogHead] = entry;
+        this.errorLogHead = (this.errorLogHead + 1) % this.maxLogSize;
+        if (this.errorLogCount < this.maxLogSize) this.errorLogCount++;
+    }
+
+    getLogs() {
+        if (this.errorLogCount === 0) return [];
+        if (this.errorLogCount < this.maxLogSize)
+            return this.errorLogBuffer.slice(0, this.errorLogCount);
+        return [
+            ...this.errorLogBuffer.slice(this.errorLogHead, this.maxLogSize),
+            ...this.errorLogBuffer.slice(0, this.errorLogHead),
+        ];
     }
 }
 
