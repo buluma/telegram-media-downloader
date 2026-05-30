@@ -942,7 +942,23 @@ const _publicDir = path.join(__dirname, 'public');
 // per-request rewriters to avoid re-reading package.json each call.
 const appVersion = _readCurrentVersion();
 
+function _injectPartials(html, baseDir) {
+    return html.replace(/<!--\s*INCLUDE:\s*(.*?)\s*-->/g, (match, partialPath) => {
+        try {
+            const fullPath = path.join(baseDir, partialPath);
+            const partialHtml = fsSync.readFileSync(fullPath, 'utf8');
+            return _injectPartials(partialHtml, baseDir);
+        } catch (e) {
+            log.error(`Failed to inject partial: ${partialPath}`, { error: e.message });
+            return match;
+        }
+    });
+}
+
 function _rewriteHtmlSrc(html) {
+    // Process server-side includes first so inner HTML tags get asset rewrites too.
+    html = _injectPartials(html, _publicDir);
+
     // Cover `/js/`, `/locales/`, AND `/css/` so a release that ships only
     // CSS changes (UI polish without JS edits) still busts the cache.
     // Without /css/ here, a stale main.css can outlive a deploy — the

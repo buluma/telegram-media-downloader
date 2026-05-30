@@ -1,0 +1,60 @@
+<div id="page-maintenance-logs" class="hidden max-w-5xl mx-auto px-3 sm:px-4" data-admin-only
+                     data-page-title-key="maintenance.logs.page_title"
+                     data-page-subtitle-key="maintenance.logs.subtitle">
+                    <section class="bg-tg-panel rounded-xl p-4 mb-3">
+                        <div class="flex items-start justify-between gap-3 flex-wrap">
+                            <div class="min-w-0">
+                                <h2 class="text-tg-text text-base font-semibold" data-i18n="maintenance.logs.page_title">Server logs</h2>
+                                <p class="text-xs text-tg-textSecondary mt-0.5" data-i18n="maintenance.logs.subtitle">Realtime stream of every event the engine emits — filter by source, level, or text. Useful when something feels off and you want to see what the server is actually doing.</p>
+                            </div>
+                            <div class="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+                                <label class="inline-flex items-center gap-1 text-xs text-tg-textSecondary cursor-pointer select-none">
+                                    <input id="logs-autoscroll" type="checkbox" checked class="accent-tg-blue">
+                                    <span data-i18n="maintenance.logs.autoscroll">Auto-scroll</span>
+                                </label>
+                                <button id="logs-pause-btn" class="tg-btn-secondary text-xs px-3 py-1.5 inline-flex items-center gap-1.5" data-paused="0">
+                                    <i class="ri-pause-line"></i><span data-i18n="maintenance.logs.pause">Pause</span>
+                                </button>
+                                <button id="logs-clear-btn" class="tg-btn-secondary text-xs px-3 py-1.5 inline-flex items-center gap-1.5">
+                                    <i class="ri-eraser-line"></i><span data-i18n="maintenance.logs.clear">Clear</span>
+                                </button>
+                                <button id="logs-download-btn" class="tg-btn-secondary text-xs px-3 py-1.5 inline-flex items-center gap-1.5">
+                                    <i class="ri-download-line"></i><span data-i18n="maintenance.logs.download">Download .log</span>
+                                </button>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Filters sub-card — source chips + level radios + search box. -->
+                    <section class="bg-tg-panel rounded-xl p-4 mb-3">
+                        <div class="flex flex-col gap-3">
+                            <div>
+                                <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary mb-1.5" data-i18n="maintenance.logs.filter.source">Source</div>
+                                <div id="logs-filter-sources" class="flex flex-wrap gap-1"></div>
+                            </div>
+                            <div class="flex items-center gap-3 flex-wrap">
+                                <div id="logs-filter-level" class="flex items-center gap-2">
+                                    <span class="text-[10px] uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.logs.filter.level">Level</span>
+                                    <label class="inline-flex items-center gap-1 text-xs"><input type="radio" name="logs-level" value="info" checked class="accent-tg-blue"> info</label>
+                                    <label class="inline-flex items-center gap-1 text-xs"><input type="radio" name="logs-level" value="warn" class="accent-tg-blue"> warn</label>
+                                    <label class="inline-flex items-center gap-1 text-xs"><input type="radio" name="logs-level" value="error" class="accent-tg-blue"> error</label>
+                                </div>
+                                <div class="relative flex-1 min-w-[160px]">
+                                    <i class="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-tg-textSecondary"></i>
+                                    <input id="logs-search" type="text" autocomplete="off"
+                                        class="tg-input w-full pl-9 text-sm"
+                                        data-i18n-placeholder="maintenance.logs.search"
+                                        placeholder="Search messages…">
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="bg-tg-panel rounded-xl overflow-hidden">
+                        <!-- Height clamps so the log pane never overflows the
+                             viewport on landscape mobile (a 360 px-tall
+                             screen made the previous calc()+min-height
+                             pair drop the bottom rows below the nav bar). -->
+                        <pre id="logs-stream" class="bg-tg-bg/60 p-3 text-[11px] font-mono whitespace-pre overflow-auto leading-snug" style="height: clamp(240px, calc(100dvh - 320px), 70dvh);" role="log" aria-live="polite" aria-atomic="false" aria-label="Realtime server log"></pre>
+                    </section>
+                </div>

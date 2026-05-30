@@ -1,0 +1,35 @@
+<div id="page-groups" class="hidden max-w-5xl mx-auto px-3 sm:px-4">
+                    <!-- Tabs -->
+                    <div class="flex border-b border-tg-border mb-4">
+                        <button id="groups-tab-all" onclick="switchGroupsTab('all')"
+                            class="px-4 py-2 text-sm font-medium border-b-2 border-tg-blue text-tg-blue" data-i18n="groups.tab.all">
+                            All Dialogs
+                        </button>
+                        <button id="groups-tab-monitored" onclick="switchGroupsTab('monitored')"
+                            class="px-4 py-2 text-sm font-medium border-b-2 border-transparent text-tg-textSecondary hover:text-white transition-colors" data-i18n="groups.tab.monitored">
+                            Monitored Only
+                        </button>
+                        <button id="groups-tab-unmonitored" onclick="switchGroupsTab('unmonitored')"
+                            class="px-4 py-2 text-sm font-medium border-b-2 border-transparent text-tg-textSecondary hover:text-white transition-colors" data-i18n="groups.tab.unmonitored">
+                            Unmonitored
+                        </button>
+                    </div>
+                    <!-- Search Box -->
+                    <div id="groups-search-box" class="mb-4">
+                        <div class="relative">
+                            <i
+                                class="ri-search-line absolute left-3 top-1/2 transform -translate-y-1/2 text-tg-textSecondary"></i>
+                            <input type="text" name="prevent_autofill_2" autocomplete="username"
+                                tabindex="-1" aria-hidden="true"
+                                style="position:absolute;width:0;height:0;overflow:hidden;opacity:0;pointer-events:none">
+                            <input type="search" id="groups-search" name="filter" role="searchbox"
+                                autocomplete="nope" spellcheck="false"
+                                data-form-type="other"
+                                data-lpignore="true" data-1p-ignore="true" data-bwignore="true"
+                                class="w-full bg-tg-panel border border-tg-border rounded-lg pl-10 pr-4 py-2 text-tg-text focus:ring-1 focus:ring-tg-blue focus:border-tg-blue outline-none"
+                                data-i18n-placeholder="groups.search_placeholder"
+                                placeholder="Search groups/channels..." oninput="filterDialogs(this.value)">
+                        </div>
+                    </div>
+                    <div id="groups-config-list" class="space-y-3"></div>
+                </div>

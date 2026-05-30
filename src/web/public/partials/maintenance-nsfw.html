@@ -1,0 +1,197 @@
+<div id="page-maintenance-nsfw" class="hidden max-w-5xl mx-auto px-3 sm:px-4" data-admin-only
+                     data-page-title-key="maintenance.nsfw.page_title"
+                     data-page-subtitle-key="maintenance.nsfw.subtitle">
+                    <section class="bg-tg-panel rounded-xl p-4 mb-3">
+                        <div class="flex items-start justify-between gap-3 flex-wrap">
+                            <div class="min-w-0">
+                                <h2 class="text-tg-text text-base font-semibold" data-i18n="maintenance.nsfw.page_title">Scan images for NSFW (18+)</h2>
+                                <p class="text-xs text-tg-textSecondary mt-0.5" data-i18n="maintenance.nsfw.subtitle">Five-tier classifier review — keep what's confidently 18+, delete what's confidently not, eyeball the borderline cases.</p>
+                                <div class="mt-2 flex items-center gap-3 text-[11px] text-tg-textSecondary flex-wrap">
+                                    <span><span data-i18n="maintenance.nsfw.threshold_label">Threshold:</span> <span id="nsfw-threshold-value" class="text-tg-text tabular-nums">—</span></span>
+                                    <span><span data-i18n="maintenance.nsfw.concurrency_label">Concurrency:</span> <span id="nsfw-concurrency-value" class="text-tg-text tabular-nums">—</span></span>
+                                </div>
+                            </div>
+                            <div class="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+                                <button id="nsfw-scan-btn" class="tg-btn text-xs px-3 py-1.5 inline-flex items-center gap-1.5" data-mode="scan"
+                                        data-i18n-title="maintenance.nsfw.scan_tooltip"
+                                        title="Run the NSFW classifier across every photo in the library. Local-only, no upload.">
+                                    <i class="ri-search-line"></i><span data-i18n="maintenance.nsfw.action">Scan</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Stats strip — 4-up. Scanned + Whitelisted + Borderline
+                             + Last scan. Borderline = sum of maybe_not + uncertain
+                             + maybe (the middle three tiers); maintenance-nsfw.js
+                             populates it from `tierCounts.tiers` on every refresh. -->
+                        <div class="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+                            <div class="bg-tg-bg/40 rounded-lg p-3">
+                                <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.nsfw.stat_scanned">Scanned</div>
+                                <div id="nsfw-stat-scanned" class="text-xl font-semibold text-tg-text tabular-nums">—</div>
+                            </div>
+                            <div class="bg-tg-bg/40 rounded-lg p-3">
+                                <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.nsfw.stat_whitelisted">Whitelisted</div>
+                                <div id="nsfw-stat-whitelisted" class="text-xl font-semibold text-tg-text tabular-nums">—</div>
+                            </div>
+                            <div class="bg-tg-bg/40 rounded-lg p-3">
+                                <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.nsfw.stat_borderline">Borderline</div>
+                                <div id="nsfw-stat-borderline" class="text-xl font-semibold text-tg-orange tabular-nums">—</div>
+                            </div>
+                            <div class="bg-tg-bg/40 rounded-lg p-3">
+                                <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.nsfw.stat_last">Last scan</div>
+                                <div id="nsfw-stat-last" class="text-xs text-tg-text tabular-nums leading-tight pt-1">—</div>
+                            </div>
+                        </div>
+
+                        <div id="nsfw-scan-progress" class="hidden mt-3 h-2 bg-tg-bg/60 rounded overflow-hidden" role="status" aria-live="polite">
+                            <div id="nsfw-scan-progress-bar" class="h-full bg-tg-blue transition-all" style="width:0%"></div>
+                        </div>
+                    </section>
+
+                    <div id="nsfw-empty-db-banner" class="hidden bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 mb-3 text-xs text-yellow-300" data-i18n="maintenance.nsfw.empty_db_hint">
+                        Library has no scannable photos — try Maintenance → Re-index from disk first if files exist on disk but the catalogue is empty.
+                    </div>
+
+                    <!-- Classifier settings + actions. The whole config
+                         lives here (no duplicate in Settings → Advanced
+                         per the project's split rule: per-tool knobs go
+                         to per-tool maintenance pages). -->
+                    <details id="nsfw-settings-card" class="bg-tg-panel rounded-xl p-4 mb-3 group">
+                        <summary class="cursor-pointer list-none flex items-start justify-between gap-3 flex-wrap">
+                            <div class="min-w-0">
+                                <h3 class="text-tg-text text-sm font-medium flex items-center gap-2">
+                                    <i class="ri-arrow-right-s-line text-tg-textSecondary transition-transform group-open:rotate-90"></i>
+                                    <i class="ri-shield-check-line text-tg-orange"></i>
+                                    <span data-i18n="maintenance.nsfw.settings_heading">Classifier settings</span>
+                                </h3>
+                                <p class="text-[11px] text-tg-textSecondary mt-0.5" data-i18n="maintenance.nsfw.settings_help">Off by default. The model downloads once on first scan (or click "Preload" to fetch it now). Runs entirely on this server — no third-party service.</p>
+                            </div>
+                            <div class="flex items-center gap-2 shrink-0">
+                                <span id="nsfw-model-status" class="inline-flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-full bg-tg-bg/40 text-tg-textSecondary" role="status" aria-live="polite">
+                                    <span class="w-1.5 h-1.5 rounded-full bg-tg-textSecondary"></span>
+                                    <span data-i18n="maintenance.nsfw.model_status.idle">Not loaded</span>
+                                </span>
+                            </div>
+                        </summary>
+
+                        <div class="flex items-start justify-between gap-3 py-2 mt-3 border-t border-tg-border/30">
+                            <div class="min-w-0">
+                                <div class="text-tg-text text-sm" data-i18n="maintenance.nsfw.enable">Enable NSFW review</div>
+                                <p class="text-[11px] text-tg-textSecondary mt-0.5" data-i18n="maintenance.nsfw.enable_help">Surfaces this Maintenance tool + scores newly-downloaded photos in the background.</p>
+                            </div>
+                            <div id="setting-adv-nsfw-enabled" class="tg-toggle shrink-0 mt-0.5"></div>
+                        </div>
+
+                        <div class="flex items-start justify-between gap-3 py-2 border-t border-tg-border/30">
+                            <div class="min-w-0">
+                                <div class="text-tg-text text-sm" data-i18n="maintenance.nsfw.preload_on_start">Preload on server start</div>
+                                <p class="text-[11px] text-tg-textSecondary mt-0.5" data-i18n="maintenance.nsfw.preload_on_start_help">Download + warm the model in the background when the server boots, so the first scan starts instantly.</p>
+                            </div>
+                            <div id="setting-adv-nsfw-preload" class="tg-toggle shrink-0 mt-0.5"></div>
+                        </div>
+
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3 pt-3 border-t border-tg-border/30">
+                            <div class="sm:col-span-2">
+                                <label for="setting-adv-nsfw-model" class="text-tg-text text-xs block mb-1" data-i18n="maintenance.nsfw.model">HuggingFace model id</label>
+                                <input id="setting-adv-nsfw-model" type="text" autocomplete="off" spellcheck="false"
+                                    class="tg-input w-full text-sm font-mono"
+                                    placeholder="AdamCodd/vit-base-nsfw-detector">
+                                <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="maintenance.nsfw.model_help">Any HuggingFace `owner/model` id that ships an `image-classification` ONNX pipeline. The library auto-detects which precision variant is available.</p>
+                            </div>
+                            <div>
+                                <label for="setting-adv-nsfw-dtype" class="text-tg-text text-xs block mb-1" data-i18n="maintenance.nsfw.dtype">Precision</label>
+                                <select id="setting-adv-nsfw-dtype" class="tg-input w-full text-sm">
+                                    <option value="q8"   data-i18n="maintenance.nsfw.dtype.q8">int8 quantized — smallest, fastest (default)</option>
+                                    <option value="fp16" data-i18n="maintenance.nsfw.dtype.fp16">fp16 — half precision</option>
+                                    <option value="fp32" data-i18n="maintenance.nsfw.dtype.fp32">fp32 — full precision</option>
+                                    <option value="q4"   data-i18n="maintenance.nsfw.dtype.q4">int4 — tiniest, lowest accuracy</option>
+                                </select>
+                                <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="maintenance.nsfw.dtype_help">Falls back to whichever variant the model actually publishes if the chosen one is missing.</p>
+                            </div>
+                            <div>
+                                <label for="setting-adv-nsfw-threshold" class="text-tg-text text-xs block mb-1" data-i18n="maintenance.nsfw.threshold">Threshold (0.10–0.99)</label>
+                                <input id="setting-adv-nsfw-threshold" type="number" min="0.10" max="0.99" step="0.05" class="tg-input w-full text-sm" placeholder="0.60">
+                                <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="maintenance.nsfw.threshold_help">Score &gt;= this counts as 18+ (kept). Below = surfaced for review. Higher = stricter.</p>
+                            </div>
+                            <div>
+                                <label for="setting-adv-nsfw-concurrency" class="text-tg-text text-xs block mb-1" data-i18n="maintenance.nsfw.concurrency">Concurrency (1–4)</label>
+                                <input id="setting-adv-nsfw-concurrency" type="number" min="1" max="4" class="tg-input w-full text-sm" placeholder="1">
+                                <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="maintenance.nsfw.concurrency_help">Parallel inferences per scan. Higher uses more CPU/RAM; default 1 keeps the server responsive.</p>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center justify-between gap-2 flex-wrap mt-3 pt-3 border-t border-tg-border/30">
+                            <div class="text-[11px] text-tg-textSecondary" id="nsfw-model-progress" aria-live="polite"></div>
+                            <div class="flex items-center gap-1.5">
+                                <button id="nsfw-preload-btn" type="button" class="tg-btn-secondary text-xs px-3 py-1.5 inline-flex items-center gap-1.5">
+                                    <i class="ri-download-cloud-line"></i><span data-i18n="maintenance.nsfw.preload">Preload model now</span>
+                                </button>
+                                <button id="nsfw-cache-clear-btn" type="button" class="tg-btn-secondary text-xs px-3 py-1.5 inline-flex items-center gap-1.5">
+                                    <i class="ri-delete-bin-line"></i><span data-i18n="maintenance.nsfw.cache_clear">Wipe cached weights</span>
+                                </button>
+                            </div>
+                        </div>
+                    </details>
+
+                    <!-- Tier panel -->
+                    <section class="bg-tg-panel rounded-xl p-4 mb-3">
+                        <div class="flex items-center justify-between mb-2 gap-3 flex-wrap">
+                            <div class="text-xs uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.nsfw.tiers_heading">Tiers</div>
+                            <div class="flex items-center gap-2 flex-wrap justify-end">
+                                <div class="inline-flex items-center gap-1 rounded-lg bg-tg-bg/40 p-1">
+                                    <button type="button" class="nsfw-media-kind px-2.5 py-1 rounded-md text-xs text-tg-textSecondary hover:bg-tg-hover/40 transition"
+                                            data-kind="all" aria-pressed="true">
+                                        All
+                                    </button>
+                                    <button type="button" class="nsfw-media-kind px-2.5 py-1 rounded-md text-xs text-tg-textSecondary hover:bg-tg-hover/40 transition"
+                                            data-kind="photo" aria-pressed="false">
+                                        Photos
+                                    </button>
+                                    <button type="button" class="nsfw-media-kind px-2.5 py-1 rounded-md text-xs text-tg-textSecondary hover:bg-tg-hover/40 transition"
+                                            data-kind="video" aria-pressed="false">
+                                        Videos
+                                    </button>
+                                </div>
+                                <label class="inline-flex items-center gap-1.5 text-xs text-tg-textSecondary cursor-pointer select-none">
+                                    <input id="nsfw-show-whitelisted" type="checkbox" class="accent-tg-blue">
+                                    <span data-i18n="maintenance.nsfw.show_whitelisted">Show whitelisted</span>
+                                </label>
+                            </div>
+                        </div>
+                        <div id="nsfw-tiers" class="grid grid-cols-2 sm:grid-cols-5 gap-2"></div>
+                    </section>
+
+                    <!-- Histogram -->
+                    <section class="bg-tg-panel rounded-xl p-4 mb-3">
+                        <div class="text-xs uppercase tracking-wide text-tg-textSecondary mb-2" data-i18n="maintenance.nsfw.histogram_heading">Score distribution</div>
+                        <svg id="nsfw-histogram" class="w-full h-32 text-tg-textSecondary" viewBox="0 0 600 140" preserveAspectRatio="none"></svg>
+                    </section>
+
+                    <!-- Bulk actions toolbar (only when a tier is selected) -->
+                    <section id="nsfw-bulk-bar" class="hidden bg-tg-panel rounded-xl p-3 mb-3">
+                        <div class="flex items-center justify-between gap-3 flex-wrap">
+                            <div class="min-w-0 flex-1">
+                                <div id="nsfw-bulk-label" class="text-xs text-tg-textSecondary"></div>
+                                <div id="nsfw-bulk-progress" class="text-[11px] text-tg-textSecondary mt-1 tabular-nums" aria-live="polite"></div>
+                            </div>
+                            <div class="flex items-center gap-1.5 flex-wrap">
+                                <button id="nsfw-bulk-reclassify-btn" class="tg-btn-secondary text-xs px-3 py-1.5"></button>
+                                <button id="nsfw-bulk-whitelist-btn" class="tg-btn-secondary text-xs px-3 py-1.5"></button>
+                                <button id="nsfw-bulk-delete-btn" class="px-3 py-1.5 rounded-lg bg-red-500/20 text-red-300 hover:bg-red-500/30 font-medium text-xs transition"></button>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Photo grid (click a tile to open the lightbox) -->
+                    <section class="bg-tg-panel rounded-xl p-3">
+                        <div id="nsfw-list" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2 max-h-[70vh] overflow-y-auto pr-1"></div>
+                        <div id="nsfw-empty" class="hidden text-center py-8 text-sm text-tg-textSecondary" data-i18n="maintenance.nsfw.empty">No candidates — the library is clean.</div>
+                        <div class="mt-3 flex items-center justify-between gap-3 flex-wrap">
+                            <div id="nsfw-page-info" class="text-xs text-tg-textSecondary"></div>
+                            <div class="flex items-center gap-1.5">
+                                <button id="nsfw-prev-btn" class="tg-btn-secondary text-xs px-3 py-1.5" data-i18n="common.prev">Prev</button>
+                                <button id="nsfw-next-btn" class="tg-btn-secondary text-xs px-3 py-1.5" data-i18n="common.next">Next</button>
+                            </div>
+                        </div>
+                    </section>
+                </div>

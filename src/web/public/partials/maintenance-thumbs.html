@@ -1,0 +1,190 @@
+<div id="page-maintenance-thumbs" class="hidden max-w-5xl mx-auto px-3 sm:px-4" data-admin-only
+                     data-page-title-key="maintenance.thumbs.page_title"
+                     data-page-subtitle-key="maintenance.thumbs.subtitle">
+                    <section class="bg-tg-panel rounded-xl p-4 mb-3">
+                        <div class="flex items-start justify-between gap-3 flex-wrap">
+                            <div class="min-w-0">
+                                <h2 class="text-tg-text text-base font-semibold" data-i18n="maintenance.thumbs.page_title">Build thumbnails</h2>
+                                <p class="text-xs text-tg-textSecondary mt-0.5" data-i18n="maintenance.thumbs.subtitle">Generate WebP previews for older files in the library. New downloads are thumbnailed automatically; this sweep covers anything that landed before the feature shipped.</p>
+                                <div id="thumbs-no-ffmpeg" class="hidden mt-2 inline-flex items-center gap-2 px-2 py-1 rounded-md bg-yellow-500/15 text-yellow-300 text-xs">
+                                    <i class="ri-error-warning-line"></i>
+                                    <span data-i18n="maintenance.thumbs.no_ffmpeg_chip">Video / audio thumbs disabled — ffmpeg missing on PATH</span>
+                                </div>
+                            </div>
+                            <div class="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+                                <button id="thumbs-wipe-btn" class="tg-btn-secondary text-xs px-3 py-1.5 inline-flex items-center gap-1.5"
+                                        data-i18n-title="maintenance.thumbs.wipe_tooltip"
+                                        title="Wipes every cached thumbnail; the next gallery scroll regenerates them on demand.">
+                                    <i class="ri-eraser-line"></i><span data-i18n="maintenance.thumbs.wipe_cache">Wipe cache</span>
+                                </button>
+                                <!-- Cancel button — visible only while a build sweep is running.
+                                     POSTs /api/maintenance/thumbs/build/cancel; the WS
+                                     `thumbs_done` event finishes the lifecycle. -->
+                                <button id="thumbs-cancel-btn" class="tg-btn-secondary text-xs px-3 py-1.5 inline-flex items-center gap-1.5 hidden"
+                                        title="Cancel the build sweep">
+                                    <i class="ri-stop-circle-line"></i><span data-i18n="maintenance.thumbs.cancel">Cancel</span>
+                                </button>
+                                <!-- Split button: main click = "Build all"; caret opens a popover
+                                     to scope the sweep to one media class (images / videos / audio). -->
+                                <div class="relative inline-flex items-stretch">
+                                    <button id="thumbs-build-btn" class="tg-btn text-xs pl-3 pr-2 py-1.5 inline-flex items-center gap-1.5 rounded-r-none"
+                                            data-i18n-title="maintenance.thumbs.build_tooltip"
+                                            title="Walks every catalogued file and generates a WebP thumb where one is missing.">
+                                        <i class="ri-image-2-line"></i><span data-i18n="maintenance.thumbs.build_all">Build all</span>
+                                    </button>
+                                    <button id="thumbs-build-kind-btn" type="button" class="tg-btn text-xs px-1.5 py-1.5 inline-flex items-center rounded-l-none border-l border-tg-border/30"
+                                            data-i18n-title="maintenance.thumbs.build_kind_tooltip"
+                                            title="Build for one media class only"
+                                            aria-haspopup="true" aria-expanded="false">
+                                        <i class="ri-arrow-down-s-line"></i>
+                                    </button>
+                                    <div id="thumbs-build-kind-menu" class="hidden absolute right-0 top-full mt-1 z-20 bg-tg-panel border border-tg-border/40 rounded-lg shadow-lg overflow-hidden min-w-[160px]" role="menu">
+                                        <button type="button" class="block w-full text-left px-3 py-1.5 text-xs hover:bg-tg-hover/40 inline-flex items-center gap-1.5" data-kind="all" role="menuitem">
+                                            <i class="ri-stack-line text-tg-textSecondary"></i><span data-i18n="maintenance.thumbs.build_kind_all">Build everything</span>
+                                        </button>
+                                        <button type="button" class="block w-full text-left px-3 py-1.5 text-xs hover:bg-tg-hover/40 inline-flex items-center gap-1.5" data-kind="image" role="menuitem">
+                                            <i class="ri-image-line text-tg-textSecondary"></i><span data-i18n="maintenance.thumbs.build_kind_image">Images only</span>
+                                        </button>
+                                        <button type="button" class="block w-full text-left px-3 py-1.5 text-xs hover:bg-tg-hover/40 inline-flex items-center gap-1.5" data-kind="video" role="menuitem">
+                                            <i class="ri-video-line text-tg-textSecondary"></i><span data-i18n="maintenance.thumbs.build_kind_video">Videos only</span>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Last build summary line — populated from
+                             /api/maintenance/thumbs/build/stats so a
+                             fresh visit can see "Last build: 3 h ago —
+                             1,240 built" before clicking anything.
+                             Survives server restart via kv. -->
+                        <div id="thumbs-stat-summary" class="hidden mt-3 text-xs text-tg-textSecondary text-center"></div>
+
+                        <div id="thumbs-progress" class="hidden mt-3" role="status" aria-live="polite">
+                            <div class="text-sm text-tg-text mb-1.5 flex items-center gap-1.5 font-medium">
+                                <i class="ri-loader-4-line animate-spin text-tg-blue"></i>
+                                <span id="thumbs-progress-status" data-i18n="maintenance.thumbs.building">Building…</span>
+                            </div>
+                            <div class="h-2 bg-tg-bg/60 rounded overflow-hidden">
+                                <div id="thumbs-progress-bar" class="h-full bg-tg-blue transition-all" style="width:0%"></div>
+                            </div>
+                            <div id="thumbs-progress-pct" class="text-[11px] text-tg-textSecondary mt-1 tabular-nums text-right"></div>
+                        </div>
+                    </section>
+                    <section class="bg-tg-panel rounded-xl p-4">
+                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+                            <div class="bg-tg-bg/40 rounded-lg p-3 text-center">
+                                <div class="text-xs text-tg-textSecondary uppercase tracking-wide" data-i18n="maintenance.thumbs.cached">Cached</div>
+                                <div id="thumbs-stat-count" class="text-2xl font-semibold text-tg-text tabular-nums">—</div>
+                            </div>
+                            <div class="bg-tg-bg/40 rounded-lg p-3 text-center">
+                                <div class="text-xs text-tg-textSecondary uppercase tracking-wide" data-i18n="maintenance.thumbs.disk">Disk</div>
+                                <div id="thumbs-stat-bytes" class="text-2xl font-semibold text-tg-text tabular-nums">—</div>
+                            </div>
+                            <div class="bg-tg-bg/40 rounded-lg p-3 text-center">
+                                <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.thumbs.last_build">Last build</div>
+                                <div id="thumbs-stat-last" class="text-xs text-tg-text tabular-nums leading-tight pt-1">—</div>
+                            </div>
+                            <div class="bg-tg-bg/40 rounded-lg p-3 col-span-2 sm:col-span-1 flex flex-col items-center justify-center text-center">
+                                <div class="text-xs text-tg-textSecondary uppercase tracking-wide mb-1.5" data-i18n="maintenance.thumbs.widths">Widths</div>
+                                <!-- Render as chips (px / px / …) instead of a slash-joined string;
+                                     the previous tabular-nums monospace flat string read like a phone
+                                     number and didn't communicate "these are picker options". -->
+                                <div id="thumbs-stat-widths" class="flex flex-wrap items-center justify-center gap-1"></div>
+                            </div>
+                        </div>
+                        <div id="thumbs-breakdown" class="grid grid-cols-3 gap-2"></div>
+                    </section>
+
+                    <!-- Decoder backend + warn-misses toggle. Per-tool
+                         settings live with their tool, not in
+                         Settings → Advanced (no duplication). -->
+                    <section class="bg-tg-panel rounded-xl p-4 mt-3">
+                        <h3 class="text-tg-text text-sm font-medium mb-2 flex items-center gap-2">
+                            <i class="ri-cpu-line text-tg-textSecondary"></i>
+                            <span data-i18n="maintenance.thumbs.hwaccel">Video thumb hardware acceleration</span>
+                        </h3>
+                        <div class="space-y-3">
+                            <div>
+                                <label for="setting-adv-ffmpeg-hwaccel" class="text-tg-text text-xs block mb-1" data-i18n="maintenance.thumbs.hwaccel_label">Decoder backend</label>
+                                <select id="setting-adv-ffmpeg-hwaccel" class="tg-input w-full text-sm">
+                                    <option value=""             data-i18n="maintenance.thumbs.hwaccel.off">Off (CPU only)</option>
+                                    <option value="vaapi"        data-i18n="maintenance.thumbs.hwaccel.vaapi">VAAPI — Intel iGPU / AMD on Linux</option>
+                                    <option value="qsv"          data-i18n="maintenance.thumbs.hwaccel.qsv">QSV — Intel Quick Sync</option>
+                                    <option value="cuda"         data-i18n="maintenance.thumbs.hwaccel.cuda">CUDA / NVDEC — NVIDIA</option>
+                                    <option value="videotoolbox" data-i18n="maintenance.thumbs.hwaccel.videotoolbox">VideoToolbox — macOS</option>
+                                    <option value="d3d11va"      data-i18n="maintenance.thumbs.hwaccel.d3d11va">D3D11VA — Windows</option>
+                                </select>
+                                <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="maintenance.thumbs.hwaccel_help">Off is the safe default. Pick the matching backend if the host has the matching driver + Docker has device passthrough (`/dev/dri` for VAAPI/QSV). Falls back to CPU silently if the chosen backend isn't available.</p>
+                            </div>
+                            <div class="bg-tg-bg/30 rounded-lg p-3 border border-tg-border/40">
+                                <div class="flex items-center justify-between gap-2 flex-wrap mb-2">
+                                    <div class="text-xs text-tg-text font-medium" data-i18n="maintenance.thumbs.hwaccel_probe_label">Test what this server can use</div>
+                                    <button id="setting-adv-ffmpeg-hwaccel-probe" type="button"
+                                        class="tg-btn-secondary text-xs px-3 py-1.5 inline-flex items-center justify-center gap-1.5 shrink-0">
+                                        <i class="ri-radar-line"></i>
+                                        <span data-i18n="maintenance.thumbs.hwaccel_probe">Run hardware probe</span>
+                                    </button>
+                                </div>
+                                <div id="setting-adv-ffmpeg-hwaccel-probe-result"
+                                     class="text-[11px] text-tg-textSecondary leading-relaxed min-h-[24px] flex flex-wrap gap-1 items-center"
+                                     role="status" aria-live="polite"></div>
+                                <p class="text-[10px] text-tg-textSecondary mt-2 leading-relaxed" data-i18n="maintenance.thumbs.hwaccel_probe_help">Click to ask the running ffmpeg which acceleration backends are actually usable on this host. Backends shown are both compiled into ffmpeg AND reachable. Pick a matching value above; leave Off if nothing shows up.</p>
+                            </div>
+                        </div>
+
+                        <div class="flex items-start justify-between gap-3 mt-4 pt-3 border-t border-tg-border/30">
+                            <div class="min-w-0">
+                                <div class="text-tg-text text-sm" data-i18n="maintenance.thumbs.warn_misses">Warn about thumb misses</div>
+                                <p class="text-[11px] text-tg-textSecondary mt-0.5" data-i18n="maintenance.thumbs.warn_misses_help">When on, emits one consolidated "X thumb misses" warning every 30 minutes if the rate is high. Turn off if you find the warnings noisy and you've already verified your library.</p>
+                            </div>
+                            <div id="setting-adv-thumbs-warn-misses" class="tg-toggle shrink-0 mt-0.5"></div>
+                        </div>
+                    </section>
+
+                    <!-- Live thumbnail preview gallery — virtualised, lazy-loaded.
+                         Uses /api/maintenance/thumbs/list (cursor pagination) +
+                         /api/thumbs/:id?w=320 per tile. IntersectionObserver
+                         drives both image src-set and infinite scroll; the DOM
+                         is capped at ~500 tiles via a sliding window. -->
+                    <section class="bg-tg-panel rounded-xl p-4 mt-3" id="thumbs-gallery-card">
+                        <div class="flex items-start justify-between gap-3 flex-wrap mb-3">
+                            <div class="min-w-0">
+                                <h3 class="text-tg-text text-sm font-medium flex items-center gap-2">
+                                    <i class="ri-gallery-line text-tg-blue"></i>
+                                    <span data-i18n="maintenance.thumbs.gallery.title">Thumbnail preview</span>
+                                </h3>
+                                <p class="text-[11px] text-tg-textSecondary mt-0.5" data-i18n="maintenance.thumbs.gallery.help">Newest first · scroll to load more · tiles render only when visible.</p>
+                            </div>
+                            <div class="flex items-center gap-1.5 shrink-0">
+                                <button class="thumbs-gallery-kind tg-btn-secondary text-[11px] px-2.5 py-1 inline-flex items-center gap-1" data-kind="all" aria-pressed="true">
+                                    <i class="ri-stack-line"></i><span data-i18n="maintenance.thumbs.gallery.kind_all">All</span>
+                                </button>
+                                <button class="thumbs-gallery-kind tg-btn-secondary text-[11px] px-2.5 py-1 inline-flex items-center gap-1" data-kind="image">
+                                    <i class="ri-image-line"></i><span data-i18n="maintenance.thumbs.gallery.kind_image">Images</span>
+                                </button>
+                                <button class="thumbs-gallery-kind tg-btn-secondary text-[11px] px-2.5 py-1 inline-flex items-center gap-1" data-kind="video">
+                                    <i class="ri-video-line"></i><span data-i18n="maintenance.thumbs.gallery.kind_video">Videos</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div id="thumbs-gallery-meta" class="text-[11px] text-tg-textSecondary mb-2 tabular-nums"></div>
+                        <div id="thumbs-gallery-grid" class="thumbs-gallery-grid" role="list" aria-busy="false"></div>
+                        <div id="thumbs-gallery-sentinel" class="thumbs-gallery-sentinel" aria-hidden="true">
+                            <div class="text-[11px] text-tg-textSecondary inline-flex items-center gap-1.5">
+                                <i class="ri-loader-4-line animate-spin"></i>
+                                <span data-i18n="maintenance.thumbs.gallery.loading">Loading more…</span>
+                            </div>
+                        </div>
+                        <div id="thumbs-gallery-empty" class="hidden text-center py-6 text-tg-textSecondary text-xs">
+                            <i class="ri-image-2-line text-2xl block mb-1 opacity-60"></i>
+                            <div data-i18n="maintenance.thumbs.gallery.empty">No thumbnails to show yet — run Build all or wait for new downloads.</div>
+                            <button id="thumbs-gallery-empty-cta" type="button" class="tg-btn text-xs px-3 py-1.5 inline-flex items-center gap-1.5 mt-3">
+                                <i class="ri-image-2-line"></i><span data-i18n="maintenance.thumbs.gallery.empty_cta">Build all now</span>
+                            </button>
+                        </div>
+                        <div id="thumbs-gallery-end" class="hidden text-center py-3 text-tg-textSecondary text-[11px]">
+                            <span data-i18n="maintenance.thumbs.gallery.end">— end of library —</span>
+                        </div>
+                    </section>
+                </div>

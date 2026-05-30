@@ -1,0 +1,45 @@
+<div id="page-maintenance-recovery" class="hidden max-w-5xl mx-auto px-3 sm:px-4" data-admin-only
+                     data-page-title-key="maintenance.recovery.page_title"
+                     data-page-subtitle-key="maintenance.recovery.subtitle">
+                    <section class="bg-tg-panel rounded-xl p-4 mb-3">
+                        <div class="flex items-start justify-between gap-3 flex-wrap">
+                            <div class="min-w-0 flex-1">
+                                <h2 class="text-tg-text text-base font-semibold" data-i18n="maintenance.recovery.page_title">Recovery cleanup</h2>
+                                <p class="text-xs text-tg-textSecondary mt-0.5" data-i18n="maintenance.recovery.subtitle">Resolve, disable, or delete groups that no loaded account can access.</p>
+                            </div>
+                        </div>
+                        <div id="recovery-empty" class="hidden text-center py-10">
+                            <i class="ri-checkbox-circle-line text-4xl text-tg-green/60"></i>
+                            <p class="text-sm text-tg-text font-medium mt-2" data-i18n="maintenance.recovery.empty.title">Nothing to clean up</p>
+                            <p class="text-xs text-tg-textSecondary mt-1" data-i18n="maintenance.recovery.empty.body">Every monitored group has a working Telegram account attached.</p>
+                        </div>
+                        <div id="recovery-stats" class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3"></div>
+                        <div id="recovery-toolbar" class="bg-tg-bg/30 rounded-xl p-3 mb-3 hidden">
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <label class="inline-flex items-center gap-1.5 text-xs text-tg-text cursor-pointer">
+                                    <input id="recovery-select-all" type="checkbox" class="rounded border-tg-border bg-tg-bg accent-tg-blue">
+                                    <span data-i18n="maintenance.recovery.select_all">Select all</span>
+                                </label>
+                                <span id="recovery-selected-count" class="text-[11px] text-tg-textSecondary tabular-nums"></span>
+                                <div class="flex-1"></div>
+                                <button id="recovery-resolve-btn" type="button" class="tg-btn-secondary text-xs px-3 py-1.5 inline-flex items-center gap-1.5">
+                                    <i class="ri-refresh-line"></i><span data-i18n="maintenance.recovery.resolve">Re-resolve</span>
+                                </button>
+                                <button id="recovery-disable-btn" type="button" class="tg-btn-secondary text-xs px-3 py-1.5 inline-flex items-center gap-1.5">
+                                    <i class="ri-pause-circle-line"></i><span data-i18n="maintenance.recovery.disable">Disable</span>
+                                </button>
+                                <select id="recovery-reassign-select" class="tg-input text-xs px-2 py-1 hidden">
+                                    <option value="" data-i18n="maintenance.recovery.reassign_placeholder">Pin to account…</option>
+                                </select>
+                                <button id="recovery-delete-btn" type="button" class="px-3 py-1.5 rounded-md bg-red-500/20 text-red-300 hover:bg-red-500/30 text-xs font-medium inline-flex items-center gap-1.5">
+                                    <i class="ri-delete-bin-line"></i><span data-i18n="maintenance.recovery.delete">Delete</span>
+                                </button>
+                            </div>
+                            <div id="recovery-progress" class="hidden mt-3 h-2 bg-tg-bg/60 rounded overflow-hidden">
+                                <div id="recovery-progress-bar" class="h-full bg-tg-blue transition-all" style="width:0%"></div>
+                            </div>
+                            <div id="recovery-progress-text" class="hidden text-[11px] text-tg-textSecondary mt-1"></div>
+                        </div>
+                        <div id="recovery-list" class="space-y-2"></div>
+                    </section>
+                </div>
