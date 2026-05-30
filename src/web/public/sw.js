@@ -27,6 +27,7 @@ const SHELL_URLS = [
     '/index.html',
     '/manifest.webmanifest',
     '/css/main.css',
+    '/index.css',
     '/icons/icon-192.png',
     '/icons/icon-512.png',
     '/icons/icon-192-maskable.png',

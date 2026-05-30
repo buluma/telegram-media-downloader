@@ -81,6 +81,7 @@ export class Resilience {
         // Non-native uncaught exceptions are real bugs — surface them and
         // crash so the watchdog can restart cleanly.
         if (type === 'Uncaught Exception') {
+            process.emit('SIGTERM'); // Signal the server to gracefully close
             setTimeout(() => process.exit(1), 5000).unref();
         }
     }
