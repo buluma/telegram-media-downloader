@@ -26,6 +26,7 @@ import { pregenerateNsfw } from './nsfw.js';
 import { pregenerateAi } from './ai/index.js';
 import { pregenerateSeekbar } from './seekbar/index.js';
 import { fileTypeFromExtension, sniffMediaFile } from './media-sniff.js';
+import { QueueManager } from './download-queue.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, '../../data');
@@ -179,13 +180,65 @@ export class DownloadManager extends EventEmitter {
         this.client = client;
         this.config = config;
         this.rateLimiter = rateLimiter;
-        // Two-lane queue. Realtime (priority 1) jobs land in `_high` and
-        // are drained first by every worker; history backfill (priority 2)
-        // lands in `queue`. Disk spillover only ever displaces history —
-        // realtime always stays in RAM. External code reads `pendingCount`
-        // (the sum) rather than `queue.length` directly.
-        this._high = [];
-        this.queue = [];
+        // Two-lane queue logic extracted to QueueManager.
+        this.queueManager = new QueueManager(config);
+
+        Object.defineProperty(this, '_high', {
+            get: () => this.queueManager.getHigh(),
+            set: (v) => {
+                this.queueManager._high = v;
+            },
+        });
+        Object.defineProperty(this, 'queue', {
+            get: () => this.queueManager.getQueue(),
+            set: (v) => {
+                this.queueManager.queue = v;
+            },
+        });
+        Object.defineProperty(this, '_jobs', { get: () => this.queueManager.getJobs() });
+        Object.defineProperty(this, '_paused', { get: () => this.queueManager.getPaused() });
+        Object.defineProperty(this, '_globalPaused', {
+            get: () => this.queueManager.getGlobalPaused(),
+            set: (v) => {
+                this.queueManager._globalPaused = v;
+            },
+        });
+        Object.defineProperty(this, '_cancelling', {
+            get: () => this.queueManager._cancelling,
+            set: (v) => {
+                this.queueManager._cancelling = v;
+            },
+        });
+
+        this.queueManager.on('queue', (n) => this.emit('queue', n));
+        this.queueManager.on('queue_changed', (evt) => this.emit('queue_changed', evt));
+
+        this.enqueue = async (job, priority) => {
+            if (job.fileSize == null) {
+                try {
+                    job.fileSize = this.getFileSize(job.message);
+                } catch (e) {
+                    logger.debug({ err: e.message }, 'Failed to get file size early hint');
+                }
+            }
+            return this.queueManager.enqueue(
+                job,
+                priority,
+                this.isDownloaded.bind(this),
+                this.active,
+            );
+        };
+        this.pauseJob = (key) => this.queueManager.pauseJob(key);
+        this.resumeJob = (key) => this.queueManager.resumeJob(key);
+        this.isPaused = (key) => this.queueManager.isPaused(key);
+        this.cancelJob = (key) => this.queueManager.cancelJob(key, this.active);
+        this.isCancelling = (key) => this.queueManager.isCancelling(key);
+        this.pauseAll = () => this.queueManager.pauseAll();
+        this.resumeAll = () => this.queueManager.resumeAll();
+        this.cancelAllQueued = () => this.queueManager.cancelAllQueued();
+        this.retryJob = (job) => this.queueManager.retryJob(job);
+        this.rehydrateFromDisk = async () => this.queueManager.rehydrateFromDisk();
+
         this.active = new Map(); // Key -> Promise/Status
         // Absolute paths of files currently being written (.part + final
         // candidates). The disk-rotator consults this Set before unlinking
@@ -198,17 +251,6 @@ export class DownloadManager extends EventEmitter {
         this.LOG_DIR = LOGS_DIR;
         this._scalerInterval = null;
         this._consecutiveSuccess = 0; // Track success streak for scaling up
-        // Per-key paused set + global flag for the IDM-style Queue page.
-        // A paused key sits in either lane but is skipped by the worker
-        // dequeue and re-queued at the back so live jobs keep flowing.
-        // `_globalPaused` short-circuits every drain — workers loop without
-        // touching the queues until `resumeAll()` clears it.
-        this._paused = new Set();
-        this._globalPaused = false;
-        // Map<key, job> snapshot for queued/high jobs so the Queue page can
-        // resolve filenames + sizes for entries that haven't started yet.
-        // Kept in lock-step with enqueue/cancel to stay O(1).
-        this._jobs = new Map();
 
         // Ensure directories
         fs.mkdir(DOWNLOADS_DIR, { recursive: true }).catch(() => {});
@@ -299,7 +341,7 @@ export class DownloadManager extends EventEmitter {
     }
 
     get pendingCount() {
-        return this._high.length + this.queue.length;
+        return this.queueManager.pendingCount;
     }
 
     _autoScale() {
@@ -348,145 +390,6 @@ export class DownloadManager extends EventEmitter {
             clearTimeout(this._saveTimeout);
             await this.saveDiskUsageCache();
         }
-    }
-
-    async enqueue(job, priority = 1) {
-        const key = `${job.groupId}_${job.message.id}`;
-        job.key = key;
-        // Stamp first-seen time for Queue-page sort-by-Added-time. Don't
-        // overwrite if a re-enqueue (e.g. retry path) already set it.
-        if (!job.addedAt) job.addedAt = Date.now();
-        // Cache a thin file-size hint so the snapshot can render size +
-        // progress before the worker actually starts the job.
-        if (job.fileSize == null) {
-            try {
-                job.fileSize = this.getFileSize(job.message);
-            } catch (e) {
-                logger.debug({ err: e.message }, 'Failed to get file size early hint');
-            }
-        }
-
-        // Dedup check (Memory + Active)
-        if (this.active.has(key)) return false;
-        // Also dedupe against queued jobs. Without this, the same
-        // (groupId,messageId) can be enqueued multiple times before the
-        // first copy is written to DB, causing concurrent workers to race
-        // on the same `.part` path.
-        if (this._jobs.has(key)) return false;
-
-        // Check DB
-        if (this.isDownloaded(job.groupId, job.message.id)) return false;
-
-        // --- DYNAMIC DEFENSE: DISK SPILLOVER ---
-        // Only history (priority 2) ever spills; realtime stays in RAM so
-        // a long backfill can't push live messages off the front of the queue.
-        const spillover =
-            Number(this.config?.advanced?.downloader?.spilloverThreshold) ||
-            DEFAULT_SPILLOVER_THRESHOLD;
-        if (priority === 2 && this.queue.length > spillover) {
-            await this.spillToDisk(job);
-            return true;
-        }
-
-        if (priority === 2)
-            this.queue.push(job); // history: FIFO normal lane
-        else if (priority === 0)
-            this._high.unshift(job); // TTL/preempt: front of high lane
-        else this._high.push(job); // realtime: FIFO high lane
-
-        // Track for snapshot()/cancel(). Kept tiny on purpose — only the
-        // fields the Queue page actually renders.
-        this._jobs.set(key, job);
-
-        this.emit('queue', this.pendingCount);
-        this.emit('queue_changed', { key, op: 'enqueue' });
-        return true;
-    }
-
-    /**
-     * Queue-page surface: pause/resume/cancel/retry by key, plus globals.
-     * All operations are O(queue length) at worst (single Array.filter for
-     * cancel) which is fine for the < 1k queues the UI is designed for.
-     */
-    pauseJob(key) {
-        if (!key) return false;
-        this._paused.add(key);
-        this.emit('queue_changed', { key, op: 'pause' });
-        return true;
-    }
-
-    resumeJob(key) {
-        if (!key) return false;
-        const had = this._paused.delete(key);
-        if (had) this.emit('queue_changed', { key, op: 'resume' });
-        return had;
-    }
-
-    isPaused(key) {
-        return this._globalPaused || this._paused.has(key);
-    }
-
-    /**
-     * Remove a queued job — works on queued OR active jobs.
-     *
-     * gramJS doesn't expose an abort signal on `downloadMedia`, but the
-     * progressCallback fires every chunk; throwing from inside it makes
-     * the downloader reject with a "Cancelled" error, which our catch
-     * block handles by deleting the .part file (no zombie). For queued
-     * jobs we just splice them out of the lane.
-     */
-    cancelJob(key) {
-        if (!key) return false;
-
-        // Queued path: drop from lane.
-        const before = this._high.length + this.queue.length;
-        this._high = this._high.filter((j) => j.key !== key);
-        this.queue = this.queue.filter((j) => j.key !== key);
-        const dequeued = this._high.length + this.queue.length < before;
-
-        // Active path: flag the key so the next progressCallback throws.
-        const wasActive = this.active.has(key);
-        if (wasActive) {
-            if (!this._cancelling) this._cancelling = new Set();
-            this._cancelling.add(key);
-        }
-
-        this._jobs.delete(key);
-        this._paused.delete(key);
-
-        if (dequeued || wasActive) {
-            this.emit('queue', this.pendingCount);
-            this.emit('queue_changed', { key, op: 'cancel' });
-            return true;
-        }
-        return false;
-    }
-
-    /** True if `cancelJob(key)` flagged this in-flight download. */
-    isCancelling(key) {
-        return !!(this._cancelling && this._cancelling.has(key));
-    }
-
-    pauseAll() {
-        this._globalPaused = true;
-        this.emit('queue_changed', { op: 'pause-all' });
-    }
-
-    resumeAll() {
-        this._globalPaused = false;
-        this._paused.clear();
-        this.emit('queue_changed', { op: 'resume-all' });
-    }
-
-    cancelAllQueued() {
-        const removed = this._high.length + this.queue.length;
-        for (const j of this._high) this._jobs.delete(j.key);
-        for (const j of this.queue) this._jobs.delete(j.key);
-        this._high = [];
-        this.queue = [];
-        this.emit('queue', this.pendingCount);
-        this.emit('queue_changed', { op: 'cancel-all' });
-        return removed;
     }
 
     /**
@@ -572,32 +475,6 @@ export class DownloadManager extends EventEmitter {
 
     // --- SPILLOVER LOGIC ---
     // Backed by the queue_backlog SQLite table (was data/logs/queue_backlog.jsonl
-    // pre-v2.7). The kv-backed store gives us atomic appends, FIFO-by-id
-    // pops, and a transactional rehydrate that can't double-deliver a job
-    // if the process is killed mid-batch — none of which the JSONL file
-    // could guarantee. Methods stay async for caller compatibility.
-    async spillToDisk(job) {
-        try {
-            pushQueueBacklog(job);
-        } catch (e) {
-            // SQLite write failed — fall back to keeping the job in memory
-            // so it isn't silently lost. This is the same posture the file
-            // path took for an EIO from the disk.
-            this.queue.push(job);
-        }
-    }
-
-    async rehydrateFromDisk() {
-        try {
-            if (queueBacklogSize() === 0) return false;
-            const popped = popQueueBacklog(1000);
-            if (!popped.length) return false;
-            for (const job of popped) this.queue.push(job);
-            return true;
-        } catch {
-            return false;
-        }
-    }
 
     async runWorker(id) {
         while (this.running) {

@@ -8,7 +8,7 @@ vi.mock('../src/core/ai/faces-client.js', () => ({
     detectFaces: vi
         .fn()
         .mockResolvedValue([
-            { x: 10, y: 10, w: 50, h: 50, score: 0.9, embedding: new Float32Array(512) },
+            { x: 10, y: 10, w: 100, h: 100, score: 0.9, embedding: new Float32Array(512) },
         ]),
 }));
 

@@ -46,7 +46,7 @@
                          or on platforms that don't expose a programmatic
                          prompt (Safari, Firefox desktop). -->
                     <button type="button" id="pwa-install-btn" data-pwa-install hidden
-                        onclick="installPwa()"
+                        data-action="installPwa"
                         class="w-full bg-tg-panel hover:bg-tg-hover rounded-xl p-3 mb-4 flex items-center gap-3 text-left transition-colors">
                         <i class="ri-install-line text-tg-blue text-xl" aria-hidden="true"></i>
                         <span class="text-tg-text text-sm font-medium" data-i18n="pwa.install">Install app</span>
@@ -882,7 +882,7 @@
                         </h3>
                         <p class="text-xs text-tg-textSecondary mb-4" data-i18n="settings.danger.help">These actions are irreversible. All files,
                             database records, and group configurations will be permanently deleted.</p>
-                        <button onclick="purgeAll()"
+                        <button data-action="purgeAll"
                             class="w-full py-2.5 rounded-lg bg-red-500/10 text-red-400 border border-red-500/30 hover:bg-red-500/20 font-medium text-sm transition-colors flex items-center justify-center gap-2">
                             <i class="ri-delete-bin-line"></i> <span data-i18n="settings.danger.purge_all">Purge All Data</span>
                         </button>

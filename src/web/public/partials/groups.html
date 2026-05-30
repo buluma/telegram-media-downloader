@@ -1,15 +1,15 @@
 <div id="page-groups" class="hidden max-w-5xl mx-auto px-3 sm:px-4">
                     <!-- Tabs -->
                     <div class="flex border-b border-tg-border mb-4">
-                        <button id="groups-tab-all" onclick="switchGroupsTab('all')"
+                        <button id="groups-tab-all" data-action="switchGroupsTab" data-arg="all"
                             class="px-4 py-2 text-sm font-medium border-b-2 border-tg-blue text-tg-blue" data-i18n="groups.tab.all">
                             All Dialogs
                         </button>
-                        <button id="groups-tab-monitored" onclick="switchGroupsTab('monitored')"
+                        <button id="groups-tab-monitored" data-action="switchGroupsTab" data-arg="monitored"
                             class="px-4 py-2 text-sm font-medium border-b-2 border-transparent text-tg-textSecondary hover:text-white transition-colors" data-i18n="groups.tab.monitored">
                             Monitored Only
                         </button>
-                        <button id="groups-tab-unmonitored" onclick="switchGroupsTab('unmonitored')"
+                        <button id="groups-tab-unmonitored" data-action="switchGroupsTab" data-arg="unmonitored"
                             class="px-4 py-2 text-sm font-medium border-b-2 border-transparent text-tg-textSecondary hover:text-white transition-colors" data-i18n="groups.tab.unmonitored">
                             Unmonitored
                         </button>

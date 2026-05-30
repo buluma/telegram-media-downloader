@@ -1,4 +1,4 @@
-<div id="media-modal" class="fixed inset-0 z-50 hidden modal-backdrop flex flex-col">
+<div id="media-modal" class="fixed inset-0 z-50 hidden modal-backdrop flex flex-col" role="dialog" aria-modal="true" aria-labelledby="modal-filename">
         <!-- Top Toolbar -->
         <div class="absolute top-0 left-0 right-0 p-4 flex justify-between items-center z-30 transition-opacity duration-300"
             id="modal-top-bar">
@@ -356,7 +356,7 @@
                             data-i18n-title="viewer.video.share_title" title="Share with friends — link works without login">
                             <i class="ri-share-line mr-2"></i><span data-i18n="viewer.video.share">Share</span>
                         </button>
-                        <button id="modal-delete" onclick="confirmDeleteFile()" data-admin-only
+                        <button id="modal-delete" data-action="confirmDeleteFile" data-admin-only
                             class="px-4 py-2 border border-red-500/50 hover:bg-red-500/20 rounded-lg text-sm text-red-400 flex items-center font-medium transition"
                             data-i18n-title="viewer.video.delete_title" title="Delete File">
                             <i class="ri-delete-bin-line mr-2"></i><span data-i18n="viewer.video.delete">Delete</span>
@@ -371,14 +371,14 @@
         </div>
     </div>
 
-<div id="group-modal" class="fixed inset-0 z-50 flex items-center justify-center p-3 modal-backdrop hidden">
+<div id="group-modal" class="fixed inset-0 z-50 flex items-center justify-center p-3 modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="group-modal-title">
             <div
                 class="bg-tg-sidebar w-full max-w-lg rounded-xl overflow-hidden shadow-2xl transform scale-100 transition-all">
                 <!-- Header — slimmer than before so the modal fits more
                      content on short viewports. -->
                 <div class="bg-tg-panel px-4 py-3 flex items-center justify-between border-b border-tg-border">
-                    <h3 class="text-white font-medium text-base" data-i18n="group.modal.title">Group Settings</h3>
-                    <button onclick="closeGroupSettings()"
+                    <h3 id="group-modal-title" class="text-white font-medium text-base" data-i18n="group.modal.title">Group Settings</h3>
+                    <button data-action="closeGroupSettings"
                         class="w-7 h-7 rounded-full hover:bg-tg-hover flex items-center justify-center transition-colors">
                         <i class="ri-close-line text-tg-textSecondary text-lg"></i>
                     </button>
@@ -392,13 +392,13 @@
                      Icons keep the labels short enough for narrow viewports;
                      `flex-1` makes each tap target evenly sized. -->
                 <div class="flex border-b border-tg-border">
-                    <div class="tab-item active flex-1 text-center inline-flex items-center justify-center gap-1.5 text-sm" onclick="switchSettingsTab('media')" id="tab-media">
+                    <div class="tab-item active flex-1 text-center inline-flex items-center justify-center gap-1.5 text-sm" data-action="switchSettingsTab" data-arg="media" id="tab-media">
                         <i class="ri-filter-line"></i><span data-i18n="group.modal.tab.media">Filters</span>
                     </div>
-                    <div class="tab-item flex-1 text-center inline-flex items-center justify-center gap-1.5 text-sm" onclick="switchSettingsTab('forward')" id="tab-forward">
+                    <div class="tab-item flex-1 text-center inline-flex items-center justify-center gap-1.5 text-sm" data-action="switchSettingsTab" data-arg="forward" id="tab-forward">
                         <i class="ri-share-forward-line"></i><span data-i18n="group.modal.tab.forward">Routing</span>
                     </div>
-                    <div class="tab-item flex-1 text-center inline-flex items-center justify-center gap-1.5 text-sm" onclick="switchSettingsTab('data')" id="tab-data">
+                    <div class="tab-item flex-1 text-center inline-flex items-center justify-center gap-1.5 text-sm" data-action="switchSettingsTab" data-arg="data" id="tab-data">
                         <i class="ri-database-2-line"></i><span data-i18n="group.modal.tab.data">Data</span>
                     </div>
                 </div>
@@ -412,7 +412,7 @@
                     <div id="content-media" class="space-y-3">
                         <label class="flex items-center justify-between p-3 bg-tg-panel rounded-lg cursor-pointer hover:bg-tg-hover transition-colors">
                             <span class="text-white text-sm font-medium" data-i18n="group.modal.enable_monitoring">Enable Monitoring</span>
-                            <div class="tg-toggle" id="group-enable-toggle" onclick="toggleGroupEnabled(event)"></div>
+                            <div class="tg-toggle" id="group-enable-toggle" data-action="toggleGroupEnabled"></div>
                         </label>
 
                         <div>
@@ -463,7 +463,7 @@
                                     <div class="text-white text-sm font-medium" data-i18n="group.fwd.title">Auto Forward</div>
                                     <p class="text-[11px] text-tg-textSecondary" data-i18n="group.fwd.subtitle">Forward media to another channel</p>
                                 </div>
-                                <div class="tg-toggle shrink-0" id="fwd-enable-toggle" onclick="toggleFwdEnabled(event)"></div>
+                                <div class="tg-toggle shrink-0" id="fwd-enable-toggle" data-action="toggleFwdEnabled"></div>
                             </label>
                             <div class="space-y-2" id="fwd-settings">
                                 <div>
@@ -472,25 +472,25 @@
                                         <input type="text" id="fwd-destination" class="tg-input pr-9 text-sm py-2"
                                             data-i18n-placeholder="group.fwd.dest_placeholder"
                                             placeholder="Use 'Select' button or type ID">
-                                        <button onclick="openDestinationPicker()"
+                                        <button data-action="openDestinationPicker"
                                             class="absolute right-2 top-1/2 transform -translate-y-1/2 text-tg-textSecondary hover:text-white p-0.5 rounded hover:bg-white/10 transition-colors"
                                             data-i18n-title="group.fwd.select_from_list" title="Select from list">
                                             <i class="ri-list-check-2"></i>
                                         </button>
                                     </div>
                                 </div>
-                                <label onclick="toggleFwdDelete(event)" class="flex items-center justify-between py-1.5 cursor-pointer">
+                                <label data-action="toggleFwdDelete" class="flex items-center justify-between py-1.5 cursor-pointer">
                                     <span class="text-tg-text text-xs" data-i18n="group.fwd.delete_after">Delete after forward</span>
                                     <div class="tg-toggle" id="fwd-delete-toggle"></div>
                                 </label>
-                                <label onclick="toggleFwdKeepImages(event)" class="flex items-center justify-between py-1.5 cursor-pointer">
+                                <label data-action="toggleFwdKeepImages" class="flex items-center justify-between py-1.5 cursor-pointer">
                                     <div>
                                         <span class="text-tg-text text-xs" data-i18n="group.fwd.keep_images">Keep images after forward</span>
                                         <p class="text-[10px] text-tg-textSecondary mt-0.5" data-i18n="group.fwd.keep_images_help">Don't delete forwarded photos locally</p>
                                     </div>
                                     <div class="tg-toggle shrink-0" id="fwd-keep-images-toggle"></div>
                                 </label>
-                                <label onclick="toggleFwdKeepVideos(event)" class="flex items-center justify-between py-1.5 cursor-pointer">
+                                <label data-action="toggleFwdKeepVideos" class="flex items-center justify-between py-1.5 cursor-pointer">
                                     <div>
                                         <span class="text-tg-text text-xs" data-i18n="group.fwd.keep_videos">Keep videos after forward</span>
                                         <p class="text-[10px] text-tg-textSecondary mt-0.5" data-i18n="group.fwd.keep_videos_help">Don't delete forwarded videos locally</p>
@@ -677,9 +677,9 @@
                 <!-- Footer — slimmer; the modal already eats more vertical
                      space than most other surfaces, so trim where we can. -->
                 <div class="px-3 py-2.5 border-t border-tg-border flex justify-end gap-2 bg-tg-sidebar">
-                    <button onclick="closeGroupSettings()"
+                    <button data-action="closeGroupSettings"
                         class="px-3 py-1.5 text-sm rounded-lg text-tg-textButton hover:bg-tg-hover transition-colors" data-i18n="common.cancel">Cancel</button>
-                    <button onclick="saveGroupSettings()"
+                    <button data-action="saveGroupSettings"
                         class="px-4 py-1.5 text-sm rounded-lg bg-tg-blue text-white font-medium hover:bg-opacity-90 transition-all shadow-lg shadow-tg-blue/20" data-i18n="group.modal.save_changes">Save Changes</button>
                 </div>
             </div>

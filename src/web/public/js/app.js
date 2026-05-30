@@ -58,6 +58,7 @@ import { setupDragDropLink } from './dragdrop-link.js';
 import { setupMiniPlayer, shrinkToMini, dismiss as dismissMiniPlayer } from './mini-player.js';
 import { wireChangelogTrigger } from './changelog-viewer.js';
 import * as WakeLock from './wake-lock.js';
+import { registerAction } from './ui-events.js';
 
 // ============ Render coalescing ============
 //
@@ -183,22 +184,22 @@ async function init() {
     // the bindings are live as soon as the module finishes its synchronous
     // bootstrap, regardless of any later network failure. Keep this list
     // in sync with `_setupSidebarGroupsCollapse` and `setupFab` further down.
-    window.navigateTo = navigateTo;
-    window.openGroup = openGroup;
-    window.showAllMedia = showAllMedia;
-    window.openMediaViewer = Viewer.openMediaViewer;
-    window.Viewer = Viewer;
-    window.closeMediaViewer = Viewer.closeMediaViewer;
-    window.openGroupSettings = openGroupSettings;
-    window.closeGroupSettings = closeGroupSettings;
-    window.saveGroupSettings = saveGroupSettings;
-    window.refreshCurrentPage = refreshCurrentPage;
-    window.switchGroupsTab = switchGroupsTab;
-    window.switchSettingsTab = switchSettingsTab;
-    window.toggleGroupEnabled = toggleGroupEnabled;
-    window.closeSidebar = closeSidebar;
-    window.confirmDeleteFile = confirmDeleteFile;
-    window.toggleFwdEnabled = toggleFwdEnabled;
+    registerAction('navigateTo', navigateTo);
+    registerAction('openGroup', openGroup);
+    registerAction('showAllMedia', showAllMedia);
+    registerAction('openMediaViewer', Viewer.openMediaViewer);
+    window.Viewer = Viewer; // Keep Viewer for external debugging if needed
+    registerAction('closeMediaViewer', Viewer.closeMediaViewer);
+    registerAction('openGroupSettings', openGroupSettings);
+    registerAction('closeGroupSettings', closeGroupSettings);
+    registerAction('saveGroupSettings', saveGroupSettings);
+    registerAction('refreshCurrentPage', refreshCurrentPage);
+    registerAction('switchGroupsTab', switchGroupsTab);
+    registerAction('switchSettingsTab', switchSettingsTab);
+    registerAction('toggleGroupEnabled', toggleGroupEnabled);
+    registerAction('closeSidebar', closeSidebar);
+    registerAction('confirmDeleteFile', confirmDeleteFile);
+    registerAction('toggleFwdEnabled', toggleFwdEnabled);
     // Mini-player public surface — viewer.js can opt into the dock-on-
     // close behaviour by calling `window.tgdlShrinkToMini()` from the
     // modal close path. Kept on `window` (instead of imported) so the
@@ -515,15 +516,15 @@ async function init() {
     // setupFab / Settings / Viewer / etc. closures further down. Safe to
     // assign post-await because no inline onclick reaches them before
     // the operator clicks something.
-    window.toggleFwdDelete = toggleFwdDelete;
-    window.toggleFwdKeepImages = toggleFwdKeepImages;
-    window.toggleFwdKeepVideos = toggleFwdKeepVideos;
-    window.openDestinationPicker = openDestinationPicker;
-    window.filterDialogs = filterDialogs;
-    window.filterSidebarGroups = filterSidebarGroups;
-    window.showToast = showToast;
-    window.purgeGroup = purgeGroup;
-    window.purgeAll = purgeAll;
+    registerAction('toggleFwdDelete', toggleFwdDelete);
+    registerAction('toggleFwdKeepImages', toggleFwdKeepImages);
+    registerAction('toggleFwdKeepVideos', toggleFwdKeepVideos);
+    registerAction('openDestinationPicker', openDestinationPicker);
+    registerAction('filterDialogs', filterDialogs);
+    registerAction('filterSidebarGroups', filterSidebarGroups);
+    registerAction('purgeGroup', purgeGroup);
+    registerAction('purgeAll', purgeAll);
+    window.showToast = showToast; // Keep on window as utility for now
 
     // View-mode picker in the header — dropdown with Grid / Compact / List
     // options (replaces the v2.3.0 cycle button so users can pick directly
@@ -673,7 +674,7 @@ async function init() {
     _initSavedFiltersChip();
 
     // Settings globals
-    window.applyPreset = Settings.applyPreset;
+    registerAction('applyPreset', Settings.applyPreset);
     // Manual Save button removed in v2.6 — auto-save handles every edit
     // 800 ms after the last change, with the inline pill + notification
     // bell entry for confirmation. The legacy `Settings.saveSettings`
@@ -1654,7 +1655,7 @@ function updateHeaderAvatar(groupId, displayName) {
     const initial = (displayName || '?').trim().charAt(0).toUpperCase() || '?';
     const slot = (Math.abs(parseInt(String(groupId).slice(-3)) || 0) % 6) + 1;
     el.className = `tg-avatar tg-avatar-${slot} w-10 h-10 text-lg flex-shrink-0 relative overflow-hidden`;
-    el.innerHTML = `<span>${initial}</span><img src="${photo}" alt="" class="absolute inset-0 w-full h-full object-cover" onerror="this.remove()">`;
+    el.innerHTML = `<span>${initial}</span><img src="${photo}" alt="${escapeHtml(name || 'Avatar')}" class="absolute inset-0 w-full h-full object-cover" onerror="this.remove()">`;
 }
 
 function showAllMedia() {
@@ -2322,7 +2323,7 @@ function renderMediaGrid(opts = {}) {
             state.imageObserver?.disconnect();
             _tileWindowObserver?.disconnect();
         }
-        grid.innerHTML = '';
+        grid.replaceChildren();
         _renderedFileCount = 0;
         renderGalleryEmptyState();
         return;
@@ -2401,7 +2402,7 @@ function renderMediaGrid(opts = {}) {
                     // phase so the visual outcome stays identical (fade-in
                     // on success, hide on failure).
                     const imgFallback =
-                        `<img loading="lazy" decoding="async" class="w-full h-full object-cover" alt=""` +
+                        `<img loading="lazy" decoding="async" class="w-full h-full object-cover" alt="${escapeHtml(file.name || 'Thumbnail')}"` +
                         (thumbUrl ? ` src="${escapeHtml(thumbUrl)}"` : '') +
                         '>';
                     const docFallback = `<div class="w-full h-full flex flex-col items-center justify-center">
@@ -2531,18 +2532,19 @@ function renderMediaGrid(opts = {}) {
         .join('');
 
     if (append) {
-        // Tail-append. insertAdjacentHTML doesn't re-parse the existing
-        // children — O(N_appended) instead of O(N_total) per scroll page,
-        // which is the difference between buttery scroll and stutter on
-        // a 1000-tile gallery.
-        grid.insertAdjacentHTML('beforeend', html);
+        // Tail-append via DocumentFragment.
+        const tpl = document.createElement('template');
+        tpl.innerHTML = html;
+        grid.appendChild(tpl.content);
     } else {
         // Release observer refs before tearing out DOM nodes so the browser
         // can GC the old tile elements immediately rather than waiting for
         // the IntersectionObserver to release its internal strong references.
         state.imageObserver?.disconnect();
         _tileWindowObserver?.disconnect();
-        grid.innerHTML = html;
+        const tpl = document.createElement('template');
+        tpl.innerHTML = html;
+        grid.replaceChildren(tpl.content);
     }
     _renderedFileCount = state.files.length;
 

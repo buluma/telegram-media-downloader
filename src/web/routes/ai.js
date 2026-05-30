@@ -1137,8 +1137,8 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                         avgScore: Number(r.avg_score.toFixed(3)),
                     }));
                     const allAvg = availableTags.map((t) => t.avgScore);
-                    scoreMin = Math.min(...allAvg);
-                    scoreMax = Math.max(...allAvg);
+                    scoreMin = allAvg.reduce((min, v) => (v < min ? v : min), allAvg[0]);
+                    scoreMax = allAvg.reduce((max, v) => (v > max ? v : max), allAvg[0]);
                 }
             } catch {}
 

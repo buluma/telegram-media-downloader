@@ -158,7 +158,7 @@
 
     <div class="flex h-full">
         <!-- Mobile Overlay -->
-        <div id="sidebar-overlay" class="fixed inset-0 bg-black/50 z-40 hidden md:hidden" onclick="closeSidebar()">
+        <div id="sidebar-overlay" class="fixed inset-0 bg-black/50 z-40 hidden md:hidden" data-action="closeSidebar">
         </div>
 
         <!-- Left Sidebar -->
@@ -180,28 +180,28 @@
                  already cover it). -->
             <nav class="border-b border-tg-border/40 px-2 py-2 flex flex-col gap-0.5">
                 <div class="nav-item flex items-center gap-2.5 px-2.5 py-2 rounded-lg cursor-pointer hover:bg-tg-hover transition-colors" data-page="groups" data-admin-only
-                    onclick="navigateTo('groups')">
+                    data-action="navigateTo" data-arg="groups">
                     <div class="w-7 h-7 rounded-md bg-blue-500/10 flex items-center justify-center flex-shrink-0">
                         <i class="ri-group-line text-sm text-blue-400"></i>
                     </div>
                     <span class="text-tg-text text-sm font-medium" data-i18n="nav.groups">Groups</span>
                 </div>
                 <div class="nav-item flex items-center gap-2.5 px-2.5 py-2 rounded-lg cursor-pointer hover:bg-tg-hover transition-colors" data-page="backfill" data-admin-only
-                    onclick="navigateTo('backfill')">
+                    data-action="navigateTo" data-arg="backfill">
                     <div class="w-7 h-7 rounded-md bg-purple-500/10 flex items-center justify-center flex-shrink-0">
                         <i class="ri-history-line text-sm text-purple-400"></i>
                     </div>
                     <span class="text-tg-text text-sm font-medium" data-i18n="nav.backfill">Backfill</span>
                 </div>
                 <div class="nav-item flex items-center gap-2.5 px-2.5 py-2 rounded-lg cursor-pointer hover:bg-tg-hover transition-colors" data-page="queue" data-admin-only
-                    onclick="navigateTo('queue')">
+                    data-action="navigateTo" data-arg="queue">
                     <div class="w-7 h-7 rounded-md bg-green-500/10 flex items-center justify-center flex-shrink-0">
                         <i class="ri-download-cloud-2-line text-sm text-green-400"></i>
                     </div>
                     <span class="text-tg-text text-sm font-medium" data-i18n="nav.queue">Queue</span>
                 </div>
                 <div class="nav-item flex items-center gap-2.5 px-2.5 py-2 rounded-lg cursor-pointer hover:bg-tg-hover transition-colors" data-page="settings"
-                    onclick="navigateTo('settings')">
+                    data-action="navigateTo" data-arg="settings">
                     <div class="w-7 h-7 rounded-md bg-gray-500/10 flex items-center justify-center flex-shrink-0">
                         <i class="ri-settings-3-line text-sm text-gray-400"></i>
                     </div>
@@ -214,7 +214,7 @@
                      Power users keep the deep links —
                      /maintenance/duplicates etc. still resolve directly. -->
                 <div class="nav-item flex items-center gap-2.5 px-2.5 py-2 rounded-lg cursor-pointer hover:bg-tg-hover transition-colors" data-page="maintenance" data-admin-only
-                    onclick="navigateTo('maintenance')">
+                    data-action="navigateTo" data-arg="maintenance">
                     <div class="w-7 h-7 rounded-md bg-amber-500/10 flex items-center justify-center flex-shrink-0">
                         <i class="ri-tools-line text-sm text-amber-400"></i>
                     </div>
@@ -243,7 +243,7 @@
             <!-- All Media Button -->
             <div class="p-1.5 border-b border-tg-border/40">
                 <div class="flex items-center gap-2.5 px-2 py-2 rounded-lg cursor-pointer hover:bg-tg-hover transition-colors"
-                    onclick="showAllMedia()">
+                    data-action="showAllMedia">
                     <div class="tg-avatar tg-avatar-4 w-9 h-9 text-base flex-shrink-0 rounded-lg">
                         <i class="ri-gallery-fill"></i>
                     </div>
@@ -444,7 +444,7 @@
                     <button id="refresh-btn" type="button"
                         class="hidden sm:flex w-10 h-10 min-w-[44px] min-h-[44px] rounded-full hover:bg-tg-hover items-center justify-center"
                         data-i18n-aria-label="header.refresh" aria-label="Refresh"
-                        onclick="refreshCurrentPage()">
+                        data-action="refreshCurrentPage">
                         <i class="ri-refresh-line text-xl text-tg-textSecondary" aria-hidden="true"></i>
                     </button>
 
