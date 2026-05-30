@@ -2767,12 +2767,6 @@ input[type="range"].tg-range::-moz-range-track,
     outline-offset: 2px;
     border-radius: 6px;
 }
-button:focus,
-input:focus,
-select:focus,
-textarea:focus {
-    outline: none;
-}
 
 /* Skip-to-content link — visually hidden until focused by keyboard.
    Ensures keyboard users can bypass sidebar nav and land directly

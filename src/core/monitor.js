@@ -427,7 +427,7 @@ export class RealtimeMonitor extends EventEmitter {
 
             this.emit('configReloaded', newConfig);
         } catch (err) {
-            // Ignore read errors
+            logger.warn({ err: err.message }, 'Failed to reload config');
         }
     }
 

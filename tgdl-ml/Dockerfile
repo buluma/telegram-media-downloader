@@ -13,6 +13,9 @@
 ARG BASE_IMAGE=ghcr.io/immich-app/immich-machine-learning:release
 FROM ${BASE_IMAGE} AS runtime
 
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends tini && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /usr/src
 COPY tgdl_ml /usr/src/tgdl_ml
 
@@ -29,4 +32,5 @@ EXPOSE 3800
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD ["python3", "-c", "import json,urllib.request; d=json.loads(urllib.request.urlopen('http://127.0.0.1:3800/health',timeout=3).read()); exit(0 if d.get('ok') else 1)"]
 
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["python", "-m", "tgdl_ml"]

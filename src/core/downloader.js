@@ -8,7 +8,7 @@ import { existsSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { Api } from 'telegram';
-import { DebugLogger } from './logger.js';
+import { logger, DebugLogger } from './logger.js';
 import {
     getDb,
     insertDownload,
@@ -361,7 +361,9 @@ export class DownloadManager extends EventEmitter {
         if (job.fileSize == null) {
             try {
                 job.fileSize = this.getFileSize(job.message);
-            } catch {}
+            } catch (e) {
+                logger.debug({ err: e.message }, 'Failed to get file size early hint');
+            }
         }
 
         // Dedup check (Memory + Active)
@@ -676,7 +678,9 @@ export class DownloadManager extends EventEmitter {
             const safeName = String(job?.groupName || job?.groupId || '?');
             const mid = job?.message?.id ?? '?';
             process.stderr.write(`[downloader] FAILED ${safeName} #${mid}: ${reason}\n`);
-        } catch {}
+        } catch (e) {
+            logger.debug({ err: e.message }, 'Failed to write to stderr in reportFailure');
+        }
     }
 
     async download(job, attempt = 1) {
@@ -739,7 +743,12 @@ export class DownloadManager extends EventEmitter {
                 // can cause immediate "0-byte success" on some media.
                 try {
                     if (existsSync(partPath)) await fs.unlink(partPath);
-                } catch {}
+                } catch (e) {
+                    logger.debug(
+                        { err: e.message, path: partPath },
+                        'Failed to cleanup part file before download',
+                    );
+                }
 
                 let prevBytes = 0n;
                 let prevTs = Date.now();
@@ -804,7 +813,12 @@ export class DownloadManager extends EventEmitter {
                     this._cancelling.delete(job.key);
                     try {
                         if (existsSync(partPath)) await fs.unlink(partPath);
-                    } catch {}
+                    } catch (e) {
+                        logger.debug(
+                            { err: e.message, path: partPath },
+                            'Failed to cleanup part file on cancel',
+                        );
+                    }
                     const err = new Error('Cancelled');
                     err.cancelled = true;
                     throw err;
@@ -823,7 +837,12 @@ export class DownloadManager extends EventEmitter {
                 if (!partStats.size) {
                     try {
                         await fs.unlink(partPath);
-                    } catch {}
+                    } catch (e) {
+                        logger.debug(
+                            { err: e.message, path: partPath },
+                            'Failed to cleanup 0-byte part file',
+                        );
+                    }
                     throw new Error(
                         `Downloaded file is empty (0 bytes); expected=${fileSize || 'unknown'}; media=${mediaInfo.description}`,
                     );
@@ -853,7 +872,12 @@ export class DownloadManager extends EventEmitter {
                 if (!finalStats.size) {
                     try {
                         await fs.unlink(writtenPath);
-                    } catch {}
+                    } catch (e) {
+                        logger.debug(
+                            { err: e.message, path: writtenPath },
+                            'Failed to cleanup 0-byte final file',
+                        );
+                    }
                     throw new Error(
                         `Final file is 0 bytes after rename; expected=${fileSize || 'unknown'}; media=${mediaInfo.description}`,
                     );
@@ -1089,10 +1113,14 @@ export class DownloadManager extends EventEmitter {
                 // NSFW is opt-in via config.advanced.nsfw.enabled.
                 try {
                     pregenerateThumb(newId);
-                } catch {}
+                } catch (e) {
+                    logger.warn({ err: e.message }, 'pregenerateThumb failed');
+                }
                 try {
                     pregenerateNsfw(newId);
-                } catch {}
+                } catch (e) {
+                    logger.warn({ err: e.message }, 'pregenerateNsfw failed');
+                }
                 try {
                     // Priority hint: realtime monitor jobs (priority 1) +
                     // TTL/self-destruct unshifts (priority 0) jump ahead
@@ -1100,7 +1128,9 @@ export class DownloadManager extends EventEmitter {
                     // never starves behind a 100k-row backfill.
                     const priority = job?.priority < 2 ? 'realtime' : 'backfill';
                     pregenerateAi(newId, { priority });
-                } catch {}
+                } catch (e) {
+                    logger.warn({ err: e.message }, 'pregenerateAi failed');
+                }
                 // Faststart-optimise newly-downloaded MP4s so the
                 // gallery's HTML5 player can seek + start audio
                 // without waiting for the entire mdat to stream
@@ -1116,7 +1146,9 @@ export class DownloadManager extends EventEmitter {
                 // benefit from faststart as much as live ingests.
                 try {
                     faststartInBackground(newId);
-                } catch {}
+                } catch (e) {
+                    logger.warn({ err: e.message }, 'faststartInBackground failed');
+                }
                 // Seekbar sprite pregenerate — gated internally by
                 // cfg.advanced.seekbar.{enabled, autoOnDownload}. Runs
                 // AFTER faststart so the sprite matches the final byte
@@ -1127,7 +1159,9 @@ export class DownloadManager extends EventEmitter {
                 try {
                     const priority = job?.priority < 2 ? 'realtime' : 'backfill';
                     pregenerateSeekbar(newId, { priority });
-                } catch {}
+                } catch (e) {
+                    logger.warn({ err: e.message }, 'pregenerateSeekbar failed');
+                }
             }
         } catch (e) {
             console.error('DB Insert Error', e);

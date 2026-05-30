@@ -114,10 +114,14 @@ describe('Resilience.handleFatal', () => {
         expect(exit).not.toHaveBeenCalled();
     });
 
-    it('exits on a generic uncaught error', () => {
+    it('exits on a generic uncaught error after a delay', () => {
+        vi.useFakeTimers();
         const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined);
-        r.handleFatal('Uncaught', new Error('something blew up'));
+        r.handleFatal('Uncaught Exception', new Error('something blew up'));
+        expect(exit).not.toHaveBeenCalled();
+        vi.advanceTimersByTime(5000);
         expect(exit).toHaveBeenCalledWith(1);
+        vi.useRealTimers();
     });
 });
 

@@ -58,6 +58,7 @@ import * as backup from '../core/backup/index.js';
 import { metrics } from '../core/metrics.js';
 import { isAuthConfigured, validateSession, startSessionGc } from '../core/web-auth.js';
 import { logger } from '../core/logger.js';
+import { resilience } from '../core/resilience.js';
 import { suppressNoise, wrapConsoleMethod, NATIVE_LOAD_FAIL } from '../core/logger.js';
 import { createJobTracker } from '../core/job-tracker.js';
 import { getSelfPeerId, getClusterToken } from '../core/cluster/identity.js';
@@ -167,58 +168,7 @@ console.warn = (...args) => {
     } catch {}
     _origConsoleWarn(...args);
 };
-// Native-binary load failures from optional deps must NOT crash the
-// process. The most common offender is `onnxruntime-node` (transitive of
-// `@huggingface/transformers`, which our optional NSFW classifier uses):
-// it ships glibc-only Linux prebuilds, so on musl-based images (alpine)
-// the dynamic linker errors with `Error loading shared library
-// ld-linux-x86-64.so.2`. We move the dep to optionalDependencies in
-// package.json so a default install doesn't pull it at all, but a
-// historical install or a re-deploy without `npm prune` may leave the
-// broken module on disk. Catch the rejection here, log once, move on.
-// The detector pattern lives in core/logger.js so this file, src/index.js,
-// and the doctor check can't drift apart.
-let _nativeLoadFailWarned = false;
-process.on('unhandledRejection', (reason) => {
-    const msg = reason?.message || String(reason);
-    if (suppressNoise(msg, 'unhandledRejection')) return;
-    if (NATIVE_LOAD_FAIL.test(msg)) {
-        if (!_nativeLoadFailWarned) {
-            _nativeLoadFailWarned = true;
-            console.warn(
-                '[startup] An optional native module failed to load (' +
-                    msg.slice(0, 200) +
-                    '). ' +
-                    'The dashboard will keep running; only the feature that triggered this load will be unavailable. ' +
-                    'Most often this is `onnxruntime-node` from the optional NSFW classifier on a musl-based image — ' +
-                    'reinstall with `npm install @huggingface/transformers` on a glibc image (Debian, Ubuntu, our default Dockerfile uses bookworm-slim) or remove it with `npm uninstall @huggingface/transformers`.',
-            );
-        }
-        return;
-    }
-    console.error('Unhandled rejection:', reason);
-});
-
-process.on('uncaughtException', (err) => {
-    const msg = err?.message || String(err);
-    if (NATIVE_LOAD_FAIL.test(msg)) {
-        if (!_nativeLoadFailWarned) {
-            _nativeLoadFailWarned = true;
-            console.warn('[startup] Native module load failure swallowed:', msg.slice(0, 200));
-        }
-        return;
-    }
-    // Non-native uncaught exceptions are real bugs — surface them and
-    // crash so the watchdog can restart cleanly. Stop accepting new
-    // connections and give in-flight requests up to 5 s to flush
-    // before exiting; without the drain, every unhandled bug produces
-    // a 502 burst for every concurrent client during the restart.
-    console.error('Uncaught exception:', err);
-    try {
-        server.close();
-    } catch {}
-    setTimeout(() => process.exit(1), 5000).unref();
-});
+resilience.init();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, '../../data');
