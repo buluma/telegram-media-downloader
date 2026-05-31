@@ -92,7 +92,7 @@ jobs:
           ls -lh "${{ matrix.slug }}.tar.gz"
 
       - name: Attach to GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: seekbar-service/dist/${{ matrix.slug }}.tar.gz
           fail_on_unmatched_files: true
