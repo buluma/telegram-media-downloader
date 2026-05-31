@@ -67,7 +67,7 @@ COPY --from=deps /app/node_modules ./node_modules
 # Copy scripts + manifests before src so model/seekbar download layers are
 # only cache-busted when scripts or node_modules change, not on every src edit.
 COPY scripts ./scripts
-COPY runner.js config.example.json package.json LICENSE README.md SECURITY.md ./
+COPY runner.js config.example.json package.json LICENSE README.md SECURITY.md CHANGELOG.md ./
 
 # Pre-warm the AI model cache at build time so a first scan completes in
 # milliseconds instead of waiting on a cold ~150 MB download. Allowed to
