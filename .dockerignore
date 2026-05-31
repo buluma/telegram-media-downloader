@@ -13,6 +13,7 @@ tests
 !README.md
 !SECURITY.md
 !LICENSE
+!CHANGELOG.md
 .editorconfig
 .nvmrc
 .prettierrc
