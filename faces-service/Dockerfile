@@ -27,7 +27,7 @@ ARG FACES_EP_VARIANT=cpu
 # ---------------------------------------------------------------------------
 # Stage 1 — builder
 # ---------------------------------------------------------------------------
-FROM python:3.12-slim-bookworm AS builder
+FROM python:3.14-slim-bookworm AS builder
 ARG FACES_EP_VARIANT
 
 # gcc / g++       — needed by transitive wheels that fall back to source
@@ -77,7 +77,7 @@ RUN python -c "from insightface.app import FaceAnalysis; a = FaceAnalysis(name='
 # ---------------------------------------------------------------------------
 # Stage 2 — runtime
 # ---------------------------------------------------------------------------
-FROM python:3.12-slim-bookworm AS runtime
+FROM python:3.14-slim-bookworm AS runtime
 
 # libgl1 + libglib2.0-0 stay (OpenCV runtime). gcc/g++ are deliberately
 # dropped — runtime never compiles. wget powers the healthcheck.
