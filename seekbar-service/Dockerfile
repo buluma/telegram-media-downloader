@@ -15,7 +15,7 @@
 #       tgdl-seekbar:latest
 
 # ---- Stage 1: build the binaries -----------------------------------------
-FROM --platform=$BUILDPLATFORM golang:1.22-bookworm AS build
+FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS build
 ARG TARGETOS
 ARG TARGETARCH
 
