@@ -105,9 +105,10 @@ async function main() {
         }
     }
     if (!downloaded) {
-        throw new Error(
-            `no compatible seekbar release asset found for ${slug}; last error: ${lastErr?.message || 'unknown'}`,
+        console.log(
+            `[pre-download-seekbar] skipping — no release asset for ${slug} (${lastErr?.message || 'unknown'})`,
         );
+        return;
     }
 
     console.log('[pre-download-seekbar] extracting...');

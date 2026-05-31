@@ -44,13 +44,10 @@ async function main() {
         `[pre-download-models] warming model=${MODEL_ID} dtype=${DTYPE} cacheDir=${CACHE_DIR}`,
     );
 
-    const cls = await pipeline('image-classification', MODEL_ID, {
+    await pipeline('image-classification', MODEL_ID, {
         dtype: DTYPE,
         cache_dir: CACHE_DIR,
     });
-
-    // Trigger first inference once so model files are actually materialized.
-    await cls('data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==');
     console.log('[pre-download-models] complete');
 }
 
