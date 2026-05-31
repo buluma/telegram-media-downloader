@@ -259,6 +259,7 @@ export class DownloadManager extends EventEmitter {
 
     // Helper to constructing the exact InputLocation required by GramJS
     getInputLocation(message) {
+        if (!message || typeof message !== 'object') return null;
         // 1. Check for Document
         let doc = message.document;
         if (!doc && message.media) {
@@ -564,6 +565,11 @@ export class DownloadManager extends EventEmitter {
         const maxRetries = this.config.download?.retries || 5;
 
         try {
+            if (!job?.message || typeof job.message !== 'object') {
+                const err = new Error('Invalid job payload: missing Telegram message object');
+                err.nonRetryable = true;
+                throw err;
+            }
             // 1. Check Disk Quota
             if (this.config.diskManagement?.maxTotalSize) {
                 const usage = await this.getDiskUsage();
@@ -1143,6 +1149,7 @@ export class DownloadManager extends EventEmitter {
     }
 
     getFileSize(message) {
+        if (!message || typeof message !== 'object') return 0;
         if (message.document) return Number(message.document.size);
         if (message.photo) {
             const sizes = message.photo.sizes;
@@ -1155,6 +1162,7 @@ export class DownloadManager extends EventEmitter {
     }
 
     getFileTypeCategory(message) {
+        if (!message || typeof message !== 'object') return null;
         if (message.photo) return 'image';
         if (message.video) return 'video';
         if (message.voice || message.audio) return 'audio';
@@ -1303,6 +1311,7 @@ export class DownloadManager extends EventEmitter {
     }
 
     getExtension(message) {
+        if (!message || typeof message !== 'object') return '.bin';
         if (message.photo) return '.jpg';
         if (message.video) return '.mp4';
         if (message.voice) return '.ogg';
