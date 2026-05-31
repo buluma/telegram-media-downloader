@@ -2408,6 +2408,14 @@ input[type="range"].tg-range::-moz-range-track,
 .sidebar-mobile.open {
     transform: translateX(0);
 }
+/* Desktop must always keep the sidebar visible. `index.html` already
+   applies `md:transform-none`, but this stylesheet loads later and would
+   otherwise override it with the mobile off-canvas transform. */
+@media (min-width: 768px) {
+    .sidebar-mobile {
+        transform: none;
+    }
+}
 
 /* ============================================================
    Engine status pill (top header) — replaces the dropped Engine
@@ -3186,7 +3194,7 @@ body[data-page="settings"] {
    Auto-shown via the body[data-page] selector below; app.js's
    renderPage() also re-paints the active class on every navigation. */
 .maintenance-tabs {
-    display: none;
+    display: none !important;
     align-items: stretch;
     gap: 6px;
     background: var(--tg-panel, #242f3d);
@@ -3274,7 +3282,7 @@ body[data-page="maintenance-recovery"] #maintenance-tabs,
 body[data-page="maintenance-db-stats"] #maintenance-tabs,
 body[data-page="maintenance-updates"] #maintenance-tabs,
 body[data-page="maintenance-logs"] #maintenance-tabs {
-    display: flex;
+    display: flex !important;
 }
 @media (max-width: 480px) {
     .maintenance-tab {
