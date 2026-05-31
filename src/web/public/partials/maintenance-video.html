@@ -1,0 +1,107 @@
+<div id="page-maintenance-video" class="hidden max-w-5xl mx-auto px-3 sm:px-4" data-admin-only
+                     data-page-title-key="maintenance.video.page_title"
+                     data-page-subtitle-key="maintenance.video.subtitle">
+                    <!-- Auto-optimise on download — indicator card.
+                         Counters maintained by the post-download hook in
+                         src/core/faststart.js (`optimizeDownloadInBackground`)
+                         and served by GET /api/maintenance/faststart/auto-stats.
+                         Live-updated by the `faststart_auto_done` WS event
+                         so a fresh MP4 landing animates the counters. -->
+                    <section class="bg-tg-panel rounded-xl p-4 mb-3">
+                        <div class="flex items-start justify-between gap-3 flex-wrap">
+                            <div class="min-w-0">
+                                <h2 class="text-tg-text text-base font-semibold flex items-center gap-2 flex-wrap">
+                                    <span class="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-wide bg-tg-green/20 text-tg-green px-2 py-0.5 rounded-full"><span class="w-1.5 h-1.5 rounded-full bg-tg-green"></span><span data-i18n="maintenance.video.auto.badge">Auto</span></span>
+                                    <span data-i18n="maintenance.video.auto.title">Auto-optimise on download</span>
+                                </h2>
+                                <p class="text-xs text-tg-textSecondary mt-0.5" data-i18n="maintenance.video.auto.subtitle">Every newly-downloaded MP4 / MOV / M4V is moov-rewritten in the background before it lands in the gallery. No operator click required — these counters track the auto path only.</p>
+                            </div>
+                            <div id="video-auto-stat-last-wrap" class="text-right shrink-0">
+                                <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.video.auto.last">Last auto run</div>
+                                <div id="video-auto-stat-last" class="text-xs text-tg-text tabular-nums leading-tight pt-0.5">—</div>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3 text-center">
+                            <div class="bg-tg-bg/40 rounded-lg p-3">
+                                <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.video.auto.seen">Seen</div>
+                                <div id="video-auto-stat-total" class="text-xl font-semibold text-tg-text tabular-nums">—</div>
+                            </div>
+                            <div class="bg-tg-bg/40 rounded-lg p-3">
+                                <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.video.auto.optimized">Optimised</div>
+                                <div id="video-auto-stat-optimized" class="text-xl font-semibold text-tg-green tabular-nums">—</div>
+                            </div>
+                            <div class="bg-tg-bg/40 rounded-lg p-3">
+                                <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.video.auto.already">Already</div>
+                                <div id="video-auto-stat-already" class="text-xl font-semibold text-tg-text tabular-nums">—</div>
+                            </div>
+                            <div class="bg-tg-bg/40 rounded-lg p-3">
+                                <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.video.auto.errored">Errored</div>
+                                <div id="video-auto-stat-errored" class="text-xl font-semibold text-tg-red tabular-nums">—</div>
+                            </div>
+                        </div>
+                        <p id="video-auto-stat-last-error" class="hidden mt-2 text-[11px] text-tg-red truncate"></p>
+                        <p class="text-[11px] text-tg-textSecondary mt-2 leading-relaxed" data-i18n="maintenance.video.auto.help">Counters persist across restarts. "Seen" = how many post-download decisions the hook handled. Use the backfill action below for files that were already in the library before auto-optimise existed.</p>
+                    </section>
+
+                    <section class="bg-tg-panel rounded-xl p-4 mb-3">
+                        <div class="flex items-start justify-between gap-3 flex-wrap">
+                            <div class="min-w-0">
+                                <h2 class="text-tg-text text-base font-semibold" data-i18n="maintenance.video.page_title">Optimise videos for streaming</h2>
+                                <p class="text-xs text-tg-textSecondary mt-0.5" data-i18n="maintenance.video.subtitle">MP4 files whose `moov` index is at the end of the file break HTML5 seek and look like they have no audio. This sweep rewrites them in-place with `+faststart` so the player gets the index up front. Stream-copy, no re-encode.</p>
+                                <div id="video-no-ffmpeg" class="hidden mt-2 inline-flex items-center gap-2 px-2 py-1 rounded-md bg-yellow-500/15 text-yellow-300 text-xs">
+                                    <i class="ri-error-warning-line"></i>
+                                    <span data-i18n="maintenance.video.no_ffmpeg_chip">Faststart unavailable — ffmpeg missing on PATH</span>
+                                </div>
+                            </div>
+                            <div class="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+                                <button id="video-scan-btn" class="tg-btn text-xs px-3 py-1.5 inline-flex items-center gap-1.5"
+                                        data-i18n-title="maintenance.video.scan_tooltip"
+                                        title="Backfill the moov rewrite across every MP4 / MOV / M4V already in the library. New downloads are handled automatically by the hook above.">
+                                    <i class="ri-film-line"></i><span data-i18n="maintenance.video.scan_all">Backfill existing files</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Last run summary — populated from
+                             /api/maintenance/faststart/stats's `lastRun`
+                             field (server merges in the persisted kv
+                             blob). Survives restart. -->
+                        <div id="video-stat-summary" class="hidden mt-3 text-xs text-tg-textSecondary text-center"></div>
+
+                        <div id="video-progress" class="hidden mt-3" role="status" aria-live="polite">
+                            <div class="text-sm text-tg-text mb-1.5 flex items-center gap-1.5 font-medium">
+                                <i class="ri-loader-4-line animate-spin text-tg-blue"></i>
+                                <span id="video-progress-status" data-i18n="maintenance.video.scanning">Optimising…</span>
+                            </div>
+                            <div class="h-2 bg-tg-bg/60 rounded overflow-hidden">
+                                <div id="video-progress-bar" class="h-full bg-tg-blue transition-all" style="width:0%"></div>
+                            </div>
+                            <div id="video-progress-pct" class="text-[11px] text-tg-textSecondary mt-1 tabular-nums text-right"></div>
+                        </div>
+                    </section>
+                    <section class="bg-tg-panel rounded-xl p-4">
+                        <div class="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-1">
+                            <div class="bg-tg-bg/40 rounded-lg p-3 text-center">
+                                <div class="text-xs text-tg-textSecondary uppercase tracking-wide" data-i18n="maintenance.video.total">Total</div>
+                                <div id="video-stat-total" class="text-2xl font-semibold text-tg-text tabular-nums">—</div>
+                            </div>
+                            <div class="bg-tg-bg/40 rounded-lg p-3 text-center">
+                                <div class="text-xs text-tg-textSecondary uppercase tracking-wide" data-i18n="maintenance.video.optimized">Optimised</div>
+                                <div id="video-stat-optimized" class="text-2xl font-semibold text-tg-green tabular-nums">—</div>
+                            </div>
+                            <div class="bg-tg-bg/40 rounded-lg p-3 text-center">
+                                <div class="text-xs text-tg-textSecondary uppercase tracking-wide" data-i18n="maintenance.video.pending">Pending</div>
+                                <div id="video-stat-pending" class="text-2xl font-semibold text-tg-orange tabular-nums">—</div>
+                            </div>
+                            <div class="bg-tg-bg/40 rounded-lg p-3 text-center">
+                                <div class="text-xs text-tg-textSecondary uppercase tracking-wide" data-i18n="maintenance.video.skipped">Skipped</div>
+                                <div id="video-stat-skipped" class="text-2xl font-semibold text-tg-textSecondary tabular-nums">—</div>
+                            </div>
+                            <div class="bg-tg-bg/40 rounded-lg p-3 text-center">
+                                <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.video.last_run">Last run</div>
+                                <div id="video-stat-last" class="text-xs text-tg-text tabular-nums leading-tight pt-1">—</div>
+                            </div>
+                        </div>
+                        <p class="text-[11px] text-tg-textSecondary mt-2 leading-relaxed" data-i18n="maintenance.video.stats_help">Library-wide totals. Pending = MP4s whose moov atom is still at the end of the file (eligible for the backfill action above). Skipped = files in containers that don't use moov (WebM, MKV) or that aren't on disk. Auto-optimise stats for new downloads are tracked separately at the top.</p>
+                    </section>
+                </div>

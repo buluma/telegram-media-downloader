@@ -1018,7 +1018,8 @@ function _deriveTagsFromOcrText(text) {
         }
     }
     if (!freq.size) return [{ tag: '_scanned_', score: 0 }];
-    const maxFreq = Math.max(...freq.values());
+    let maxFreq = 0;
+    for (const v of freq.values()) if (v > maxFreq) maxFreq = v;
     return Array.from(freq.entries())
         .map(([tag, count]) => ({ tag, score: Math.min(1, count / maxFreq) }))
         .sort((a, b) => b.score - a.score)

@@ -2261,8 +2261,8 @@ function _matchEmbedding(queryEmbedding, minScore) {
     const rows = activeModel
         ? db
               .prepare(`SELECT download_id, embedding FROM image_embeddings WHERE model = ?`)
-              .all(activeModel)
-        : db.prepare(`SELECT download_id, embedding FROM image_embeddings`).all();
+              .iterate(activeModel)
+        : db.prepare(`SELECT download_id, embedding FROM image_embeddings`).iterate();
 
     const q =
         queryEmbedding instanceof Float32Array ? queryEmbedding : Float32Array.from(queryEmbedding);

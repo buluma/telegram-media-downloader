@@ -1,0 +1,934 @@
+<div id="page-settings" class="hidden max-w-5xl mx-auto px-3 sm:px-4">
+
+                    <!-- Sticky chip-nav. Drives smooth-scroll to the five
+                         anchored sections below (System / Accounts /
+                         Downloads / Look & Feel / Privacy & Net). Click
+                         updates the hash; an IntersectionObserver at the
+                         bottom of the page mirrors active section back
+                         to the chip via [aria-selected]. -->
+                    <nav class="settings-chip-nav" role="tablist" aria-label="Settings sections">
+                        <!-- Trimmed in v2.9: 10 chips → 5. Engine card +
+                             Maintenance card moved to a header Session menu /
+                             the /maintenance hub respectively; Quick Presets
+                             retired; Advanced collapsed behind a footer
+                             <details>. The chip-nav now mirrors only the
+                             top-level configuration sections. -->
+                        <button type="button" role="tab" data-admin-only class="settings-chip" data-chip="card-tg-api" aria-selected="true">
+                            <i class="ri-key-2-line" aria-hidden="true"></i>
+                            <span data-i18n="settings.tg_api">Telegram API</span>
+                        </button>
+                        <button type="button" role="tab" data-admin-only class="settings-chip" data-chip="card-accounts" aria-selected="false">
+                            <i class="ri-user-line" aria-hidden="true"></i>
+                            <span data-i18n="settings.accounts">Accounts</span>
+                        </button>
+                        <button type="button" role="tab" data-admin-only class="settings-chip" data-chip="card-federation" aria-selected="false">
+                            <i class="ri-broadcast-line" aria-hidden="true"></i>
+                            <span data-i18n="settings.federation">Federation</span>
+                        </button>
+                        <button type="button" role="tab" data-admin-only class="settings-chip" data-chip="card-download" aria-selected="false">
+                            <i class="ri-download-line" aria-hidden="true"></i>
+                            <span data-i18n="settings.download">Download</span>
+                        </button>
+                        <button type="button" role="tab" class="settings-chip" data-chip="card-appearance" aria-selected="false">
+                            <i class="ri-palette-line" aria-hidden="true"></i>
+                            <span data-i18n="settings.appearance">Appearance</span>
+                        </button>
+                        <button type="button" role="tab" data-admin-only class="settings-chip" data-chip="card-security" aria-selected="false">
+                            <i class="ri-lock-2-line" aria-hidden="true"></i>
+                            <span data-i18n="settings.security">Security</span>
+                        </button>
+                    </nav>
+
+                    <!-- PWA install affordance — hidden until the browser
+                         fires `beforeinstallprompt` (handled in js/pwa.js).
+                         Sits above the Engine card so it appears front-and-
+                         centre on first visit, then disappears once installed
+                         or on platforms that don't expose a programmatic
+                         prompt (Safari, Firefox desktop). -->
+                    <button type="button" id="pwa-install-btn" data-pwa-install hidden
+                        data-action="installPwa"
+                        class="w-full bg-tg-panel hover:bg-tg-hover rounded-xl p-3 mb-4 flex items-center gap-3 text-left transition-colors">
+                        <i class="ri-install-line text-tg-blue text-xl" aria-hidden="true"></i>
+                        <span class="text-tg-text text-sm font-medium" data-i18n="pwa.install">Install app</span>
+                        <i class="ri-arrow-right-s-line text-tg-textSecondary ml-auto" aria-hidden="true"></i>
+                    </button>
+
+                    <section id="settings-system" role="tabpanel" data-admin-only class="settings-section space-y-4 mb-6">
+
+                    <!-- Realtime monitor card. Drives the engine lifecycle
+                         (start/stop/restart) and surfaces queue + active +
+                         downloaded counters for the running session.
+                         The animated dot + state pill mirror the topbar
+                         indicator so at-a-glance status is consistent
+                         everywhere. -->
+                    <section id="settings-card-engine" class="engine-card bg-tg-panel rounded-xl p-4 mb-6">
+                        <header class="engine-header">
+                            <div class="engine-title-group">
+                                <span id="engine-state-dot" class="engine-state-dot" data-state="stopped" aria-hidden="true"></span>
+                                <i class="ri-pulse-line text-tg-blue text-lg" aria-hidden="true"></i>
+                                <h3 class="engine-title" data-i18n="settings.engine.title">Realtime monitor</h3>
+                            </div>
+                            <span id="engine-pill" class="engine-state-pill engine-state-stopped">
+                                <i class="ri-stop-circle-line"></i>
+                                <span data-i18n="settings.engine.stopped">Stopped</span>
+                            </span>
+                        </header>
+
+                        <div class="engine-stats">
+                            <div class="engine-stat-tile" data-stat="queue">
+                                <i class="ri-stack-line engine-stat-icon" aria-hidden="true"></i>
+                                <div class="engine-stat-meta">
+                                    <div class="engine-stat-label" data-i18n="settings.engine.queue">Queue</div>
+                                    <div id="engine-queue" class="engine-stat-value">0</div>
+                                </div>
+                            </div>
+                            <div class="engine-stat-tile" data-stat="active">
+                                <i class="ri-loader-4-line engine-stat-icon" aria-hidden="true"></i>
+                                <div class="engine-stat-meta">
+                                    <div class="engine-stat-label" data-i18n="settings.engine.active">Active</div>
+                                    <div id="engine-active" class="engine-stat-value">0</div>
+                                </div>
+                            </div>
+                            <div class="engine-stat-tile" data-stat="downloaded">
+                                <i class="ri-download-line engine-stat-icon" aria-hidden="true"></i>
+                                <div class="engine-stat-meta">
+                                    <div class="engine-stat-label" data-i18n="settings.engine.downloaded">Downloaded</div>
+                                    <div id="engine-downloaded" class="engine-stat-value">0</div>
+                                </div>
+                            </div>
+                            <div class="engine-stat-tile" data-stat="uptime">
+                                <i class="ri-time-line engine-stat-icon" aria-hidden="true"></i>
+                                <div class="engine-stat-meta">
+                                    <div class="engine-stat-label" data-i18n="settings.engine.uptime">Uptime</div>
+                                    <div id="engine-uptime" class="engine-stat-value">—</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="engine-actions">
+                            <button type="button" id="engine-start" class="tg-btn-input inline-flex items-center gap-1.5">
+                                <i class="ri-play-fill"></i><span data-i18n="settings.engine.start">Start monitor</span>
+                            </button>
+                            <button type="button" id="engine-stop" class="tg-btn-input-secondary hidden inline-flex items-center gap-1.5">
+                                <i class="ri-stop-fill"></i><span data-i18n="settings.engine.stop">Stop monitor</span>
+                            </button>
+                            <button type="button" id="engine-restart" class="tg-btn-input-secondary inline-flex items-center gap-1.5">
+                                <i class="ri-restart-line"></i><span data-i18n="settings.engine.restart">Restart</span>
+                            </button>
+                            <a href="#/queue" class="engine-link" data-i18n="settings.engine.view_queue">View full queue →</a>
+                        </div>
+
+                        <p id="engine-error" class="engine-error hidden"></p>
+                    </section>
+
+                    <!-- Discovery pointer to the Maintenance hub. Replaces
+                         the 14-button card retired in v2.9 — keeps the
+                         affordance discoverable from Settings without
+                         duplicating every action button across two pages. -->
+                    <a href="#/maintenance" class="block bg-tg-panel hover:bg-tg-hover transition-colors rounded-xl p-4 mb-6 flex items-start gap-3 group" data-admin-only>
+                        <div class="w-10 h-10 rounded-xl bg-tg-blue/15 text-tg-blue flex items-center justify-center text-xl shrink-0">
+                            <i class="ri-tools-line"></i>
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <h3 class="text-tg-text text-sm font-semibold mb-1" data-i18n="settings.maintenance_link.title">Maintenance &amp; admin tools</h3>
+                            <p class="text-xs text-tg-textSecondary leading-relaxed" data-i18n="settings.maintenance_link.body">Dedup, thumbnails, NSFW review, logs, updates, DB integrity, share links — every operational tool moved to the Maintenance hub.</p>
+                        </div>
+                        <i class="ri-arrow-right-s-line text-tg-textSecondary self-center group-hover:translate-x-0.5 transition-transform" aria-hidden="true"></i>
+                    </a>
+
+                    <!-- Advanced (runtime tunables) — collapsed by default in v2.9.
+                         Power-user settings — every value here was a hardcoded
+                         constant pre-2.x and the defaults still match the
+                         original behaviour exactly. Auto-saved like every other
+                         field on this page; server clamps every value, so a
+                         typo can't brick the install.
+                    -->
+                    <details id="settings-card-advanced-details" class="mt-6 bg-tg-panel rounded-xl scroll-mt-24" data-admin-only>
+                        <summary class="cursor-pointer p-4 list-none flex items-center gap-2">
+                            <i class="ri-tools-fill text-tg-orange"></i>
+                            <span class="text-tg-text font-medium" data-i18n="settings.advanced.title">Advanced</span>
+                            <span class="ml-2 text-xs text-tg-textSecondary" data-i18n="settings.advanced.collapsed_hint">Power-user tunables — click to expand</span>
+                            <i class="ri-arrow-down-s-line text-tg-textSecondary ml-auto details-marker"></i>
+                        </summary>
+                        <div id="settings-card-advanced" data-settings-section="card-advanced" class="px-4 pb-4 pt-0">
+                        <p class="text-xs text-tg-textSecondary mb-4" data-i18n="settings.advanced.subtitle">Hot-path tunables. Defaults match the original hardcoded values — only change these if you know what you are doing.</p>
+
+                        <div class="space-y-4">
+                            <!-- Downloader -->
+                            <div>
+                                <h4 class="text-tg-text text-sm font-medium mb-2" data-i18n="settings.advanced.downloader">Downloader</h4>
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div>
+                                        <label for="setting-adv-min-concurrency" class="text-tg-text text-xs block mb-1" data-i18n="settings.advanced.min_concurrency">Min workers</label>
+                                        <input id="setting-adv-min-concurrency" type="number" min="1" max="100" class="tg-input w-full text-sm" placeholder="3">
+                                        <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.advanced.min_concurrency_help">Auto-scaler floor. FloodWait throttles snap back to this.</p>
+                                    </div>
+                                    <div>
+                                        <label for="setting-adv-max-concurrency" class="text-tg-text text-xs block mb-1" data-i18n="settings.advanced.max_concurrency">Max workers</label>
+                                        <input id="setting-adv-max-concurrency" type="number" min="1" max="100" class="tg-input w-full text-sm" placeholder="20">
+                                        <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.advanced.max_concurrency_help">Auto-scaler ceiling. Higher risks Telegram FLOOD_WAIT bans.</p>
+                                    </div>
+                                    <div>
+                                        <label for="setting-adv-scaler-sec" class="text-tg-text text-xs block mb-1" data-i18n="settings.advanced.scaler_sec">Scaler tick (s)</label>
+                                        <input id="setting-adv-scaler-sec" type="number" min="1" max="600" class="tg-input w-full text-sm" placeholder="5">
+                                        <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.advanced.scaler_sec_help">How often to add/remove workers based on queue depth.</p>
+                                    </div>
+                                    <div>
+                                        <label for="setting-adv-idle-sleep-ms" class="text-tg-text text-xs block mb-1" data-i18n="settings.advanced.idle_sleep">Idle sleep (ms)</label>
+                                        <input id="setting-adv-idle-sleep-ms" type="number" min="50" max="10000" class="tg-input w-full text-sm" placeholder="200">
+                                        <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.advanced.idle_sleep_help">Worker pause when no job is queued. Lower = snappier.</p>
+                                    </div>
+                                    <div class="sm:col-span-2">
+                                        <label for="setting-adv-spillover" class="text-tg-text text-xs block mb-1" data-i18n="settings.advanced.spillover">History spillover threshold</label>
+                                        <input id="setting-adv-spillover" type="number" min="100" max="100000" class="tg-input w-full text-sm" placeholder="2000">
+                                        <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.advanced.spillover_help">When the history queue exceeds this size, new jobs spill to disk to bound RAM. Realtime never spills.</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- History -->
+                            <div class="border-t border-tg-border/50 pt-4">
+                                <h4 class="text-tg-text text-sm font-medium mb-2" data-i18n="settings.advanced.history">History backfill</h4>
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div>
+                                        <label for="setting-adv-backpressure" class="text-tg-text text-xs block mb-1" data-i18n="settings.advanced.backpressure">Backpressure cap</label>
+                                        <input id="setting-adv-backpressure" type="number" min="10" max="100000" class="tg-input w-full text-sm" placeholder="500">
+                                        <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.advanced.backpressure_help">Pause iteration when downloader queue exceeds this size.</p>
+                                    </div>
+                                    <div>
+                                        <label for="setting-adv-backpressure-wait" class="text-tg-text text-xs block mb-1" data-i18n="settings.advanced.backpressure_wait">Backpressure timeout (ms)</label>
+                                        <input id="setting-adv-backpressure-wait" type="number" min="5000" max="3600000" step="1000" class="tg-input w-full text-sm" placeholder="300000">
+                                        <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.advanced.backpressure_wait_help">Abort backfill if queue stays full this long.</p>
+                                    </div>
+                                    <div>
+                                        <label for="setting-adv-short-break" class="text-tg-text text-xs block mb-1" data-i18n="settings.advanced.short_break">Short break every N msgs</label>
+                                        <input id="setting-adv-short-break" type="number" min="0" max="100000" class="tg-input w-full text-sm" placeholder="100">
+                                        <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.advanced.short_break_help">2-5s scrolling pause. 0 disables.</p>
+                                    </div>
+                                    <div>
+                                        <label for="setting-adv-long-break" class="text-tg-text text-xs block mb-1" data-i18n="settings.advanced.long_break">Long break every N msgs</label>
+                                        <input id="setting-adv-long-break" type="number" min="0" max="1000000" class="tg-input w-full text-sm" placeholder="1000">
+                                        <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.advanced.long_break_help">60-120s coffee break. 0 disables. Helps avoid bans.</p>
+                                    </div>
+                                </div>
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+                                    <div class="flex items-start justify-between gap-3 py-1 sm:col-span-2">
+                                        <div class="min-w-0">
+                                            <div class="text-tg-text text-sm" data-i18n="settings.advanced.auto_first_backfill">Auto-backfill on first add</div>
+                                            <p class="text-[10px] text-tg-textSecondary mt-0.5" data-i18n="settings.advanced.auto_first_backfill_help">When you add a brand-new group, automatically pull the most recent N messages so the gallery isn't empty. Disable to keep the manual flow.</p>
+                                        </div>
+                                        <div id="setting-adv-auto-first-backfill" class="tg-toggle shrink-0 mt-0.5"></div>
+                                    </div>
+                                    <div>
+                                        <label for="setting-adv-auto-first-limit" class="text-tg-text text-xs block mb-1" data-i18n="settings.advanced.auto_first_limit">Auto-backfill limit</label>
+                                        <input id="setting-adv-auto-first-limit" type="number" min="0" max="10000" class="tg-input w-full text-sm" placeholder="100">
+                                        <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.advanced.auto_first_limit_help">Messages to pull on first add. 0 disables.</p>
+                                    </div>
+                                    <div class="flex items-start justify-between gap-3 py-1">
+                                        <div class="min-w-0">
+                                            <div class="text-tg-text text-sm" data-i18n="settings.advanced.auto_catchup">Auto catch-up after restart</div>
+                                            <p class="text-[10px] text-tg-textSecondary mt-0.5" data-i18n="settings.advanced.auto_catchup_help">After a container restart, auto-spawn a backfill for the gap between the last stored message and Telegram's current top.</p>
+                                        </div>
+                                        <div id="setting-adv-auto-catchup" class="tg-toggle shrink-0 mt-0.5"></div>
+                                    </div>
+                                    <div>
+                                        <label for="setting-adv-batch-insert" class="text-tg-text text-xs block mb-1" data-i18n="settings.advanced.batch_insert">Batch insert size</label>
+                                        <input id="setting-adv-batch-insert" type="number" min="1" max="500" class="tg-input w-full text-sm" placeholder="50">
+                                        <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.advanced.batch_insert_help">DB rows buffered before commit during backfill. Higher = faster on small files; uses a tiny bit more RAM.</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Disk rotator -->
+                            <div class="border-t border-tg-border/50 pt-4">
+                                <h4 class="text-tg-text text-sm font-medium mb-2" data-i18n="settings.advanced.rotator">Disk rotator</h4>
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div>
+                                        <label for="setting-adv-sweep-batch" class="text-tg-text text-xs block mb-1" data-i18n="settings.advanced.sweep_batch">Sweep batch</label>
+                                        <input id="setting-adv-sweep-batch" type="number" min="1" max="1000" class="tg-input w-full text-sm" placeholder="50">
+                                        <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.advanced.sweep_batch_help">Candidate rows fetched per pass.</p>
+                                    </div>
+                                    <div>
+                                        <label for="setting-adv-max-deletes" class="text-tg-text text-xs block mb-1" data-i18n="settings.advanced.max_deletes">Max deletes / sweep</label>
+                                        <input id="setting-adv-max-deletes" type="number" min="1" max="100000" class="tg-input w-full text-sm" placeholder="5000">
+                                        <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.advanced.max_deletes_help">Hard ceiling against runaway loops.</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Integrity -->
+                            <div class="border-t border-tg-border/50 pt-4">
+                                <h4 class="text-tg-text text-sm font-medium mb-2" data-i18n="settings.advanced.integrity">Integrity sweep</h4>
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div>
+                                        <label for="setting-adv-integrity-min" class="text-tg-text text-xs block mb-1" data-i18n="settings.advanced.integrity_min">Interval (min)</label>
+                                        <input id="setting-adv-integrity-min" type="number" min="1" max="10080" class="tg-input w-full text-sm" placeholder="60">
+                                        <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.advanced.integrity_min_help">How often to walk every DB row and prune dead entries.</p>
+                                    </div>
+                                    <div>
+                                        <label for="setting-adv-integrity-batch" class="text-tg-text text-xs block mb-1" data-i18n="settings.advanced.integrity_batch">stat() batch size</label>
+                                        <input id="setting-adv-integrity-batch" type="number" min="1" max="1024" class="tg-input w-full text-sm" placeholder="64">
+                                        <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.advanced.integrity_batch_help">Concurrent stat() calls. Bigger = faster, more FD pressure.</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Web -->
+                            <div class="border-t border-tg-border/50 pt-4">
+                                <h4 class="text-tg-text text-sm font-medium mb-2" data-i18n="settings.advanced.web">Dashboard</h4>
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div>
+                                        <label for="setting-adv-session-days" class="text-tg-text text-xs block mb-1" data-i18n="settings.advanced.session_days">Session lifetime (days)</label>
+                                        <input id="setting-adv-session-days" type="number" min="1" max="365" class="tg-input w-full text-sm" placeholder="7">
+                                        <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.advanced.session_days_help">New login cookies expire after this many days. Existing sessions keep their original expiry.</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+                    </details>
+                    </section>
+
+                    <section id="settings-accounts" role="tabpanel" data-admin-only class="settings-section space-y-4 mb-6">
+                    <!-- Telegram Accounts -->
+                    <div id="settings-card-accounts" data-settings-section="card-accounts" class="bg-tg-panel rounded-xl p-4 mb-4 scroll-mt-24" data-admin-only>
+                        <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
+                            <i class="ri-user-line text-tg-blue"></i> <span data-i18n="settings.accounts">Telegram Accounts</span>
+                            <a href="/add-account.html" class="ml-auto tg-btn-secondary text-xs px-3 py-1 inline-flex items-center gap-1">
+                                <i class="ri-add-line"></i> <span data-i18n="settings.accounts.add">Add account</span>
+                            </a>
+                        </h3>
+                        <div id="accounts-list" class="space-y-2">
+                            <div class="text-tg-textSecondary text-sm" data-i18n="settings.accounts.loading">Loading...</div>
+                        </div>
+                        <p class="text-xs text-tg-textSecondary mt-3" data-i18n="settings.accounts.session_help">Sessions are stored AES-256 encrypted under <code>data/sessions/</code>.</p>
+                    </div>
+
+                    <!-- Telegram API credentials -->
+                    <div id="settings-card-tg-api" data-settings-section="card-tg-api" class="bg-tg-panel rounded-xl p-4 mb-4 scroll-mt-24" data-admin-only>
+                        <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
+                            <i class="ri-key-2-line text-tg-blue"></i> <span data-i18n="settings.tg_api">Telegram API</span>
+                        </h3>
+                        <div class="space-y-3">
+                            <div>
+                                <label class="text-tg-text text-sm block mb-1" data-i18n="settings.tg_api.id">API ID</label>
+                                <input type="text" id="setting-api-id" inputmode="numeric" class="tg-input w-full text-sm" data-i18n-placeholder="settings.tg_api.id_placeholder" placeholder="From my.telegram.org">
+                            </div>
+                            <div>
+                                <label class="text-tg-text text-sm block mb-1" data-i18n="settings.tg_api.hash">API Hash</label>
+                                <input type="password" id="setting-api-hash" class="tg-input w-full text-sm" data-i18n-placeholder="settings.tg_api.hash_placeholder" placeholder="Stored locally; never sent to the dashboard once saved">
+                                <p class="text-xs text-tg-textSecondary mt-1" data-i18n="settings.tg_api.hash_keep_help">Leave blank to keep the existing hash.</p>
+                            </div>
+                            <button id="save-api-credentials" class="tg-btn-secondary w-full text-sm">
+                                <i class="ri-save-line mr-2"></i><span data-i18n="settings.tg_api.save">Save credentials</span>
+                            </button>
+                        </div>
+                    </div>
+                    </section>
+
+                    <!-- Federation (cluster) — three sub-cards:
+                         (1) This-peer summary (read-only, deep-link to /maintenance/cluster
+                             where the operational management actually lives).
+                         (2) Replication policy editor — list of curated config keys, each
+                             with a 3-state segmented control (Local / Cluster / Cluster-excl)
+                             that writes to config.cluster.replicate.<key>. config-sync.js
+                             already reads this map, so toggling the segmented control
+                             enables peer-to-peer mirroring of that key automatically.
+                         (3) Failover grace window — slider for cluster.failover_grace_minutes.
+                         The whole section is hidden when the cluster has no paired peers
+                         (settings.js _initFederation reads /api/cluster/peers and adds
+                         `data-cluster-empty` to the card; CSS hides it). -->
+                    <section id="settings-federation" role="tabpanel" data-admin-only class="settings-section space-y-4 mb-6">
+                    <div id="settings-card-federation" data-settings-section="card-federation" class="bg-tg-panel rounded-xl p-4 mb-4 scroll-mt-24" data-admin-only>
+                        <h3 class="text-tg-text font-medium mb-1 flex items-center gap-2">
+                            <i class="ri-broadcast-line text-tg-blue"></i>
+                            <span data-i18n="settings.federation">Federation</span>
+                        </h3>
+                        <p class="text-xs text-tg-textSecondary mb-4" data-i18n="settings.federation.subtitle">Settings that span every paired peer in your cluster. Pair peers and manage tokens under Maintenance → Cluster.</p>
+
+                        <!-- This-peer summary -->
+                        <div class="bg-tg-bg/40 rounded-lg p-3 mb-3">
+                            <div class="flex items-center justify-between gap-2 flex-wrap">
+                                <div class="min-w-0 flex-1">
+                                    <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary" data-i18n="settings.federation.this_peer">This peer</div>
+                                    <div class="text-sm text-tg-text font-medium" id="federation-self-name">—</div>
+                                    <code id="federation-self-id" class="text-[10px] text-tg-textSecondary font-mono break-all">—</code>
+                                </div>
+                                <a href="#/maintenance/cluster" class="tg-btn-secondary text-xs px-3 py-1.5 inline-flex items-center gap-1.5 shrink-0">
+                                    <i class="ri-settings-3-line"></i><span data-i18n="settings.federation.manage">Manage cluster</span>
+                                </a>
+                            </div>
+                            <div id="federation-empty-hint" class="hidden mt-2 text-[11px] text-tg-textSecondary leading-relaxed" data-i18n="settings.federation.empty_hint">No peers paired yet. Replication settings below take effect once at least one peer is paired.</div>
+                        </div>
+
+                        <!-- Replication policy editor -->
+                        <div class="bg-tg-bg/40 rounded-lg p-3 mb-3">
+                            <div class="flex items-start justify-between gap-2 mb-2 flex-wrap">
+                                <div class="min-w-0">
+                                    <div class="text-sm text-tg-text font-medium" data-i18n="settings.federation.replicate.title">Replication policy</div>
+                                    <p class="text-[11px] text-tg-textSecondary mt-0.5" data-i18n="settings.federation.replicate.help">Pick which config keys mirror across the cluster. Local stays on this peer. Cluster mirrors edits to every paired peer (last-writer-wins). Cluster-excl mirrors but lets receivers override locally.</p>
+                                </div>
+                            </div>
+                            <div id="federation-replicate-list" class="space-y-1.5"></div>
+                        </div>
+
+                        <!-- Failover grace -->
+                        <div class="bg-tg-bg/40 rounded-lg p-3">
+                            <label for="federation-failover-grace" class="text-sm text-tg-text font-medium block" data-i18n="settings.federation.failover.title">Failover grace window</label>
+                            <p class="text-[11px] text-tg-textSecondary mt-0.5 mb-3" data-i18n="settings.federation.failover.help">Minutes the backup peer waits after the owner goes silent before taking over downloading. Lower = faster recovery, higher = fewer false failovers from a slow peer.</p>
+                            <div class="flex items-center gap-3">
+                                <input id="federation-failover-grace" type="range" min="1" max="60" step="1" value="5" class="flex-1 accent-tg-blue">
+                                <span id="federation-failover-grace-value" class="text-sm text-tg-text tabular-nums w-16 text-right">5 min</span>
+                            </div>
+                        </div>
+                    </div>
+                    </section>
+
+                    <section id="settings-downloads" role="tabpanel" data-admin-only class="settings-section space-y-4 mb-6">
+                    <!-- Download Settings -->
+                    <div id="settings-card-download" data-settings-section="card-download" class="bg-tg-panel rounded-xl p-4 mb-4 scroll-mt-24" data-admin-only>
+                        <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
+                            <i class="ri-download-line text-tg-blue"></i> <span data-i18n="settings.download">Download</span>
+                        </h3>
+                        <div class="space-y-5">
+                            <div>
+                                <div class="flex items-center justify-between mb-1">
+                                    <label class="text-tg-text text-sm" data-i18n="settings.download.concurrent">Concurrent Downloads</label>
+                                    <span id="concurrent-value" class="text-tg-blue font-medium">3</span>
+                                </div>
+                                <input type="range" id="setting-concurrent" class="w-full accent-tg-blue" min="1"
+                                    max="20" value="3"
+                                    oninput="document.getElementById('concurrent-value').textContent = this.value">
+                                <div class="flex justify-between text-xs text-tg-textSecondary mt-1">
+                                    <span data-i18n="settings.download.concurrent_safe">1 (Safe)</span>
+                                    <span>10</span>
+                                    <span data-i18n="settings.download.concurrent_max">20 (Max)</span>
+                                </div>
+                                <p class="text-xs text-tg-textSecondary mt-1" data-i18n="settings.download.concurrent_help">Higher values download faster but increase the risk of Telegram rate limiting.</p>
+                            </div>
+                            <div>
+                                <div class="flex items-center justify-between mb-1">
+                                    <label class="text-tg-text text-sm" data-i18n="settings.download.retries">Retry Attempts</label>
+                                    <span id="retries-value" class="text-tg-blue font-medium">5</span>
+                                </div>
+                                <input type="range" id="setting-retries" class="w-full accent-tg-blue" min="1" max="10"
+                                    value="5"
+                                    oninput="document.getElementById('retries-value').textContent = this.value">
+                                <p class="text-xs text-tg-textSecondary mt-1" data-i18n="settings.download.retries_help">How many times to retry a failed download before giving up.</p>
+                            </div>
+                            <!-- Download folder field retired in v2.9: it
+                                 was read-only and changing it required CLI
+                                 anyway, so it leaked information without
+                                 offering an action. The path is still
+                                 visible via /api/config diag. Hidden input
+                                 preserved so settings.js form-binding still
+                                 sees the field on POST/save. -->
+                            <input type="hidden" id="setting-path" />
+                            <div>
+                                <div class="flex items-center justify-between mb-2">
+                                    <label class="text-tg-text text-sm" data-i18n="settings.download.max_speed">Max Download Speed</label>
+                                    <span id="speed-value" class="text-tg-blue font-medium text-sm" data-i18n="settings.download.unlimited">Unlimited</span>
+                                </div>
+                                <!-- Free-form numeric value + unit picker. Empty
+                                     value = unlimited. Bytes are computed at
+                                     save time; the live label above mirrors
+                                     whatever the user is currently typing. -->
+                                <div class="flex gap-1">
+                                    <input id="setting-max-speed-value" type="number" min="0" step="0.5" placeholder="0 = unlimited"
+                                        class="tg-input flex-1 text-sm">
+                                    <select id="setting-max-speed-unit" class="tg-input text-sm" style="max-width:90px;">
+                                        <option value="KB">KB/s</option>
+                                        <option value="MB" selected>MB/s</option>
+                                        <option value="GB">GB/s</option>
+                                    </select>
+                                </div>
+                                <!-- Hidden input keeps the legacy `setting-max-speed` element
+                                     name so settings.js's get() in the save path still finds
+                                     the bytes value. settings.js wires the dual inputs above
+                                     to update this hidden field on every change. -->
+                                <input id="setting-max-speed" type="hidden" value="0">
+                                <p class="text-xs text-tg-textSecondary mt-1" data-i18n="settings.download.speed_help">Limit bandwidth usage per worker. Free-form: 0 = unlimited; type any number, pick a unit.</p>
+                            </div>
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <label class="text-tg-text text-sm" data-i18n="settings.download.block_webp">Block WebP / Stickers</label>
+                                    <p class="text-xs text-tg-textSecondary mt-0.5" data-i18n="settings.download.block_webp_help">Never download .webp files or Telegram stickers, even if a group has stickers enabled.</p>
+                                </div>
+                                <label class="relative inline-flex items-center cursor-pointer ml-4 shrink-0">
+                                    <input type="checkbox" id="setting-block-webp" class="sr-only peer">
+                                    <div class="w-11 h-6 bg-tg-secondary rounded-full peer peer-checked:bg-tg-blue after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Rate Limits -->
+                    <div id="settings-card-rate" data-settings-section="card-rate" class="bg-tg-panel rounded-xl p-4 mb-4 scroll-mt-24">
+                        <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
+                            <i class="ri-speed-line text-tg-orange"></i> <span data-i18n="settings.rate.title">Rate Limits</span>
+                            <span
+                                class="text-xs bg-tg-orange/20 text-tg-orange px-2 py-0.5 rounded-full ml-auto" data-i18n="settings.rate.badge">Anti-Ban</span>
+                        </h3>
+                        <div class="space-y-5">
+                            <div>
+                                <div class="flex items-center justify-between mb-1">
+                                    <label class="text-tg-text text-sm" data-i18n="settings.rate.rpm">Requests/Minute</label>
+                                    <span id="rpm-value" class="text-tg-orange font-medium">15</span>
+                                </div>
+                                <input type="range" id="setting-rpm" class="w-full accent-tg-orange" min="5" max="60"
+                                    value="15" oninput="document.getElementById('rpm-value').textContent = this.value">
+                                <div class="flex justify-between text-xs text-tg-textSecondary mt-1">
+                                    <span data-i18n="settings.rate.rpm_safe">5 (Safe)</span>
+                                    <span>30</span>
+                                    <span data-i18n="settings.rate.rpm_fast">60 (Fast)</span>
+                                </div>
+                                <p class="text-xs text-tg-textSecondary mt-1" data-i18n="settings.rate.rpm_help">Lower values reduce ban risk when downloading from large or restricted channels.</p>
+                            </div>
+                            <div>
+                                <div class="flex items-center justify-between mb-1">
+                                    <label class="text-tg-text text-sm" data-i18n="settings.rate.polling">Polling Interval</label>
+                                    <span id="polling-value" class="text-tg-orange font-medium">10s</span>
+                                </div>
+                                <input type="range" id="setting-polling" class="w-full accent-tg-orange" min="5"
+                                    max="60" value="10"
+                                    oninput="document.getElementById('polling-value').textContent = this.value + 's'">
+                                <p class="text-xs text-tg-textSecondary mt-1" data-i18n="settings.rate.polling_help">How often to check for new messages</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Size Limits -->
+                    <div id="settings-card-size" data-settings-section="card-size" class="bg-tg-panel rounded-xl p-4 mb-4 scroll-mt-24">
+                        <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
+                            <i class="ri-hard-drive-2-line text-tg-green"></i> <span data-i18n="settings.size.title">Size Limits</span>
+                        </h3>
+                        <div class="space-y-4">
+                            <div class="grid grid-cols-3 gap-3">
+                                <div>
+                                    <label class="text-tg-textSecondary text-xs block mb-1" data-i18n="settings.size.total_disk">Total Disk</label>
+                                    <div class="flex gap-1">
+                                        <input id="setting-max-disk-value" type="number" min="0" step="1" placeholder="500" class="tg-input flex-1 text-sm">
+                                        <select id="setting-max-disk-unit" class="tg-input text-sm" style="max-width:78px;">
+                                            <option value="">—</option>
+                                            <option value="MB">MB</option>
+                                            <option value="GB">GB</option>
+                                            <option value="TB">TB</option>
+                                        </select>
+                                    </div>
+                                    <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.size.total_disk_help">Empty value = no limit. Auto-rotate (below) uses this cap.</p>
+                                </div>
+                                <div>
+                                    <label class="text-tg-textSecondary text-xs block mb-1" data-i18n="settings.size.per_video">Per Video</label>
+                                    <select id="setting-max-video" class="tg-input w-full text-sm">
+                                        <option value="" data-i18n="settings.size.no_limit">No limit</option>
+                                        <option value="100MB">100 MB</option>
+                                        <option value="500MB">500 MB</option>
+                                        <option value="1GB">1 GB</option>
+                                        <option value="2GB">2 GB</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="text-tg-textSecondary text-xs block mb-1" data-i18n="settings.size.per_image">Per Image</label>
+                                    <select id="setting-max-image" class="tg-input w-full text-sm">
+                                        <option value="" data-i18n="settings.size.no_limit">No limit</option>
+                                        <option value="10MB">10 MB</option>
+                                        <option value="50MB">50 MB</option>
+                                        <option value="100MB">100 MB</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <p class="text-xs text-tg-textSecondary" data-i18n="settings.size.help">Files exceeding these limits will be skipped</p>
+                            <p class="text-xs text-tg-textSecondary" data-i18n="settings.disk.cap_help">Use units like "10 GB", "500 MB", or "1 TB". Leave the dropdown empty for no cap.</p>
+
+                            <!-- Auto-rotate toggle: when the total cap is exceeded, delete the
+                                 oldest downloads first. Pinned items are kept. -->
+                            <label class="flex items-center justify-between p-3 bg-tg-bg/40 rounded-lg cursor-pointer mt-2">
+                                <div class="text-tg-text text-sm" data-i18n="settings.disk.rotate">Auto-rotate when full</div>
+                                <div id="setting-disk-rotate" class="tg-toggle"></div>
+                            </label>
+                            <p class="text-xs text-tg-textSecondary mt-1" data-i18n="settings.disk.rotate_help">When the cap is exceeded, delete the oldest downloads first. Pinned items are kept.</p>
+                        </div>
+                    </div>
+
+                    <!-- Rescue Mode (global default). Per-group rescueMode='auto'
+                         follows this toggle; 'on'/'off' overrides it. The sweep
+                         interval applies to every group with rescue active. -->
+                    <div id="settings-card-rescue" data-settings-section="card-rescue" class="bg-tg-panel rounded-xl p-4 mb-4 scroll-mt-24" data-admin-only>
+                        <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
+                            <i class="ri-lifebuoy-line text-tg-blue" aria-hidden="true"></i>
+                            <span data-i18n="settings.rescue.title">Rescue mode</span>
+                        </h3>
+                        <p class="text-xs text-tg-textSecondary mb-3" data-i18n="settings.rescue.help">When enabled by default, every monitored group keeps only messages that get deleted from Telegram within the retention window. Per-group override available in Group Settings.</p>
+                        <label class="flex items-center justify-between p-3 bg-tg-bg/40 rounded-lg cursor-pointer mb-3">
+                            <div class="text-tg-text text-sm" data-i18n="settings.rescue.default">Default to Rescue mode for new groups</div>
+                            <div id="setting-rescue-default" class="tg-toggle"></div>
+                        </label>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label for="setting-rescue-default-hours" class="text-tg-textSecondary text-xs block mb-1" data-i18n="settings.rescue.default_hours">Retention (hours)</label>
+                                <input id="setting-rescue-default-hours" type="number" min="1" max="720" placeholder="48" class="tg-input w-full text-sm" />
+                            </div>
+                            <div>
+                                <label for="setting-rescue-sweep-min" class="text-tg-textSecondary text-xs block mb-1" data-i18n="settings.rescue.sweep_min">Sweep interval (min)</label>
+                                <input id="setting-rescue-sweep-min" type="number" min="1" max="1440" placeholder="10" class="tg-input w-full text-sm" />
+                            </div>
+                        </div>
+                        <p id="rescue-stats-line" class="text-xs text-tg-textSecondary mt-3" data-i18n="settings.rescue.stats_loading">Loading rescue stats…</p>
+                    </div>
+
+                    <!-- Quick Presets card retired in v2.9. The 3 buttons
+                         (Safe / Balanced / Fast) bulk-set rate-limit + size
+                         + concurrency knobs and were useful exactly once at
+                         first-run; rare revisitors never used them. The
+                         applyPreset(slug) function remains in settings.js for
+                         programmatic callers, but no UI surface invokes it. -->
+                    </section>
+
+                    <section id="settings-appearance" role="tabpanel" class="settings-section space-y-4 mb-6">
+                    <!-- Appearance -->
+                    <div id="settings-card-appearance" data-settings-section="card-appearance" class="bg-tg-panel rounded-xl p-4 mb-4 scroll-mt-24">
+                        <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
+                            <i class="ri-palette-line text-tg-blue" aria-hidden="true"></i>
+                            <span data-i18n="settings.appearance">Appearance</span>
+                        </h3>
+                        <div class="grid grid-cols-3 gap-2 text-sm mb-4">
+                            <button data-theme-set="light" class="theme-btn py-2 px-3 rounded-lg bg-tg-bg/40 hover:bg-tg-hover transition flex items-center gap-2 justify-center" type="button"><i class="ri-sun-line" aria-hidden="true"></i> <span data-i18n="settings.theme.light">Light</span></button>
+                            <button data-theme-set="dark" class="theme-btn py-2 px-3 rounded-lg bg-tg-bg/40 hover:bg-tg-hover transition flex items-center gap-2 justify-center" type="button"><i class="ri-moon-line" aria-hidden="true"></i> <span data-i18n="settings.theme.dark">Dark</span></button>
+                            <button data-theme-set="auto" class="theme-btn py-2 px-3 rounded-lg bg-tg-bg/40 hover:bg-tg-hover transition flex items-center gap-2 justify-center" type="button"><i class="ri-contrast-2-line" aria-hidden="true"></i> <span data-i18n="settings.theme.auto">Auto</span></button>
+                        </div>
+                        <label class="flex items-center justify-between p-3 bg-tg-bg/40 rounded-lg cursor-pointer mb-3">
+                            <div class="text-tg-text text-sm" data-i18n="settings.notifications">Browser notifications</div>
+                            <div id="setting-notifications" class="tg-toggle"></div>
+                        </label>
+                        <p class="text-xs text-tg-textSecondary mt-1 mb-3" data-i18n="settings.notifications_help">Get a system toast when downloads finish.</p>
+
+                        <label for="setting-language" class="text-tg-text text-sm block mb-2 flex items-center gap-2">
+                            <i class="ri-translate-2 text-tg-textSecondary" aria-hidden="true"></i>
+                            <span data-i18n="settings.language">Language</span>
+                        </label>
+                        <select id="setting-language" class="tg-input w-full text-sm mb-3">
+                            <option value="auto" data-i18n="settings.language.auto">Auto-detect</option>
+                            <option value="en">English</option>
+                            <option value="th">ไทย</option>
+                        </select>
+
+                        <label for="setting-font" class="text-tg-text text-sm block mb-2 flex items-center gap-2">
+                            <i class="ri-font-family text-tg-textSecondary" aria-hidden="true"></i>
+                            <span data-i18n="settings.font">Font</span>
+                        </label>
+                        <select id="setting-font" class="tg-input w-full text-sm">
+                            <!-- Options populated by js/fonts.js so the
+                                 list stays in sync with the boot-time
+                                 registry. Default selection is set
+                                 from localStorage. -->
+                        </select>
+                    </div>
+
+                    <!-- Video Player preferences (browser-side only,
+                         persisted in localStorage). Each toggle/select
+                         maps 1:1 to a key the viewer module reads on
+                         every clip load. -->
+                    <div id="settings-card-video" data-settings-section="card-video" class="bg-tg-panel rounded-xl p-4 mb-4 scroll-mt-24">
+                        <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
+                            <i class="ri-play-circle-line text-tg-blue" aria-hidden="true"></i>
+                            <span data-i18n="settings.video_player.title">Video Player</span>
+                        </h3>
+
+                        <label class="flex items-center justify-between p-3 bg-tg-bg/40 rounded-lg cursor-pointer mb-2">
+                            <div>
+                                <div class="text-tg-text text-sm" data-i18n="settings.video_player.autoplay">Autoplay videos</div>
+                                <div class="text-[11px] text-tg-textSecondary mt-0.5" data-i18n="settings.video_player.autoplay_help">Start playing automatically when a video opens.</div>
+                            </div>
+                            <div id="setting-viewer-autoplay" class="tg-toggle shrink-0"></div>
+                        </label>
+
+                        <label class="flex items-center justify-between p-3 bg-tg-bg/40 rounded-lg cursor-pointer mb-2">
+                            <div>
+                                <div class="text-tg-text text-sm" data-i18n="settings.video_player.start_muted">Start muted</div>
+                                <div class="text-[11px] text-tg-textSecondary mt-0.5" data-i18n="settings.video_player.start_muted_help">Required by most browsers for autoplay to work. Click 🔊 in the player to unmute.</div>
+                            </div>
+                            <div id="setting-viewer-start-muted" class="tg-toggle shrink-0"></div>
+                        </label>
+
+                        <label class="flex items-center justify-between p-3 bg-tg-bg/40 rounded-lg cursor-pointer mb-2">
+                            <div>
+                                <div class="text-tg-text text-sm" data-i18n="settings.video_player.loop">Loop video</div>
+                                <div class="text-[11px] text-tg-textSecondary mt-0.5" data-i18n="settings.video_player.loop_help">Restart from the beginning when the clip ends.</div>
+                            </div>
+                            <div id="setting-viewer-loop" class="tg-toggle shrink-0"></div>
+                        </label>
+
+                        <label class="flex items-center justify-between p-3 bg-tg-bg/40 rounded-lg cursor-pointer mb-2">
+                            <div>
+                                <div class="text-tg-text text-sm" data-i18n="settings.video_player.auto_advance">Auto-advance to next</div>
+                                <div class="text-[11px] text-tg-textSecondary mt-0.5" data-i18n="settings.video_player.auto_advance_help">When a video ends, open the next file in the gallery automatically.</div>
+                            </div>
+                            <div id="setting-viewer-auto-advance" class="tg-toggle shrink-0"></div>
+                        </label>
+
+                        <label class="flex items-center justify-between p-3 bg-tg-bg/40 rounded-lg cursor-pointer mb-2">
+                            <div>
+                                <div class="text-tg-text text-sm" data-i18n="settings.video_player.resume">Remember position</div>
+                                <div class="text-[11px] text-tg-textSecondary mt-0.5" data-i18n="settings.video_player.resume_help">Resume each clip where you left off the next time you open it.</div>
+                            </div>
+                            <div id="setting-viewer-resume" class="tg-toggle shrink-0"></div>
+                        </label>
+
+                        <label class="flex items-center justify-between p-3 bg-tg-bg/40 rounded-lg cursor-pointer mb-2">
+                            <div>
+                                <div class="text-tg-text text-sm" data-i18n="settings.video_player.show_pip">Show Picture-in-Picture button</div>
+                                <div class="text-[11px] text-tg-textSecondary mt-0.5" data-i18n="settings.video_player.show_pip_help">Hide if you never use PiP — frees space in the toolbar.</div>
+                            </div>
+                            <div id="setting-viewer-show-pip" class="tg-toggle shrink-0"></div>
+                        </label>
+
+                        <label class="flex items-center justify-between p-3 bg-tg-bg/40 rounded-lg cursor-pointer mb-2">
+                            <div>
+                                <div class="text-tg-text text-sm" data-i18n="settings.video_player.show_speed">Show speed button</div>
+                                <div class="text-[11px] text-tg-textSecondary mt-0.5" data-i18n="settings.video_player.show_speed_help">Hide to clean up the toolbar; you can still set the default speed below.</div>
+                            </div>
+                            <div id="setting-viewer-show-speed" class="tg-toggle shrink-0"></div>
+                        </label>
+
+                        <label class="flex items-center justify-between p-3 bg-tg-bg/40 rounded-lg cursor-pointer mb-2">
+                            <div>
+                                <div class="text-tg-text text-sm" data-i18n="settings.video_player.dbl_tap_fs">Double-tap to fullscreen</div>
+                                <div class="text-[11px] text-tg-textSecondary mt-0.5" data-i18n="settings.video_player.dbl_tap_fs_help">Mobile-friendly shortcut. Single tap still toggles play/pause.</div>
+                            </div>
+                            <div id="setting-viewer-dbl-tap-fs" class="tg-toggle shrink-0"></div>
+                        </label>
+
+                        <div class="grid grid-cols-2 gap-2 mt-2">
+                            <div>
+                                <label for="setting-viewer-default-speed" class="text-tg-textSecondary text-xs block mb-1" data-i18n="settings.video_player.default_speed">Default speed</label>
+                                <select id="setting-viewer-default-speed" class="tg-input w-full text-sm">
+                                    <option value="0.5">0.5×</option>
+                                    <option value="0.75">0.75×</option>
+                                    <option value="1" selected>1×</option>
+                                    <option value="1.25">1.25×</option>
+                                    <option value="1.5">1.5×</option>
+                                    <option value="1.75">1.75×</option>
+                                    <option value="2">2×</option>
+                                </select>
+                            </div>
+                            <div>
+                                <div class="flex items-center justify-between mb-1">
+                                    <label for="setting-viewer-default-volume" class="text-tg-textSecondary text-xs" data-i18n="settings.video_player.default_volume">Default volume</label>
+                                    <span class="text-tg-textSecondary text-xs tabular-nums"><span id="setting-viewer-default-volume-val">100</span>%</span>
+                                </div>
+                                <input id="setting-viewer-default-volume" type="range" min="0" max="100" step="1" class="tg-range w-full mt-1">
+                            </div>
+                            <div>
+                                <label for="setting-viewer-skip-step" class="text-tg-textSecondary text-xs block mb-1" data-i18n="settings.video_player.skip_step">Skip step (s)</label>
+                                <input id="setting-viewer-skip-step" type="number" min="1" max="60" step="1" class="tg-input w-full text-sm" placeholder="5">
+                            </div>
+                            <div>
+                                <label for="setting-viewer-hide-delay" class="text-tg-textSecondary text-xs block mb-1" data-i18n="settings.video_player.hide_delay">Hide controls after (s)</label>
+                                <input id="setting-viewer-hide-delay" type="number" min="1" max="30" step="1" class="tg-input w-full text-sm" placeholder="3">
+                            </div>
+                        </div>
+                    </div>
+                    </section>
+
+                    <section data-settings-section="network" id="settings-network" role="tabpanel" aria-labelledby="settings-chip-network" data-admin-only class="settings-section space-y-4 mb-6">
+                    <!-- Privacy / DM downloads -->
+                    <div class="bg-tg-panel rounded-xl p-4 mb-4" data-admin-only>
+                        <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
+                            <i class="ri-shield-user-line text-tg-blue"></i> <span data-i18n="settings.privacy.title">Privacy</span>
+                        </h3>
+                        <label class="flex items-start justify-between gap-4 p-3 rounded-lg cursor-pointer hover:bg-tg-hover transition-colors">
+                            <div class="min-w-0 flex-1">
+                                <div class="text-tg-text text-sm font-medium" data-i18n="settings.privacy.allow_dm">Allow DM downloads</div>
+                                <p class="text-xs text-tg-textSecondary mt-1 leading-snug" data-i18n="settings.privacy.allow_dm_help">Lets the Groups picker show 1-on-1 chats. Off by default — once enabled you'll see DMs in the dialog list and can opt them in individually.</p>
+                            </div>
+                            <div id="setting-allow-dm" class="tg-toggle shrink-0 mt-0.5"></div>
+                        </label>
+                    </div>
+
+                    <!-- Proxy -->
+                    <div class="bg-tg-panel rounded-xl p-4 mb-4" data-admin-only>
+                        <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
+                            <i class="ri-shield-flash-line text-tg-blue"></i> <span data-i18n="settings.proxy.title">Proxy</span>
+                        </h3>
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <div>
+                                <label class="text-tg-textSecondary text-xs block mb-1" data-i18n="settings.proxy.type">Type</label>
+                                <select id="proxy-type" class="tg-input w-full text-sm">
+                                    <option value="" data-i18n="settings.proxy.none">None</option>
+                                    <option value="socks5">SOCKS5</option>
+                                    <option value="socks4">SOCKS4</option>
+                                    <option value="mtproxy">MTProxy</option>
+                                </select>
+                            </div>
+                            <div class="sm:col-span-2">
+                                <label class="text-tg-textSecondary text-xs block mb-1" data-i18n="settings.proxy.host_port">Host : Port</label>
+                                <div class="flex gap-2">
+                                    <input id="proxy-host" class="tg-input flex-1 text-sm" data-i18n-placeholder="settings.proxy.host_placeholder" placeholder="proxy.example.com">
+                                    <input id="proxy-port" type="number" min="1" max="65535" class="tg-input w-24 text-sm" placeholder="1080">
+                                </div>
+                            </div>
+                            <div>
+                                <label class="text-tg-textSecondary text-xs block mb-1" data-i18n="settings.proxy.username">Username (optional)</label>
+                                <input id="proxy-username" class="tg-input w-full text-sm" autocomplete="off">
+                            </div>
+                            <div>
+                                <label class="text-tg-textSecondary text-xs block mb-1" data-i18n="settings.proxy.password">Password (optional)</label>
+                                <input id="proxy-password" type="password" class="tg-input w-full text-sm" autocomplete="off">
+                            </div>
+                            <div>
+                                <label class="text-tg-textSecondary text-xs block mb-1" data-i18n="settings.proxy.secret">MTProxy secret</label>
+                                <input id="proxy-secret" class="tg-input w-full text-sm" autocomplete="off" data-i18n-placeholder="settings.proxy.secret_placeholder" placeholder="(only for MTProxy)">
+                            </div>
+                        </div>
+                        <div class="flex gap-2 mt-3">
+                            <button id="proxy-save" class="tg-btn-secondary text-sm flex-1"><i class="ri-save-line mr-2"></i><span data-i18n="settings.proxy.save">Save</span></button>
+                            <button id="proxy-test" class="tg-btn-secondary text-sm flex-1"><i class="ri-flashlight-line mr-2"></i><span data-i18n="settings.proxy.test">Test</span></button>
+                        </div>
+                        <p id="proxy-status" class="text-xs mt-2"></p>
+                    </div>
+
+                    <!-- Security (web auth) -->
+                    <div id="settings-card-security" data-settings-section="card-security" class="bg-tg-panel rounded-xl p-4 mb-4 scroll-mt-24" data-admin-only>
+                        <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
+                            <i class="ri-lock-2-line text-tg-blue"></i> <span data-i18n="settings.security">Dashboard security</span>
+                        </h3>
+                        <div class="space-y-3">
+                            <div class="flex items-start justify-between gap-3 py-1">
+                                <div class="min-w-0">
+                                    <div class="text-tg-text text-sm" data-i18n="settings.security.force_https">Force HTTPS</div>
+                                    <p class="text-xs text-tg-textSecondary mt-0.5" data-i18n="settings.security.force_https_help">Redirect HTTP requests to HTTPS. Localhost is exempt. Set <code>TRUST_PROXY=1</code> if running behind a reverse proxy.</p>
+                                </div>
+                                <div id="setting-force-https" class="tg-toggle shrink-0 mt-0.5"></div>
+                            </div>
+                            <div class="flex items-start justify-between gap-3 py-1 border-t border-tg-border/50 pt-3">
+                                <div class="min-w-0">
+                                    <div class="text-tg-text text-sm" data-i18n="settings.security.rate_limit">API rate limit</div>
+                                    <p class="text-xs text-tg-textSecondary mt-0.5" data-i18n="settings.security.rate_limit_help">Throttles <code>/api/*</code> per IP (default off). Enable only if exposing the dashboard publicly. Login + setup limiters stay on regardless.</p>
+                                </div>
+                                <div id="setting-rate-limit" class="tg-toggle shrink-0 mt-0.5"></div>
+                            </div>
+                            <div class="flex items-center justify-between gap-3 py-1">
+                                <label for="setting-rate-limit-rpm" class="text-tg-text text-sm" data-i18n="settings.security.rate_limit_rpm">Requests per minute</label>
+                                <input id="setting-rate-limit-rpm" type="number" min="10" max="1000000" step="500" class="tg-input text-sm w-32 text-right" placeholder="10000">
+                            </div>
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div>
+                                    <label class="text-tg-text text-sm block mb-1" data-i18n="settings.security.current">Current password</label>
+                                    <input type="password" id="sec-current" autocomplete="current-password" class="tg-input w-full text-sm">
+                                </div>
+                                <div>
+                                    <label class="text-tg-text text-sm block mb-1" data-i18n="settings.security.new">New password (min 8)</label>
+                                    <input type="password" id="sec-new" autocomplete="new-password" minlength="8" class="tg-input w-full text-sm">
+                                </div>
+                            </div>
+                            <button id="change-password-btn" class="tg-btn-secondary w-full text-sm">
+                                <i class="ri-key-line mr-2"></i><span data-i18n="settings.security.change">Change password</span>
+                            </button>
+                            <button id="logout-btn" class="tg-btn-secondary w-full text-sm">
+                                <i class="ri-logout-box-line mr-2"></i><span data-i18n="settings.security.signout">Sign out</span>
+                            </button>
+
+                            <!-- Guest access (read-only role) -->
+                            <div class="mt-4 pt-4 border-t border-tg-border/50">
+                                <h4 class="text-tg-text text-sm font-medium mb-1 flex items-center gap-2">
+                                    <i class="ri-eye-line text-tg-blue"></i>
+                                    <span data-i18n="settings.security.guest_section">Guest access</span>
+                                </h4>
+                                <p class="text-xs text-tg-textSecondary mb-3" data-i18n="settings.security.guest_password_help">Guests can browse and watch media but cannot delete files, change settings, or manage Telegram accounts.</p>
+                                <div class="flex items-start justify-between gap-3 py-1">
+                                    <div class="min-w-0">
+                                        <div class="text-tg-text text-sm" data-i18n="settings.security.guest_enable">Enable guest access</div>
+                                        <p class="text-xs text-tg-textSecondary mt-0.5" id="guest-enable-status">—</p>
+                                    </div>
+                                    <div id="setting-guest-enabled" class="tg-toggle shrink-0 mt-0.5"></div>
+                                </div>
+                                <div class="mt-2">
+                                    <label for="setting-guest-password" class="text-tg-text text-sm block mb-1" data-i18n="settings.security.guest_password_label">Guest password (min 8)</label>
+                                    <input type="password" id="setting-guest-password" autocomplete="new-password" minlength="8" class="tg-input w-full text-sm" placeholder="••••••••">
+                                </div>
+                                <div class="grid grid-cols-2 gap-2 mt-2">
+                                    <button id="guest-set-btn" class="tg-btn-secondary w-full text-sm">
+                                        <i class="ri-key-line mr-2"></i><span data-i18n="settings.security.guest_set">Set guest password</span>
+                                    </button>
+                                    <button id="guest-clear-btn" class="tg-btn-secondary w-full text-sm">
+                                        <i class="ri-eraser-line mr-2"></i><span data-i18n="settings.security.guest_clear">Clear</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    </section>
+
+                    <!-- Auto-save status pill. Sits where the manual Save
+                         button used to live, but only when there's something
+                         to communicate (idle = invisible). The check-mark
+                         pulse + chip-fade animations replace the explicit
+                         "Save" affordance, and a parallel notification bell
+                         entry lets the operator confirm the save landed
+                         even if they were scrolling away.
+                         ARIA polite live region so screen readers hear
+                         "Saved at 12:34:56" without losing focus. -->
+                    <div id="settings-autosave-status" class="settings-autosave-pill" data-state="idle"
+                         role="status" aria-live="polite" aria-atomic="true" data-admin-only>
+                        <span id="settings-autosave-icon" class="settings-autosave-icon" aria-hidden="true"></span>
+                        <span id="settings-autosave-text"></span>
+                    </div>
+
+                    <!-- Danger Zone -->
+                    <div class="mt-6 bg-red-500/5 border border-red-500/20 rounded-xl p-4" data-admin-only>
+                        <h3 class="text-red-400 font-medium mb-2 flex items-center gap-2">
+                            <i class="ri-error-warning-line"></i> <span data-i18n="settings.danger.title">Danger Zone</span>
+                        </h3>
+                        <p class="text-xs text-tg-textSecondary mb-4" data-i18n="settings.danger.help">These actions are irreversible. All files,
+                            database records, and group configurations will be permanently deleted.</p>
+                        <button data-action="purgeAll"
+                            class="w-full py-2.5 rounded-lg bg-red-500/10 text-red-400 border border-red-500/30 hover:bg-red-500/20 font-medium text-sm transition-colors flex items-center justify-center gap-2">
+                            <i class="ri-delete-bin-line"></i> <span data-i18n="settings.danger.purge_all">Purge All Data</span>
+                        </button>
+                    </div>
+
+                    <script type="module">
+                        // Settings chip-nav: smooth-scroll on click, IntersectionObserver-driven
+                        // active state on scroll. Self-contained; no external dependency. Runs
+                        // once because #page-settings is mounted statically in index.html.
+                        (function () {
+                            const nav = document.querySelector('.settings-chip-nav');
+                            if (!nav) return;
+                            const chips = Array.from(nav.querySelectorAll('.settings-chip'));
+                            const sections = chips.map(c => document.getElementById('settings-' + c.dataset.chip)).filter(Boolean);
+                            if (!sections.length) return;
+
+                            // Click → update hash; router.js + app.js handle the smooth scroll.
+                            chips.forEach(c => c.addEventListener('click', (e) => {
+                                e.preventDefault();
+                                window.location.hash = '#/settings/' + c.dataset.chip;
+                            }));
+
+                            // Scroll → mark the chip whose section is most visible.
+                            const setActive = (anchor) => {
+                                chips.forEach(c => c.setAttribute('aria-selected', c.dataset.chip === anchor ? 'true' : 'false'));
+                                // Keep the active chip in view inside the horizontally-scrolling nav.
+                                const active = chips.find(c => c.dataset.chip === anchor);
+                                if (active && nav.scrollWidth > nav.clientWidth) {
+                                    const navRect = nav.getBoundingClientRect();
+                                    const chipRect = active.getBoundingClientRect();
+                                    if (chipRect.left < navRect.left + 16) nav.scrollBy({ left: chipRect.left - navRect.left - 16, behavior: 'smooth' });
+                                    else if (chipRect.right > navRect.right - 16) nav.scrollBy({ left: chipRect.right - navRect.right + 16, behavior: 'smooth' });
+                                }
+                            };
+
+                            const io = new IntersectionObserver((entries) => {
+                                // Pick the entry with the largest intersection ratio that's
+                                // currently intersecting. Ignores leave events.
+                                let best = null;
+                                for (const e of entries) {
+                                    if (!e.isIntersecting) continue;
+                                    if (!best || e.intersectionRatio > best.intersectionRatio) best = e;
+                                }
+                                if (best) setActive(best.target.getAttribute('data-settings-section'));
+                            }, { rootMargin: '-80px 0px -55% 0px', threshold: [0, 0.1, 0.5, 1] });
+                            sections.forEach(s => io.observe(s));
+                        })();
+                    </script>
+                </div>

@@ -238,7 +238,8 @@ export async function crossModalSearch(query, opts = {}) {
     // ranking while preventing scores from feeling arbitrarily low when
     // only one modality fires or IDs match only a subset of modalities.
     if (combined.size > 0) {
-        const max = Math.max(...combined.values());
+        let max = 0;
+        for (const v of combined.values()) if (v > max) max = v;
         if (max > 0 && max < 1) {
             for (const [id, score] of combined) {
                 combined.set(id, score / max);

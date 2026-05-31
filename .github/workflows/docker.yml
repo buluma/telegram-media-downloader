@@ -62,12 +62,15 @@ jobs:
       # own source. We hit a permissions bug (mode 0 on /app/src/*) that
       # only surfaced at runtime, so we now boot the container and ping
       # the healthcheck before considering the build successful.
-      - name: Smoke test
+      - name: Smoke test & Container Scan
         shell: bash
         run: |
           set -e
           IMAGE=$(echo "${{ steps.meta.outputs.tags }}" | head -n 1)
           echo "Smoke-testing $IMAGE"
+
+          # Run Trivy Vulnerability Scanner
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy image --severity HIGH,CRITICAL --ignore-unfixed "$IMAGE"
 
           # File modes + readability (the chmod -R a+rX guard)
           docker run --rm --entrypoint=sh "$IMAGE" -c '

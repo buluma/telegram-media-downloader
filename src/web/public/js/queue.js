@@ -739,7 +739,7 @@ function renderRows() {
     const rows = getFilteredSorted();
     _renderedKeys.clear();
     if (rows.length === 0) {
-        rowsHost.innerHTML = '';
+        rowsHost.replaceChildren();
         view.rendered = 0;
         if (empty) empty.classList.remove('hidden');
         if (sentinel) sentinel.classList.add('hidden');
@@ -749,7 +749,9 @@ function renderRows() {
 
     const initial = Math.min(INITIAL_RENDER, rows.length);
     const slice = rows.slice(0, initial);
-    rowsHost.innerHTML = slice.map((j) => renderRow(j)).join('');
+    const tpl = document.createElement('template');
+    tpl.innerHTML = slice.map((j) => renderRow(j)).join('');
+    rowsHost.replaceChildren(tpl.content);
     for (const j of slice) _renderedKeys.add(j.key);
     view.rendered = initial;
 
@@ -875,7 +877,9 @@ function appendNextPage() {
     // doesn't re-parse the existing rows — a `rowsHost.innerHTML += …`
     // would re-parse the entire prior content, killing performance on
     // a long queue.
-    rowsHost.insertAdjacentHTML('beforeend', slice.map((j) => renderRow(j)).join(''));
+    const tpl = document.createElement('template');
+    tpl.innerHTML = slice.map((j) => renderRow(j)).join('');
+    rowsHost.appendChild(tpl.content);
     for (const j of slice) _renderedKeys.add(j.key);
     view.rendered += slice.length;
     // Sliding window — drop the topmost N rows that have scrolled out of
@@ -1256,7 +1260,8 @@ function _pushSpeed(bps) {
 
 function _speedSparkline() {
     const len = _speedHistory.length;
-    const max = Math.max(1, ..._speedHistory);
+    let max = 1;
+    for (const v of _speedHistory) if (v > max) max = v;
     const w = 120;
     const h = 24;
     const step = w / (len - 1);

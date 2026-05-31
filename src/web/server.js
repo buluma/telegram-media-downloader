@@ -58,6 +58,7 @@ import * as backup from '../core/backup/index.js';
 import { metrics } from '../core/metrics.js';
 import { isAuthConfigured, validateSession, startSessionGc } from '../core/web-auth.js';
 import { logger } from '../core/logger.js';
+import { resilience } from '../core/resilience.js';
 import { suppressNoise, wrapConsoleMethod, NATIVE_LOAD_FAIL } from '../core/logger.js';
 import { createJobTracker } from '../core/job-tracker.js';
 import { getSelfPeerId, getClusterToken } from '../core/cluster/identity.js';
@@ -124,7 +125,10 @@ const LOG_BUFFER_SIZE = Math.max(
     Math.min(20000, Number(process.env.TGDL_LOG_BUFFER_SIZE) || 2000),
 );
 const LOG_MSG_MAX = Math.max(256, Math.min(65536, Number(process.env.TGDL_LOG_MSG_MAX) || 8000));
-const _logBuffer = [];
+const _logBuffer = new Array(LOG_BUFFER_SIZE);
+let _logHead = 0;
+let _logCount = 0;
+
 // Strip ANSI escape sequences before storing log entries so the dashboard
 // log viewer doesn't render raw escape codes like "[32m" or "0m".
 const _ANSI_RE = /\x1b\[[0-9;]*m/g;
@@ -139,9 +143,16 @@ function _pushLogEntry(level, source, msg) {
         level,
         msg: _stripAnsi(msg).slice(0, LOG_MSG_MAX),
     };
-    _logBuffer.push(entry);
-    if (_logBuffer.length > LOG_BUFFER_SIZE) _logBuffer.shift();
+    _logBuffer[_logHead] = entry;
+    _logHead = (_logHead + 1) % LOG_BUFFER_SIZE;
+    if (_logCount < LOG_BUFFER_SIZE) _logCount++;
     return entry;
+}
+
+function _getLogs() {
+    if (_logCount === 0) return [];
+    if (_logCount < LOG_BUFFER_SIZE) return _logBuffer.slice(0, _logCount);
+    return [..._logBuffer.slice(_logHead, LOG_BUFFER_SIZE), ..._logBuffer.slice(0, _logHead)];
 }
 const _consoleTee = (level) => (args, joined) => {
     try {
@@ -167,58 +178,7 @@ console.warn = (...args) => {
     } catch {}
     _origConsoleWarn(...args);
 };
-// Native-binary load failures from optional deps must NOT crash the
-// process. The most common offender is `onnxruntime-node` (transitive of
-// `@huggingface/transformers`, which our optional NSFW classifier uses):
-// it ships glibc-only Linux prebuilds, so on musl-based images (alpine)
-// the dynamic linker errors with `Error loading shared library
-// ld-linux-x86-64.so.2`. We move the dep to optionalDependencies in
-// package.json so a default install doesn't pull it at all, but a
-// historical install or a re-deploy without `npm prune` may leave the
-// broken module on disk. Catch the rejection here, log once, move on.
-// The detector pattern lives in core/logger.js so this file, src/index.js,
-// and the doctor check can't drift apart.
-let _nativeLoadFailWarned = false;
-process.on('unhandledRejection', (reason) => {
-    const msg = reason?.message || String(reason);
-    if (suppressNoise(msg, 'unhandledRejection')) return;
-    if (NATIVE_LOAD_FAIL.test(msg)) {
-        if (!_nativeLoadFailWarned) {
-            _nativeLoadFailWarned = true;
-            console.warn(
-                '[startup] An optional native module failed to load (' +
-                    msg.slice(0, 200) +
-                    '). ' +
-                    'The dashboard will keep running; only the feature that triggered this load will be unavailable. ' +
-                    'Most often this is `onnxruntime-node` from the optional NSFW classifier on a musl-based image — ' +
-                    'reinstall with `npm install @huggingface/transformers` on a glibc image (Debian, Ubuntu, our default Dockerfile uses bookworm-slim) or remove it with `npm uninstall @huggingface/transformers`.',
-            );
-        }
-        return;
-    }
-    console.error('Unhandled rejection:', reason);
-});
-
-process.on('uncaughtException', (err) => {
-    const msg = err?.message || String(err);
-    if (NATIVE_LOAD_FAIL.test(msg)) {
-        if (!_nativeLoadFailWarned) {
-            _nativeLoadFailWarned = true;
-            console.warn('[startup] Native module load failure swallowed:', msg.slice(0, 200));
-        }
-        return;
-    }
-    // Non-native uncaught exceptions are real bugs — surface them and
-    // crash so the watchdog can restart cleanly. Stop accepting new
-    // connections and give in-flight requests up to 5 s to flush
-    // before exiting; without the drain, every unhandled bug produces
-    // a 502 burst for every concurrent client during the restart.
-    console.error('Uncaught exception:', err);
-    try {
-        server.close();
-    } catch {}
-    setTimeout(() => process.exit(1), 5000).unref();
-});
+resilience.init();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, '../../data');
@@ -992,7 +952,23 @@ const _publicDir = path.join(__dirname, 'public');
 // per-request rewriters to avoid re-reading package.json each call.
 const appVersion = _readCurrentVersion();
 
+function _injectPartials(html, baseDir) {
+    return html.replace(/<!--\s*INCLUDE:\s*(.*?)\s*-->/g, (match, partialPath) => {
+        try {
+            const fullPath = path.join(baseDir, partialPath);
+            const partialHtml = fsSync.readFileSync(fullPath, 'utf8');
+            return _injectPartials(partialHtml, baseDir);
+        } catch (e) {
+            log.error(`Failed to inject partial: ${partialPath}`, { error: e.message });
+            return match;
+        }
+    });
+}
+
 function _rewriteHtmlSrc(html) {
+    // Process server-side includes first so inner HTML tags get asset rewrites too.
+    html = _injectPartials(html, _publicDir);
+
     // Cover `/js/`, `/locales/`, AND `/css/` so a release that ships only
     // CSS changes (UI polish without JS edits) still busts the cache.
     // Without /css/ here, a stale main.css can outlive a deploy — the
@@ -1635,7 +1611,7 @@ app.get('/api/maintenance/logs/recent', async (req, res) => {
     const minLevel = req.query.level || null; // 'info'|'warn'|'error'
     const levelOrder = { info: 0, warn: 1, error: 2 };
     const minLvl = minLevel ? (levelOrder[minLevel] ?? 0) : 0;
-    const filtered = _logBuffer.filter((e) => {
+    const filtered = _getLogs().filter((e) => {
         if (sources && !sources.includes(e.source)) return false;
         if ((levelOrder[e.level] ?? 0) < minLvl) return false;
         return true;
@@ -1643,7 +1619,7 @@ app.get('/api/maintenance/logs/recent', async (req, res) => {
     res.json({
         logs: filtered.slice(-limit),
         bufferSize: LOG_BUFFER_SIZE,
-        total: _logBuffer.length,
+        total: _logCount,
     });
 });
 

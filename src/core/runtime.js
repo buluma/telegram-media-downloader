@@ -243,3 +243,10 @@ class Runtime extends EventEmitter {
 }
 
 export const runtime = new Runtime();
+
+process.on('tgdl:auth_error', () => {
+    if (runtime.state === 'running' || runtime.state === 'starting') {
+        runtime.stop().catch(console.error);
+        runtime.setState('stopped', 'Session Invalid. Please login again via the dashboard.');
+    }
+});

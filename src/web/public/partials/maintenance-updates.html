@@ -1,0 +1,45 @@
+<div id="page-maintenance-updates" class="hidden max-w-5xl mx-auto px-3 sm:px-4" data-admin-only
+                     data-page-title-key="update.history.title"
+                     data-page-subtitle-key="update.history.help">
+                    <section class="bg-tg-panel rounded-xl p-4 mb-3">
+                        <div class="flex items-start justify-between gap-3 flex-wrap">
+                            <div class="min-w-0 flex-1">
+                                <h2 class="text-tg-text text-base font-semibold" data-i18n="update.history.title">Update history</h2>
+                                <p class="text-xs text-tg-textSecondary mt-0.5" data-i18n="update.history.help">Audit log of every Install update click — the structured error code makes repeat failures easy to diagnose.</p>
+                            </div>
+                            <div class="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+                                <button id="updates-refresh-btn" class="tg-btn-secondary text-xs px-3 py-1.5 inline-flex items-center gap-1.5">
+                                    <i class="ri-refresh-line"></i><span data-i18n="update.history.refresh">Refresh</span>
+                                </button>
+                                <button id="updates-trigger-btn" class="tg-btn text-xs px-3 py-1.5 inline-flex items-center gap-1.5" disabled>
+                                    <i class="ri-download-cloud-2-line"></i><span data-i18n="update.install_disabled">Install (unavailable)</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="mt-3 grid grid-cols-3 gap-2 text-center">
+                            <div class="bg-tg-bg/40 rounded-lg p-3">
+                                <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary" data-i18n="update.stats.current_version">Current version</div>
+                                <div id="updates-stat-version" class="text-base font-semibold text-tg-text tabular-nums leading-tight pt-1">—</div>
+                            </div>
+                            <div class="bg-tg-bg/40 rounded-lg p-3">
+                                <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary" data-i18n="update.stats.last_attempt">Last attempt</div>
+                                <div id="updates-stat-last" class="text-xs text-tg-text tabular-nums leading-tight pt-1">—</div>
+                            </div>
+                            <div class="bg-tg-bg/40 rounded-lg p-3">
+                                <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary" data-i18n="update.stats.pending">Pending</div>
+                                <div id="updates-stat-pending" class="text-xs text-tg-text leading-tight pt-1">—</div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section id="updates-status-card" class="bg-tg-panel rounded-xl p-4 mb-3">
+                        <h3 class="text-tg-text text-sm font-semibold mb-2 flex items-center gap-2">
+                            <i class="ri-history-line text-tg-textSecondary"></i>
+                            <span data-i18n="update.history.list_heading">Recent attempts</span>
+                        </h3>
+                        <div id="updates-history-list" class="overflow-x-auto">
+                            <div class="text-center py-8 text-sm text-tg-textSecondary" data-i18n="update.history.empty">No updates have been triggered from this dashboard yet.</div>
+                        </div>
+                    </section>
+                </div>

@@ -63,7 +63,8 @@
                 "useBiomeIgnoreFolder": "off",
                 "noShorthandPropertyOverrides": "off",
                 "noDuplicateProperties": "off",
-                "noTemplateCurlyInString": "off"
+                "noTemplateCurlyInString": "off",
+                "noUnknownAtRules": "off"
             },
             "style": {
                 "useNodejsImportProtocol": "off",

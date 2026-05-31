@@ -1,0 +1,55 @@
+<div id="page-maintenance-backup" class="hidden max-w-5xl mx-auto px-3 sm:px-4" data-admin-only
+                     data-page-title-key="maintenance.backup.page_title"
+                     data-page-subtitle-key="maintenance.backup.subtitle">
+                    <section class="bg-tg-panel rounded-xl p-4 mb-3">
+                        <div class="flex items-start justify-between gap-3 flex-wrap">
+                            <div class="min-w-0">
+                                <h2 class="text-tg-text text-base font-semibold" data-i18n="maintenance.backup.page_title">Backup destinations</h2>
+                                <p class="text-xs text-tg-textSecondary mt-0.5" data-i18n="maintenance.backup.subtitle">Mirror new downloads to S3-compatible storage, an SFTP NAS, or a local mount. Optional client-side encryption + scheduled snapshots.</p>
+                            </div>
+                            <div class="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+                                <button id="backup-add-btn" class="tg-btn text-xs px-3 py-1.5 inline-flex items-center gap-1.5">
+                                    <i class="ri-add-line"></i><span data-i18n="maintenance.backup.add">Add destination</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Stats strip — destinations / synced / queued / last-mirror.
+                             maintenance-backup.js fills these from the existing
+                             /api/maintenance/backup/destinations + /recent payloads. -->
+                        <div class="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+                            <div class="bg-tg-bg/40 rounded-lg p-3">
+                                <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.backup.stat_destinations">Destinations</div>
+                                <div id="backup-stat-destinations" class="text-xl font-semibold text-tg-text tabular-nums">—</div>
+                            </div>
+                            <div class="bg-tg-bg/40 rounded-lg p-3">
+                                <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.backup.stat_synced">Synced</div>
+                                <div id="backup-stat-synced" class="text-xl font-semibold text-tg-green tabular-nums">—</div>
+                            </div>
+                            <div class="bg-tg-bg/40 rounded-lg p-3">
+                                <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.backup.stat_queued">Queued</div>
+                                <div id="backup-stat-queued" class="text-xl font-semibold text-tg-orange tabular-nums">—</div>
+                            </div>
+                            <div class="bg-tg-bg/40 rounded-lg p-3">
+                                <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.backup.stat_last_mirror">Last mirror</div>
+                                <div id="backup-stat-last" class="text-xs text-tg-text tabular-nums leading-tight pt-1">—</div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <div id="backup-empty" class="hidden bg-tg-panel rounded-xl p-8 text-center text-sm text-tg-textSecondary mb-3">
+                        <i class="ri-cloud-off-line text-3xl block mb-2 text-tg-textSecondary/60"></i>
+                        <div data-i18n="maintenance.backup.empty">No destinations yet — click "Add destination" to mirror your library off-host.</div>
+                    </div>
+
+                    <div id="backup-cards" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-3"></div>
+
+                    <section class="bg-tg-panel rounded-xl p-4">
+                        <h3 class="text-tg-text text-sm font-semibold mb-2 flex items-center gap-2">
+                            <i class="ri-history-line text-tg-textSecondary"></i>
+                            <span data-i18n="maintenance.backup.recent">Recent activity</span>
+                        </h3>
+                        <div id="backup-recent" class="space-y-1 max-h-[40vh] overflow-y-auto pr-1"></div>
+                        <div id="backup-recent-empty" class="hidden text-center py-8 text-sm text-tg-textSecondary" data-i18n="maintenance.backup.recent_empty">No backup jobs yet.</div>
+                    </section>
+                </div>

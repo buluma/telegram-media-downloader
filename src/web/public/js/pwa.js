@@ -3,7 +3,7 @@
 // an `installable` CustomEvent so the UI can show / hide an install button.
 //
 // Usage in markup:
-//   <button id="pwa-install-btn" hidden onclick="installPwa()">…</button>
+//   <button id="pwa-install-btn" hidden data-action="installPwa">…</button>
 //
 // We surface the button by toggling the `hidden` attribute on any element
 // with `[data-pwa-install]`. The button is invisible until the browser
@@ -69,9 +69,10 @@ export async function installPwa() {
     }
 }
 
-// Expose globally so inline `onclick="installPwa()"` works without an
+// Expose globally so inline `data-action="installPwa"` works without an
 // import in the markup.
-window.installPwa = installPwa;
+import { registerAction } from './ui-events.js';
+registerAction('installPwa', installPwa);
 
 // Hide the button up-front if we're already running standalone.
 if (isStandalone()) setInstallVisible(false);

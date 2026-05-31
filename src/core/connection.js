@@ -35,6 +35,10 @@ export class ConnectionManager {
     async check() {
         if (!this.running) return;
 
+        if (this.backoffUntil && Date.now() < this.backoffUntil) {
+            return;
+        }
+
         try {
             // 1. Check if connected property is true
             if (!this.client.connected) {
@@ -51,9 +55,18 @@ export class ConnectionManager {
 
             // Reset failures if successful
             this.failures = 0;
+            this.backoffUntil = null;
         } catch (error) {
             this.failures++;
-            logger.warn({ attempt: this.failures, err: error.message }, '⚠️ Connection lost');
+
+            // Calculate exponential backoff (max 1 hour)
+            const backoffDelay = Math.min(60000 * Math.pow(2, this.failures - 1), 3600000);
+            this.backoffUntil = Date.now() + backoffDelay;
+
+            logger.warn(
+                { attempt: this.failures, err: error.message, nextRetryIn: backoffDelay },
+                '⚠️ Connection lost',
+            );
 
             try {
                 // Force reconnect
@@ -61,9 +74,10 @@ export class ConnectionManager {
                 await this.client.connect();
                 logger.info('✅ Reconnected successfully');
                 this.failures = 0;
+                this.backoffUntil = null;
             } catch (reconnectError) {
                 logger.error({ err: reconnectError.message }, '❌ Reconnect failed');
-                // Will try again next interval
+                // Will try again after backoff period
             }
         }
     }

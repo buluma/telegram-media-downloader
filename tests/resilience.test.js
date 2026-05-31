@@ -53,15 +53,15 @@ describe('Resilience.guard', () => {
         expect(out).toEqual({ action: 'RETRY', delay: 5000 });
     });
 
-    it('exits the process on AUTH_KEY_UNREGISTERED instead of rethrowing', async () => {
-        const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined);
+    it('emits tgdl:auth_error on AUTH_KEY_UNREGISTERED instead of rethrowing', async () => {
+        const emit = vi.spyOn(process, 'emit').mockImplementation(() => undefined);
         const out = await r.guard(async () => {
             const err = new Error('login required');
             err.errorMessage = 'AUTH_KEY_UNREGISTERED';
             throw err;
         }, 'auth');
-        expect(exit).toHaveBeenCalledWith(1);
-        // Without the explicit `return` after process.exit, the function would
+        expect(emit).toHaveBeenCalledWith('tgdl:auth_error');
+        // Without the explicit `return`, the function would
         // have rethrown — guard would have surfaced the original error.
         expect(out).toBeUndefined();
     });
@@ -83,11 +83,11 @@ describe('Resilience.guard', () => {
             e.code = 'ECONNRESET';
             throw e;
         }, 'ctx-B');
-        expect(r.errorLog).toHaveLength(2);
-        expect(r.errorLog[0]).toMatchObject({ context: 'ctx-A', message: 'FLOOD_WAIT once' });
-        expect(r.errorLog[1]).toMatchObject({ context: 'ctx-B', message: 'socket hang up' });
-        expect(r.errorLog[0].timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
-        expect(r.errorLog[0].stack).toBeTruthy();
+        expect(r.getLogs()).toHaveLength(2);
+        expect(r.getLogs()[0]).toMatchObject({ context: 'ctx-A', message: 'FLOOD_WAIT once' });
+        expect(r.getLogs()[1]).toMatchObject({ context: 'ctx-B', message: 'socket hang up' });
+        expect(r.getLogs()[0].timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+        expect(r.getLogs()[0].stack).toBeTruthy();
     });
 });
 
@@ -105,7 +105,7 @@ describe('Resilience.handleFatal', () => {
         const err = Object.assign(new Error('reset'), { code: 'ECONNRESET' });
         r.handleFatal('Uncaught', err);
         expect(exit).not.toHaveBeenCalled();
-        expect(r.errorLog[0]).toMatchObject({ context: 'FATAL' });
+        expect(r.getLogs()[0]).toMatchObject({ context: 'FATAL' });
     });
 
     it('skips process.exit when the message mentions "Connection"', () => {
@@ -114,10 +114,14 @@ describe('Resilience.handleFatal', () => {
         expect(exit).not.toHaveBeenCalled();
     });
 
-    it('exits on a generic uncaught error', () => {
+    it('exits on a generic uncaught error after a delay', () => {
+        vi.useFakeTimers();
         const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined);
-        r.handleFatal('Uncaught', new Error('something blew up'));
+        r.handleFatal('Uncaught Exception', new Error('something blew up'));
+        expect(exit).not.toHaveBeenCalled();
+        vi.advanceTimersByTime(5000);
         expect(exit).toHaveBeenCalledWith(1);
+        vi.useRealTimers();
     });
 });
 

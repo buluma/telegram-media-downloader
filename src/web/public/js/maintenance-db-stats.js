@@ -288,7 +288,10 @@ async function load() {
                 color: COLORS[i % COLORS.length],
             }));
             const maxLabel = Math.min(
-                Math.max(...topGroups.map((g) => (g.group_name || g.group_id || '?').length)) *
+                topGroups.reduce((acc, g) => {
+                    const len = (g.group_name || g.group_id || '?').length;
+                    return len > acc ? len : acc;
+                }, 0) *
                     6.5 +
                     8,
                 160,

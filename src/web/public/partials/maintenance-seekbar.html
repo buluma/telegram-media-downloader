@@ -1,0 +1,292 @@
+<div id="page-maintenance-seekbar" class="hidden max-w-5xl mx-auto px-3 sm:px-4" data-admin-only
+                     data-page-title-key="maintenance.seekbar.page_title"
+                     data-page-subtitle-key="maintenance.seekbar.subtitle">
+
+                    <!-- Header card — title/subtitle/sidecar pill on the
+                         left; Cancel + Scan now visible at all times,
+                         less-used actions tucked behind the overflow
+                         (Wipe cache / Run probe / Restart sidecar) so
+                         the header reads at a glance. Progress bar +
+                         KPI tiles live inside the same card. -->
+                    <section class="bg-tg-panel rounded-xl p-4 mb-3">
+                        <div class="flex items-start justify-between gap-3 flex-wrap">
+                            <div class="min-w-0">
+                                <h2 class="text-tg-text text-base font-semibold" data-i18n="maintenance.seekbar.page_title">Seekbar previews</h2>
+                                <p class="text-xs text-tg-textSecondary mt-0.5" data-i18n="maintenance.seekbar.subtitle">Generate WebP sprite sheets for video hover-preview thumbnails.</p>
+                                <!-- Sidecar pill — same pattern as the AI
+                                     subsystem badge. Hydrated by
+                                     `_renderSidecarStatus()` on the
+                                     `seekbar_sidecar_status` WS event. -->
+                                <div id="seekbar-sidecar-pill" class="mt-2 inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-full bg-tg-bg/40 text-tg-textSecondary" role="status">
+                                    <i class="ri-loader-4-line animate-spin"></i>
+                                    <span data-i18n="maintenance.seekbar.sidecar.checking">Checking…</span>
+                                </div>
+                                <p id="seekbar-sidecar-detail" class="text-[10.5px] text-tg-textSecondary/80 mt-1 font-mono break-all"></p>
+                            </div>
+                            <div class="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+                                <button id="seekbar-cancel-btn" type="button" class="tg-btn-secondary text-xs px-3 py-1.5 inline-flex items-center gap-1.5" disabled
+                                        data-i18n-title="maintenance.seekbar.cancel"
+                                        title="Cancel the running scan">
+                                    <i class="ri-stop-circle-line"></i><span data-i18n="maintenance.seekbar.cancel">Cancel</span>
+                                </button>
+                                <button id="seekbar-scan-btn" type="button" class="tg-btn text-xs px-3 py-1.5 inline-flex items-center gap-1.5"
+                                        data-i18n-title="maintenance.seekbar.scan_now"
+                                        title="Backfill sprites for every existing video that doesn't have one yet.">
+                                    <i class="ri-play-fill"></i><span data-i18n="maintenance.seekbar.scan_now">Scan now</span>
+                                </button>
+                                <details id="seekbar-more-menu" class="relative">
+                                    <summary class="tg-btn-secondary text-xs px-2 py-1.5 inline-flex items-center gap-1 cursor-pointer list-none"
+                                             title="More actions" aria-haspopup="menu">
+                                        <i class="ri-more-2-fill"></i>
+                                    </summary>
+                                    <div class="absolute right-0 top-full mt-1 z-30 w-56 bg-tg-panel border border-tg-border rounded-lg shadow-xl py-1" role="menu">
+                                        <button id="seekbar-hwaccel-probe" type="button" class="w-full text-left px-3 py-2 text-xs text-tg-text hover:bg-tg-bg/40 inline-flex items-center gap-2"
+                                                title="Probe which hwaccel backends actually initialise on this host.">
+                                            <i class="ri-radar-line text-tg-blue"></i><span data-i18n="maintenance.seekbar.hwaccel.probe">Run hardware probe</span>
+                                        </button>
+                                        <button id="seekbar-restart-btn" type="button" class="w-full text-left px-3 py-2 text-xs text-tg-text hover:bg-tg-bg/40 inline-flex items-center gap-2"
+                                                data-i18n-title="maintenance.seekbar.restart_sidecar_title"
+                                                title="Restart the Go sidecar — useful after a hwaccel / driver change.">
+                                            <i class="ri-restart-line text-yellow-300"></i><span data-i18n="maintenance.seekbar.restart_sidecar">Restart sidecar</span>
+                                        </button>
+                                        <div class="border-t border-tg-border/40 my-1"></div>
+                                        <button id="seekbar-wipe-btn" type="button" class="w-full text-left px-3 py-2 text-xs text-red-300 hover:bg-tg-bg/40 inline-flex items-center gap-2"
+                                                title="Delete every sprite + metadata row on disk.">
+                                            <i class="ri-delete-bin-2-line"></i><span data-i18n="maintenance.seekbar.wipe_cache">Wipe cache</span>
+                                        </button>
+                                    </div>
+                                </details>
+                            </div>
+                        </div>
+
+                        <!-- Progress bar — visible while a scan / rebuild
+                             is running. Same shape as the AI page. -->
+                        <div id="seekbar-progress" class="hidden mt-3" role="status" aria-live="polite">
+                            <div class="text-sm text-tg-text mb-1.5 flex items-center gap-1.5 font-medium">
+                                <i class="ri-loader-4-line animate-spin text-tg-blue"></i>
+                                <span id="seekbar-progress-label" data-i18n="maintenance.seekbar.progress">Generating sprites…</span>
+                                <span id="seekbar-progress-pct" class="ml-auto text-[11px] text-tg-textSecondary tabular-nums">0%</span>
+                            </div>
+                            <div class="h-2 bg-tg-bg/60 rounded overflow-hidden">
+                                <div id="seekbar-progress-bar" class="h-full bg-tg-blue transition-all" style="width:0%"></div>
+                            </div>
+                            <div id="seekbar-progress-detail" class="text-[11px] text-tg-textSecondary mt-1 tabular-nums text-right"></div>
+                        </div>
+
+                        <!-- KPI strip — four tiles at the bottom of the
+                             header card so the operator sees footprint +
+                             ffmpeg status without scrolling. -->
+                        <div class="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+                            <div class="bg-tg-bg/40 rounded-lg p-3">
+                                <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.seekbar.kpi.indexed">Indexed videos</div>
+                                <div id="seekbar-kpi-indexed" class="text-xl font-semibold text-tg-text tabular-nums">—</div>
+                            </div>
+                            <div class="bg-tg-bg/40 rounded-lg p-3">
+                                <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.seekbar.kpi.coverage">Coverage</div>
+                                <div id="seekbar-kpi-coverage" class="text-xl font-semibold text-tg-green tabular-nums">—</div>
+                            </div>
+                            <div class="bg-tg-bg/40 rounded-lg p-3">
+                                <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.seekbar.kpi.disk">Disk usage</div>
+                                <div id="seekbar-kpi-disk" class="text-xl font-semibold text-tg-blue tabular-nums">—</div>
+                            </div>
+                            <div class="bg-tg-bg/40 rounded-lg p-3">
+                                <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.seekbar.kpi.last_scan">Last scan</div>
+                                <div id="seekbar-kpi-last" class="text-xs text-tg-text tabular-nums leading-tight pt-1">—</div>
+                            </div>
+                        </div>
+                        <div id="seekbar-coverage-wrap" class="hidden mt-3">
+                            <div class="flex items-center justify-between gap-2 mb-1">
+                                <span id="seekbar-coverage-label" class="text-[11px] text-tg-textSecondary tabular-nums">—</span>
+                                <button id="seekbar-scan-cta" type="button" class="tg-btn-secondary text-[11px] px-2 py-0.5 inline-flex items-center gap-1">
+                                    <i class="ri-play-fill"></i><span data-i18n="maintenance.seekbar.scan_missing">Scan missing</span>
+                                </button>
+                            </div>
+                            <div class="h-2 bg-tg-bg/60 rounded-full overflow-hidden">
+                                <div id="seekbar-coverage-bar" class="h-full bg-tg-blue transition-all duration-500 rounded-full" style="width:0%"></div>
+                            </div>
+                            <p id="seekbar-ffmpeg-line" class="hidden mt-1 text-[10.5px] text-tg-textSecondary">
+                                <span data-i18n="maintenance.seekbar.kpi.ffmpeg">ffmpeg</span>:
+                                <span id="seekbar-kpi-ffmpeg" class="font-mono">—</span>
+                            </p>
+                        </div>
+                    </section>
+
+                    <!-- System health — collapsed by default. Mirrors the
+                         AI doctor card shape: chevron + stethoscope icon
+                         + heading + worst-state summary inline; details
+                         expand into a flat key/value grid with the
+                         operational facts (sidecar mode, URL, PID,
+                         binary path, hwaccel result, version). -->
+                    <details id="seekbar-doctor-card" class="bg-tg-panel rounded-xl px-3 py-2 mb-3 group">
+                        <summary class="cursor-pointer list-none flex items-center justify-between gap-2 flex-wrap">
+                            <div class="min-w-0 flex items-center gap-1.5 flex-wrap">
+                                <i class="ri-arrow-right-s-line text-tg-textSecondary text-xs transition-transform group-open:rotate-90"></i>
+                                <i class="ri-stethoscope-line text-tg-blue text-xs"></i>
+                                <span class="text-tg-text text-xs font-medium" data-i18n="maintenance.seekbar.health.title">System health</span>
+                                <span id="seekbar-doctor-summary" class="text-[10.5px] text-tg-textSecondary"></span>
+                            </div>
+                            <button id="seekbar-doctor-refresh-btn" type="button" class="text-[10.5px] text-tg-textSecondary hover:text-tg-text inline-flex items-center gap-1 px-2 py-0.5 rounded hover:bg-tg-bg/40">
+                                <i class="ri-refresh-line"></i><span data-i18n="maintenance.seekbar.health.refresh">Refresh</span>
+                            </button>
+                        </summary>
+                        <dl id="seekbar-health-grid" class="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-xs mt-2">
+                            <div class="flex items-center justify-between gap-2 py-1 border-b border-tg-bg/30">
+                                <dt class="text-tg-textSecondary" data-i18n="maintenance.seekbar.health.sidecar">Sidecar</dt>
+                                <dd id="seekbar-health-sidecar" class="text-tg-text font-mono">—</dd>
+                            </div>
+                            <div class="flex items-center justify-between gap-2 py-1 border-b border-tg-bg/30">
+                                <dt class="text-tg-textSecondary" data-i18n="maintenance.seekbar.health.url">URL</dt>
+                                <dd id="seekbar-health-url" class="text-tg-text font-mono truncate">—</dd>
+                            </div>
+                            <div class="flex items-center justify-between gap-2 py-1 border-b border-tg-bg/30">
+                                <dt class="text-tg-textSecondary" data-i18n="maintenance.seekbar.health.pid">PID</dt>
+                                <dd id="seekbar-health-pid" class="text-tg-text font-mono">—</dd>
+                            </div>
+                            <div class="flex items-center justify-between gap-2 py-1 border-b border-tg-bg/30">
+                                <dt class="text-tg-textSecondary" data-i18n="maintenance.seekbar.health.binary">Binary</dt>
+                                <dd id="seekbar-health-binary" class="text-tg-text font-mono truncate">—</dd>
+                            </div>
+                            <div class="flex items-center justify-between gap-2 py-1 border-b border-tg-bg/30">
+                                <dt class="text-tg-textSecondary" data-i18n="maintenance.seekbar.health.hwaccel">Hwaccel</dt>
+                                <dd id="seekbar-health-hwaccel" class="text-tg-text font-mono">—</dd>
+                            </div>
+                            <div class="flex items-center justify-between gap-2 py-1 border-b border-tg-bg/30">
+                                <dt class="text-tg-textSecondary" data-i18n="maintenance.seekbar.health.version">Version</dt>
+                                <dd id="seekbar-health-version" class="text-tg-text font-mono">—</dd>
+                            </div>
+                        </dl>
+                        <p id="seekbar-health-error" class="hidden mt-2 text-[11px] text-red-400 font-mono break-all"></p>
+                    </details>
+
+                    <section id="seekbar-queue-card" class="bg-tg-panel rounded-xl px-3 py-2 mb-3">
+                        <div class="flex items-center justify-between gap-2 flex-wrap">
+                            <div class="flex items-center gap-1.5 min-w-0">
+                                <i class="ri-list-check-2 text-tg-blue text-xs"></i>
+                                <span class="text-tg-text text-xs font-medium" data-i18n="maintenance.seekbar.queue.title">Generation activity</span>
+                            </div>
+                            <span id="seekbar-queue-idle-badge" class="text-[10.5px] text-tg-textSecondary">idle</span>
+                            <span id="seekbar-queue-live-badge" class="hidden text-[10.5px] text-tg-green inline-flex items-center gap-1">
+                                <i class="ri-loader-4-line animate-spin"></i><span>live</span>
+                            </span>
+                        </div>
+                        <div id="seekbar-queue-active" class="hidden mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+                            <div class="bg-tg-bg/40 rounded-lg p-2">
+                                <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary">Queued</div>
+                                <div id="seekbar-queue-queued" class="text-lg font-semibold text-tg-text tabular-nums">—</div>
+                            </div>
+                            <div class="bg-tg-bg/40 rounded-lg p-2">
+                                <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary">Processing</div>
+                                <div id="seekbar-queue-processing" class="text-lg font-semibold text-tg-blue tabular-nums">—</div>
+                            </div>
+                            <div class="bg-tg-bg/40 rounded-lg p-2">
+                                <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary">Completed</div>
+                                <div id="seekbar-queue-completed" class="text-lg font-semibold text-tg-green tabular-nums">—</div>
+                            </div>
+                            <div class="bg-tg-bg/40 rounded-lg p-2">
+                                <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary">Failed</div>
+                                <div id="seekbar-queue-failed" class="text-lg font-semibold text-red-400 tabular-nums">—</div>
+                            </div>
+                        </div>
+                        <p id="seekbar-queue-idle-line" class="mt-2 text-[11px] text-tg-textSecondary">—</p>
+                    </section>
+
+                    <!-- Sprite settings — flat layout, all controls at
+                         the same depth like the AI faces card. Master
+                         toggles up top, sprite knobs in a 2-col grid,
+                         hwaccel sub-card nested at the bottom. -->
+                    <section class="bg-tg-panel rounded-xl p-4 mb-3">
+                        <h3 class="text-tg-text text-sm font-medium mb-1 flex items-center gap-2">
+                            <i class="ri-movie-line text-tg-blue"></i>
+                            <span data-i18n="maintenance.seekbar.settings.title">Sprite settings</span>
+                        </h3>
+                        <p class="text-[11px] text-tg-textSecondary mb-3" data-i18n="maintenance.seekbar.settings.desc">Defaults are tuned for hover scrubbing on Telegram clips; tweak only if your library has very long files or very tight disk budget.</p>
+
+                        <div class="space-y-3">
+                            <!-- Master enable toggle. Auto-on default
+                                 (the Go sidecar auto-downloads on first
+                                 boot); operators flip this only if they
+                                 want to suppress generation entirely. -->
+                            <div class="flex items-start justify-between gap-3 pb-3 border-b border-tg-border/30">
+                                <div class="min-w-0">
+                                    <div class="text-tg-text text-sm" data-i18n="maintenance.seekbar.enable_label">Enable seekbar previews</div>
+                                    <p class="text-[11px] text-tg-textSecondary mt-0.5" data-i18n="maintenance.seekbar.enable_help">Master switch. When off, no new sprites are generated and the player falls back to the time-only tooltip on hover.</p>
+                                </div>
+                                <div id="setting-adv-seekbar-enabled" class="tg-toggle shrink-0 mt-0.5" role="switch" aria-checked="true" tabindex="0"></div>
+                            </div>
+
+                            <!-- Auto-on-download toggle — controls the
+                                 pregenerateSeekbar() post-download hook. -->
+                            <div class="flex items-start justify-between gap-3 pb-3 border-b border-tg-border/30">
+                                <div class="min-w-0">
+                                    <div class="text-tg-text text-sm" data-i18n="maintenance.seekbar.auto_label">Auto-generate on download</div>
+                                    <p class="text-[11px] text-tg-textSecondary mt-0.5" data-i18n="maintenance.seekbar.auto_help">Every newly-downloaded video gets a sprite in the background. Realtime jumps ahead of any backfill in flight.</p>
+                                </div>
+                                <div id="setting-adv-seekbar-autoOnDownload" class="tg-toggle shrink-0 mt-0.5" role="switch" aria-checked="true" tabindex="0"></div>
+                            </div>
+
+                            <!-- Sprite tuning — a 2-col grid keeps numeric
+                                 inputs scannable without bloating the
+                                 page. Placeholders show the current
+                                 defaults so an empty field reads as
+                                 "use the default". -->
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div>
+                                    <label for="setting-adv-seekbar-intervalSec" class="text-tg-text text-xs block mb-1" data-i18n="maintenance.seekbar.settings.interval">Interval (s)</label>
+                                    <input id="setting-adv-seekbar-intervalSec" type="number" min="1" max="30" step="1" class="tg-input w-full text-sm" placeholder="4">
+                                </div>
+                                <div>
+                                    <label for="setting-adv-seekbar-tileWidth" class="text-tg-text text-xs block mb-1" data-i18n="maintenance.seekbar.settings.tile_width">Tile width (px)</label>
+                                    <input id="setting-adv-seekbar-tileWidth" type="number" min="80" max="400" step="1" class="tg-input w-full text-sm" placeholder="160">
+                                </div>
+                                <div>
+                                    <label for="setting-adv-seekbar-columns" class="text-tg-text text-xs block mb-1" data-i18n="maintenance.seekbar.settings.columns">Columns</label>
+                                    <input id="setting-adv-seekbar-columns" type="number" min="2" max="20" step="1" class="tg-input w-full text-sm" placeholder="10">
+                                </div>
+                                <div>
+                                    <label for="setting-adv-seekbar-maxTiles" class="text-tg-text text-xs block mb-1" data-i18n="maintenance.seekbar.settings.max_tiles">Max tiles</label>
+                                    <input id="setting-adv-seekbar-maxTiles" type="number" min="20" max="500" step="1" class="tg-input w-full text-sm" placeholder="240">
+                                </div>
+                                <div>
+                                    <label for="setting-adv-seekbar-format" class="text-tg-text text-xs block mb-1" data-i18n="maintenance.seekbar.settings.format">Format</label>
+                                    <select id="setting-adv-seekbar-format" class="tg-input w-full text-sm">
+                                        <option value="webp">WebP</option>
+                                        <option value="jpeg">JPEG</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label for="setting-adv-seekbar-quality" class="text-tg-text text-xs block mb-1" data-i18n="maintenance.seekbar.settings.quality">Quality</label>
+                                    <input id="setting-adv-seekbar-quality" type="number" min="30" max="95" step="1" class="tg-input w-full text-sm" placeholder="75">
+                                </div>
+                                <div class="sm:col-span-2">
+                                    <label for="setting-adv-seekbar-concurrency" class="text-tg-text text-xs block mb-1" data-i18n="maintenance.seekbar.settings.concurrency">Sidecar concurrency</label>
+                                    <input id="setting-adv-seekbar-concurrency" type="number" min="1" max="16" step="1" class="tg-input w-full text-sm sm:w-40" placeholder="4">
+                                    <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="maintenance.seekbar.settings.concurrency_help">How many sprite encodes the Go sidecar runs in parallel. 4 is the sweet spot on 4–8-core hosts.</p>
+                                </div>
+                            </div>
+
+                            <!-- Hardware acceleration sub-card — same
+                                 nested-card shape as AI faces providers. -->
+                            <div class="bg-tg-bg/30 rounded-lg p-3 border border-tg-border/40 mt-3">
+                                <div class="flex items-center justify-between gap-2 flex-wrap mb-1">
+                                    <div class="min-w-0">
+                                        <div class="text-xs text-tg-text font-medium" data-i18n="maintenance.seekbar.hwaccel.label">Hardware acceleration</div>
+                                        <p class="text-[10.5px] text-tg-textSecondary mt-0.5" data-i18n="maintenance.seekbar.hwaccel.help">Auto picks the best backend per platform (cuda → vaapi → qsv on Linux x86, videotoolbox on macOS, cuda → qsv → d3d11va on Windows, v4l2m2m on Pi). Falls back to CPU silently.</p>
+                                    </div>
+                                </div>
+                                <div id="seekbar-hwaccel-result" class="text-[11px] text-tg-textSecondary leading-relaxed min-h-[24px] flex flex-wrap gap-1 items-center font-mono" role="status" aria-live="polite"></div>
+                                <label for="setting-adv-seekbar-hwaccel" class="text-tg-text text-xs block mt-3 mb-1" data-i18n="maintenance.seekbar.hwaccel.backend_label">Backend</label>
+                                <select id="setting-adv-seekbar-hwaccel" class="tg-input w-full text-sm">
+                                    <option value="">auto</option>
+                                    <option value="cuda">cuda — NVIDIA</option>
+                                    <option value="vaapi">vaapi — Intel/AMD Linux</option>
+                                    <option value="qsv">qsv — Intel QuickSync</option>
+                                    <option value="d3d11va">d3d11va — Windows</option>
+                                    <option value="videotoolbox">videotoolbox — macOS</option>
+                                    <option value="v4l2m2m">v4l2m2m — Pi/Rockchip</option>
+                                    <option value="none">none — CPU only</option>
+                                </select>
+                                <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="maintenance.seekbar.hwaccel.backend_help">Auto is safe; pick a specific backend only after the probe shows it works. The sidecar silently falls back to CPU if the chosen backend can't initialise on this host.</p>
+                            </div>
+                        </div>
+                    </section>
+                </div>

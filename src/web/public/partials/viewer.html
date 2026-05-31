@@ -1,0 +1,32 @@
+<div id="page-viewer" class="hidden">
+                    <div id="media-grid" class="media-grid"></div>
+                    <!-- Drag-to-select rubber-band rectangle. Single shared
+                         element managed by gallery-select.js — kept outside
+                         the grid so it can extend past the grid bounds
+                         without altering layout. -->
+                    <div id="gallery-lasso" aria-hidden="true"></div>
+                    <!-- Empty-state with actionable hints. Defaults to the
+                         neutral "No media files" copy; renderEmptyGroupState()
+                         in app.js swaps in group-specific guidance (run
+                         backfill / check filters / re-index from disk) when
+                         the user lands on a per-group view that turned up
+                         zero rows. Without those hints users were filing
+                         "ทำไมบางกลุ่มไม่เจอ media" without knowing where to
+                         look. -->
+                    <div id="empty-state"
+                        class="hidden flex flex-col items-center justify-center min-h-[16rem] text-center px-4 py-8">
+                        <i id="empty-state-icon" class="ri-image-line text-5xl text-tg-textSecondary mb-4"></i>
+                        <p id="empty-state-title" class="text-tg-text font-medium mb-1" data-i18n="viewer.empty">No media files</p>
+                        <p id="empty-state-body" class="text-xs text-tg-textSecondary max-w-sm hidden"></p>
+                        <div id="empty-state-actions" class="mt-4 flex flex-wrap gap-2 justify-center hidden"></div>
+                    </div>
+                    <div id="loading" class="hidden flex justify-center py-8">
+                        <div class="w-8 h-8 border-2 border-tg-blue border-t-transparent rounded-full animate-spin">
+                        </div>
+                    </div>
+                    <div id="load-more-indicator" class="hidden flex items-center justify-center gap-2 py-4 text-xs text-tg-textSecondary">
+                        <div class="w-4 h-4 border-2 border-tg-blue border-t-transparent rounded-full animate-spin"></div>
+                        <span data-i18n="viewer.loading_more">Loading more…</span>
+                    </div>
+                    <div id="load-more-sentinel" class="h-10"></div>
+                </div>

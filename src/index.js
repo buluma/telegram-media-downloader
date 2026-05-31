@@ -34,29 +34,7 @@ import { sanitizeName, migrateFolders } from './core/downloader.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// gramJS surfaces a steady trickle of recoverable internal errors during
-// reconnects (TIMEOUT, "Not connected", "Connection closed", etc).
-// We use our new structured `logger` to capture these without breaking the
-// operational flow.
-// Same native-binary-load guard the web server uses — keeps a CLI run
-// from dying on `Error loading shared library ld-linux-…` when an
-// optional dep (most often `onnxruntime-node`, transitively from the
-// optional NSFW classifier) ships glibc-only prebuilds on a musl image.
-process.on('unhandledRejection', (reason) => {
-    const msg = reason?.message || String(reason);
-    if (isNoise(msg)) {
-        logger.debug({ reason }, 'GramJS noise suppressed');
-        return;
-    }
-    if (NATIVE_LOAD_FAIL.test(msg)) {
-        logger.warn(
-            { msg: msg.slice(0, 200) },
-            '[startup] An optional native module failed to load',
-        );
-        return;
-    }
-    logger.error(reason, 'Unhandled rejection');
-});
+resilience.init();
 
 // Transient Readline Interface
 function question(query) {
