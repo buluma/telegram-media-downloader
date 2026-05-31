@@ -9,7 +9,7 @@
 #
 # Pin a specific patch version. Floating tags drift; this image is reproducible.
 
-FROM node:24.15.0-bookworm-slim AS deps
+FROM node:26.2.0-bookworm-slim AS deps
 WORKDIR /app
 RUN apt-get update \
     && apt-get install -y --no-install-recommends python3 make g++ \
@@ -17,7 +17,7 @@ RUN apt-get update \
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
 
-FROM node:24.15.0-bookworm-slim AS runtime
+FROM node:26.2.0-bookworm-slim AS runtime
 
 # Build identity — passed in by CI (`docker build --build-arg GIT_SHA=…
 # --build-arg BUILT_AT=…`) and surfaced via `/api/version` so the
