@@ -426,12 +426,15 @@ export function createClusterRouter({ broadcast, log }) {
     // P2P bridge endpoint — when peer A's /files resolves a row that lives on
     // peer B, A signs a GET to B at this path. We respond with the same
     // bytes the local /files would serve.
-    router.get('/cluster/files/:path(*)', async (req, res, next) => {
+    router.get('/cluster/files/*path', async (req, res, next) => {
         const v = _peerHmacGate(req, res);
         if (!v) return;
         let reqPath;
         try {
-            reqPath = decodeURIComponent(req.params.path || '').replace(/^\/+/, '');
+            const rawPath = Array.isArray(req.params.path)
+                ? req.params.path.join('/')
+                : req.params.path || '';
+            reqPath = decodeURIComponent(rawPath).replace(/^\/+/, '');
         } catch {
             return res.status(400).send('Bad request');
         }
