@@ -12,7 +12,13 @@ services:
   telegram-downloader:
     image: ghcr.io/buluma/telegram-media-downloader:latest
     pull_policy: always
-    # build: .
+    # Local-build metadata (used when a compose override enables build).
+    # `docker compose build` uses these args to stamp `/api/version`.
+    build:
+      context: .
+      args:
+        GIT_SHA: ${GIT_SHA:-dev}
+        BUILT_AT: ${BUILT_AT:-}
     container_name: telegram-downloader
     restart: unless-stopped
     ports:

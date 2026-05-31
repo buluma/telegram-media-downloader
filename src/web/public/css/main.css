@@ -3186,7 +3186,7 @@ body[data-page="settings"] {
    Auto-shown via the body[data-page] selector below; app.js's
    renderPage() also re-paints the active class on every navigation. */
 .maintenance-tabs {
-    display: flex;
+    display: none;
     align-items: stretch;
     gap: 6px;
     background: var(--tg-panel, #242f3d);

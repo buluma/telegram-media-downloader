@@ -22,8 +22,7 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 
-const SIDECAR_VERSION = '0.3.2';
-const GH_BASE = `https://github.com/buluma/telegram-media-downloader/releases/download/seekbar-v${SIDECAR_VERSION}`;
+const SIDECAR_VERSIONS = ['0.3.3', '0.3.2'];
 
 function platformSlug() {
     const platMap = { win32: 'win', linux: 'linux', darwin: 'mac' };
@@ -89,11 +88,27 @@ async function main() {
 
     await fsp.mkdir(binDir, { recursive: true });
 
-    const tarUrl = `${GH_BASE}/${slug}.tar.gz`;
     const tarPath = path.join(binDir, `${slug}.tar.gz`);
-
-    console.log(`[pre-download-seekbar] downloading ${tarUrl}`);
-    await download(tarUrl, tarPath);
+    let downloaded = false;
+    let lastErr = null;
+    for (const version of SIDECAR_VERSIONS) {
+        const ghBase = `https://github.com/buluma/telegram-media-downloader/releases/download/seekbar-v${version}`;
+        const tarUrl = `${ghBase}/${slug}.tar.gz`;
+        try {
+            console.log(`[pre-download-seekbar] downloading ${tarUrl}`);
+            await download(tarUrl, tarPath);
+            downloaded = true;
+            break;
+        } catch (e) {
+            lastErr = e;
+            console.warn(`[pre-download-seekbar] ${version} unavailable: ${e.message}`);
+        }
+    }
+    if (!downloaded) {
+        throw new Error(
+            `no compatible seekbar release asset found for ${slug}; last error: ${lastErr?.message || 'unknown'}`,
+        );
+    }
 
     console.log('[pre-download-seekbar] extracting...');
     const res = spawnSync('tar', ['-xzf', tarPath, '-C', binDir], { stdio: 'inherit' });
