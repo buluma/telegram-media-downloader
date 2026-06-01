@@ -47,6 +47,17 @@ npm run build:heimdal-cache
 The `build:heimdal-cache` script stores cache metadata under
 `/home/heimdal/.cache/tgdl-buildkit` by default (`BUILDKIT_CACHE_DIR`
 override supported). This keeps `npm`/layer cache warm across rebuilds.
+On Heimdal, pass the override compose file so local-build mode is
+respected:
+
+```bash
+COMPOSE_OVERRIDE_FILE=docker-compose.override.yml npm run build:heimdal-cache
+```
+
+The script also auto-selects/bootstraps a dedicated buildx builder
+(`BUILDX_BUILDER=tgdlbuilder` by default) and uses cache export with
+`ignore-error=true` to avoid non-fatal layer-lock stalls from failing the
+deploy.
 
 ### Predictable Docker cleanup (safe prune)
 
