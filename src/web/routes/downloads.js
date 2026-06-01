@@ -2,6 +2,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
 import { existsSync, readdirSync } from 'fs';
+import { spawn } from 'child_process';
 import express from 'express';
 import { loadConfig } from '../../config/manager.js';
 import { getDb } from '../../core/db.js';
@@ -17,7 +18,7 @@ import {
 import { safeResolveDownload } from '../lib/resolve-download.js';
 import { bestGroupName, formatBytes } from '../lib/format.js';
 import { sanitizeName } from '../../core/downloader.js';
-import { purgeThumbsForDownload } from '../../core/thumbs.js';
+import { purgeThumbsForDownload, resolveFfmpegBin, resolveFfprobeBin } from '../../core/thumbs.js';
 import { listPeers } from '../../core/cluster/peers.js';
 import { writeConfigAtomic } from '../lib/config-writer.js';
 import { deleteAllDownloads } from '../../core/db/groups.js';
@@ -36,6 +37,72 @@ function sanitizeForLog(value, maxLen = 500) {
 }
 const DOWNLOADS_DIR = path.join(DATA_DIR, 'downloads');
 const PHOTOS_DIR = path.join(DATA_DIR, 'photos');
+
+function _runProc(bin, args, timeoutMs = 120_000) {
+    return new Promise((resolve) => {
+        const p = spawn(bin, args, { windowsHide: true });
+        const out = [];
+        const err = [];
+        const timer = setTimeout(
+            () => {
+                try {
+                    p.kill('SIGKILL');
+                } catch {}
+            },
+            Math.max(5_000, timeoutMs),
+        );
+        p.stdout.on('data', (c) => out.push(c));
+        p.stderr.on('data', (c) => err.push(c));
+        p.on('error', (e) => {
+            clearTimeout(timer);
+            resolve({
+                ok: false,
+                code: null,
+                error: e?.message || String(e),
+                stdout: '',
+                stderr: '',
+            });
+        });
+        p.on('close', (code) => {
+            clearTimeout(timer);
+            resolve({
+                ok: code === 0,
+                code,
+                stdout: Buffer.concat(out).toString('utf8'),
+                stderr: Buffer.concat(err).toString('utf8'),
+            });
+        });
+    });
+}
+
+async function _probePlayback(absPath) {
+    const ffprobe = resolveFfprobeBin();
+    const args = [
+        '-v',
+        'error',
+        '-show_entries',
+        'format=duration',
+        '-show_streams',
+        '-of',
+        'json',
+        absPath,
+    ];
+    const r = await _runProc(ffprobe, args, 90_000);
+    if (!r.ok) {
+        return {
+            ok: false,
+            error: (r.stderr || r.stdout || `ffprobe exit ${r.code}`).trim().slice(0, 1000),
+        };
+    }
+    try {
+        const parsed = JSON.parse(r.stdout || '{}');
+        const streams = Array.isArray(parsed.streams) ? parsed.streams : [];
+        const hasVideo = streams.some((s) => s?.codec_type === 'video');
+        return { ok: !!hasVideo, streams: streams.length };
+    } catch {
+        return { ok: true };
+    }
+}
 
 export function createDownloadsRouter({
     broadcast,
@@ -622,6 +689,107 @@ export function createDownloadsRouter({
         if (!ok) return res.status(500).json({ error: 'Update failed' });
         broadcast({ type: 'download_pinned', id, pinned });
         res.json({ success: true, id, pinned });
+    });
+
+    // Playback probe for decode failures. Useful when browser says
+    // PIPELINE_ERROR_DECODE and we need to distinguish "broken bytes"
+    // from frontend codec/runtime issues.
+    router.post('/downloads/:id/playback-verify', async (req, res) => {
+        const id = parseInt(req.params.id, 10);
+        if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'Invalid id' });
+        const row = getDownloadById(id);
+        if (!row) return res.status(404).json({ error: 'Not found' });
+        const sr = await safeResolveDownload(row.file_path);
+        if (!sr.ok) return res.status(404).json({ error: `File not found: ${row.file_path}` });
+        const probe = await _probePlayback(sr.real);
+        res.json({ success: true, id, file: row.file_name, path: row.file_path, probe });
+    });
+
+    // Transcode one file to a web-safe MP4 (H.264 + AAC) and replace the
+    // row path/name so playback can recover from codec/profile issues.
+    router.post('/downloads/:id/playback-transcode', async (req, res) => {
+        const id = parseInt(req.params.id, 10);
+        if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'Invalid id' });
+        const row = getDownloadById(id);
+        if (!row) return res.status(404).json({ error: 'Not found' });
+        const sr = await safeResolveDownload(row.file_path);
+        if (!sr.ok) return res.status(404).json({ error: `File not found: ${row.file_path}` });
+        const inAbs = sr.real;
+        const inDir = path.dirname(inAbs);
+        const inExt = path.extname(row.file_name || inAbs);
+        const inBase = path.basename(row.file_name || inAbs, inExt || undefined);
+        const outName = `${inBase}.websafe.mp4`;
+        const outAbs = path.join(inDir, outName);
+        const tmpAbs = outAbs + `.tmp.${Date.now()}`;
+        const ffmpeg = resolveFfmpegBin();
+        const args = [
+            '-hide_banner',
+            '-loglevel',
+            'error',
+            '-i',
+            inAbs,
+            '-map',
+            '0:v:0',
+            '-map',
+            '0:a?',
+            '-c:v',
+            'libx264',
+            '-preset',
+            'veryfast',
+            '-crf',
+            '23',
+            '-pix_fmt',
+            'yuv420p',
+            '-c:a',
+            'aac',
+            '-b:a',
+            '128k',
+            '-movflags',
+            '+faststart',
+            '-y',
+            tmpAbs,
+        ];
+        const tx = await _runProc(ffmpeg, args, 30 * 60_000);
+        if (!tx.ok) {
+            try {
+                await fs.unlink(tmpAbs);
+            } catch {}
+            return res.status(500).json({
+                error: 'Transcode failed',
+                detail: (tx.stderr || tx.stdout || `ffmpeg exit ${tx.code}`).slice(0, 1200),
+            });
+        }
+        const probe = await _probePlayback(tmpAbs);
+        if (!probe.ok) {
+            try {
+                await fs.unlink(tmpAbs);
+            } catch {}
+            return res.status(500).json({ error: 'Transcode output failed verification', probe });
+        }
+        await fs.rename(tmpAbs, outAbs);
+        const st = await fs.stat(outAbs);
+        const relDir = row.file_path
+            ? path.posix.dirname(String(row.file_path).replace(/\\/g, '/'))
+            : '';
+        const nextRel = relDir && relDir !== '.' ? `${relDir}/${outName}` : outName;
+        getDb()
+            .prepare(
+                `UPDATE downloads
+                    SET file_name = ?, file_path = ?, file_size = ?, file_type = 'video'
+                  WHERE id = ?`,
+            )
+            .run(outName, nextRel, Number(st.size) || 0, id);
+        try {
+            await purgeThumbsForDownload(id);
+        } catch {}
+        broadcast({ type: 'download_transcoded', id, file_name: outName, file_path: nextRel });
+        res.json({
+            success: true,
+            id,
+            file_name: outName,
+            file_path: nextRel,
+            file_size: Number(st.size) || 0,
+        });
     });
 
     // Bulk pin/unpin. Body: `{ ids: [1,2,3], pinned: true|false }`.

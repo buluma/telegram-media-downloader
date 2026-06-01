@@ -3353,6 +3353,12 @@ function filterSidebarGroups(rawQuery) {
     });
     _syncSidebarGroupSectionVisibility(list);
 }
+// Inline HTML handler compatibility:
+// index.html currently uses `oninput="filterSidebarGroups(this.value)"`.
+// Expose this function on window so the handler is always resolvable.
+if (typeof window !== 'undefined') {
+    window.filterSidebarGroups = filterSidebarGroups;
+}
 
 function _syncSidebarGroupSectionVisibility(list = document.getElementById('groups-list')) {
     if (!list) return;
