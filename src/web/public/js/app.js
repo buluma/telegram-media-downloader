@@ -503,6 +503,15 @@ async function init() {
     setupFab();
     _setupSidebarGroupsCollapse();
     _setupSidebarMaintenanceCollapse();
+    // Sidebar groups filter: bind explicitly instead of inline HTML
+    // handlers so rebuilds/minification can't break symbol lookup.
+    const sidebarGroupsSearch = document.getElementById('sidebar-groups-search');
+    if (sidebarGroupsSearch && !sidebarGroupsSearch.dataset.boundFilter) {
+        sidebarGroupsSearch.addEventListener('input', (e) => {
+            filterSidebarGroups(e?.target?.value || '');
+        });
+        sidebarGroupsSearch.dataset.boundFilter = '1';
+    }
     // Wire the Queue store + WS handlers eagerly so its in-memory state
     // (and the bottom-nav badge) tracks live downloads even when the user
     // hasn't visited the page yet. Queue is admin-only — guests never see

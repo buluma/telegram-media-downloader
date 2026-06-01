@@ -3185,6 +3185,18 @@ body[data-page="backfill"] {
 body[data-page="queue"] {
     --page-accent: #29b6f6;
 }
+
+/* Sidebar "Downloaded Groups" search — keep icon + input text alignment
+   stable even if utility classes are reordered/trimmed in rebuilds. */
+.sidebar-groups-header .relative > .ri-search-line {
+    left: 0.75rem;
+    top: 50%;
+    transform: translateY(-50%);
+    pointer-events: none;
+}
+#sidebar-groups-search {
+    padding-left: 2.2rem;
+}
 body[data-page="settings"] {
     --page-accent: var(--tg-blue, #2aabee);
 }
