@@ -1715,6 +1715,39 @@ html.theme-light .notify-menu .notify-row:hover {
     cursor: not-allowed;
 }
 
+/* Compact variant for dense AI chips (Tag browser, WD14 tags, merge
+   suggestions). Keeps global action-button sizing untouched. */
+.ai-compact-chip {
+    padding: 0.42rem 0.85rem !important;
+    border-radius: 0.9rem;
+    font-size: 0.76rem;
+    line-height: 1.1;
+    font-weight: 600;
+}
+
+/* Maintenance → AI → People merge-suggestion chips. These use
+   `.tg-btn-input` (bright blue), so muted secondary text loses contrast.
+   Pin high-contrast text and render face-count as a dark translucent pill. */
+.ai-people-suggestion {
+    color: #f8fbff;
+    gap: 0.35rem;
+}
+.ai-people-suggestion .ai-people-suggestion-icon {
+    color: #f8fbff;
+    opacity: 0.95;
+}
+.ai-people-suggestion .ai-people-suggestion-name {
+    color: #ffffff;
+}
+.ai-people-suggestion .ai-people-suggestion-count {
+    color: #e9f4ff;
+    background: rgba(10, 20, 36, 0.28);
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 999px;
+    padding: 0.05rem 0.4rem;
+    line-height: 1.2;
+}
+
 /* AI Doctor — health-check strip on the AI page. Each check is one
    line: icon + label + detail (truncated). Compact so 10+ checks
    fit without scrolling. */
@@ -3211,6 +3244,21 @@ body[data-page="queue"] {
     z-index: 2;
 }
 .queue-search-wrap .queue-search-input {
+    padding-left: 2.25rem;
+}
+/* Backfill "Start new" group picker search — pin icon alignment. */
+.backfill-search-wrap {
+    position: relative;
+}
+.backfill-search-wrap .backfill-search-icon {
+    position: absolute;
+    left: 0.75rem;
+    top: 50%;
+    transform: translateY(-50%);
+    pointer-events: none;
+    z-index: 2;
+}
+.backfill-search-wrap .backfill-search-input {
     padding-left: 2.25rem;
 }
 body[data-page="settings"] {

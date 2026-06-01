@@ -225,7 +225,7 @@ async function _renderTagBrowser(forceReload = true) {
         chips.innerHTML = tags
             .map(
                 (t) =>
-                    `<button type="button" class="tg-btn-input text-[11px] px-2.5 py-1 inline-flex items-center gap-1 tag-chip" data-tag="${escapeHtml(t.tag)}" aria-pressed="false">
+                    `<button type="button" class="tg-btn-input ai-compact-chip text-[11px] px-2.5 py-1 inline-flex items-center gap-1 tag-chip" data-tag="${escapeHtml(t.tag)}" aria-pressed="false">
                         ${escapeHtml(t.tag)}
                         <span class="text-[10px] text-white/70 tabular-nums">${t.count}</span>
                     </button>`,
@@ -652,7 +652,7 @@ function _renderWd14BrowserChips() {
     chips.innerHTML = visible
         .map(
             (t) =>
-                `<button type="button" class="tg-btn-input text-[10px] px-2 py-0.5 inline-flex items-center gap-1 wd14-tag-chip${selected === t.tag ? ' active' : ''}" data-wd14-tag="${escapeHtml(t.tag)}">
+                `<button type="button" class="tg-btn-input ai-compact-chip text-[10px] px-2 py-0.5 inline-flex items-center gap-1 wd14-tag-chip${selected === t.tag ? ' active' : ''}" data-wd14-tag="${escapeHtml(t.tag)}">
                     ${escapeHtml(t.tag)}
                     <span class="text-[10px] text-white/70 tabular-nums">${t.count}</span>
                 </button>`,
@@ -4562,10 +4562,10 @@ function _renderPeopleSuggestions(people) {
     list.innerHTML = suggestions
         .map(
             (p) =>
-                `<button type="button" class="tg-btn-input text-[10px] px-2 py-1 inline-flex items-center gap-1 rounded-full ai-people-suggestion" data-person="${p.id}">
-                    <i class="ri-user-question-line"></i>
-                    <span>Person #${p.id}</span>
-                    <span class="tabular-nums text-tg-textSecondary">${p.face_count} faces</span>
+                `<button type="button" class="tg-btn-input ai-compact-chip text-[10px] px-2 py-1 inline-flex items-center gap-1 rounded-full ai-people-suggestion" data-person="${p.id}">
+                    <i class="ri-user-question-line ai-people-suggestion-icon"></i>
+                    <span class="ai-people-suggestion-name">Person #${p.id}</span>
+                    <span class="tabular-nums ai-people-suggestion-count">${p.face_count} faces</span>
                 </button>`,
         )
         .join('');
