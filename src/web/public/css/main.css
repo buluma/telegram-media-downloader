@@ -1715,22 +1715,56 @@ html.theme-light .notify-menu .notify-row:hover {
     cursor: not-allowed;
 }
 
-/* Compact variant for dense AI chips (Tag browser, WD14 tags, merge
-   suggestions). Keeps global action-button sizing untouched. */
-.ai-compact-chip {
-    padding: 0.42rem 0.85rem !important;
-    border-radius: 0.9rem;
-    font-size: 0.76rem;
+/* Dedicated chip family for dense, high-cardinality UIs (tags, OCR words,
+   people suggestions). Kept separate from `.tg-btn-input` so global button
+   padding changes never bloat chip-heavy sections. */
+.tg-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    border-radius: 999px;
+    border: 1px solid transparent;
     line-height: 1.1;
     font-weight: 600;
+    letter-spacing: 0;
+    transition:
+        background-color 0.16s ease,
+        border-color 0.16s ease,
+        color 0.16s ease;
+    cursor: pointer;
+}
+.tg-chip--dense {
+    padding: 0.42rem 0.86rem;
+    font-size: 0.72rem;
+}
+.tg-chip--blue {
+    background: rgba(42, 171, 238, 0.92);
+    border-color: rgba(42, 171, 238, 0.95);
+    color: #f5fbff;
+}
+.tg-chip--blue:hover {
+    background: #2aabee;
+    border-color: #2aabee;
+}
+.tg-chip--blue.active,
+.tag-chip.active,
+.wd14-tag-chip.active,
+.ocr-chip.active,
+.ocr-word-chip.active {
+    background: #229ed9;
+    border-color: #229ed9;
+    color: #ffffff;
+}
+.tg-chip--blue .tabular-nums {
+    color: #d9efff;
+    font-size: 0.83em;
+    font-weight: 700;
 }
 
-/* Maintenance → AI → People merge-suggestion chips. These use
-   `.tg-btn-input` (bright blue), so muted secondary text loses contrast.
-   Pin high-contrast text and render face-count as a dark translucent pill. */
+/* Maintenance → AI → People merge-suggestion chips. Keep high-contrast
+   text and render face-count as a dark translucent pill. */
 .ai-people-suggestion {
     color: #f8fbff;
-    gap: 0.35rem;
 }
 .ai-people-suggestion .ai-people-suggestion-icon {
     color: #f8fbff;

@@ -114,6 +114,13 @@ const _selected = new Set();
 // Pivot for shift-click range selection — last single toggle that
 // happened in the rendered window. Cleared when the row disappears.
 let _selectionPivot = null;
+const _pendingProgressByKey = new Map();
+let _filterVersion = 0;
+
+function bumpFilterVersion() {
+    _filterVersion += 1;
+    _filteredCacheTag = '';
+}
 
 // Render scheduling — collapse WS bursts into one rAF tick. Two paths:
 //   - `scheduleRender()`         → cheap, patches the rendered window
@@ -135,6 +142,7 @@ function scheduleRender() {
         _renderScheduled = false;
         _renderStructural = false;
         requestAnimationFrame(() => {
+            _flushPendingProgress();
             if (view.visible) {
                 if (structural) renderRows();
                 else patchRenderedRows();
@@ -167,18 +175,24 @@ function bumpStatus(status, delta) {
     else statusCounts.set(status, next);
 }
 
-function upsert(entry) {
+function upsert(entry, { structural = true } = {}) {
     if (!entry || !entry.key) return;
     const prev = store.get(entry.key);
+    let touchedStructure = false;
     if (prev) {
         if (prev.status !== entry.status) {
             bumpStatus(prev.status, -1);
             bumpStatus(entry.status, 1);
+            touchedStructure = true;
         }
         Object.assign(prev, entry);
     } else {
         store.set(entry.key, { ...entry });
         bumpStatus(entry.status, 1);
+        touchedStructure = true;
+    }
+    if (structural && touchedStructure) {
+        bumpFilterVersion();
     }
 }
 
@@ -187,6 +201,7 @@ function remove(key) {
     if (!prev) return;
     bumpStatus(prev.status, -1);
     store.delete(key);
+    bumpFilterVersion();
     // A removed row can never be acted on again — drop it from the
     // selection so the floating-bar count and "select all" tri-state
     // stay accurate even when the underlying list churns.
@@ -394,7 +409,7 @@ async function runRetryAll() {
     }
 }
 
-function patchProgress(payload) {
+function patchProgress(payload, { structural = false } = {}) {
     if (!payload?.key) return;
     const prev = store.get(payload.key);
     const total = payload.total || prev?.total || prev?.fileSize || 0;
@@ -419,7 +434,16 @@ function patchProgress(payload) {
         accountId: payload.accountId ?? prev?.accountId ?? null,
         accountName: payload.accountName ?? prev?.accountName ?? null,
     };
-    upsert(next);
+    upsert(next, { structural });
+}
+
+function _flushPendingProgress() {
+    if (_pendingProgressByKey.size === 0) return;
+    const progressAffectsOrder = view.sort === 'progress';
+    for (const payload of _pendingProgressByKey.values()) {
+        patchProgress(payload, { structural: progressAffectsOrder });
+    }
+    _pendingProgressByKey.clear();
 }
 
 // ============ Bootstrap ============
@@ -553,7 +577,7 @@ function handleWs(msg) {
         return;
     }
     if (msg.type === 'download_progress' && msg.payload?.key) {
-        patchProgress(msg.payload);
+        _pendingProgressByKey.set(msg.payload.key, msg.payload);
         scheduleRender();
         return;
     }
@@ -624,7 +648,7 @@ let _filteredCache = null;
 let _filteredCacheTag = '';
 
 function getFilteredSorted() {
-    const tag = `${view.filter}|${view.sort}|${view.sortDir}|${view.search}|${store.size}`;
+    const tag = `${view.filter}|${view.sort}|${view.sortDir}|${view.search}|${_filterVersion}`;
     if (tag === _filteredCacheTag && _filteredCache) return _filteredCache;
     const filterFn = (STATUS_FILTERS.find((f) => f.id === view.filter) || STATUS_FILTERS[0]).match;
     const q = view.search.trim().toLowerCase();
@@ -667,7 +691,7 @@ function getFilteredSorted() {
 }
 
 function invalidateFilterCache() {
-    _filteredCacheTag = '';
+    bumpFilterVersion();
 }
 
 // ============ Render ============
@@ -961,8 +985,12 @@ function patchRenderedRows() {
     }
     // Patch in place. Each `[data-key]` row has a small set of named
     // child nodes the patcher knows about; update only those.
+    const rowByKey = new Map();
+    rowsHost.querySelectorAll('[data-key]').forEach((el) => {
+        rowByKey.set(el.dataset.key || '', el);
+    });
     for (const job of filtered.slice(0, view.rendered)) {
-        const rowEl = rowsHost.querySelector(`[data-key="${CSS.escape(job.key)}"]`);
+        const rowEl = rowByKey.get(job.key);
         if (!rowEl) continue;
         _patchRowNode(rowEl, job);
     }

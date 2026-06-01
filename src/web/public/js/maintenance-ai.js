@@ -225,7 +225,7 @@ async function _renderTagBrowser(forceReload = true) {
         chips.innerHTML = tags
             .map(
                 (t) =>
-                    `<button type="button" class="tg-btn-input ai-compact-chip text-[11px] px-2.5 py-1 inline-flex items-center gap-1 tag-chip" data-tag="${escapeHtml(t.tag)}" aria-pressed="false">
+                    `<button type="button" class="tg-chip tg-chip--dense tg-chip--blue tag-chip" data-tag="${escapeHtml(t.tag)}" aria-pressed="false">
                         ${escapeHtml(t.tag)}
                         <span class="text-[10px] text-white/70 tabular-nums">${t.count}</span>
                     </button>`,
@@ -469,7 +469,7 @@ function _renderOcrBrowserChips() {
     chips.innerHTML = visible
         .map(
             (w) =>
-                `<button type="button" class="tg-btn-input text-[10px] px-2 py-0.5 inline-flex items-center gap-1 ocr-word-chip${selected === w.word ? ' active' : ''}" data-ocr-word="${escapeHtml(w.word)}">
+                `<button type="button" class="tg-chip tg-chip--dense tg-chip--blue ocr-word-chip${selected === w.word ? ' active' : ''}" data-ocr-word="${escapeHtml(w.word)}">
                     ${escapeHtml(w.word)}
                     <span class="text-[10px] text-white/70 tabular-nums">${w.cnt}</span>
                 </button>`,
@@ -652,7 +652,7 @@ function _renderWd14BrowserChips() {
     chips.innerHTML = visible
         .map(
             (t) =>
-                `<button type="button" class="tg-btn-input ai-compact-chip text-[10px] px-2 py-0.5 inline-flex items-center gap-1 wd14-tag-chip${selected === t.tag ? ' active' : ''}" data-wd14-tag="${escapeHtml(t.tag)}">
+                `<button type="button" class="tg-chip tg-chip--dense tg-chip--blue wd14-tag-chip${selected === t.tag ? ' active' : ''}" data-wd14-tag="${escapeHtml(t.tag)}">
                     ${escapeHtml(t.tag)}
                     <span class="text-[10px] text-white/70 tabular-nums">${t.count}</span>
                 </button>`,
@@ -918,7 +918,7 @@ async function _renderOcrChips() {
         chips.innerHTML = _ocrWordsCache
             .map(
                 (w) =>
-                    `<button type="button" class="tg-btn-input text-[10px] px-2 py-0.5 inline-flex items-center gap-1 ocr-chip${_ocrWordFilter === w.word ? ' active' : ''}" data-word="${escapeHtml(w.word)}">
+                    `<button type="button" class="tg-chip tg-chip--dense tg-chip--blue ocr-chip${_ocrWordFilter === w.word ? ' active' : ''}" data-word="${escapeHtml(w.word)}">
                         ${escapeHtml(w.word)}
                         <span class="text-[9px] text-white/70 tabular-nums">${w.cnt}</span>
                     </button>`,
@@ -4562,7 +4562,7 @@ function _renderPeopleSuggestions(people) {
     list.innerHTML = suggestions
         .map(
             (p) =>
-                `<button type="button" class="tg-btn-input ai-compact-chip text-[10px] px-2 py-1 inline-flex items-center gap-1 rounded-full ai-people-suggestion" data-person="${p.id}">
+                `<button type="button" class="tg-chip tg-chip--dense tg-chip--blue ai-people-suggestion" data-person="${p.id}">
                     <i class="ri-user-question-line ai-people-suggestion-icon"></i>
                     <span class="ai-people-suggestion-name">Person #${p.id}</span>
                     <span class="tabular-nums ai-people-suggestion-count">${p.face_count} faces</span>

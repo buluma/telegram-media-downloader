@@ -29,6 +29,40 @@ npm run doctor
 
 Reports Node + ABI, config load, SQLite open, `data/` writability, port availability, and `ffmpeg`. Exits non-zero on any blocking failure — wire it into your provisioning script or CI smoke-step.
 
+### Faster source rebuilds (Heimdal / on-host builds)
+
+For hosts that build from source regularly, use the included scripts:
+
+```bash
+# 1) Publish apt-heavy runtime base once (or whenever Dockerfile runtime deps change)
+npm run build:runtime-base -- --repo ghcr.io/buluma/tgdl-runtime-base --tag bookworm-node26
+
+# 2) Point app rebuilds at that base image
+export RUNTIME_BASE_IMAGE=ghcr.io/buluma/tgdl-runtime-base:bookworm-node26
+
+# 3) Build with persistent local BuildKit cache + restart service
+npm run build:heimdal-cache
+```
+
+The `build:heimdal-cache` script stores cache metadata under
+`/home/heimdal/.cache/tgdl-buildkit` by default (`BUILDKIT_CACHE_DIR`
+override supported). This keeps `npm`/layer cache warm across rebuilds.
+
+### Predictable Docker cleanup (safe prune)
+
+Use the scripted prune flow instead of ad-hoc `docker system prune`:
+
+```bash
+# dry-run (default)
+npm run docker:prune:safe
+
+# apply, but abort if free disk is under 20 GiB
+npm run docker:prune:safe -- --apply --min-free-gb 20
+
+# include anonymous volumes
+npm run docker:prune:safe -- --apply --min-free-gb 20 --volumes
+```
+
 ### Environment variables
 
 | Var | Default | Notes |
