@@ -3351,14 +3351,21 @@ function filterSidebarGroups(rawQuery) {
         .toLowerCase();
     const rows = list.querySelectorAll('.chat-row');
     if (!q) {
-        rows.forEach((r) => r.classList.remove('hidden'));
+        rows.forEach((r) => {
+            r.classList.remove('hidden');
+            r.style.display = '';
+        });
         _syncSidebarGroupSectionVisibility(list);
         return;
     }
     rows.forEach((r) => {
         const name = (r.querySelector('.row-title-name')?.textContent || '').toLowerCase();
         const id = (r.dataset.id || '').toLowerCase();
-        r.classList.toggle('hidden', !(name.includes(q) || id.includes(q)));
+        const show = name.includes(q) || id.includes(q);
+        r.classList.toggle('hidden', !show);
+        // Hard hide via inline style: avoids utility-class/CSS-order drift
+        // where `.chat-row` display rules can override `.hidden`.
+        r.style.display = show ? '' : 'none';
     });
     _syncSidebarGroupSectionVisibility(list);
 }
@@ -3373,7 +3380,7 @@ function _syncSidebarGroupSectionVisibility(list = document.getElementById('grou
     if (!list) return;
     list.querySelectorAll('.sidebar-group-section').forEach((section) => {
         const hasVisibleRows = Array.from(section.querySelectorAll('.chat-row')).some(
-            (row) => !row.classList.contains('hidden') && row.style.display !== 'none',
+            (row) => row.style.display !== 'none',
         );
         section.classList.toggle('hidden', !hasVisibleRows);
     });

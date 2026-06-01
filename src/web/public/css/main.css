@@ -3197,6 +3197,22 @@ body[data-page="queue"] {
 #sidebar-groups-search {
     padding-left: 2.2rem;
 }
+/* Queue toolbar search — explicit positioning so the magnifier doesn't drift
+   when utility-class order changes or partials are rebundled. */
+.queue-search-wrap {
+    position: relative;
+}
+.queue-search-wrap .queue-search-icon {
+    position: absolute;
+    left: 0.75rem;
+    top: 50%;
+    transform: translateY(-50%);
+    pointer-events: none;
+    z-index: 2;
+}
+.queue-search-wrap .queue-search-input {
+    padding-left: 2.25rem;
+}
 body[data-page="settings"] {
     --page-accent: var(--tg-blue, #2aabee);
 }
