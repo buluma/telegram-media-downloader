@@ -8,6 +8,7 @@
 #     the dashboard's /api/auth_check endpoint.
 #
 # Pin a specific patch version. Floating tags drift; this image is reproducible.
+ARG RUNTIME_BASE_IMAGE=runtime-base
 
 FROM node:26.2.0-bookworm-slim AS deps
 WORKDIR /app
@@ -17,17 +18,7 @@ RUN apt-get update \
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
 
-FROM node:26.2.0-bookworm-slim AS runtime
-
-# Build identity — passed in by CI (`docker build --build-arg GIT_SHA=…
-# --build-arg BUILT_AT=…`) and surfaced via `/api/version` so the
-# status-bar chip always reflects what's actually deployed.
-ARG GIT_SHA=dev
-ARG BUILT_AT=
-ENV NODE_ENV=production \
-    PORT=3000 \
-    GIT_SHA=${GIT_SHA} \
-    BUILT_AT=${BUILT_AT}
+FROM node:26.2.0-bookworm-slim AS runtime-base
 
 # tini    — proper PID 1 (signal handling + zombie reaping). Debian ships
 #           the binary at /usr/bin/tini.
@@ -60,6 +51,24 @@ RUN apt-get update \
             intel-media-va-driver i965-va-driver; \
     fi \
     && rm -rf /var/lib/apt/lists/*
+
+# Optional optimization path:
+#   - default: `RUNTIME_BASE_IMAGE=runtime-base` (uses the stage above)
+#   - faster deploy path: point at a prebuilt base image that already has
+#     ffmpeg/libva tooling baked in, e.g.
+#       RUNTIME_BASE_IMAGE=ghcr.io/buluma/tgdl-runtime-base:bookworm-node26-arm64
+# This avoids re-running the heavy apt install block on each app rebuild.
+FROM ${RUNTIME_BASE_IMAGE} AS runtime
+
+# Build identity — passed in by CI (`docker build --build-arg GIT_SHA=…
+# --build-arg BUILT_AT=…`) and surfaced via `/api/version` so the
+# status-bar chip always reflects what's actually deployed.
+ARG GIT_SHA=dev
+ARG BUILT_AT=
+ENV NODE_ENV=production \
+    PORT=3000 \
+    GIT_SHA=${GIT_SHA} \
+    BUILT_AT=${BUILT_AT}
 
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules

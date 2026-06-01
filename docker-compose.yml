@@ -19,6 +19,9 @@ services:
       args:
         GIT_SHA: ${GIT_SHA:-dev}
         BUILT_AT: ${BUILT_AT:-}
+        # Optional: point to a prebuilt runtime base image so app rebuilds
+        # skip the heavy apt install layer in Dockerfile.
+        RUNTIME_BASE_IMAGE: ${RUNTIME_BASE_IMAGE:-runtime-base}
     container_name: telegram-downloader
     restart: unless-stopped
     ports:

@@ -23,6 +23,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 
 const SIDECAR_VERSIONS = ['0.3.3', '0.3.2'];
+const REQUEST_TIMEOUT_MS = Number(process.env.SEEKBAR_DOWNLOAD_TIMEOUT_MS || 7000);
+const DEFAULT_SKIP_SLUGS = new Set(['tgdl-seekbar-linux-arm64']);
+const SKIP_PRELOAD_SLUGS = new Set(
+    String(process.env.SEEKBAR_PRELOAD_SKIP_SLUGS || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean),
+);
 
 function platformSlug() {
     const platMap = { win32: 'win', linux: 'linux', darwin: 'mac' };
@@ -39,7 +47,7 @@ function platformSlug() {
 function download(url, dest, redirectsLeft = 5) {
     return new Promise((resolve, reject) => {
         const lib = url.startsWith('https') ? https : http;
-        lib.get(url, { headers: { 'user-agent': 'tgdl-build' } }, (res) => {
+        const req = lib.get(url, { headers: { 'user-agent': 'tgdl-build' } }, (res) => {
             if (
                 res.statusCode >= 300 &&
                 res.statusCode < 400 &&
@@ -63,7 +71,11 @@ function download(url, dest, redirectsLeft = 5) {
             ws.on('finish', resolve);
             ws.on('error', reject);
             res.on('error', reject);
-        }).on('error', reject);
+        });
+        req.setTimeout(REQUEST_TIMEOUT_MS, () => {
+            req.destroy(new Error(`timeout after ${REQUEST_TIMEOUT_MS}ms`));
+        });
+        req.on('error', reject);
     });
 }
 
@@ -73,6 +85,20 @@ async function main() {
         console.log(
             `[pre-download-seekbar] skipping — unsupported platform ${process.platform}/${process.arch}`,
         );
+        return;
+    }
+
+    // Known pain point: on Heimdal (linux/arm64) release artifacts may lag
+    // behind app releases, causing repeated 404 probes during every image build.
+    // Allow an explicit skip list to make those builds deterministic + quiet.
+    const skipByDefault =
+        DEFAULT_SKIP_SLUGS.has(slug) &&
+        String(process.env.SEEKBAR_PRELOAD_FORCE || '').toLowerCase() !== '1';
+    if (skipByDefault || SKIP_PRELOAD_SLUGS.has(slug)) {
+        const reason = skipByDefault
+            ? `${slug} has no published asset in current release set`
+            : `${slug} is in SEEKBAR_PRELOAD_SKIP_SLUGS`;
+        console.log(`[pre-download-seekbar] skipping — ${reason}`);
         return;
     }
 
