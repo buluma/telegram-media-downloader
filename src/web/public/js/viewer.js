@@ -90,6 +90,16 @@ function _startSlideshowTimer() {
     }, sec * 1000);
 }
 
+function _refreshPinButton(file) {
+    const icon = document.getElementById('modal-pin-icon');
+    const label = document.getElementById('modal-pin-label');
+    const btn = document.getElementById('modal-pin');
+    if (!icon || !label || !btn) return;
+    const pinned = !!file?.pinned;
+    icon.className = pinned ? 'ri-pushpin-2-fill mr-2 text-amber-400' : 'ri-pushpin-line mr-2';
+    label.textContent = pinned ? 'Unpin' : 'Pin';
+}
+
 // Review-mode action toolbar — populated by openMediaViewerForReview and
 // cleared on close. Each entry: { key, label, icon?, danger?, handler }.
 // `handler(file, index)` is invoked on click or matching keydown; if it
@@ -590,6 +600,7 @@ export function openMediaViewer(index) {
         `${_groupChip}${escapeHtml(file.sizeFormatted)} • ${escapeHtml(formatDate(file.modified))}`;
     document.getElementById('modal-counter').textContent = `${index + 1} / ${state.files.length}`;
     document.getElementById('modal-download').href = downloadUrl;
+    _refreshPinButton(file);
     _setTypeChip(file);
 
     if (kind === 'image' && file.id) {
@@ -1783,6 +1794,25 @@ export function setupViewerEvents() {
     // Share button — opens the share-link sheet for the current file.
     // Lazy-import keeps the module out of the cold-load path; it only
     // gets fetched the first time an admin opens this sheet.
+    document.getElementById('modal-pin')?.addEventListener('click', async () => {
+        const file = state.files[state.currentFileIndex];
+        if (!file?.id) return;
+        const next = !file.pinned;
+        try {
+            const r = await fetch(`/api/downloads/${file.id}/pin`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                body: JSON.stringify({ pinned: next }),
+            });
+            if (r.ok) {
+                file.pinned = next;
+                _refreshPinButton(file);
+                showToast(next ? 'Pinned' : 'Unpinned');
+            }
+        } catch {}
+    });
+
     document.getElementById('modal-share')?.addEventListener('click', async () => {
         const file = state.files[state.currentFileIndex];
         if (!file?.id) {
