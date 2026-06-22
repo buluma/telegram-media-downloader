@@ -45,6 +45,15 @@ try {
     ws.on('config_updated', () => {
         _seekbarEnabledCache = null;
     });
+    ws.on('backup_done', (msg) => {
+        const dlId = msg?.downloadId;
+        if (!dlId) return;
+        const file = state.files?.[state.currentFileIndex];
+        if (file && file.id === dlId) {
+            file._backedUp = true;
+            _refreshBackupButton(file);
+        }
+    });
 } catch {
     /* ws not available in tests */
 }
