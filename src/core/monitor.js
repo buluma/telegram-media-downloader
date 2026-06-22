@@ -363,14 +363,16 @@ export class RealtimeMonitor extends EventEmitter {
             // Accept the freshly-saved tree from the bus when available;
             // otherwise re-read it (covers manual reloadConfig() callers).
             const newConfig = maybeConfig || loadConfig();
-            const oldGroupIds = this.config.groups.map((g) => String(g.id));
-            const newGroupIds = newConfig.groups.map((g) => String(g.id));
+            const oldGroups = this.config.groups || [];
+            const newGroups = newConfig.groups || [];
+            const oldGroupIds = oldGroups.map((g) => String(g.id));
+            const newGroupIds = newGroups.map((g) => String(g.id));
 
             // Detect changes
-            const added = newConfig.groups.filter((g) => !oldGroupIds.includes(String(g.id)));
-            const removed = this.config.groups.filter((g) => !newGroupIds.includes(String(g.id)));
-            const changed = newConfig.groups.filter((g) => {
-                const old = this.config.groups.find((og) => String(og.id) === String(g.id));
+            const added = newGroups.filter((g) => !oldGroupIds.includes(String(g.id)));
+            const removed = oldGroups.filter((g) => !newGroupIds.includes(String(g.id)));
+            const changed = newGroups.filter((g) => {
+                const old = oldGroups.find((og) => String(og.id) === String(g.id));
                 return old && old.enabled !== g.enabled;
             });
 
