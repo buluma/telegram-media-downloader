@@ -25,6 +25,7 @@ import { deleteAllDownloads } from '../../core/db/groups.js';
 import { deferDelete } from '../../core/delete-queue.js';
 import { checkJobConflict } from '../../core/job-tracker.js';
 import { backupDb } from '../../core/db/backup.js';
+import { toPosixPath } from '../../core/util/paths.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -285,7 +286,7 @@ export function createDownloadsRouter({
                             : row.file_type === 'sticker'
                               ? 'stickers'
                               : 'documents';
-                const stored = (row.file_path || '').replace(/\\/g, '/');
+                const stored = toPosixPath(row.file_path);
                 const fallbackFolder = sanitizeName(
                     configGroups.get(String(row.group_id))?.name ||
                         row.group_name ||
@@ -421,7 +422,7 @@ export function createDownloadsRouter({
 
                 // Prefer the stored relative path. Normalise Windows-style
                 // backslashes into forward slashes for the URL.
-                const stored = (row.file_path || '').replace(/\\/g, '/');
+                const stored = toPosixPath(row.file_path);
                 const fullPath =
                     stored && stored.includes('/')
                         ? stored
@@ -516,7 +517,7 @@ export function createDownloadsRouter({
                               : 'documents';
                 // Use the stored relative path when present (matches the actual
                 // on-disk location even if the group has since been renamed).
-                const stored = (row.file_path || '').replace(/\\/g, '/');
+                const stored = toPosixPath(row.file_path);
                 const fullPath =
                     stored && stored.includes('/')
                         ? stored
@@ -575,7 +576,7 @@ export function createDownloadsRouter({
                     "SELECT id FROM downloads WHERE REPLACE(file_path, '\\', '/') = ?",
                 );
                 for (const p of pathList) {
-                    const norm = String(p || '').replace(/\\/g, '/');
+                    const norm = toPosixPath(p);
                     if (!norm) continue;
                     const row = stmt.get(norm);
                     if (row?.id) resolvedIdsFromPaths.push(row.id);
@@ -621,7 +622,7 @@ export function createDownloadsRouter({
                     // record of where the downloader wrote the file. Fall back
                     // to the reconstructed candidate ONLY when file_path is
                     // missing (legacy rows pre-v1.x that never had the column).
-                    const stored = (row.file_path || '').replace(/\\/g, '/');
+                    const stored = toPosixPath(row.file_path);
                     let candidate = stored;
                     if (!candidate || !candidate.includes('/')) {
                         const folder =
@@ -768,9 +769,7 @@ export function createDownloadsRouter({
         }
         await fs.rename(tmpAbs, outAbs);
         const st = await fs.stat(outAbs);
-        const relDir = row.file_path
-            ? path.posix.dirname(String(row.file_path).replace(/\\/g, '/'))
-            : '';
+        const relDir = row.file_path ? path.posix.dirname(toPosixPath(row.file_path)) : '';
         const nextRel = relDir && relDir !== '.' ? `${relDir}/${outName}` : outName;
         getDb()
             .prepare(
@@ -877,7 +876,7 @@ export function createDownloadsRouter({
                             : row.file_type === 'sticker'
                               ? 'stickers'
                               : 'documents';
-                const stored = (row.file_path || '').replace(/\\/g, '/');
+                const stored = toPosixPath(row.file_path);
                 const candidate =
                     stored && stored.includes('/')
                         ? stored

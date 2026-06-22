@@ -1223,50 +1223,7 @@ export class RealtimeMonitor extends EventEmitter {
     }
 
     getMediaType(message) {
-        // Resolve actual media object — message.media may itself wrap a
-        // photo/document, but the inner shape is already what we want.
-        let m = message;
-        if (message.media && !message.photo && !message.document && !message.sticker) {
-            m = message.media;
-        }
-
-        // 1. Check for Sticker
-        if (m.sticker || message.sticker) return 'stickers';
-
-        // 2. Check document mime type for sticker/webp
-        const doc =
-            m.document ||
-            (m.className === 'MessageMediaDocument' ? m : null) ||
-            (m.className === 'MessageMediaWebPage'
-                ? m.webpage?.document || m.webPage?.document
-                : null);
-        if (doc) {
-            const mime = doc.mimeType || '';
-            if (mime.includes('image/webp') || mime.includes('application/x-tgsticker'))
-                return 'stickers';
-        }
-
-        // Direct checks
-        if (m.photo || m.className === 'MessageMediaPhoto') return 'photos';
-
-        if (m.video || m.videoNote) {
-            if (m.gif) return 'gifs';
-            return 'videos';
-        }
-
-        if (doc) {
-            const mime = doc.mimeType || '';
-            if (mime.includes('image/gif')) return 'gifs';
-            if (mime.includes('video/')) return 'videos'; // Some videos are documents
-            if (mime.includes('image/')) return 'photos'; // Uncompressed images
-            if (mime.includes('audio/')) return 'audio'; // Audio files
-            if (mime.includes('voice')) return 'voice';
-        }
-
-        if (m.voice) return 'voice';
-        if (m.audio) return 'audio';
-
-        return 'files';
+        return getMediaType(message);
     }
 
     async handleUrls(message, group) {
@@ -1338,11 +1295,48 @@ export function _isBlockedByGlobalWebpRule(mediaType, config) {
 }
 
 /**
- * Thin wrapper so tests can call getMediaType without constructing a full
- * RealtimeMonitor instance. Delegates to the instance method.
+ * Classify a Telegram message's media type. Pure function — no instance
+ * state needed. The instance method delegates here.
  */
-export function _getMediaType(message) {
-    return _sharedMonitor.getMediaType(message);
+export function getMediaType(message) {
+    let m = message;
+    if (message.media && !message.photo && !message.document && !message.sticker) {
+        m = message.media;
+    }
+
+    if (m.sticker || message.sticker) return 'stickers';
+
+    const doc =
+        m.document ||
+        (m.className === 'MessageMediaDocument' ? m : null) ||
+        (m.className === 'MessageMediaWebPage' ? m.webpage?.document || m.webPage?.document : null);
+    if (doc) {
+        const mime = doc.mimeType || '';
+        if (mime.includes('image/webp') || mime.includes('application/x-tgsticker'))
+            return 'stickers';
+    }
+
+    if (m.photo || m.className === 'MessageMediaPhoto') return 'photos';
+
+    if (m.video || m.videoNote) {
+        if (m.gif) return 'gifs';
+        return 'videos';
+    }
+
+    if (doc) {
+        const mime = doc.mimeType || '';
+        if (mime.includes('image/gif')) return 'gifs';
+        if (mime.includes('video/')) return 'videos';
+        if (mime.includes('image/')) return 'photos';
+        if (mime.includes('audio/')) return 'audio';
+        if (mime.includes('voice')) return 'voice';
+    }
+
+    if (m.voice) return 'voice';
+    if (m.audio) return 'audio';
+
+    return 'files';
 }
 
-const _sharedMonitor = new RealtimeMonitor(null, null, {});
+// Backward-compatible alias for tests that imported _getMediaType.
+export const _getMediaType = getMediaType;

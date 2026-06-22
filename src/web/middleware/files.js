@@ -8,6 +8,7 @@ import { parseClusterRefPath } from '../../core/cluster/dedup.js';
 import { getPeer } from '../../core/cluster/peers.js';
 import { streamFromPeer, requestSignedShareUrl } from '../../core/cluster/proxy.js';
 import { safeResolveDownload } from '../lib/resolve-download.js';
+import { toPosixPath } from '../../core/util/paths.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, '../../../data');
@@ -125,7 +126,7 @@ export function createFileServingMiddleware({ broadcast }) {
                 if (r.reason === 'missing') {
                     queueMicrotask(() => {
                         try {
-                            const fwd = reqPath.replace(/\\/g, '/');
+                            const fwd = toPosixPath(reqPath);
                             const bwd = fwd.replace(/\//g, '\\');
                             const db = getDb();
                             const result = db

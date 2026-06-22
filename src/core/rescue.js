@@ -177,6 +177,10 @@ export function getRescueSweeper(opts) {
     return _singleton;
 }
 
+export function _resetRescueSweeper() {
+    _singleton = null;
+}
+
 /**
  * Compute the effective rescue retention for a group. Returns either the
  * retention in milliseconds (Rescue is on for this group) or null (off).

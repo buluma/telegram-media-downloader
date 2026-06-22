@@ -27,6 +27,7 @@ import {
 import { Upload } from '@aws-sdk/lib-storage';
 import { BackupProvider, openReadStream } from './base.js';
 import { encryptStream } from '../encryption.js';
+import { toPosixPath } from '../../util/paths.js';
 
 export class S3Provider extends BackupProvider {
     static get name() {
@@ -134,9 +135,7 @@ export class S3Provider extends BackupProvider {
 
     /** Build a full S3 key from a remote path. */
     _key(remotePath) {
-        const norm = String(remotePath || '')
-            .replace(/\\/g, '/')
-            .replace(/^\/+/, '');
+        const norm = toPosixPath(remotePath).replace(/^\/+/, '');
         return this.prefix ? `${this.prefix}/${norm}` : norm;
     }
 

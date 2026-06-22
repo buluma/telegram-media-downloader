@@ -200,3 +200,7 @@ export function getAutoBackfillScheduler(opts) {
     if (!_singleton && opts) _singleton = new AutoBackfillScheduler(opts);
     return _singleton;
 }
+
+export function _resetAutoBackfillScheduler() {
+    _singleton = null;
+}

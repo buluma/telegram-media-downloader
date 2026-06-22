@@ -35,6 +35,7 @@ import {
     runFfmpegArgs,
 } from '../thumbs.js';
 import { getSidecarUrl, submitOne as sidecarSubmitOne } from './client.js';
+import { toPosixPath } from '../util/paths.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..', '..');
@@ -119,7 +120,7 @@ export function getMetaFilePath(downloadId) {
 function _resolveDownloadAbs(stored) {
     if (!stored) return null;
     if (path.isAbsolute(stored) && existsSync(stored)) return stored;
-    let s = String(stored).replace(/\\/g, '/');
+    let s = toPosixPath(stored);
     while (s.startsWith('data/downloads/')) s = s.slice('data/downloads/'.length);
     const candidate = path.join(DOWNLOADS_DIR, s);
     if (existsSync(candidate)) return candidate;

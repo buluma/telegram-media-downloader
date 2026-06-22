@@ -26,6 +26,7 @@ import { buildMetadataText, setImageEmbedding, setTextEmbedding } from '../db/fa
 import { computeFaceQualityScore, detectFaces } from './faces.js';
 import { embedImage as _clientEmbedImage } from './faces-client.js';
 import { resolveClipModelId } from './tgdl-ml-client.js';
+import { toPosixPath } from '../util/paths.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..', '..');
@@ -355,7 +356,7 @@ async function _drainBg() {
 function _resolveAbs(storedPath) {
     if (!storedPath) return null;
     if (path.isAbsolute(storedPath) && existsSync(storedPath)) return storedPath;
-    let s = String(storedPath).replace(/\\/g, '/');
+    let s = toPosixPath(storedPath);
     while (s.startsWith('data/downloads/')) s = s.slice('data/downloads/'.length);
     const candidate = path.join(DATA_DIR, 'downloads', s);
     if (existsSync(candidate)) return candidate;

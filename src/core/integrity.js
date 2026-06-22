@@ -19,6 +19,7 @@ import { getDb, insertDownload } from './db.js';
 import { logger } from './logger.js';
 import { sanitizeName } from './downloader.js';
 import { fileTypeFromExtension, sniffMediaFile } from './media-sniff.js';
+import { toPosixPath } from './util/paths.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DOWNLOADS_DIR = path.join(__dirname, '../../data/downloads');
@@ -95,7 +96,7 @@ export async function sweep(onProgress) {
             if (!page.length) break;
             const checks = await Promise.all(
                 page.map(async (r) => {
-                    let rel = String(r.file_path || '').replace(/\\/g, '/');
+                    let rel = toPosixPath(r.file_path);
                     if (!rel) return null;
                     // Tolerate the legacy `data/downloads/` prefix that some
                     // older rows still carry — same fix that
@@ -379,9 +380,9 @@ export async function reindexFromDisk(configGroups, onProgress) {
                             continue;
                         }
                         const fullAbs = path.join(DOWNLOADS_DIR, folderName, typeFolder, f.name);
-                        const relPath = path.posix
-                            .join(folderName, typeFolder, f.name)
-                            .replace(/\\/g, '/');
+                        const relPath = toPosixPath(
+                            path.posix.join(folderName, typeFolder, f.name),
+                        );
                         await _ingestOne({
                             result,
                             fullAbs,
@@ -398,7 +399,7 @@ export async function reindexFromDisk(configGroups, onProgress) {
                         continue;
                     }
                     const fullAbs = path.join(DOWNLOADS_DIR, folderName, sub.name);
-                    const relPath = path.posix.join(folderName, sub.name).replace(/\\/g, '/');
+                    const relPath = toPosixPath(path.posix.join(folderName, sub.name));
                     await _ingestOne({
                         result,
                         fullAbs,

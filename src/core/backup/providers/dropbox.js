@@ -25,6 +25,7 @@ import fs from 'fs';
 import { Transform } from 'stream';
 import { BackupProvider, optionalDepError, openReadStream } from './base.js';
 import { encryptStream } from '../encryption.js';
+import { toPosixPath } from '../../util/paths.js';
 
 const SINGLE_SHOT_LIMIT = 150 * 1024 * 1024;
 const DEFAULT_CHUNK_BYTES =
@@ -143,9 +144,7 @@ export class DropboxProvider extends BackupProvider {
      *  trailing slash (except for the literal root). Dropbox itself is
      *  picky — `/foo/` returns `path/malformed_path`. */
     _normRemote(p) {
-        let s = String(p == null ? '/' : p)
-            .replace(/\\/g, '/')
-            .replace(/\/+/g, '/');
+        let s = toPosixPath(p == null ? '/' : p).replace(/\/+/g, '/');
         if (!s.startsWith('/')) s = '/' + s;
         if (s.length > 1 && s.endsWith('/')) s = s.slice(0, -1);
         return s;
@@ -153,9 +152,7 @@ export class DropboxProvider extends BackupProvider {
 
     /** Resolve a relative path under the configured root. */
     _resolve(remotePath) {
-        const norm = String(remotePath || '')
-            .replace(/\\/g, '/')
-            .replace(/^\/+/, '');
+        const norm = toPosixPath(remotePath).replace(/^\/+/, '');
         if (norm.split('/').some((seg) => seg === '..')) {
             throw new Error(`unsafe remote path: ${remotePath}`);
         }

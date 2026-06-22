@@ -14,6 +14,7 @@ import { pipeline } from 'stream/promises';
 import { Transform } from 'stream';
 import { BackupProvider } from './base.js';
 import { encryptStream } from '../encryption.js';
+import { toPosixPath } from '../../util/paths.js';
 
 export class LocalProvider extends BackupProvider {
     static get name() {
@@ -62,7 +63,7 @@ export class LocalProvider extends BackupProvider {
     /** Resolve a remote (POSIX) path to an absolute on-disk path,
      *  refusing anything that escapes the configured root via `..`. */
     _resolveSafe(remotePath) {
-        const norm = String(remotePath || '').replace(/\\/g, '/');
+        const norm = toPosixPath(remotePath);
         if (norm.includes('..') || path.posix.isAbsolute(norm)) {
             throw new Error(`unsafe remote path: ${remotePath}`);
         }
@@ -156,7 +157,7 @@ export class LocalProvider extends BackupProvider {
             if (e.isFile()) {
                 try {
                     const st = await fsp.stat(abs);
-                    const rel = path.posix.join(String(prefix || '').replace(/\\/g, '/'), e.name);
+                    const rel = path.posix.join(toPosixPath(prefix), e.name);
                     yield { name: rel, size: st.size, mtime: st.mtimeMs };
                 } catch {
                     /* file disappeared mid-list */
@@ -164,10 +165,7 @@ export class LocalProvider extends BackupProvider {
             } else if (e.isDirectory()) {
                 // Recurse — snapshot retention only walks shallow prefixes
                 // so depth is bounded in practice.
-                yield* this.list(
-                    path.posix.join(String(prefix || '').replace(/\\/g, '/'), e.name),
-                    ctx,
-                );
+                yield* this.list(path.posix.join(toPosixPath(prefix), e.name), ctx);
             }
         }
     }

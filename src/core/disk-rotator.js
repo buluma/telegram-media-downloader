@@ -262,3 +262,7 @@ export function getDiskRotator(opts) {
     if (!_singleton && opts) _singleton = new DiskRotator(opts);
     return _singleton;
 }
+
+export function _resetDiskRotator() {
+    _singleton = null;
+}

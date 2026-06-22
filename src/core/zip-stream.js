@@ -25,6 +25,7 @@
 
 import { createReadStream } from 'fs';
 import { stat } from 'fs/promises';
+import { toPosixPath } from './util/paths.js';
 
 const SIG_LOCAL_FILE = 0x04034b50;
 const SIG_CENTRAL_FILE = 0x02014b50;
@@ -105,7 +106,7 @@ export class ZipStream {
         if (st.size > ZIP_MAX_BYTES) {
             throw new Error('ZipStream: file too large for non-zip64 archive');
         }
-        const nameBuf = utf8Buf(archiveName.replace(/\\/g, '/'));
+        const nameBuf = utf8Buf(toPosixPath(archiveName));
         const { time, date } = toDosTime(st.mtime || new Date());
         const localHeaderOffset = this._offset;
 

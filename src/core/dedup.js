@@ -24,6 +24,7 @@ import { getDb } from './db.js';
 import { softDeleteDownloads } from './db/downloads.js';
 import { deferDelete } from './delete-queue.js';
 import { sha256OfFile, sha256OfFileViaPool } from './checksum.js';
+import { toPosixPath } from './util/paths.js';
 
 // Where the downloader writes by default (relative to the project root).
 // `safeResolveDownload`-style resolution lives in server.js; for the CLI
@@ -40,7 +41,7 @@ const DEFAULT_DOWNLOAD_ROOT = path.resolve(process.cwd(), 'data/downloads');
 function resolveStoredPath(stored) {
     if (!stored) return null;
     if (path.isAbsolute(stored) && fs.existsSync(stored)) return stored;
-    let s = String(stored).replace(/\\/g, '/');
+    let s = toPosixPath(stored);
     while (s.startsWith('data/downloads/')) s = s.slice('data/downloads/'.length);
     const candidate = path.join(DEFAULT_DOWNLOAD_ROOT, s);
     if (fs.existsSync(candidate)) return candidate;

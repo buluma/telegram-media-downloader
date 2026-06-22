@@ -31,6 +31,7 @@ import {
     checkNsfwBlocklistHashes,
 } from './db.js';
 import { sha256OfFile } from './checksum.js';
+import { toPosixPath } from './util/paths.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
@@ -403,7 +404,7 @@ export async function startScan(cfg, onProgress, onDone, onModel, onLog) {
         const resolveAbs = (storedPath) => {
             if (!storedPath) return null;
             if (path.isAbsolute(storedPath) && existsSync(storedPath)) return storedPath;
-            let s = String(storedPath).replace(/\\/g, '/');
+            let s = toPosixPath(storedPath);
             while (s.startsWith('data/downloads/')) s = s.slice('data/downloads/'.length);
             const candidate = path.join(DATA_DIR, 'downloads', s);
             if (existsSync(candidate)) return candidate;
@@ -610,7 +611,7 @@ async function _drainBg() {
                 if (path.isAbsolute(row.file_path) && existsSync(row.file_path)) {
                     abs = row.file_path;
                 } else {
-                    let s = String(row.file_path).replace(/\\/g, '/');
+                    let s = toPosixPath(row.file_path);
                     while (s.startsWith('data/downloads/')) s = s.slice('data/downloads/'.length);
                     const candidate = path.join(DATA_DIR, 'downloads', s);
                     if (existsSync(candidate)) abs = candidate;

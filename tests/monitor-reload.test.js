@@ -61,4 +61,45 @@ describe('monitor reloadConfig', () => {
         expect(monitor.config.groups).toHaveLength(1);
         expect(String(monitor.config.groups[0].id)).toBe('-100111');
     });
+
+    it('detects removed groups', () => {
+        const cfg = manager.loadConfig();
+        cfg.groups = [
+            { id: '-100111', name: 'A', enabled: true },
+            { id: '-100222', name: 'B', enabled: true },
+        ];
+        manager.saveConfig(cfg);
+
+        const monitor = new RealtimeMonitor(null, null, manager.loadConfig());
+        cfg.groups = [{ id: '-100111', name: 'A', enabled: true }];
+        manager.saveConfig(cfg);
+
+        expect(monitor.config.groups).toHaveLength(1);
+        expect(String(monitor.config.groups[0].id)).toBe('-100111');
+    });
+
+    it('detects enabled/disabled toggle', () => {
+        const cfg = manager.loadConfig();
+        cfg.groups = [{ id: '-100111', name: 'A', enabled: true }];
+        manager.saveConfig(cfg);
+
+        const monitor = new RealtimeMonitor(null, null, manager.loadConfig());
+        const cfg2 = manager.loadConfig();
+        const g = cfg2.groups.find((g) => String(g.id) === '-100111');
+        g.enabled = false;
+        manager.saveConfig(cfg2);
+
+        expect(monitor.config.groups[0].enabled).toBe(false);
+    });
+
+    it('handles multiple rapid config changes', () => {
+        const monitor = new RealtimeMonitor(null, null, {});
+        for (let i = 0; i < 5; i++) {
+            const cfg = manager.loadConfig();
+            cfg.groups = [{ id: `-100${i}`, name: `G${i}`, enabled: true }];
+            manager.saveConfig(cfg);
+        }
+        expect(monitor.config.groups).toHaveLength(1);
+        expect(String(monitor.config.groups[0].id)).toBe('-1004');
+    });
 });

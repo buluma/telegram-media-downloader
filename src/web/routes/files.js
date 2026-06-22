@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import express from 'express';
 import { getDownloadById } from '../../core/db/downloads.js';
 import { getCloudStream } from '../../core/backup/manager.js';
+import { toPosixPath } from '../../core/util/paths.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_DATA_DIR = path.join(__dirname, '../../../data');
@@ -48,7 +49,7 @@ export async function streamFileResponse(id, res, dataDir = DEFAULT_DATA_DIR) {
         return;
     }
 
-    const norm = (row.file_path || row.file_name || '').replace(/\\/g, '/');
+    const norm = toPosixPath(row.file_path || row.file_name);
     // Reject path traversal — any segment resolving above the downloads root.
     if (norm.includes('..') || path.posix.isAbsolute(norm)) {
         res.status(400).json({ error: 'Invalid file path' });

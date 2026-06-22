@@ -16,6 +16,7 @@ import { Transform } from 'stream';
 import SftpClient from 'ssh2-sftp-client';
 import { BackupProvider, openReadStream } from './base.js';
 import { encryptStream } from '../encryption.js';
+import { toPosixPath } from '../../util/paths.js';
 
 export class SftpProvider extends BackupProvider {
     static get name() {
@@ -106,9 +107,7 @@ export class SftpProvider extends BackupProvider {
 
     /** Resolve a remote (relative) path against the configured root. */
     _resolve(remotePath) {
-        const norm = String(remotePath || '')
-            .replace(/\\/g, '/')
-            .replace(/^\/+/, '');
+        const norm = toPosixPath(remotePath).replace(/^\/+/, '');
         if (norm.includes('..')) throw new Error(`unsafe remote path: ${remotePath}`);
         return path.posix.join(this.root, norm);
     }

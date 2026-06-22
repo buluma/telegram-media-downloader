@@ -2,6 +2,28 @@ import { loadConfig, saveConfig } from '../../config/manager.js';
 import { invalidateConfigCache } from './config-cache.js';
 import { publishConfigChange } from '../../core/cluster/config-sync.js';
 
+/**
+ * Read-modify-write config in a single atomic operation. Replaces the
+ * scattered `loadConfig() → mutate → saveConfig()` dance that is
+ * copy-pasted at ~49 call sites and is race-prone.
+ *
+ *   await mutateConfig((cfg) => { cfg.web.enabled = true; });
+ *
+ * The callback receives the current config; mutate it in place (or
+ * return a replacement object). The result is persisted, cache is
+ * invalidated, and cluster peers are notified — same as writeConfigAtomic.
+ *
+ * @param {(config: object) => void | object} fn
+ * @returns {Promise<object>} the saved config
+ */
+export async function mutateConfig(fn) {
+    const config = loadConfig();
+    const result = fn(config);
+    const toSave = result !== undefined ? result : config;
+    await writeConfigAtomic(toSave);
+    return toSave;
+}
+
 // Saves config with SQLITE_BUSY retry backoff, invalidates the cache, and
 // replicates per-key diffs to cluster peers.
 export async function writeConfigAtomic(config) {

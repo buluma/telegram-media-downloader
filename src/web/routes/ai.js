@@ -43,6 +43,7 @@ import * as llm from '../../core/llm/index.js';
 import { safeResolveDownload } from '../lib/resolve-download.js';
 import { checkJobConflict } from '../../core/job-tracker.js';
 import { getScanStateCounts, listScanFailures } from '../../core/db/scan-state.js';
+import { toPosixPath } from '../../core/util/paths.js';
 
 export function createAiRouter({ broadcast, log, jobTrackers }) {
     const router = express.Router();
@@ -68,7 +69,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
     function _resolveAiPath(storedPath) {
         if (!storedPath) return null;
         if (path.isAbsolute(storedPath) && existsSync(storedPath)) return storedPath;
-        let s = String(storedPath).replace(/\\/g, '/');
+        let s = toPosixPath(storedPath);
         while (s.startsWith('data/downloads/')) s = s.slice('data/downloads/'.length);
         const candidate = path.join(DATA_DIR, 'downloads', s);
         if (existsSync(candidate)) return candidate;
@@ -453,7 +454,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                         ? 'audio'
                         : 'documents';
             for (const row of rows) {
-                const fp = String(row.file_path || '').replace(/\\/g, '/');
+                const fp = toPosixPath(row.file_path);
                 if (fp.startsWith('_clusterref/')) continue;
                 const abs = _resolveAiPath(fp);
                 if (!abs) {

@@ -100,6 +100,7 @@ import { createLinkDownloadRouter } from './routes/link-download.js';
 import { createFileServingMiddleware } from './middleware/files.js';
 import { cookieParser, checkAuth, guestGate, isLocalRequest } from './middleware/auth.js';
 import { resolveGroupNamesFromTelegram } from './lib/resolve-group-names.js';
+import { toPosixPath } from '../core/util/paths.js';
 
 // Demote gramJS reconnect chatter from stderr/stdout to data/logs/network.log.
 // gramJS opens a fresh DC connection per file download (different DCs host
@@ -1151,8 +1152,8 @@ runtime.on('event', (e) => {
         //   3. already canonical `<group>/<type>/<file>` — leave alone
         let relPath = null;
         if (p.filePath) {
-            let s = String(p.filePath).replace(/\\/g, '/');
-            const absRoot = path.resolve(DOWNLOADS_DIR).replace(/\\/g, '/');
+            let s = toPosixPath(p.filePath);
+            const absRoot = toPosixPath(path.resolve(DOWNLOADS_DIR));
             if (s.startsWith(absRoot + '/')) {
                 relPath = s.slice(absRoot.length + 1);
             } else if (s.startsWith('./data/downloads/')) {

@@ -45,6 +45,7 @@ import { resolveFacesValue } from './faces-config.js';
 import { clusterFacesRemote, detectFacesBatch, getSidecarUrl } from './faces-client.js';
 import { mlOcr, isTgdlMlEnabled, getTgdlMlUrl } from './tgdl-ml-client.js';
 import { checkSidecarCapability } from './preflight.js';
+import { toPosixPath } from '../util/paths.js';
 import { getActiveProvider, generate } from '../llm/index.js';
 import { setImageText } from '../db/faces.js';
 import { readFileSync } from 'fs';
@@ -212,7 +213,7 @@ export function cancelScan(feature) {
 function _resolveAbs(storedPath) {
     if (!storedPath) return null;
     if (path.isAbsolute(storedPath) && existsSync(storedPath)) return storedPath;
-    let s = String(storedPath).replace(/\\/g, '/');
+    let s = toPosixPath(storedPath);
     while (s.startsWith('data/downloads/')) s = s.slice('data/downloads/'.length);
     const candidate = path.join(DATA_DIR, 'downloads', s);
     if (existsSync(candidate)) return candidate;

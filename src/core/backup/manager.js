@@ -64,6 +64,7 @@ import { SftpProvider } from './providers/sftp.js';
 import { FtpProvider } from './providers/ftp.js';
 import { GoogleDriveProvider } from './providers/gdrive.js';
 import { DropboxProvider } from './providers/dropbox.js';
+import { toPosixPath } from '../util/paths.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '../../..');
@@ -465,7 +466,7 @@ function _onDownloadComplete(e) {
     // — we need the `downloads.id` so the queue row can FK into it.
     const payload = e.payload;
     if (payload.deduped) return; // nothing new on disk to ship
-    const filePath = String(payload.filePath || '').replace(/\\/g, '/');
+    const filePath = toPosixPath(payload.filePath);
     if (!filePath) return;
     // Resolve the downloads row by file_path. The downloader's emitted
     // path can have a few prefixes (see server.js's normaliser); we
@@ -497,7 +498,7 @@ function _mirrorRemotePath(row) {
     // Same shape as the downloads dir: `<group>/<type>/<file>`. Forward
     // slashes only — providers apply them to S3 keys / SFTP paths
     // verbatim.
-    return String(row.file_path || '').replace(/\\/g, '/');
+    return toPosixPath(row.file_path);
 }
 
 // ---- Workers --------------------------------------------------------------

@@ -22,6 +22,7 @@ import fs from 'fs';
 import { Transform } from 'stream';
 import { BackupProvider, optionalDepError, openReadStream } from './base.js';
 import { encryptStream } from '../encryption.js';
+import { toPosixPath } from '../../util/paths.js';
 
 const DEFAULT_TIMEOUT_MS =
     Number(process.env.BACKUP_FTP_TIMEOUT_MS) > 0
@@ -125,9 +126,7 @@ export class FtpProvider extends BackupProvider {
     /** Normalise a remote path: backslashes → forward, collapse `//`,
      *  ensure leading `/`. Drops trailing `/` except for the literal root. */
     _normRemote(p) {
-        let s = String(p == null ? '/' : p)
-            .replace(/\\/g, '/')
-            .replace(/\/+/g, '/');
+        let s = toPosixPath(p == null ? '/' : p).replace(/\/+/g, '/');
         if (!s.startsWith('/')) s = '/' + s;
         if (s.length > 1 && s.endsWith('/')) s = s.slice(0, -1);
         return s;
@@ -136,9 +135,7 @@ export class FtpProvider extends BackupProvider {
     /** Resolve a relative remote path under the configured root. Refuses
      *  `..` escapes — symmetric with LocalProvider's _resolveSafe. */
     _resolve(remotePath) {
-        const norm = String(remotePath || '')
-            .replace(/\\/g, '/')
-            .replace(/^\/+/, '');
+        const norm = toPosixPath(remotePath).replace(/^\/+/, '');
         if (norm.split('/').some((seg) => seg === '..')) {
             throw new Error(`unsafe remote path: ${remotePath}`);
         }

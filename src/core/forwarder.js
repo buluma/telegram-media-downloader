@@ -10,6 +10,7 @@ import { Api } from 'telegram';
 import { getDb } from './db.js';
 import { logger } from './logger.js';
 import { deferDelete } from './delete-queue.js';
+import { toPosixPath } from './util/paths.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DOWNLOADS_DIR = path.resolve(__dirname, '../../data/downloads');
@@ -169,7 +170,7 @@ export class AutoForwarder {
                     // Skip delete when other DB rows share this file — it is
                     // the dedup canonical copy and removing it would corrupt
                     // every other group that points at the same path.
-                    const relPath = path.relative(DOWNLOADS_DIR, filePath).replace(/\\/g, '/');
+                    const relPath = toPosixPath(path.relative(DOWNLOADS_DIR, filePath));
                     const sharedCount =
                         getDb()
                             .prepare(`SELECT COUNT(*) AS n FROM downloads WHERE file_path = ?`)

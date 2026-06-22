@@ -28,6 +28,7 @@ import path from 'path';
 import { Transform } from 'stream';
 import { BackupProvider, optionalDepError, openReadStream } from './base.js';
 import { encryptStream } from '../encryption.js';
+import { toPosixPath } from '../../util/paths.js';
 
 const APP_PROPERTY_KEY = 'tgdl-backup';
 const APP_PROPERTY_VALUE = '1';
@@ -180,9 +181,7 @@ export class GoogleDriveProvider extends BackupProvider {
      *  segment as needed. Returns the leaf folder id and updates the
      *  cache for every intermediate path. */
     async _ensurePathFolders(dirPath) {
-        const norm = String(dirPath || '')
-            .replace(/\\/g, '/')
-            .replace(/^\/+|\/+$/g, '');
+        const norm = toPosixPath(dirPath).replace(/^\/+|\/+$/g, '');
         if (!norm) return this._rootFolderId;
         if (this._folderCache.has(norm)) return this._folderCache.get(norm);
 
@@ -205,9 +204,7 @@ export class GoogleDriveProvider extends BackupProvider {
     /** Find a file by POSIX path under the root. Returns the Drive file
      *  metadata (`id`, `size`, `modifiedTime`, `md5Checksum`) or null. */
     async _findFile(remotePath) {
-        const norm = String(remotePath || '')
-            .replace(/\\/g, '/')
-            .replace(/^\/+/, '');
+        const norm = toPosixPath(remotePath).replace(/^\/+/, '');
         if (!norm) return null;
         const dir = path.posix.dirname(norm);
         const name = path.posix.basename(norm);
@@ -235,9 +232,7 @@ export class GoogleDriveProvider extends BackupProvider {
     /** Read-only path → folderId resolver. Returns null when any
      *  intermediate segment is missing — never creates folders. */
     async _lookupFolder(dirPath) {
-        const norm = String(dirPath || '')
-            .replace(/\\/g, '/')
-            .replace(/^\/+|\/+$/g, '');
+        const norm = toPosixPath(dirPath).replace(/^\/+|\/+$/g, '');
         if (!norm) return this._rootFolderId;
         if (this._folderCache.has(norm)) return this._folderCache.get(norm);
         let parentId = this._rootFolderId;
@@ -266,9 +261,7 @@ export class GoogleDriveProvider extends BackupProvider {
     }
 
     async upload(localPath, remotePath, opts, ctx) {
-        const norm = String(remotePath || '')
-            .replace(/\\/g, '/')
-            .replace(/^\/+/, '');
+        const norm = toPosixPath(remotePath).replace(/^\/+/, '');
         const dir = path.posix.dirname(norm);
         const name = path.posix.basename(norm);
         const parentId = await this._ensurePathFolders(dir === '.' ? '' : dir);
@@ -370,9 +363,7 @@ export class GoogleDriveProvider extends BackupProvider {
         // Walk the folder tree under the resolved prefix, yielding files
         // (relative paths) along the way. We resolve the start folder
         // once, then BFS the children.
-        const norm = String(prefix || '')
-            .replace(/\\/g, '/')
-            .replace(/^\/+|\/+$/g, '');
+        const norm = toPosixPath(prefix).replace(/^\/+|\/+$/g, '');
         const startFolderId = norm ? await this._lookupFolder(norm) : this._rootFolderId;
         if (!startFolderId) return;
         const stack = [{ folderId: startFolderId, relPath: norm }];
