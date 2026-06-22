@@ -484,9 +484,21 @@ export function openMediaViewer(index) {
             image.style.opacity = '0';
             image.onload = () => {
                 image.style.opacity = '1';
+                const ph = imageContainer.querySelector('.viewer-unavailable');
+                if (ph) ph.classList.add('hidden');
             };
             image.onerror = () => {
-                image.style.opacity = '1';
+                image.style.opacity = '0';
+                let ph = imageContainer.querySelector('.viewer-unavailable');
+                if (!ph) {
+                    ph = document.createElement('div');
+                    ph.className =
+                        'viewer-unavailable flex flex-col items-center justify-center absolute inset-0 text-tg-textSecondary';
+                    ph.innerHTML =
+                        '<i class="ri-image-line text-5xl mb-3 opacity-40"></i><span class="text-sm">File unavailable</span>';
+                    imageContainer.appendChild(ph);
+                }
+                ph.classList.remove('hidden');
             };
             image.src = url;
             if (image.complete) image.style.opacity = '1';
