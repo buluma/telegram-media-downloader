@@ -26,6 +26,8 @@ import { deferDelete } from '../../core/delete-queue.js';
 import { checkJobConflict } from '../../core/job-tracker.js';
 import { backupDb } from '../../core/db/backup.js';
 import { toPosixPath } from '../../core/util/paths.js';
+import * as backupQueue from '../../core/backup/queue.js';
+import { listDestinations, _wake as wakeBackupWorker } from '../../core/backup/manager.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -690,6 +692,44 @@ export function createDownloadsRouter({
         if (!ok) return res.status(500).json({ error: 'Update failed' });
         broadcast({ type: 'download_pinned', id, pinned });
         res.json({ success: true, id, pinned });
+    });
+
+    // Check whether a download has been backed up to any destination.
+    router.get('/downloads/:id/backup-status', async (req, res) => {
+        const id = parseInt(req.params.id, 10);
+        if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'Invalid id' });
+        const row = getDownloadById(id);
+        if (!row) return res.status(404).json({ error: 'Not found' });
+        const confirmed = getDb()
+            .prepare(
+                `SELECT COUNT(*) AS cnt FROM backup_jobs
+                  WHERE download_id = ? AND (status = 'done' OR confirmed_at IS NOT NULL)`,
+            )
+            .get(id);
+        res.json({ backedUp: (confirmed?.cnt || 0) > 0 });
+    });
+
+    // Manually push a single download to all enabled mirror destinations.
+    router.post('/downloads/:id/backup', async (req, res) => {
+        const id = parseInt(req.params.id, 10);
+        if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'Invalid id' });
+        const row = getDownloadById(id);
+        if (!row || !row.file_path) return res.status(404).json({ error: 'Not found' });
+        const remotePath = toPosixPath(row.file_path);
+        let queued = 0;
+        for (const dest of listDestinations({ scrubbed: false })) {
+            if (!dest.enabled) continue;
+            if (dest.mode === 'snapshot') continue;
+            if (backupQueue.hasJobForDownload(dest.id, id)) continue;
+            backupQueue.enqueue({
+                destinationId: dest.id,
+                downloadId: id,
+                remotePath,
+            });
+            wakeBackupWorker(dest.id);
+            queued++;
+        }
+        res.json({ success: true, queued });
     });
 
     // Playback probe for decode failures. Useful when browser says

@@ -350,25 +350,31 @@
                         </div>
                         <p id="modal-meta" class="text-sm text-gray-300"></p>
                     </div>
-                    <div class="flex items-center gap-2">
+                    <div class="flex items-center gap-1.5">
                         <button id="modal-pin"
-                            class="px-4 py-2 bg-tg-panel hover:bg-tg-hover rounded-lg text-sm text-tg-text flex items-center font-medium transition"
+                            class="p-2.5 bg-tg-panel hover:bg-tg-hover rounded-lg text-tg-text transition"
                             title="Pin / Unpin">
-                            <i id="modal-pin-icon" class="ri-pushpin-line mr-2"></i><span id="modal-pin-label">Pin</span>
+                            <i id="modal-pin-icon" class="ri-pushpin-line text-lg"></i>
+                        </button>
+                        <button id="modal-backup"
+                            class="p-2.5 bg-tg-panel hover:bg-tg-hover rounded-lg text-tg-text transition"
+                            title="Push to backup destinations">
+                            <i id="modal-backup-icon" class="ri-cloud-line text-lg"></i>
                         </button>
                         <button id="modal-share" data-admin-only
-                            class="px-4 py-2 bg-tg-panel hover:bg-tg-hover rounded-lg text-sm text-tg-text flex items-center font-medium transition"
-                            data-i18n-title="viewer.video.share_title" title="Share with friends — link works without login">
-                            <i class="ri-share-line mr-2"></i><span data-i18n="viewer.video.share">Share</span>
+                            class="p-2.5 bg-tg-panel hover:bg-tg-hover rounded-lg text-tg-text transition"
+                            title="Share with friends — link works without login">
+                            <i class="ri-share-line text-lg"></i>
                         </button>
                         <button id="modal-delete" data-action="confirmDeleteFile" data-admin-only
-                            class="px-4 py-2 border border-red-500/50 hover:bg-red-500/20 rounded-lg text-sm text-red-400 flex items-center font-medium transition"
-                            data-i18n-title="viewer.video.delete_title" title="Delete File">
-                            <i class="ri-delete-bin-line mr-2"></i><span data-i18n="viewer.video.delete">Delete</span>
+                            class="p-2.5 border border-red-500/50 hover:bg-red-500/20 rounded-lg text-red-400 transition"
+                            title="Delete file">
+                            <i class="ri-delete-bin-line text-lg"></i>
                         </button>
                         <a id="modal-download" href="#" download
-                            class="px-4 py-2 bg-tg-blue hover:bg-tg-darkBlue rounded-lg text-sm text-white flex items-center font-medium transition">
-                            <i class="ri-download-line mr-2"></i><span data-i18n="viewer.video.download">Download</span>
+                            class="p-2.5 bg-tg-blue hover:bg-tg-darkBlue rounded-lg text-white transition"
+                            title="Download file">
+                            <i class="ri-download-line text-lg"></i>
                         </a>
                     </div>
                 </div>

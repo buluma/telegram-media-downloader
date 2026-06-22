@@ -92,12 +92,23 @@ function _startSlideshowTimer() {
 
 function _refreshPinButton(file) {
     const icon = document.getElementById('modal-pin-icon');
-    const label = document.getElementById('modal-pin-label');
     const btn = document.getElementById('modal-pin');
-    if (!icon || !label || !btn) return;
+    if (!icon || !btn) return;
     const pinned = !!file?.pinned;
-    icon.className = pinned ? 'ri-pushpin-2-fill mr-2 text-amber-400' : 'ri-pushpin-line mr-2';
-    label.textContent = pinned ? 'Unpin' : 'Pin';
+    icon.className = pinned
+        ? 'ri-pushpin-2-fill text-lg text-amber-400'
+        : 'ri-pushpin-line text-lg';
+    btn.title = pinned ? 'Unpin' : 'Pin';
+}
+
+function _refreshBackupButton(file) {
+    const icon = document.getElementById('modal-backup-icon');
+    const btn = document.getElementById('modal-backup');
+    if (!icon || !btn) return;
+    icon.className = file?._backedUp
+        ? 'ri-cloud-fill text-lg text-green-400'
+        : 'ri-cloud-line text-lg';
+    btn.title = file?._backedUp ? 'Already backed up' : 'Push to backup destinations';
 }
 
 // Review-mode action toolbar — populated by openMediaViewerForReview and
@@ -601,6 +612,19 @@ export function openMediaViewer(index) {
     document.getElementById('modal-counter').textContent = `${index + 1} / ${state.files.length}`;
     document.getElementById('modal-download').href = downloadUrl;
     _refreshPinButton(file);
+    _refreshBackupButton(file);
+    if (file.id && !file._backupChecked) {
+        fetch(`/api/downloads/${file.id}/backup-status`, { credentials: 'same-origin' })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => {
+                if (d) {
+                    file._backedUp = !!d.backedUp;
+                    file._backupChecked = true;
+                    _refreshBackupButton(file);
+                }
+            })
+            .catch(() => {});
+    }
     _setTypeChip(file);
 
     if (kind === 'image' && file.id) {
@@ -1794,6 +1818,30 @@ export function setupViewerEvents() {
     // Share button — opens the share-link sheet for the current file.
     // Lazy-import keeps the module out of the cold-load path; it only
     // gets fetched the first time an admin opens this sheet.
+    document.getElementById('modal-backup')?.addEventListener('click', async () => {
+        const file = state.files[state.currentFileIndex];
+        if (!file?.id) return;
+        try {
+            const r = await fetch(`/api/downloads/${file.id}/backup`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+            });
+            const d = await r.json();
+            if (r.ok && d.queued > 0) {
+                file._backedUp = true;
+                _refreshBackupButton(file);
+                showToast(`Queued to ${d.queued} destination(s)`);
+            } else if (r.ok && d.queued === 0) {
+                showToast('Already backed up to all destinations');
+            } else {
+                showToast(d.error || 'Backup failed', 'error');
+            }
+        } catch {
+            showToast('Backup request failed', 'error');
+        }
+    });
+
     document.getElementById('modal-pin')?.addEventListener('click', async () => {
         const file = state.files[state.currentFileIndex];
         if (!file?.id) return;
