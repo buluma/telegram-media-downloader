@@ -98,7 +98,7 @@ import {
 import { createStatsRouter, broadcastStatsSoon } from './routes/stats.js';
 import { createLinkDownloadRouter } from './routes/link-download.js';
 import { createFileServingMiddleware } from './middleware/files.js';
-import { cookieParser, checkAuth, guestGate } from './middleware/auth.js';
+import { cookieParser, checkAuth, guestGate, isLocalRequest } from './middleware/auth.js';
 import { resolveGroupNamesFromTelegram } from './lib/resolve-group-names.js';
 
 // Demote gramJS reconnect chatter from stderr/stdout to data/logs/network.log.
@@ -774,8 +774,19 @@ app.get('/manifest.webmanifest', (req, res) => {
 // Set TGDL_METRICS_TOKEN if you want gating; clients then need ?token=…
 app.get('/metrics', (req, res) => {
     const wanted = process.env.TGDL_METRICS_TOKEN;
-    if (wanted && req.query.token !== wanted) {
-        res.status(401).type('text/plain').send('# unauthorized\n');
+    if (wanted) {
+        // Token-gated: require ?token=… on every request.
+        if (req.query.token !== wanted) {
+            res.status(401).type('text/plain').send('# unauthorized\n');
+            return;
+        }
+    } else if (!isLocalRequest(req)) {
+        // No token configured: only allow loopback (Prometheus on the
+        // same host). Prevents leaking group/queue cardinality to the
+        // public when the operator forgets to set TGDL_METRICS_TOKEN.
+        res.status(403)
+            .type('text/plain')
+            .send('# forbidden — set TGDL_METRICS_TOKEN or scrape from localhost\n');
         return;
     }
     runtime.status(); // refresh gauges

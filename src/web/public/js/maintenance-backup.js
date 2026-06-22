@@ -417,8 +417,9 @@ function _renderProviderHelp(providerName) {
                     <ol class="list-decimal pl-4 space-y-1.5">
                         <li>${escapeHtml(i18nT('maintenance.backup.help.gdrive.step1', 'Open Google Cloud Console → "New project" (any name).'))}</li>
                         <li>${escapeHtml(i18nT('maintenance.backup.help.gdrive.step2', 'APIs & Services → Library → search "Google Drive API" → click Enable.'))}</li>
-                        <li>${escapeHtml(i18nT('maintenance.backup.help.gdrive.step3', 'APIs & Services → Credentials → Create Credentials → OAuth client ID → application type "Desktop app". Save the client ID + client secret into the fields above.'))}</li>
-                        <li>${escapeHtml(i18nT('maintenance.backup.help.gdrive.step4', 'Open the OAuth Playground → gear icon → "Use your own OAuth credentials" → paste client ID + secret. Pick scope https://www.googleapis.com/auth/drive.file → Authorize → Exchange authorization code for tokens → copy the refresh_token into the field above.'))}</li>
+                        <li>${escapeHtml(i18nT('maintenance.backup.help.gdrive.step3', 'APIs & Services → Credentials → Create Credentials → OAuth client ID → application type "Desktop app". Add http://localhost to "Authorized redirect URIs". Save the client ID + client secret into the fields above.'))}</li>
+                        <li>${escapeHtml(i18nT('maintenance.backup.help.gdrive.step4_publish', 'APIs & Services → OAuth consent screen → click "Publish App" (Testing → Production). No Google review needed for drive.file scope. Apps in Testing mode issue tokens that expire every 7 days.'))}</li>
+                        <li>${escapeHtml(i18nT('maintenance.backup.help.gdrive.step5', 'Run "node scripts/setup-gdrive.js" on the server — it opens a browser and captures the token automatically. Or use the OAuth Playground: gear icon → "Use your own OAuth credentials" → paste client ID + secret → add the Playground URL to your client\'s redirect URIs → pick scope drive.file → Authorize → Exchange → copy the refresh_token.'))}</li>
                     </ol>
                     <div class="flex flex-wrap gap-2 pt-1">
                         <a href="${consoleUrl}" target="_blank" rel="noopener" class="tg-btn-secondary text-[11px] px-2 py-1"><i class="ri-external-link-line mr-1"></i>${consoleLabel}</a>

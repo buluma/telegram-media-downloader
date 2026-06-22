@@ -99,7 +99,14 @@ export async function drainDeleteQueue() {
             return; // directory doesn't exist yet — nothing to drain
         }
         for (const entry of entries) {
-            await fs.unlink(path.join(DELETED_DIR, entry)).catch(() => {});
+            await fs.unlink(path.join(DELETED_DIR, entry)).catch((e) => {
+                if (e?.code !== 'ENOENT') {
+                    logger.warn(
+                        { file: entry, err: e?.message },
+                        '[delete-queue] drain unlink failed — file leaked on disk',
+                    );
+                }
+            });
         }
     } finally {
         _draining = false;

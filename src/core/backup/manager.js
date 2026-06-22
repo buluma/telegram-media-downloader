@@ -1040,12 +1040,20 @@ async function _applyRetention(destinationId) {
         items.sort((a, b) => b.mtime - a.mtime);
         const toDelete = items.slice(keep);
         for (const item of toDelete) {
-            await provider.delete(item.name, ctx).catch(() => {});
-            _log({
-                source: 'backup',
-                level: 'info',
-                msg: `retention pruned ${item.name} on #${destinationId}`,
-            });
+            try {
+                await provider.delete(item.name, ctx);
+                _log({
+                    source: 'backup',
+                    level: 'info',
+                    msg: `retention pruned ${item.name} on #${destinationId}`,
+                });
+            } catch (e) {
+                _log({
+                    source: 'backup',
+                    level: 'warn',
+                    msg: `retention prune failed for ${item.name} on #${destinationId}: ${e?.message || e}`,
+                });
+            }
         }
     } finally {
         await provider.close().catch(() => {});

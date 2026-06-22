@@ -7,20 +7,77 @@
 //   node scripts/setup-gdrive.js
 //
 // You'll be prompted for the OAuth client ID + secret (created in the
-// Google Cloud Console — see docs/BACKUP.md), then sent to a URL to
-// authorise the app, then asked to paste the resulting code back. The
-// script exchanges the code for a refresh token and prints it.
+// Google Cloud Console — see docs/BACKUP.md), then a browser opens
+// the consent screen. After approval, a one-shot localhost listener
+// captures the authorization code and exchanges it for a refresh token.
 //
 // No data is sent anywhere except Google's token endpoint. The
 // `googleapis` SDK is required: `npm install googleapis`.
 
+import http from 'http';
 import readline from 'readline';
 
 const SCOPE = 'https://www.googleapis.com/auth/drive.file';
-const REDIRECT = 'urn:ietf:wg:oauth:2.0:oob'; // legacy "out-of-band" copy-paste flow
 
 function ask(rl, q) {
     return new Promise((res) => rl.question(q, (a) => res(a.trim())));
+}
+
+/**
+ * Start a one-shot HTTP listener on a random available port. Returns a
+ * promise that resolves with the authorization code from Google's
+ * redirect, plus the port the server is listening on.
+ */
+function startCallbackServer() {
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        const server = http.createServer((req, res) => {
+            if (settled) {
+                res.writeHead(200, { 'Content-Type': 'text/plain' });
+                res.end('Already processed — you can close this tab.');
+                return;
+            }
+            const url = new URL(req.url, `http://127.0.0.1`);
+            const code = url.searchParams.get('code');
+            const error = url.searchParams.get('error');
+            if (error) {
+                res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+                res.end(
+                    `<h2>Authorization denied</h2><p>${error}</p><p>You can close this tab.</p>`,
+                );
+                settled = true;
+                server.close();
+                reject(new Error(`Authorization denied: ${error}`));
+                return;
+            }
+            if (!code) {
+                res.writeHead(400, { 'Content-Type': 'text/plain' });
+                res.end('Missing authorization code in callback.');
+                return;
+            }
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+            res.end(
+                '<h2>Authorization received</h2>' +
+                    '<p>You can close this tab and return to the terminal.</p>',
+            );
+            settled = true;
+            server.close();
+            resolve(code);
+        });
+        server.listen(0, '127.0.0.1', () => {
+            const { port } = server.address();
+            // Attach port so the caller can build the redirect URI.
+            server._boundPort = port;
+        });
+        // Surface listen errors (port conflict, etc.)
+        server.once('error', (e) => {
+            if (!settled) reject(e);
+        });
+        // Resolve immediately with the server so the caller can read the port.
+        // The code comes back later via the promise above.
+        // We use a two-step approach: return server synchronously for the port,
+        // return a separate promise for the code.
+    });
 }
 
 async function main() {
@@ -46,26 +103,94 @@ async function main() {
         process.exit(1);
     }
 
-    const oauth = new google.auth.OAuth2(clientId, clientSecret, REDIRECT);
-    const url = oauth.generateAuthUrl({
+    // Start a one-shot localhost listener to capture the OAuth callback.
+    // A promise resolves with the code once Google redirects back.
+    const server = http.createServer();
+    const codePromise = new Promise((resolve, reject) => {
+        let settled = false;
+        server.on('request', (req, res) => {
+            if (settled) {
+                res.writeHead(200, { 'Content-Type': 'text/plain' });
+                res.end('Already processed — you can close this tab.');
+                return;
+            }
+            const url = new URL(req.url, 'http://127.0.0.1');
+            const code = url.searchParams.get('code');
+            const error = url.searchParams.get('error');
+            if (error) {
+                res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+                res.end(
+                    `<h2>Authorization denied</h2><p>${error}</p><p>You can close this tab.</p>`,
+                );
+                settled = true;
+                server.close();
+                reject(new Error(`Authorization denied: ${error}`));
+                return;
+            }
+            if (!code) {
+                res.writeHead(400, { 'Content-Type': 'text/plain' });
+                res.end('Missing authorization code in callback.');
+                return;
+            }
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+            res.end(
+                '<h2>Authorization received</h2>' +
+                    '<p>You can close this tab and return to the terminal.</p>',
+            );
+            settled = true;
+            server.close();
+            resolve(code);
+        });
+        server.once('error', (e) => {
+            if (!settled) reject(e);
+        });
+    });
+
+    await new Promise((res, rej) => {
+        server.listen(0, '127.0.0.1', () => res());
+        server.once('error', rej);
+    });
+    const port = server.address().port;
+    const redirectUri = `http://127.0.0.1:${port}`;
+
+    const oauth = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
+    const authUrl = oauth.generateAuthUrl({
         access_type: 'offline',
         prompt: 'consent',
         scope: [SCOPE],
     });
 
     console.log('\n1) Open this URL in your browser:');
-    console.log('   ' + url);
-    console.log(
-        '\n2) Sign in, click "Allow", and copy the authorisation code shown on the next page.',
-    );
+    console.log(`   ${authUrl}`);
+    console.log(`\n2) Sign in, click "Allow", and wait for the redirect to localhost:${port}.`);
+    console.log('   The authorization code will be captured automatically.\n');
 
-    const code = await ask(rl, '\nPaste the authorisation code: ');
-    rl.close();
+    // Try to open the browser automatically (best-effort).
+    try {
+        const { exec } = await import('child_process');
+        const cmd =
+            process.platform === 'darwin'
+                ? `open "${authUrl}"`
+                : process.platform === 'win32'
+                  ? `start "" "${authUrl}"`
+                  : `xdg-open "${authUrl}"`;
+        exec(cmd);
+    } catch {
+        // Manual open is fine — URL is printed above.
+    }
 
-    if (!code) {
-        console.error('No code provided.');
+    console.log('Waiting for authorization...');
+
+    let code;
+    try {
+        code = await codePromise;
+    } catch (e) {
+        console.error(e.message);
+        rl.close();
         process.exit(1);
     }
+
+    rl.close();
 
     let tokens;
     try {
@@ -78,16 +203,23 @@ async function main() {
 
     if (!tokens.refresh_token) {
         console.error(
-            'Google did not return a refresh_token. This usually means you have already authorised this app — go to https://myaccount.google.com/permissions, revoke the app, then re-run this script.',
+            'Google did not return a refresh_token. This usually means you have already ' +
+                'authorised this app — go to https://myaccount.google.com/permissions, revoke ' +
+                'the app, then re-run this script.',
         );
         process.exit(1);
     }
 
-    console.log('\nSuccess. Paste these into the dashboard wizard:');
+    console.log('\n✅ Success. Paste these into the dashboard wizard:\n');
     console.log('  clientId:     ' + clientId);
     console.log('  clientSecret: ' + clientSecret);
     console.log('  refreshToken: ' + tokens.refresh_token);
     console.log('\nKeep the refresh token secret — it grants ongoing access to your Drive.');
+    console.log(
+        '\n⚠️  If your Cloud project\'s OAuth consent screen is in "Testing" mode,\n' +
+            '   refresh tokens expire every 7 days. Publish it to "Production" (no\n' +
+            '   Google review needed for drive.file scope) to get non-expiring tokens.',
+    );
 }
 
 main().catch((e) => {

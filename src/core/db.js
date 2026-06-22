@@ -45,7 +45,23 @@ export function getDb() {
         fs.mkdirSync(DATA_DIR, { recursive: true });
     }
 
-    db = new Database(DB_PATH);
+    try {
+        db = new Database(DB_PATH);
+    } catch (e) {
+        if (/NODE_MODULE_VERSION/.test(e?.message)) {
+            const match = e.message.match(
+                /compiled against.*NODE_MODULE_VERSION (\d+).*requires.*NODE_MODULE_VERSION (\d+)/,
+            );
+            const hint = match
+                ? `\n  Module was built for ABI ${match[1]}, but this Node uses ABI ${match[2]}.`
+                : '';
+            console.error(
+                `\n[db] Native module ABI mismatch — better-sqlite3 was compiled for a different Node version.${hint}` +
+                    '\n  Fix: run "npm rebuild better-sqlite3" (make sure you\'re on the correct Node version).\n',
+            );
+        }
+        throw e;
+    }
     try {
         sqliteVec.load(db);
     } catch (e) {

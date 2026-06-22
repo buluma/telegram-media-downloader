@@ -18,12 +18,17 @@ import { readConfigSafe } from '../lib/config-cache.js';
 import { writeConfigAtomic } from '../lib/config-writer.js';
 import { isLocalRequest } from '../middleware/auth.js';
 
-const SESSION_COOKIE_OPTS = {
-    httpOnly: true,
-    sameSite: 'strict',
-    secure: process.env.NODE_ENV === 'production',
-    path: '/',
-};
+// Evaluated at cookie-set time so forceHttps config changes take
+// effect without a restart. Secure when: production env, forceHttps
+// config enabled, or request arrived over TLS (behind a proxy).
+function sessionCookieOpts(req) {
+    const cfg = readConfigSafe();
+    const isSecure =
+        process.env.NODE_ENV === 'production' ||
+        cfg?.web?.forceHttps === true ||
+        req?.protocol === 'https';
+    return { httpOnly: true, sameSite: 'strict', secure: isSecure, path: '/' };
+}
 
 function sessionTtlMsFromConfig(config) {
     const days = Number(config?.advanced?.web?.sessionTtlDays);
@@ -97,7 +102,7 @@ export function createAuthRouter({ broadcast }) {
                 ttlMs: sessionTtlMsFromConfig(config),
                 role: result.role,
             });
-            res.cookie('tg_dl_session', token, { ...SESSION_COOKIE_OPTS, maxAge: maxAgeMs });
+            res.cookie('tg_dl_session', token, { ...sessionCookieOpts(req), maxAge: maxAgeMs });
             res.json({ success: true, role: result.role });
         } catch (e) {
             console.error('Login error:', e);
@@ -108,7 +113,7 @@ export function createAuthRouter({ broadcast }) {
     router.post('/logout', (req, res) => {
         const token = req.cookies['tg_dl_session'];
         if (token) revokeSession(token);
-        res.clearCookie('tg_dl_session', SESSION_COOKIE_OPTS);
+        res.clearCookie('tg_dl_session', sessionCookieOpts(req));
         res.json({ success: true });
     });
 
@@ -142,7 +147,7 @@ export function createAuthRouter({ broadcast }) {
                 ttlMs: sessionTtlMsFromConfig(config),
                 role: 'admin',
             });
-            res.cookie('tg_dl_session', token, { ...SESSION_COOKIE_OPTS, maxAge: maxAgeMs });
+            res.cookie('tg_dl_session', token, { ...sessionCookieOpts(req), maxAge: maxAgeMs });
             res.json({ success: true });
         } catch (e) {
             console.error('Setup error:', e);
@@ -213,7 +218,7 @@ export function createAuthRouter({ broadcast }) {
                 ttlMs: sessionTtlMsFromConfig(config),
                 role: 'admin',
             });
-            res.cookie('tg_dl_session', token, { ...SESSION_COOKIE_OPTS, maxAge: maxAgeMs });
+            res.cookie('tg_dl_session', token, { ...sessionCookieOpts(req), maxAge: maxAgeMs });
             res.json({ success: true });
         } catch (e) {
             console.error('change-password:', e);
@@ -362,7 +367,10 @@ export function createAuthRouter({ broadcast }) {
                 ttlMs: sessionTtlMsFromConfig(config),
                 role: 'admin',
             });
-            res.cookie('tg_dl_session', sessionTok, { ...SESSION_COOKIE_OPTS, maxAge: maxAgeMs });
+            res.cookie('tg_dl_session', sessionTok, {
+                ...sessionCookieOpts(req),
+                maxAge: maxAgeMs,
+            });
             res.json({ success: true });
         } catch (e) {
             console.error('reset/confirm:', e);

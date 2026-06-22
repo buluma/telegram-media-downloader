@@ -173,18 +173,25 @@ the refresh token externally and paste it into the wizard.
 3. **Create an OAuth client.** APIs & Services → Credentials → Create
    credentials → OAuth client ID. If prompted to configure the consent
    screen, pick "External", supply an app name + your email, and add
-   the scope `https://www.googleapis.com/auth/drive.file` (you can
-   leave the app in "Testing" mode — no public verification needed).
-   Then create an OAuth client ID with application type **Desktop
-   app**. Save the resulting client ID + client secret.
-4. **Generate a refresh token.** Either run `node scripts/setup-gdrive.js`
-   on the server (CLI helper that prints the refresh token), or use
-   the [Google OAuth Playground](https://developers.google.com/oauthplayground/):
-   click the gear icon → "Use your own OAuth credentials" → paste
-   client ID + secret. In the left panel, scroll to "Drive API v3"
-   and tick `https://www.googleapis.com/auth/drive.file`. Click
-   Authorize APIs → sign in → Allow → "Exchange authorization code
-   for tokens" → copy the `refresh_token` shown.
+   the scope `https://www.googleapis.com/auth/drive.file`. Then create
+   an OAuth client ID with application type **Desktop app**. Add
+   `http://localhost` to the "Authorized redirect URIs" list. Save the
+   resulting client ID + client secret.
+4. **Publish the consent screen.** APIs & Services → OAuth consent
+   screen → click **Publish App** to move from "Testing" to
+   "Production". No Google review is needed for the `drive.file` scope.
+   **This is required** — apps in "Testing" mode issue refresh tokens
+   that expire every 7 days, forcing you to re-generate them.
+5. **Generate a refresh token.** Run `node scripts/setup-gdrive.js`
+   on the server — it opens a browser, captures the OAuth callback on
+   a temporary localhost port, and prints the refresh token. Alternatively,
+   use the [Google OAuth Playground](https://developers.google.com/oauthplayground/):
+   gear icon → "Use your own OAuth credentials" → paste client ID +
+   secret. Add `https://developers.google.com/oauthplayground` to your
+   client's "Authorized redirect URIs" in the Cloud Console. In the
+   left panel, select `https://www.googleapis.com/auth/drive.file`.
+   Click Authorize APIs → sign in → Allow → "Exchange authorization
+   code for tokens" → copy the `refresh_token`.
 
 Paste clientId + clientSecret + refreshToken into the wizard. The
 provider auto-creates a folder named `tgdl-backup` at My Drive root
