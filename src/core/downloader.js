@@ -605,6 +605,72 @@ export class DownloadManager extends EventEmitter {
                 throw err;
             }
 
+            // 2b. Pre-download dedup: if a hash-verified file with the
+            // same original Telegram filename + size already exists, skip
+            // the download entirely and register a DB row pointing at the
+            // existing file. Catches cross-group reposts without wasting
+            // bandwidth on a full download + hash cycle.
+            if (fileSize > 0 && attempt === 1) {
+                const origName = this._getOriginalFilename(job.message);
+                if (origName) {
+                    try {
+                        const existing = getDb()
+                            .prepare(`
+                                SELECT id, file_path, file_size, file_hash FROM downloads
+                                 WHERE file_size = ? AND file_hash IS NOT NULL
+                                 ORDER BY id ASC LIMIT 20
+                            `)
+                            .all(fileSize);
+                        const match = existing.find((r) => {
+                            const base = path.basename(r.file_path || '');
+                            const ext = path.extname(base);
+                            const origExt = path.extname(origName);
+                            return (
+                                ext === origExt &&
+                                r.file_path &&
+                                existsSync(
+                                    path.isAbsolute(r.file_path)
+                                        ? r.file_path
+                                        : path.resolve(DOWNLOADS_DIR, r.file_path),
+                                )
+                            );
+                        });
+                        if (match) {
+                            const storedPath = path.isAbsolute(match.file_path)
+                                ? match.file_path
+                                : path.resolve(DOWNLOADS_DIR, match.file_path);
+                            const sniffedType = fileTypeFromExtension(storedPath);
+                            const relPath = path.relative(DOWNLOADS_DIR, storedPath);
+                            insertDownload({
+                                groupId: String(job.groupId || 'unknown'),
+                                groupName: job.groupName || null,
+                                messageId: job.message.id,
+                                fileName: path.basename(storedPath),
+                                fileSize: match.file_size,
+                                fileType: sniffedType,
+                                filePath: relPath,
+                                ttlSeconds: job.ttlSeconds || null,
+                                fileHash: match.file_hash,
+                                pendingUntil: job.pendingUntil || null,
+                            });
+                            this.emit('download_complete', {
+                                filePath: relPath,
+                                fileName: path.basename(storedPath),
+                                size: match.file_size,
+                                groupId: job.groupId,
+                                groupName: job.groupName,
+                                mediaType: job.mediaType,
+                                message: job.message,
+                                deduped: true,
+                            });
+                            return;
+                        }
+                    } catch {
+                        // Non-fatal — fall through to normal download.
+                    }
+                }
+            }
+
             // 3. Rate Limit
             if (this.rateLimiter && attempt === 1) await this.rateLimiter.acquire();
 
@@ -1146,6 +1212,16 @@ export class DownloadManager extends EventEmitter {
             downloadable,
             description: `${cls || 'unknown'}${resolved && resolved !== media ? `->${resolvedCls}` : ''}${mime ? ` mime=${mime}` : ''}`,
         };
+    }
+
+    _getOriginalFilename(message) {
+        if (!message || typeof message !== 'object') return null;
+        const doc = message.document || message.media?.document;
+        if (!doc) return null;
+        for (const attr of doc.attributes || []) {
+            if (attr.fileName) return attr.fileName;
+        }
+        return null;
     }
 
     getFileSize(message) {
