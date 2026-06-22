@@ -452,10 +452,14 @@ export function openMediaViewer(index) {
         case 'image':
             image.style.transition = 'opacity 0.3s ease';
             image.style.opacity = '0';
-            image.src = url;
             image.onload = () => {
                 image.style.opacity = '1';
             };
+            image.onerror = () => {
+                image.style.opacity = '1';
+            };
+            image.src = url;
+            if (image.complete) image.style.opacity = '1';
             imageContainer.classList.remove('hidden');
             setupImageZoom();
             _startSlideshowTimer();
