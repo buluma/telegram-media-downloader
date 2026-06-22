@@ -389,7 +389,14 @@ app.use((req, res, next) => {
 // silently retry mutations on a different scheme.
 app.use(async (req, res, next) => {
     const config = await readConfigSafe();
-    if (!config.web?.forceHttps) return next();
+    if (!config.web?.forceHttps) {
+        // Clear any cached HSTS policy so browsers stop forcing HTTPS
+        // after the operator disables forceHttps.
+        if (req.secure) {
+            res.setHeader('Strict-Transport-Security', 'max-age=0');
+        }
+        return next();
+    }
     // HSTS — set on every secure response so browsers remember the
     // upgrade. 1-year max-age + includeSubDomains is the modern baseline;
     // we deliberately omit `preload` because the operator has to opt in
@@ -792,6 +799,35 @@ app.get('/metrics', (req, res) => {
     }
     runtime.status(); // refresh gauges
     res.type('text/plain; version=0.0.4').send(metrics.render());
+});
+
+// JSON health check — uptime, heap, CPU, DB, WS clients. Registered
+// pre-auth so Docker HEALTHCHECK and uptime monitors can reach it.
+// Loopback-only when no metrics token is set (same policy as /metrics).
+app.get('/api/system/health', (req, res) => {
+    const wanted = process.env.TGDL_METRICS_TOKEN;
+    if (wanted) {
+        if (req.query.token !== wanted) return res.status(401).json({ error: 'unauthorized' });
+    } else if (!isLocalRequest(req)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+    const mem = process.memoryUsage();
+    const cpu = process.cpuUsage();
+    let dbOk = false;
+    try {
+        getDb().prepare('SELECT 1').get();
+        dbOk = true;
+    } catch {}
+    res.json({
+        ok: dbOk,
+        uptime: Math.floor(process.uptime()),
+        heap: { used: mem.heapUsed, total: mem.heapTotal, rss: mem.rss },
+        cpu: { user: cpu.user, system: cpu.system },
+        db: dbOk ? 'ok' : 'unreachable',
+        wsClients: wss.clients?.size ?? 0,
+        nodeVersion: process.version,
+        pid: process.pid,
+    });
 });
 
 // ====== Public share-link route (HMAC-gated, no dashboard cookie) ==========

@@ -68,6 +68,28 @@ let zoomState = { scale: 1, panning: false, pointX: 0, pointY: 0, startX: 0, sta
 /** @type {VideoPlayer|null} */
 let videoPlayer = null;
 
+let _slideshowTimer = null;
+function _clearSlideshowTimer() {
+    if (_slideshowTimer) {
+        clearTimeout(_slideshowTimer);
+        _slideshowTimer = null;
+    }
+}
+function _startSlideshowTimer() {
+    _clearSlideshowTimer();
+    if (localStorage.getItem('viewer-auto-advance') !== '1') return;
+    const sec = Math.max(
+        2,
+        Math.min(15, Number(localStorage.getItem('viewer-slideshow-interval')) || 5),
+    );
+    _slideshowTimer = setTimeout(() => {
+        _slideshowTimer = null;
+        const modal = document.getElementById('media-modal');
+        if (!modal || modal.classList.contains('hidden')) return;
+        navigateMedia(1);
+    }, sec * 1000);
+}
+
 // Review-mode action toolbar — populated by openMediaViewerForReview and
 // cleared on close. Each entry: { key, label, icon?, danger?, handler }.
 // `handler(file, index)` is invoked on click or matching keydown; if it
@@ -413,6 +435,7 @@ export function openMediaViewer(index) {
     // video are first-class so we keep direct refs around for the existing
     // zoom / video-player wiring; the rest live behind _resetAllPreviewContainers.
     _resetAllPreviewContainers();
+    _clearSlideshowTimer();
 
     // Always tear the previous clip down BEFORE swapping in the new src so a
     // 100 MB video doesn't keep streaming in the background after you flip
@@ -427,9 +450,15 @@ export function openMediaViewer(index) {
 
     switch (kind) {
         case 'image':
+            image.style.transition = 'opacity 0.3s ease';
+            image.style.opacity = '0';
             image.src = url;
+            image.onload = () => {
+                image.style.opacity = '1';
+            };
             imageContainer.classList.remove('hidden');
             setupImageZoom();
+            _startSlideshowTimer();
             break;
         case 'video': {
             videoContainer.classList.remove('hidden');
@@ -1696,6 +1725,7 @@ class VideoPlayer {
 // ============================================================================
 
 export function closeMediaViewer() {
+    _clearSlideshowTimer();
     const modal = document.getElementById('media-modal');
     // If the user is closing while a video is mid-playback, hand off to
     // the mini-player BEFORE we tear the modal video down so playback

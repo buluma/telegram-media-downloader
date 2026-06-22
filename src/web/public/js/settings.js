@@ -237,6 +237,20 @@ export async function loadSettings() {
             'Auto-advance enabled.',
             'Auto-advance disabled.',
         );
+        // Photo slideshow interval slider (2–15 s).
+        const slideshowSlider = document.getElementById('setting-slideshow-interval');
+        const slideshowLabel = document.getElementById('slideshow-interval-label');
+        if (slideshowSlider && slideshowLabel) {
+            const stored = Number(localStorage.getItem('viewer-slideshow-interval')) || 5;
+            slideshowSlider.value = String(Math.max(2, Math.min(15, stored)));
+            slideshowLabel.textContent = `${slideshowSlider.value}s`;
+            slideshowSlider.oninput = () => {
+                slideshowLabel.textContent = `${slideshowSlider.value}s`;
+                try {
+                    localStorage.setItem('viewer-slideshow-interval', slideshowSlider.value);
+                } catch {}
+            };
+        }
         // PiP / Speed button visibility — defaults to ON (legacy behaviour).
         // Use inverted-sense keys ('viewer-hide-pip' = '1' → hidden) so
         // existing users who never touched the toggle keep both visible.

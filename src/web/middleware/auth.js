@@ -25,6 +25,7 @@ export const PUBLIC_API_PATHS = new Set([
     '/api/auth_check',
     '/api/version', // public so the status-bar chip can render pre-login
     '/api/version/check', // public update-check (GitHub releases poll, cached)
+    '/api/system/health', // gated by token/loopback inside the handler
     '/api/auth/setup', // first-run only — guarded inside the handler
     '/api/auth/reset/request', // logs token to stdout — no body returned
     '/api/auth/reset/confirm', // requires the stdout token + new password

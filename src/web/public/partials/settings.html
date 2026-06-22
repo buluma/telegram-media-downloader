@@ -662,9 +662,20 @@
                         <label class="flex items-center justify-between p-3 bg-tg-bg/40 rounded-lg cursor-pointer mb-2">
                             <div>
                                 <div class="text-tg-text text-sm" data-i18n="settings.video_player.auto_advance">Auto-advance to next</div>
-                                <div class="text-[11px] text-tg-textSecondary mt-0.5" data-i18n="settings.video_player.auto_advance_help">When a video ends, open the next file in the gallery automatically.</div>
+                                <div class="text-[11px] text-tg-textSecondary mt-0.5" data-i18n="settings.video_player.auto_advance_help">When a video ends or a photo timer expires, open the next file automatically.</div>
                             </div>
                             <div id="setting-viewer-auto-advance" class="tg-toggle shrink-0"></div>
+                        </label>
+
+                        <label class="flex items-center justify-between p-3 bg-tg-bg/40 rounded-lg cursor-pointer mb-2">
+                            <div>
+                                <div class="text-tg-text text-sm" data-i18n="settings.video_player.slideshow_interval">Photo slideshow interval</div>
+                                <div class="text-[11px] text-tg-textSecondary mt-0.5" data-i18n="settings.video_player.slideshow_interval_help">Seconds before auto-advancing to the next photo (when auto-advance is on).</div>
+                            </div>
+                            <div class="flex items-center gap-2 shrink-0">
+                                <input id="setting-slideshow-interval" type="range" min="2" max="15" step="1" value="5" class="w-20 accent-tg-buttonBg">
+                                <span id="slideshow-interval-label" class="text-xs text-tg-textSecondary w-6 text-right">5s</span>
+                            </div>
                         </label>
 
                         <label class="flex items-center justify-between p-3 bg-tg-bg/40 rounded-lg cursor-pointer mb-2">
