@@ -415,6 +415,7 @@ export function createGroupsRouter({
             if (groupIndex === -1) {
                 // Create new — resolve a real name from any loaded account.
                 let groupName = req.body.name;
+                let groupType = req.body.type || null;
                 if (
                     !groupName ||
                     groupName === 'Unknown' ||
@@ -429,11 +430,20 @@ export function createGroupsRouter({
                             (e.firstName && e.firstName + (e.lastName ? ' ' + e.lastName : '')) ||
                             e.username ||
                             groupName;
+                        if (!groupType) {
+                            if (e.className === 'Channel' && e.broadcast) groupType = 'channel';
+                            else if (e.className === 'Channel') groupType = 'group';
+                            else if (e.bot) groupType = 'bot';
+                            else if (e.className === 'User') groupType = 'user';
+                            else groupType = 'group';
+                        }
                     }
                 }
+                if (!groupType) groupType = dialogsTypeFor(groupId) || null;
                 const newGroup = {
                     id: groupId.startsWith('-') ? parseInt(groupId) : groupId,
                     name: groupName || `Unknown`,
+                    type: groupType,
                     enabled: req.body.enabled ?? false,
                     filters: { ...GROUP_DEFAULTS.filters },
                     trackComments: GROUP_DEFAULTS.trackComments,
@@ -449,6 +459,7 @@ export function createGroupsRouter({
             const group = config.groups[groupIndex];
             if (req.body.enabled !== undefined) group.enabled = req.body.enabled;
             if (req.body.name) group.name = req.body.name;
+            if (req.body.type && !group.type) group.type = req.body.type;
             if (req.body.filters) {
                 group.filters = { ...group.filters, ...req.body.filters };
             }
@@ -847,15 +858,25 @@ export function createGroupsRouter({
                         null;
                     if (realName) {
                         const cg = (config.groups || []).find((g) => String(g.id) === id);
-                        if (
-                            cg &&
-                            (!cg.name ||
+                        if (cg) {
+                            if (
+                                !cg.name ||
                                 cg.name === 'Unknown' ||
                                 cg.name === id ||
-                                cg.name.startsWith('Group '))
-                        ) {
-                            cg.name = realName;
-                            mutatedConfig = true;
+                                cg.name.startsWith('Group ')
+                            ) {
+                                cg.name = realName;
+                                mutatedConfig = true;
+                            }
+                            if (!cg.type && entity) {
+                                if (entity.className === 'Channel' && entity.broadcast)
+                                    cg.type = 'channel';
+                                else if (entity.className === 'Channel') cg.type = 'group';
+                                else if (entity.bot) cg.type = 'bot';
+                                else if (entity.className === 'User') cg.type = 'user';
+                                else cg.type = 'group';
+                                mutatedConfig = true;
+                            }
                         }
                         try {
                             const stmt = getDb().prepare(

@@ -3470,14 +3470,20 @@ async function openGroupSettings(groupId, groupName) {
     // Always resolve via the canonical store — callers may pass nothing
     // (deep-link router) or a stale label (sidebar dataset).
     const canonical = getGroupName(groupId, { fallback: groupName });
-    currentEditGroup = { id: groupId, name: canonical };
+    const dialog = (state.allDialogs || []).find((d) => String(d.id) === String(groupId));
+    const configGroup = (state.groups || []).find((g) => String(g.id) === String(groupId));
+    currentEditGroup = {
+        id: groupId,
+        name: canonical,
+        type: configGroup?.type || dialog?.type || null,
+    };
     groupName = canonical;
 
     const modal = document.getElementById('group-modal');
     if (!modal) return;
 
     // Load current config for this group
-    const group = state.groups.find((g) => String(g.id) === String(groupId));
+    const group = configGroup;
     const filters = group?.filters || {};
     const fwd = group?.autoForward || {};
 
@@ -3964,6 +3970,7 @@ async function saveGroupSettings() {
 
     const data = {
         name: currentEditGroup.name,
+        type: currentEditGroup.type || undefined,
         enabled,
         filters,
         autoForward: {
