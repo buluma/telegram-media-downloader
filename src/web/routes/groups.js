@@ -108,11 +108,16 @@ export function createGroupsRouter({
             // Browse-chats picker uses, so the sidebar shows the same name.
             const dialogsNames = await getDialogsNameCache();
 
+            const typesToPersist = [];
             const groupsWithPhotos = await Promise.all(
                 (config.groups || []).map(async (group) => {
                     const safeGroupId = String(group.id).replace(/[^A-Za-z0-9_.-]/g, '_');
                     const photoPath = path.join(PHOTOS_DIR, `${safeGroupId}.jpg`);
                     const hasPhoto = existsSync(photoPath);
+                    let resolvedType = group.type || dialogsTypeFor(group.id) || null;
+                    if (resolvedType && !group.type) {
+                        typesToPersist.push({ id: String(group.id), type: resolvedType });
+                    }
                     return {
                         ...group,
                         name: bestGroupName(
@@ -121,21 +126,23 @@ export function createGroupsRouter({
                             dbNames.get(String(group.id)),
                             dialogsNames.get(String(group.id)),
                         ),
-                        // Sidebar uses `type` to render the right corner icon
-                        // (megaphone vs group vs user/bot). Without this the
-                        // Downloaded Groups list defaulted to the id-prefix
-                        // heuristic in createAvatar() which painted every
-                        // supergroup as a channel.
-                        type: group.type || dialogsTypeFor(group.id),
+                        type: resolvedType,
                         photoUrl: hasPhoto ? `/photos/${safeGroupId}.jpg` : null,
-                        // Federation surface — own groups carry peerId: null
-                        // so the sidebar can distinguish them from peer rows
-                        // appended below.
                         peerId: null,
                         peerName: null,
                     };
                 }),
             );
+            if (typesToPersist.length > 0) {
+                try {
+                    const stmt = getDb().prepare(
+                        'UPDATE groups SET type = ? WHERE id = ? AND type IS NULL',
+                    );
+                    for (const { id, type } of typesToPersist) stmt.run(type, id);
+                } catch {
+                    /* non-fatal */
+                }
+            }
 
             // Federation merge — append every paired peer's groups to the list,
             // deduplicated by id (own row wins; peer rows that share an id are
