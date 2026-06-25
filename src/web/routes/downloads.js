@@ -186,8 +186,10 @@ export function createDownloadsRouter({
                         // (channel = megaphone / group = group icon / user / bot).
                         // Prefer config (sticky), fall back to live-dialogs cache.
                         type: isCommentGroup
-                            ? cfg?.type || dialogsTypeFor(parentGroupId)
-                            : cfg?.type || dialogsTypeFor(r.group_id),
+                            ? cfg?.type || dialogsTypeFor(parentGroupId) || 'channel'
+                            : cfg?.type ||
+                              dialogsTypeFor(r.group_id) ||
+                              (String(r.group_id).startsWith('-100') ? 'channel' : null),
                         totalFiles: r.count,
                         totalSize: Number(r.size) || 0,
                         sizeFormatted: formatBytes(r.size || 0),

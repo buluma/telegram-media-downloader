@@ -114,7 +114,14 @@ export function createGroupsRouter({
                     const safeGroupId = String(group.id).replace(/[^A-Za-z0-9_.-]/g, '_');
                     const photoPath = path.join(PHOTOS_DIR, `${safeGroupId}.jpg`);
                     const hasPhoto = existsSync(photoPath);
-                    let resolvedType = group.type || dialogsTypeFor(group.id) || null;
+                    const gid = String(group.id);
+                    const isComment = gid.startsWith('comment:');
+                    const lookupId = isComment ? gid.slice(8) : gid;
+                    let resolvedType =
+                        group.type ||
+                        dialogsTypeFor(lookupId) ||
+                        (isComment ? 'channel' : null) ||
+                        (lookupId.startsWith('-100') ? 'channel' : null);
                     if (resolvedType && !group.type) {
                         typesToPersist.push({ id: String(group.id), type: resolvedType });
                     }
