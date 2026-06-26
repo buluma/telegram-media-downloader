@@ -314,6 +314,7 @@ export function createDownloadsRouter({
                     groupId: row.group_id,
                     groupName:
                         configGroups.get(String(row.group_id))?.name || row.group_name || null,
+                    messageId: row.message_id || null,
                     pendingUntil: row.pending_until || null,
                     rescuedAt: row.rescued_at || null,
                     pinned: !!row.pinned,
@@ -443,6 +444,9 @@ export function createDownloadsRouter({
                     type: typeFolder,
                     extension: path.extname(row.file_name),
                     modified: row.created_at,
+                    groupId: row.group_id,
+                    groupName: configGroup?.name || row.group_name || null,
+                    messageId: row.message_id || null,
                     // Rescue Mode surface — null when not in rescue mode.
                     pendingUntil: row.pending_until || null,
                     rescuedAt: row.rescued_at || null,
