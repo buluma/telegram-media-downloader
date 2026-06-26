@@ -1328,6 +1328,14 @@ function renderGroupsList() {
                                         );
                                 const ring =
                                     !isForeign && state.activeRings.has(id) ? 'downloading' : null;
+                                const lastVisited = parseInt(
+                                    localStorage.getItem(`tgdl-lv-${id}`) || '0',
+                                    10,
+                                );
+                                const lastDl = g.lastDownloadAt
+                                    ? new Date(g.lastDownloadAt).getTime()
+                                    : 0;
+                                const hasNew = !isForeign && lastDl > 0 && lastDl > lastVisited;
                                 // Monitor toggle — only meaningful for own (non-foreign) groups
                                 // that are actually in `state.groups` (config-defined). Folder-
                                 // only rows have no monitor state to toggle.
@@ -1346,6 +1354,7 @@ function renderGroupsList() {
                                         ? formatRelativeTime(g.lastDownloadAt)
                                         : '',
                                     selected: state.currentGroupId === id,
+                                    unread: hasNew ? '●' : null,
                                     cog: !isForeign, // foreign groups are read-only; hide the cog
                                     monitorEnabled, // 1-click ▶/⏸ toggle when this is a config group
                                     peerId: g.peerId || null,
@@ -1561,6 +1570,7 @@ function normalize(str) {
 
 // ============ Open Group / Show All ============
 function openGroup(groupId, groupName) {
+    localStorage.setItem(`tgdl-lv-${groupId}`, String(Date.now()));
     state.currentGroupId = groupId;
     // Always reconcile with the canonical store so the modal/header never
     // show a stale "Unknown" or numeric id when /api/groups/refresh-info
@@ -2155,6 +2165,7 @@ async function loadAllFiles() {
         const type =
             state.currentFilter && state.currentFilter !== 'all' ? state.currentFilter : 'all';
         const pinQs = state.pinnedFilter ? '&pinned=1' : '';
+        const watchedQs = state.watchedFilter ? '&watched=1' : '';
         const pinFirstQs =
             localStorage.getItem('tgdl-pinned-first') === '1' ? '&pinnedFirst=1' : '';
         const sortQs =
@@ -2167,7 +2178,7 @@ async function loadAllFiles() {
         ].join('');
         const scopeQs = _galleryScopeQs();
         const res = await api.get(
-            `/api/downloads/all?page=${state.page}&limit=${FILES_PER_PAGE}&type=${encodeURIComponent(type)}${pinQs}${pinFirstQs}${sortQs}${dateQs}${scopeQs}`,
+            `/api/downloads/all?page=${state.page}&limit=${FILES_PER_PAGE}&type=${encodeURIComponent(type)}${pinQs}${watchedQs}${pinFirstQs}${sortQs}${dateQs}${scopeQs}`,
         );
         const newFiles = res?.files || [];
 
@@ -2222,6 +2233,7 @@ async function loadGroupFiles(groupId) {
         const type =
             state.currentFilter && state.currentFilter !== 'all' ? state.currentFilter : 'all';
         const pinQs = state.pinnedFilter ? '&pinned=1' : '';
+        const watchedQs = state.watchedFilter ? '&watched=1' : '';
         const pinFirstQs =
             localStorage.getItem('tgdl-pinned-first') === '1' ? '&pinnedFirst=1' : '';
         const sortQs =
@@ -2234,7 +2246,7 @@ async function loadGroupFiles(groupId) {
         ].join('');
         const scopeQs = _galleryScopeQs();
         const res = await api.get(
-            `/api/downloads/${encodeURIComponent(groupId)}?page=${state.page}&limit=${FILES_PER_PAGE}&type=${encodeURIComponent(type)}${pinQs}${pinFirstQs}${sortQs}${dateQs}${scopeQs}`,
+            `/api/downloads/${encodeURIComponent(groupId)}?page=${state.page}&limit=${FILES_PER_PAGE}&type=${encodeURIComponent(type)}${pinQs}${watchedQs}${pinFirstQs}${sortQs}${dateQs}${scopeQs}`,
         );
         const newFiles = res.files || [];
 
@@ -2492,6 +2504,12 @@ function renderMediaGrid(opts = {}) {
                         file.nsfw_score != null && Number(file.nsfw_score) >= 0.7
                             ? `<span class="tile-nsfw-badge" title="NSFW ${Math.round(Number(file.nsfw_score) * 100)}%">18+</span>`
                             : '';
+                    // Cross-group repost badge — shown when same file_hash
+                    // appears in more than one group.
+                    const crosspostBadge =
+                        file.crosspostCount > 1
+                            ? `<span class="tile-crosspost-badge" title="Seen in ${file.crosspostCount} groups"><i class="ri-repeat-line"></i>${file.crosspostCount}</span>`
+                            : '';
                     // Pin chip — appears on hover, golden when pinned. data-tile-pin
                     // is what the gallery delegation handler keys off below.
                     const pinnedCls = file.pinned ? 'is-pinned' : '';
@@ -2510,6 +2528,7 @@ function renderMediaGrid(opts = {}) {
                     ${thumbInner}
                     ${gridDocLabel}
                     ${nsfwBadge}
+                    ${crosspostBadge}
                     ${peerBadgeOverlay}
                 </div>
                 ${pinChip}
@@ -4367,8 +4386,10 @@ function resetGalleryFilter() {
     state.currentFilter = 'all';
     state.dateFrom = null;
     state.dateTo = null;
+    state.watchedFilter = false;
     document.querySelectorAll('#media-tabs .tab-item').forEach((t) => {
         t.classList.toggle('active', (t.dataset.type || 'all') === 'all');
+        if (t.dataset.watchedToggle !== undefined) t.setAttribute('aria-pressed', 'false');
     });
     const labelEl = document.getElementById('date-chip-label');
     if (labelEl) labelEl.textContent = i18nT('filter.date.label', 'Date');
@@ -4400,8 +4421,24 @@ function setupMediaTabs() {
                 }
                 return;
             }
+            if (tab.dataset.watchedToggle !== undefined) {
+                const next = tab.getAttribute('aria-pressed') !== 'true';
+                tab.setAttribute('aria-pressed', next ? 'true' : 'false');
+                state.watchedFilter = next;
+                state.page = 1;
+                state.hasMore = true;
+                state.files = [];
+                if (state.currentPage === 'viewer') {
+                    if (state.currentGroupId) loadGroupFiles(state.currentGroupId);
+                    else loadAllFiles();
+                } else {
+                    renderMediaGrid();
+                }
+                return;
+            }
             document.querySelectorAll('#media-tabs .tab-item').forEach((t) => {
                 if (t.dataset.pinnedToggle !== undefined) return; // leave the chip alone
+                if (t.dataset.watchedToggle !== undefined) return;
                 t.classList.remove('active');
             });
             tab.classList.add('active');

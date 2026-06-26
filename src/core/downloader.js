@@ -1048,6 +1048,7 @@ export class DownloadManager extends EventEmitter {
                 // sweeper can prune it later (unless a delete event rescues
                 // it first).
                 pendingUntil: job.pendingUntil || null,
+                caption: job.caption || null,
             });
             // Pre-generate the default-width thumbnail in the background so
             // the FIRST gallery scroll already finds the WebP in cache. The

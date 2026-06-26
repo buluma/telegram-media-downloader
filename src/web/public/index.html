@@ -163,7 +163,7 @@
 
         <!-- Left Sidebar -->
         <aside id="sidebar"
-            class="fixed md:relative w-[min(85vw,11.7rem)] sm:w-52 bg-tg-sidebar border-r border-tg-border flex flex-col h-full z-50 sidebar-mobile md:transform-none">
+            class="fixed md:relative w-[min(85vw,11.7rem)] sm:w-52 flex-none overflow-x-hidden bg-tg-sidebar border-r border-tg-border flex flex-col h-full z-50 sidebar-mobile md:transform-none">
 
             <!-- Header -->
             <div class="p-3 flex items-center gap-3 border-b border-tg-border/40">
@@ -507,6 +507,11 @@
                          data-i18n-title="favorites.filter_title" title="Show only pinned"
                          role="button" aria-pressed="false">
                         <i class="ri-pushpin-2-line mr-1" aria-hidden="true"></i><span data-i18n="favorites.filter">Pinned</span>
+                    </div>
+                    <div class="tab-item tab-item--toggle" data-watched-toggle
+                         title="Show only watched"
+                         role="button" aria-pressed="false">
+                        <i class="ri-eye-line mr-1" aria-hidden="true"></i><span>Watched</span>
                     </div>
                 </div>
                 <!-- Sort chip + gallery scope chip live outside the scrollable inner div

@@ -632,6 +632,25 @@ export function openMediaViewer(index) {
         `${_groupChip}${escapeHtml(file.sizeFormatted)} • ${escapeHtml(formatDate(file.modified))}`;
     document.getElementById('modal-counter').textContent = `${index + 1} / ${state.files.length}`;
     document.getElementById('modal-download').href = downloadUrl;
+
+    const captionEl = document.getElementById('modal-caption');
+    if (captionEl) {
+        if (file.caption) {
+            captionEl.textContent = file.caption;
+            captionEl.classList.remove('hidden');
+        } else {
+            captionEl.textContent = '';
+            captionEl.classList.add('hidden');
+        }
+    }
+
+    if (file.id) {
+        fetch(`/api/downloads/${file.id}/viewed`, {
+            method: 'POST',
+            credentials: 'same-origin',
+        }).catch(() => {});
+    }
+
     _refreshPinButton(file);
     _refreshBackupButton(file);
     if (file.id && !file._backupChecked) {

@@ -104,6 +104,14 @@ const MIGRATIONS = [
         name: '021_downloads_cache_evicted_at',
         up: (db) => db.exec('ALTER TABLE downloads ADD COLUMN cache_evicted_at INTEGER'),
     },
+    {
+        name: '022_downloads_caption',
+        up: (db) => db.exec('ALTER TABLE downloads ADD COLUMN caption TEXT'),
+    },
+    {
+        name: '023_downloads_last_viewed_at',
+        up: (db) => db.exec('ALTER TABLE downloads ADD COLUMN last_viewed_at INTEGER'),
+    },
 ];
 
 export function runMigrations(db) {

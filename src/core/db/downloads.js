@@ -213,12 +213,13 @@ export function insertDownload(data) {
         // Rescue Mode: when set, the rescue sweeper auto-deletes this row
         // after the timestamp unless the source is deleted first.
         pendingUntil: data.pendingUntil ?? null,
+        caption: data.caption ?? null,
     };
     const stmt = db.prepare(`
         INSERT OR IGNORE INTO downloads (
-            group_id, group_name, message_id, file_name, file_size, file_type, file_path, ttl_seconds, file_hash, pending_until
+            group_id, group_name, message_id, file_name, file_size, file_type, file_path, ttl_seconds, file_hash, pending_until, caption
         ) VALUES (
-            @groupId, @groupName, @messageId, @fileName, @fileSize, @fileType, @filePath, @ttlSeconds, @fileHash, @pendingUntil
+            @groupId, @groupName, @messageId, @fileName, @fileSize, @fileType, @filePath, @ttlSeconds, @fileHash, @pendingUntil, @caption
         )
     `);
     return stmt.run(row);
@@ -244,6 +245,16 @@ export function markRescued(groupId, messageId) {
         `)
         .run(now, String(groupId), Number(messageId));
     return r.changes;
+}
+
+/**
+ * Stamp last_viewed_at on a download so it appears in the "Watched" filter.
+ * Idempotent — repeat calls just refresh the timestamp.
+ */
+export function stampViewed(id) {
+    return getDb()
+        .prepare('UPDATE downloads SET last_viewed_at = ? WHERE id = ?')
+        .run(Date.now(), Number(id)).changes;
 }
 
 /**
@@ -368,6 +379,9 @@ export function getAllDownloads(limit = 50, offset = 0, type = 'all', opts = {})
     if (opts.pinnedOnly) {
         clauses.push('COALESCE(pinned, 0) = 1');
     }
+    if (opts.watchedOnly) {
+        clauses.push('last_viewed_at IS NOT NULL');
+    }
     if (opts.dateFrom) {
         clauses.push('date(created_at) >= ?');
         params.push(opts.dateFrom);
@@ -390,7 +404,9 @@ export function getAllDownloads(limit = 50, offset = 0, type = 'all', opts = {})
     const orderBy = opts.pinnedFirst ? `COALESCE(pinned, 0) DESC, ${baseSort}` : baseSort;
     const rows = getDb()
         .prepare(
-            `SELECT d.*, ss.duration_sec
+            `SELECT d.*, ss.duration_sec,
+                (SELECT COUNT(DISTINCT group_id) FROM downloads cx
+                  WHERE cx.file_hash = d.file_hash AND d.file_hash IS NOT NULL) AS crosspost_count
                FROM downloads d
                LEFT JOIN seekbar_sprites ss ON ss.download_id = d.id${where}
               ORDER BY ${orderBy} LIMIT ? OFFSET ?`,
@@ -421,6 +437,7 @@ export function getDownloads(groupId, limit = 50, offset = 0, type = 'all', opts
     }
 
     if (opts.pinnedOnly) whereParts.push('COALESCE(pinned, 0) = 1');
+    if (opts.watchedOnly) whereParts.push('last_viewed_at IS NOT NULL');
     if (opts.dateFrom) {
         whereParts.push('date(created_at) >= ?');
         params.push(opts.dateFrom);
@@ -442,7 +459,9 @@ export function getDownloads(groupId, limit = 50, offset = 0, type = 'all', opts
 
     const rows = db
         .prepare(
-            `SELECT d.*, ss.duration_sec
+            `SELECT d.*, ss.duration_sec,
+                (SELECT COUNT(DISTINCT group_id) FROM downloads cx
+                  WHERE cx.file_hash = d.file_hash AND d.file_hash IS NOT NULL) AS crosspost_count
                FROM downloads d
                LEFT JOIN seekbar_sprites ss ON ss.download_id = d.id
               WHERE ${where}
@@ -578,6 +597,10 @@ const _FED_COLS_LOCAL = `
     COALESCE(d.pinned, 0) AS pinned,
     d.pending_until, d.rescued_at,
     ss.duration_sec,
+    d.caption,
+    d.last_viewed_at,
+    (SELECT COUNT(DISTINCT group_id) FROM downloads cx
+      WHERE cx.file_hash = d.file_hash AND d.file_hash IS NOT NULL) AS crosspost_count,
     CAST(strftime('%s', d.created_at) AS INTEGER) * 1000 AS sort_ts
 `;
 const _FED_COLS_PEER = `
@@ -587,6 +610,9 @@ const _FED_COLS_PEER = `
     0 AS pinned,
     NULL AS pending_until, NULL AS rescued_at,
     NULL AS duration_sec,
+    NULL AS caption,
+    NULL AS last_viewed_at,
+    0 AS crosspost_count,
     CAST(created_at AS INTEGER) AS sort_ts
 `;
 
@@ -645,6 +671,11 @@ export function getAllDownloadsFederated(limit = 50, offset = 0, type = 'all', o
         localWherePartsD.push('COALESCE(d.pinned, 0) = 1');
         // Peer side excluded entirely under pinnedOnly — peer files can't
         // be locally pinned. Drop a never-true predicate to short-circuit.
+        peerWhereParts.push('0 = 1');
+    }
+    if (opts.watchedOnly) {
+        localWhereParts.push('last_viewed_at IS NOT NULL');
+        localWherePartsD.push('d.last_viewed_at IS NOT NULL');
         peerWhereParts.push('0 = 1');
     }
     if (opts.dateFrom) {
@@ -731,6 +762,11 @@ export function getDownloadsForGroupFederated(
     if (opts.pinnedOnly) {
         localWhereParts.push('COALESCE(pinned, 0) = 1');
         localWherePartsD.push('COALESCE(d.pinned, 0) = 1');
+        peerWhereParts.push('0 = 1');
+    }
+    if (opts.watchedOnly) {
+        localWhereParts.push('last_viewed_at IS NOT NULL');
+        localWherePartsD.push('d.last_viewed_at IS NOT NULL');
         peerWhereParts.push('0 = 1');
     }
     if (opts.dateFrom) {

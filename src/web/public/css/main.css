@@ -1204,6 +1204,27 @@ html.theme-light .tile-peer-badge {
     display: none;
 }
 
+.tile-crosspost-badge {
+    position: absolute;
+    bottom: 5px;
+    left: 5px;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: rgba(59, 130, 246, 0.82);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.4;
+    pointer-events: none;
+    white-space: nowrap;
+}
+.media-grid.view-list .tile-crosspost-badge {
+    display: none;
+}
+
 /* Gallery-scope chip popover — opens below the chip at the right edge of
    the media-tabs row, anchors to the parent `flex` so positioning is
    relative to the row. Click-outside dismiss is wired in app.js. */
@@ -2963,10 +2984,15 @@ input[type="range"].tg-range::-moz-range-track,
 #groups-list .chat-row .row-title {
     font-size: 13px;
     gap: 4px;
+    min-width: 0;
+    overflow: hidden;
 }
 #groups-list .chat-row .row-subtitle {
     font-size: 11px;
     line-height: 1.25;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 #groups-list .chat-row .row-meta {
     font-size: 10px;
@@ -3064,6 +3090,7 @@ input[type="range"].tg-range::-moz-range-track,
     text-overflow: ellipsis;
     white-space: nowrap;
     min-width: 0;
+    max-width: 100%;
 }
 .chat-row .row-subtitle {
     font-size: 12px;

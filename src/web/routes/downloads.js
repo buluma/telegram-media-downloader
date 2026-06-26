@@ -14,6 +14,7 @@ import {
     setDownloadPinned,
     bulkSetDownloadPinned,
     deleteDownloadsBy,
+    stampViewed,
 } from '../../core/db/downloads.js';
 import { safeResolveDownload } from '../lib/resolve-download.js';
 import { bestGroupName, formatBytes } from '../lib/format.js';
@@ -224,6 +225,7 @@ export function createDownloadsRouter({
             // existing callers behave identically.
             const pinnedOnly = req.query.pinned === '1' || req.query.pinned === 'true';
             const pinnedFirst = req.query.pinnedFirst === '1' || req.query.pinnedFirst === 'true';
+            const watchedOnly = req.query.watched === '1';
             const VALID_SORTS = new Set(['date_desc', 'date_asc', 'size_desc', 'name_asc']);
             const sortBy = VALID_SORTS.has(req.query.sort) ? req.query.sort : 'date_desc';
             const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -251,6 +253,7 @@ export function createDownloadsRouter({
             const result = getAllDownloadsFederated(limit, offset, type, {
                 pinnedOnly,
                 pinnedFirst,
+                watchedOnly,
                 sortBy,
                 dateFrom,
                 dateTo,
@@ -315,6 +318,9 @@ export function createDownloadsRouter({
                     groupName:
                         configGroups.get(String(row.group_id))?.name || row.group_name || null,
                     messageId: row.message_id || null,
+                    caption: row.caption || null,
+                    lastViewedAt: row.last_viewed_at || null,
+                    crosspostCount: row.crosspost_count > 1 ? row.crosspost_count : 0,
                     pendingUntil: row.pending_until || null,
                     rescuedAt: row.rescued_at || null,
                     pinned: !!row.pinned,
@@ -368,6 +374,7 @@ export function createDownloadsRouter({
 
             const pinnedOnly = req.query.pinned === '1' || req.query.pinned === 'true';
             const pinnedFirst = req.query.pinnedFirst === '1' || req.query.pinnedFirst === 'true';
+            const watchedOnly = req.query.watched === '1';
             const VALID_SORTS = new Set(['date_desc', 'date_asc', 'size_desc', 'name_asc']);
             const sortBy = VALID_SORTS.has(req.query.sort) ? req.query.sort : 'date_desc';
             const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -386,6 +393,7 @@ export function createDownloadsRouter({
             const result = getDownloadsForGroupFederated(groupId, limit, offset, type, {
                 pinnedOnly,
                 pinnedFirst,
+                watchedOnly,
                 sortBy,
                 dateFrom,
                 dateTo,
@@ -447,6 +455,9 @@ export function createDownloadsRouter({
                     groupId: row.group_id,
                     groupName: configGroup?.name || row.group_name || null,
                     messageId: row.message_id || null,
+                    caption: row.caption || null,
+                    lastViewedAt: row.last_viewed_at || null,
+                    crosspostCount: row.crosspost_count > 1 ? row.crosspost_count : 0,
                     // Rescue Mode surface — null when not in rescue mode.
                     pendingUntil: row.pending_until || null,
                     rescuedAt: row.rescued_at || null,
@@ -698,6 +709,14 @@ export function createDownloadsRouter({
         if (!ok) return res.status(500).json({ error: 'Update failed' });
         broadcast({ type: 'download_pinned', id, pinned });
         res.json({ success: true, id, pinned });
+    });
+
+    // Stamp last_viewed_at — fire-and-forget from the viewer on open.
+    router.post('/downloads/:id/viewed', async (req, res) => {
+        const id = parseInt(req.params.id, 10);
+        if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'Invalid id' });
+        stampViewed(id);
+        res.json({ ok: true });
     });
 
     // Check whether a download has been backed up to any destination.

@@ -1074,6 +1074,7 @@ export class RealtimeMonitor extends EventEmitter {
                         mediaType,
                         ttlSeconds,
                         pendingUntil,
+                        caption: message.message || null,
                         client: sourceClient,
                         accountId,
                         accountName,
