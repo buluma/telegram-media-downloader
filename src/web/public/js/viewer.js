@@ -626,7 +626,7 @@ export function openMediaViewer(index) {
     document.getElementById('modal-filename').textContent = file.name;
     const _groupLabel = file.groupName || '';
     const _groupChip = _groupLabel
-        ? `<button class="hover:text-white underline underline-offset-2 transition-colors" data-group-id="${escapeHtml(String(file.groupId || ''))}" data-group-name="${escapeHtml(_groupLabel)}" data-message-id="${escapeHtml(String(file.messageId || ''))}">${escapeHtml(_groupLabel)}</button> · `
+        ? `<button class="hover:text-white underline underline-offset-2 transition-colors" data-group-id="${escapeHtml(String(file.groupId || ''))}" data-group-name="${escapeHtml(_groupLabel)}">${escapeHtml(_groupLabel)}</button> · `
         : '';
     document.getElementById('modal-meta').innerHTML =
         `${_groupChip}${escapeHtml(file.sizeFormatted)} • ${escapeHtml(formatDate(file.modified))}`;
@@ -1831,17 +1831,7 @@ export function setupViewerEvents() {
         if (!btn) return;
         const groupId = btn.dataset.groupId;
         const groupName = btn.dataset.groupName;
-        const messageId = btn.dataset.messageId;
         if (!groupId) return;
-        // Build a t.me source link when we have a message id.
-        // Channels/supergroups use the /c/{numericId}/{msgId} format;
-        // strip the -100 prefix Telegram uses internally.
-        if (messageId) {
-            const numericId = String(groupId).replace(/^-100/, '').replace(/^-/, '');
-            window.open(`https://t.me/c/${numericId}/${messageId}`, '_blank', 'noopener');
-            return;
-        }
-        // Fallback: no message id — navigate to the group gallery.
         closeMediaViewer();
         window.openGroup?.(groupId, groupName);
     });
