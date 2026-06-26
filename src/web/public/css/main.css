@@ -2488,6 +2488,23 @@ input[type="range"].tg-range::-moz-range-track,
     border-radius: 3px 3px 0 0;
 }
 
+/* Sidebar width — enforced here so the values survive Tailwind recompiles.
+   Reduced 35% from original 18rem/20rem. flex: none prevents the flex
+   parent from stretching it; overflow-x: hidden clips long group names. */
+#sidebar {
+    width: min(85vw, 11.7rem);
+    max-width: min(85vw, 11.7rem);
+    min-width: 0;
+    flex: none;
+    overflow-x: hidden;
+}
+@media (min-width: 640px) {
+    #sidebar {
+        width: 13rem;
+        max-width: 13rem;
+    }
+}
+
 .sidebar-mobile {
     transform: translateX(-100%);
     transition: transform 0.3s ease;

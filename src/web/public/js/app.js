@@ -186,11 +186,13 @@ async function init() {
     // in sync with `_setupSidebarGroupsCollapse` and `setupFab` further down.
     registerAction('navigateTo', navigateTo);
     registerAction('openGroup', openGroup);
+    window.openGroup = openGroup;
     registerAction('showAllMedia', showAllMedia);
     registerAction('openMediaViewer', Viewer.openMediaViewer);
     window.Viewer = Viewer; // Keep Viewer for external debugging if needed
     registerAction('closeMediaViewer', Viewer.closeMediaViewer);
     registerAction('openGroupSettings', openGroupSettings);
+    window.openGroupSettings = openGroupSettings;
     registerAction('closeGroupSettings', closeGroupSettings);
     registerAction('saveGroupSettings', saveGroupSettings);
     registerAction('refreshCurrentPage', refreshCurrentPage);
