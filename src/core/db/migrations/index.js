@@ -112,6 +112,11 @@ const MIGRATIONS = [
         name: '023_downloads_last_viewed_at',
         up: (db) => db.exec('ALTER TABLE downloads ADD COLUMN last_viewed_at INTEGER'),
     },
+    {
+        name: '024_backup_destinations_paused',
+        up: (db) =>
+            db.exec('ALTER TABLE backup_destinations ADD COLUMN paused INTEGER NOT NULL DEFAULT 0'),
+    },
 ];
 
 export function runMigrations(db) {

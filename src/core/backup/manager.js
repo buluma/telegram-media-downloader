@@ -360,9 +360,9 @@ export async function runBackup(id) {
     return { started: true, mode: 'mirror', enqueued };
 }
 
-/** Pause / resume the worker. Existing pending jobs sit in the DB
- *  untouched and resume after `resume()`. */
+/** Pause / resume the worker. Persisted to DB so restart survives. */
 export function pause(id) {
+    getDb().prepare('UPDATE backup_destinations SET paused = 1 WHERE id = ?').run(Number(id));
     const w = _workers.get(Number(id));
     if (w) w.paused = true;
     _broadcast({
@@ -372,6 +372,7 @@ export function pause(id) {
     return true;
 }
 export function resume(id) {
+    getDb().prepare('UPDATE backup_destinations SET paused = 0 WHERE id = ?').run(Number(id));
     const w = _workers.get(Number(id));
     if (w) {
         w.paused = false;
@@ -510,7 +511,8 @@ class Worker {
     constructor(destinationId) {
         this.destinationId = Number(destinationId);
         this.running = false;
-        this.paused = false;
+        const row = _loadDestRow(this.destinationId);
+        this.paused = row?.paused === 1;
         this.activeAborters = new Set();
         this._tickScheduled = false;
         // Reset any in-flight rows from a previous boot.
