@@ -2014,6 +2014,12 @@ export function setupViewerEvents() {
             }
         }
 
+        if ((e.key === 'p' || e.key === 'P') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+            e.preventDefault();
+            document.getElementById('modal-pin')?.click();
+            return;
+        }
+
         // Review-mode action shortcuts — match by single-letter key
         // (case-insensitive) so j/k/w/d feel native. Skip when modifiers
         // are held so Cmd/Ctrl combos still bubble to the browser.
