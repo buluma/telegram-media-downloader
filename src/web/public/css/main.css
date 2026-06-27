@@ -2492,16 +2492,16 @@ input[type="range"].tg-range::-moz-range-track,
    Reduced 35% from original 18rem/20rem. flex: none prevents the flex
    parent from stretching it; overflow-x: hidden clips long group names. */
 #sidebar {
-    width: min(85vw, 11.7rem);
-    max-width: min(85vw, 11.7rem);
+    width: min(85vw, 14rem);
+    max-width: min(85vw, 14rem);
     min-width: 0;
     flex: none;
     overflow-x: hidden;
 }
 @media (min-width: 640px) {
     #sidebar {
-        width: 13rem;
-        max-width: 13rem;
+        width: 16rem;
+        max-width: 16rem;
     }
 }
 
