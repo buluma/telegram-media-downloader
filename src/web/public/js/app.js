@@ -185,6 +185,7 @@ async function init() {
     // bootstrap, regardless of any later network failure. Keep this list
     // in sync with `_setupSidebarGroupsCollapse` and `setupFab` further down.
     registerAction('navigateTo', navigateTo);
+    window.navigateTo = navigateTo;
     registerAction('openGroup', openGroup);
     window.openGroup = openGroup;
     registerAction('showAllMedia', showAllMedia);

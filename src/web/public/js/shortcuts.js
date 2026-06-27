@@ -208,7 +208,7 @@ function _runAction(id) {
         return;
     }
     if (id === 'focus_search') {
-        document.getElementById('search-input')?.focus();
+        document.getElementById('sidebar-groups-search')?.focus();
         return;
     }
     if (id === 'go_library') {
@@ -247,14 +247,20 @@ export function initShortcuts() {
             return;
         }
 
+        // Viewer owns its own keydown — don't let gallery shortcuts leak in.
+        // `?` is still allowed so the cheatsheet is reachable from anywhere.
+        const viewerOpen = !document.getElementById('media-modal')?.classList.contains('hidden');
+
         if (e.key === '?' || (e.key === '/' && e.shiftKey)) {
             e.preventDefault();
             show();
             return;
         }
+        if (viewerOpen) return;
+
         if (e.key === '/') {
             e.preventDefault();
-            document.getElementById('search-input')?.focus();
+            document.getElementById('sidebar-groups-search')?.focus();
             return;
         }
         if (e.key === 'l' || e.key === 'L') {

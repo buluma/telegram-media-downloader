@@ -364,6 +364,10 @@ async function load() {
             );
         }
 
+        // TODO: improve trend chart — add per-group breakdown (stacked bars or
+        // group filter), hover tooltip with exact count + group list, selectable
+        // date range beyond 14 days, and a bytes-downloaded overlay series.
+
         // ── 14-day download trend (day-of-week + MM-DD sub-labels) ──
         if (dailyTrend?.length) {
             const total14 = dailyTrend.reduce((s, d) => s + d.n, 0);

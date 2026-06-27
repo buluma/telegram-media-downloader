@@ -2062,6 +2062,11 @@ export function setupViewerEvents() {
         }
 
         if (videoActive && videoPlayer) {
+            // j is not mapped by the video player, so it stays as navigate-next.
+            if (e.key === 'j') {
+                navigateMedia(1);
+                return;
+            }
             if (videoPlayer.handleKey(e)) {
                 e.preventDefault();
                 return;
