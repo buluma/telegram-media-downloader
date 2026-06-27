@@ -191,6 +191,7 @@ async function init() {
     registerAction('showAllMedia', showAllMedia);
     registerAction('openMediaViewer', Viewer.openMediaViewer);
     window.Viewer = Viewer; // Keep Viewer for external debugging if needed
+    window.tgdlDeleteCurrentFile = deleteCurrentFile;
     registerAction('closeMediaViewer', Viewer.closeMediaViewer);
     registerAction('openGroupSettings', openGroupSettings);
     window.openGroupSettings = openGroupSettings;
@@ -4353,20 +4354,9 @@ async function openDestinationPicker() {
 }
 
 // ============ Delete File ============
-async function confirmDeleteFile() {
+async function deleteCurrentFile() {
     const file = state.files[state.currentFileIndex];
     if (!file) return;
-
-    if (
-        !(await confirmSheet({
-            title: i18nT('viewer.delete.title', 'Delete file?'),
-            message: i18nTf('viewer.delete.confirm', { name: file.name }, `Delete "${file.name}"?`),
-            confirmLabel: i18nT('common.delete', 'Delete'),
-            danger: true,
-        }))
-    )
-        return;
-
     try {
         await api.delete(`/api/file?path=${encodeURIComponent(file.fullPath)}`);
         state.files.splice(state.currentFileIndex, 1);
@@ -4379,6 +4369,21 @@ async function confirmDeleteFile() {
             'error',
         );
     }
+}
+
+async function confirmDeleteFile() {
+    const file = state.files[state.currentFileIndex];
+    if (!file) return;
+    if (
+        !(await confirmSheet({
+            title: i18nT('viewer.delete.title', 'Delete file?'),
+            message: i18nTf('viewer.delete.confirm', { name: file.name }, `Delete "${file.name}"?`),
+            confirmLabel: i18nT('common.delete', 'Delete'),
+            danger: true,
+        }))
+    )
+        return;
+    await deleteCurrentFile();
 }
 
 // Reset the All / Photos / Videos / Files / Audio tab back to "All"

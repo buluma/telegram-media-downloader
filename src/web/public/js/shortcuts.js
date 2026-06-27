@@ -77,6 +77,12 @@ const SHORTCUTS = [
         k: 'shortcuts.autoplay_advance',
         def: '(in viewer) enable autoplay + auto-advance if inactive',
     },
+    {
+        id: 'delete_file',
+        keys: 'd',
+        k: 'shortcuts.delete_file',
+        def: '(in viewer) delete current file without confirmation',
+    },
 ];
 
 /**

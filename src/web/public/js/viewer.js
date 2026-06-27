@@ -2061,6 +2061,12 @@ export function setupViewerEvents() {
             }
         }
 
+        if (e.key === 'd' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+            e.preventDefault();
+            window.tgdlDeleteCurrentFile?.();
+            return;
+        }
+
         if (e.key === 'a' && !e.metaKey && !e.ctrlKey && !e.altKey) {
             e.preventDefault();
             const apOn = localStorage.getItem('viewer-autoplay') === '1';
