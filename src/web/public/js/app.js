@@ -2785,7 +2785,7 @@ function renderGalleryEmptyState() {
                 {
                     label: i18nT('viewer.empty.action.backfill', 'Run Backfill'),
                     icon: 'ri-history-line',
-                    onClick: () => window.navigateTo?.('backfill'),
+                    onClick: () => window.navigateTo?.(`backfill/${encodeURIComponent(groupId)}`),
                 },
                 {
                     label: i18nT('viewer.empty.action.group_settings', 'Group Settings'),
