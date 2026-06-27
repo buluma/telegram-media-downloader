@@ -1312,6 +1312,14 @@ class VideoPlayer {
             case 'K':
                 this.togglePlay();
                 return true;
+            case 'j':
+            case 'J':
+                this.seekRelative(-10);
+                return true;
+            case 'l':
+            case 'L':
+                this.seekRelative(10);
+                return true;
             case 'ArrowLeft': {
                 // Configurable skip step (Settings → Video Player). Shift
                 // jumps 2× the step for power users.
@@ -2023,19 +2031,29 @@ export function setupViewerEvents() {
             .getElementById('video-container')
             .classList.contains('hidden');
         if (!videoActive) {
-            if (e.key === 'ArrowLeft' || e.key === 'k') {
+            if (e.key === 'ArrowLeft') {
                 navigateMedia(-1);
                 return;
             }
-            if (e.key === 'ArrowRight' || e.key === 'j') {
+            if (e.key === 'ArrowRight') {
                 navigateMedia(1);
                 return;
             }
         }
 
-        if ((e.key === 'p' || e.key === 'P') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        if ((e.key === 't' || e.key === 'T') && !e.metaKey && !e.ctrlKey && !e.altKey) {
             e.preventDefault();
             document.getElementById('modal-pin')?.click();
+            return;
+        }
+
+        if (e.key === 'p' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+            navigateMedia(-1);
+            return;
+        }
+
+        if (e.key === 'n' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+            navigateMedia(1);
             return;
         }
 
@@ -2087,11 +2105,6 @@ export function setupViewerEvents() {
         }
 
         if (videoActive && videoPlayer) {
-            // j is not mapped by the video player, so it stays as navigate-next.
-            if (e.key === 'j') {
-                navigateMedia(1);
-                return;
-            }
             if (videoPlayer.handleKey(e)) {
                 e.preventDefault();
                 return;

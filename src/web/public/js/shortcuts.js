@@ -55,21 +55,39 @@ const SHORTCUTS = [
     },
     {
         id: 'play_pause',
-        keys: 'Enter',
+        keys: 'Enter / k',
         k: 'shortcuts.play_pause',
         def: '(in viewer) play / pause video',
     },
     {
         id: 'prev_next',
-        keys: '← / → or k / j',
+        keys: '← / → or p / n',
         k: 'shortcuts.prev_next',
         def: '(in viewer) previous / next item',
+    },
+    {
+        id: 'rewind',
+        keys: 'j',
+        k: 'shortcuts.rewind',
+        def: '(in viewer) rewind 10 seconds',
+    },
+    {
+        id: 'fast_forward',
+        keys: 'l',
+        k: 'shortcuts.fast_forward',
+        def: '(in viewer) fast forward 10 seconds',
     },
     {
         id: 'fullscreen',
         keys: 'f',
         k: 'shortcuts.fullscreen',
         def: '(in viewer) toggle fullscreen',
+    },
+    {
+        id: 'toggle_pin',
+        keys: 't',
+        k: 'shortcuts.toggle_pin',
+        def: '(in viewer) toggle pin',
     },
     {
         id: 'autoplay_advance',
