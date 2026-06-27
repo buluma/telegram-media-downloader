@@ -109,8 +109,8 @@ const TOOLS = [
         defaultBody: 'NAS / S3 / SFTP / Google Drive / Dropbox mirror + scheduled snapshots.',
         icon: 'ri-cloud-line',
         accent: 'green',
-        statusUrl: null, // multi-destination — hub card just opens the page
-        wsEvents: ['backup_progress', 'backup_done', 'backup_error'],
+        statusUrl: '/api/backup/status',
+        wsEvents: ['backup_progress', 'backup_done', 'backup_error', 'backup_destination_updated'],
     },
     {
         slug: 'cluster',
@@ -261,6 +261,17 @@ function _wireWs() {
     for (const tool of TOOLS) {
         for (const evt of tool.wsEvents) {
             ws.on(evt, (m) => {
+                // backup_destination_updated carries per-destination state;
+                // re-fetch aggregate status rather than guessing from event name.
+                if (evt === 'backup_destination_updated' && tool.statusUrl) {
+                    api.get(tool.statusUrl)
+                        .then((r) => {
+                            _live.set(tool.slug, { running: !!(r && r.running) });
+                            _renderGrid();
+                        })
+                        .catch(() => {});
+                    return;
+                }
                 const running = evt.endsWith('_progress') ? true : m?.running === true;
                 _live.set(tool.slug, { running });
                 // Throttle re-render so a chatty progress stream doesn't

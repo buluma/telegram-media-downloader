@@ -152,6 +152,22 @@ export function createBackupRouter({ log }) {
         }
     });
 
+    router.get('/backup/status', (_req, res) => {
+        try {
+            const dests = backup.listDestinations({ scrubbed: true });
+            const running = dests.some((d) => {
+                try {
+                    return !!backup.getDestinationStatus(d.id)?.running;
+                } catch {
+                    return false;
+                }
+            });
+            res.json({ running });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
     router.get('/backup/destinations/:id/status', async (req, res) => {
         const id = Number(req.params.id);
         if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'bad id' });
