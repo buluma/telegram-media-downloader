@@ -1646,7 +1646,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
     router.get('/ai/llm/status', async (_req, res) => {
         try {
             res.json(
-                await _cachedAiRoute('/api/ai/llm/status', 15_000, async () => {
+                await _cachedAiRoute('/api/ai/llm/status', 60_000, async () => {
                     const [providers, active] = await Promise.all([
                         llm.probeProviders(),
                         llm.getActiveProvider(),
@@ -2814,7 +2814,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
     router.get(['/ai/doctor', '/ai/health'], async (_req, res) => {
         try {
             res.json(
-                await _cachedAiRoute('/api/ai/doctor', 15_000, async () =>
+                await _cachedAiRoute('/api/ai/doctor', 60_000, async () =>
                     _buildAiDoctorSnapshot(),
                 ),
             );
