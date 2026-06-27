@@ -71,6 +71,12 @@ const SHORTCUTS = [
         k: 'shortcuts.fullscreen',
         def: '(in viewer) toggle fullscreen',
     },
+    {
+        id: 'autoplay_advance',
+        keys: 'a',
+        k: 'shortcuts.autoplay_advance',
+        def: '(in viewer) enable autoplay + auto-advance if inactive',
+    },
 ];
 
 /**

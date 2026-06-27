@@ -2061,6 +2061,25 @@ export function setupViewerEvents() {
             }
         }
 
+        if (e.key === 'a' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+            e.preventDefault();
+            const apOn = localStorage.getItem('viewer-autoplay') === '1';
+            const aaOn = localStorage.getItem('viewer-auto-advance') === '1';
+            if (!apOn) {
+                localStorage.setItem('viewer-autoplay', '1');
+                document.getElementById('setting-viewer-autoplay')?.classList.add('active');
+            }
+            if (!aaOn) {
+                localStorage.setItem('viewer-auto-advance', '1');
+                document.getElementById('setting-viewer-auto-advance')?.classList.add('active');
+            }
+            if (!apOn && !aaOn) showToast('Autoplay + auto-advance enabled');
+            else if (!apOn) showToast('Autoplay enabled');
+            else if (!aaOn) showToast('Auto-advance enabled');
+            else showToast('Autoplay + auto-advance already active', 'info');
+            return;
+        }
+
         if (videoActive && videoPlayer) {
             // j is not mapped by the video player, so it stays as navigate-next.
             if (e.key === 'j') {
