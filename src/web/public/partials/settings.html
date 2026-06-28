@@ -551,28 +551,22 @@
                         </div>
                     </div>
 
-                    <!-- Rescue Mode (global default). Per-group rescueMode='auto'
-                         follows this toggle; 'on'/'off' overrides it. The sweep
-                         interval applies to every group with rescue active. -->
+                    <!-- File Retention (global default). Per-group rescueMode='auto'
+                         follows this toggle; 'on'/'off' overrides per group. -->
                     <div id="settings-card-rescue" data-settings-section="card-rescue" class="bg-tg-panel rounded-xl p-4 mb-4 scroll-mt-24" data-admin-only>
                         <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
-                            <i class="ri-lifebuoy-line text-tg-blue" aria-hidden="true"></i>
-                            <span data-i18n="settings.rescue.title">Rescue mode</span>
+                            <i class="ri-shield-check-line text-tg-blue" aria-hidden="true"></i>
+                            <span data-i18n="settings.rescue.title">File retention</span>
                         </h3>
-                        <p class="text-xs text-tg-textSecondary mb-3" data-i18n="settings.rescue.help">When enabled by default, every monitored group keeps only messages that get deleted from Telegram within the retention window. Per-group override available in Group Settings.</p>
+                        <p class="text-xs text-tg-textSecondary mb-3" data-i18n="settings.rescue.help">When enabled, files are kept permanently and excluded from disk rotation. Per-group override available in Group Settings.</p>
                         <label class="flex items-center justify-between p-3 bg-tg-bg/40 rounded-lg cursor-pointer mb-3">
-                            <div class="text-tg-text text-sm" data-i18n="settings.rescue.default">Default to Rescue mode for new groups</div>
+                            <div class="text-tg-text text-sm" data-i18n="settings.rescue.default">Retain files by default for all groups</div>
                             <div id="setting-rescue-default" class="tg-toggle"></div>
                         </label>
-                        <div class="grid grid-cols-2 gap-3">
-                            <div>
-                                <label for="setting-rescue-default-hours" class="text-tg-textSecondary text-xs block mb-1" data-i18n="settings.rescue.default_hours">Retention (hours)</label>
-                                <input id="setting-rescue-default-hours" type="number" min="1" max="720" placeholder="48" class="tg-input w-full text-sm" />
-                            </div>
-                            <div>
-                                <label for="setting-rescue-sweep-min" class="text-tg-textSecondary text-xs block mb-1" data-i18n="settings.rescue.sweep_min">Sweep interval (min)</label>
-                                <input id="setting-rescue-sweep-min" type="number" min="1" max="1440" placeholder="10" class="tg-input w-full text-sm" />
-                            </div>
+                        <input id="setting-rescue-default-hours" type="hidden" value="48" />
+                        <div>
+                            <label for="setting-rescue-sweep-min" class="text-tg-textSecondary text-xs block mb-1" data-i18n="settings.rescue.sweep_min">Legacy sweep interval (min)</label>
+                            <input id="setting-rescue-sweep-min" type="number" min="1" max="1440" placeholder="10" class="tg-input w-full text-sm" />
                         </div>
                         <p id="rescue-stats-line" class="text-xs text-tg-textSecondary mt-3" data-i18n="settings.rescue.stats_loading">Loading rescue stats…</p>
                     </div>

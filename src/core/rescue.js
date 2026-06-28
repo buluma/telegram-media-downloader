@@ -182,14 +182,24 @@ export function _resetRescueSweeper() {
 }
 
 /**
- * Compute the effective rescue retention for a group. Returns either the
- * retention in milliseconds (Rescue is on for this group) or null (off).
+ * Returns true when rescue (file retention) is active for this group.
  *
  * Per-group `rescueMode` values:
- *   - 'on'   : Always on for this group (uses group.rescueRetentionHours
- *              or falls back to cfg.rescue.retentionHours).
- *   - 'off'  : Always off for this group.
+ *   - 'on'   : Always retain files for this group.
+ *   - 'off'  : Normal behaviour — disk rotator may evict files.
  *   - 'auto' (or unset): follow cfg.rescue.enabled.
+ */
+export function isRescueProtected(group, cfg) {
+    const rescueCfg = (cfg && cfg.rescue) || {};
+    const groupMode = group?.rescueMode;
+    if (groupMode === 'on') return true;
+    if (groupMode === 'off') return false;
+    return rescueCfg.enabled === true;
+}
+
+/**
+ * @deprecated Use isRescueProtected. Kept for the legacy sweeper which still
+ * needs to clean up rows that had pending_until stamped before this change.
  */
 export function effectiveRescueMs(group, cfg) {
     const rescueCfg = (cfg && cfg.rescue) || {};

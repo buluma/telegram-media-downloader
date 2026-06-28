@@ -604,21 +604,19 @@
                             <p id="history-progress" class="text-[11px] text-tg-textSecondary mt-1.5 hidden"></p>
                         </div>
 
-                        <!-- 4. Rescue mode -->
+                        <!-- 4. File retention -->
                         <div class="bg-tg-panel rounded-lg p-3 border border-tg-border/40">
                             <h4 class="text-tg-text text-sm font-medium mb-1.5 flex items-center gap-1.5">
-                                <i class="ri-lifebuoy-line text-tg-blue"></i>
-                                <span data-i18n="group.rescue.title">Rescue mode</span>
+                                <i class="ri-shield-check-line text-tg-blue"></i>
+                                <span data-i18n="group.rescue.title">Retain files</span>
                             </h4>
-                            <div class="flex gap-1 mb-2" id="setting-rescue-mode" role="radiogroup" data-i18n-aria-label="group.rescue.title" aria-label="Rescue mode">
+                            <p class="text-[11px] text-tg-textSecondary mb-2" data-i18n="group.rescue.help">When on, files in this group are kept permanently and excluded from disk rotation.</p>
+                            <div class="flex gap-1" id="setting-rescue-mode" role="radiogroup" data-i18n-aria-label="group.rescue.title" aria-label="Retain files">
                                 <button type="button" data-rescue-value="auto" class="rescue-chip flex-1 py-1 px-2 rounded text-[11px] bg-tg-bg/40 hover:bg-tg-hover transition-colors" data-i18n="group.rescue.mode_auto">Auto</button>
                                 <button type="button" data-rescue-value="on" class="rescue-chip flex-1 py-1 px-2 rounded text-[11px] bg-tg-bg/40 hover:bg-tg-hover transition-colors" data-i18n="group.rescue.mode_on">On</button>
                                 <button type="button" data-rescue-value="off" class="rescue-chip flex-1 py-1 px-2 rounded text-[11px] bg-tg-bg/40 hover:bg-tg-hover transition-colors" data-i18n="group.rescue.mode_off">Off</button>
                             </div>
-                            <div class="flex items-center gap-2">
-                                <label for="setting-rescue-hours" class="text-[11px] text-tg-textSecondary shrink-0" data-i18n="group.rescue.hours_label">Retention (h)</label>
-                                <input id="setting-rescue-hours" type="number" min="1" max="720" placeholder="48" class="tg-input flex-1 text-sm py-1.5" />
-                            </div>
+                            <input id="setting-rescue-hours" type="hidden" />
                         </div>
 
                         <!-- 5. Auto-backfill schedule -->

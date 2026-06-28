@@ -161,10 +161,13 @@ export async function loadSettings() {
                 const on = rescueDefaultToggle.classList.contains('active');
                 showToast(
                     on
-                        ? i18nT('toast.rescue_default_on', 'Rescue mode default on — save to apply')
+                        ? i18nT(
+                              'toast.rescue_default_on',
+                              'File retention on by default — save to apply',
+                          )
                         : i18nT(
                               'toast.rescue_default_off',
-                              'Rescue mode default off — save to apply',
+                              'File retention off by default — save to apply',
                           ),
                     on ? 'success' : 'info',
                 );

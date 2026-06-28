@@ -27,6 +27,7 @@ import {
     setDownloadEvicted,
 } from './db.js';
 import { hasMirrorDestinations } from './backup/queue.js';
+import { isRescueProtected } from './rescue.js';
 import { deferDelete } from './delete-queue.js';
 import { purgeThumbsForDownload } from './thumbs.js';
 import { purgeSeekbarForDownload } from './seekbar/index.js';
@@ -221,9 +222,12 @@ export class DiskRotator {
             outer: while (total > capBytes && safety > 0) {
                 const candidates = getOldestDownloads(batch, { skipUnconfirmed });
                 if (!candidates.length) break;
+                const groups = cfg?.groups || [];
                 for (const row of candidates) {
                     if (total <= capBytes || safety <= 0) break outer;
                     if (isInFlight(row)) continue; // skip — downloader is mid-write
+                    const group = groups.find((g) => g.id === row.group_id);
+                    if (isRescueProtected(group, cfg)) continue; // skip — group is retention-protected
                     await tryUnlink(row);
                     // Mark as evicted: keep the DB row so the gallery can
                     // show a "cloud only" badge and stream on demand.

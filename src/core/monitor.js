@@ -9,7 +9,7 @@ import { EventEmitter } from 'events';
 import { logger } from './logger.js';
 import { sanitizeName } from './downloader.js';
 import { markRescued } from './db.js';
-import { effectiveRescueMs } from './rescue.js';
+import { isRescueProtected } from './rescue.js';
 import { loadConfig, saveConfig, watchConfig } from '../config/manager.js';
 import { SpamGuard } from './monitor-spam.js';
 import fs from 'fs/promises';
@@ -1045,13 +1045,9 @@ export class RealtimeMonitor extends EventEmitter {
                     });
                 }
 
-                // Rescue Mode: stamp the job with pending_until if this group
-                // (or the global default) has rescue on. The DB row inserted
-                // in registerDownload() carries this through, and the rescue
-                // sweeper auto-deletes it after expiry unless markRescued()
-                // fired in the meantime.
-                const rescueMs = effectiveRescueMs(group, this.config);
-                const pendingUntil = rescueMs ? Date.now() + rescueMs : null;
+                // Rescue (retention) mode: files in protected groups are kept
+                // forever — disk rotator skips them. No expiry stamp needed.
+                const pendingUntil = null;
 
                 // Pin the client that actually surfaced this message so the
                 // downloader fetches bytes through the same session. The poll
