@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+## [2.25.0] — 2026-06-28
+
 Viewer overhaul, file retention redesign, backfill UX fixes, sidebar hardening, backup observability, pre-download dedup, security hardening, and a full AI workflow pass (scanner cards, search/tag/people tooling, durable scan state, Smart Albums v2).
 
 ### Added
