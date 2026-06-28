@@ -4,37 +4,80 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
-Maintenance → AI received a full workflow pass: scanner status cards, richer search/tag/people tooling, durable scan state, and Smart Albums v2 runtime controls. This release also hardens downloader edge cases behind empty-file failures and aligns semantic-search APIs/config with the current AI roadmap.
+Viewer overhaul, file retention redesign, backfill UX fixes, sidebar hardening, backup observability, pre-download dedup, security hardening, and a full AI workflow pass (scanner cards, search/tag/people tooling, durable scan state, Smart Albums v2).
 
 ### Added
-- **AI scanner cards** — per-feature status cards (faces/tags/OCR/objects/WD14) with readiness, coverage, quick actions, and direct links to Settings / View failures.
+- **File retention mode** — rescue mode semantics flipped: enabling retention now keeps files permanently and excludes the group from disk rotation. Per-group override (Auto / On / Off) in Group Settings. Previously, enabling rescue mode caused files to be deleted unless Telegram deleted them first.
+- **Viewer keyboard shortcuts** — `a` enables autoplay + auto-advance; `d` deletes current file without confirmation; `j`/`k`/`l`/`p`/`n`/`t` rewired to correct actions.
+- **Viewer pin/unpin button** — icon-only action bar with Pin, Backup, Share, Delete, Download. `p` keyboard shortcut toggles pin.
+- **Viewer manual backup push** — cloud icon enqueues file to all enabled mirror destinations; turns green on WS `backup_done` confirmation.
+- **Viewer photo slideshow** — auto-advance timer (2–15 s configurable) with crossfade transitions.
+- **Viewer broken-image placeholder** — evicted/missing images show a placeholder instead of broken-image icon.
+- **Caption display** — message captions stored on download and shown in viewer below the file.
+- **View history / watched filter** — `last_viewed_at` stamped on viewer open; "Watched" toggle chip in gallery tab bar filters to seen files.
+- **Crosspost badge** — blue badge on gallery tiles when the same file hash appears in more than one group.
+- **Sidebar new-since-last-visit badge** — unread dot on groups with downloads newer than last open.
+- **Backup status pill** — Idle/Running pill on maintenance hub backup card, driven by `GET /api/backup/status`.
+- **Backup pause persistence** — pause state written to `backup_destinations.paused` and restored on restart.
+- **Health endpoint** — `GET /api/system/health` returns uptime, heap, CPU, DB ping, and WebSocket client count.
+- **AI scanner cards** — per-feature status cards (faces/tags/OCR/WD14) with readiness, coverage, quick actions, and links to Settings / View failures.
 - **AI search tab improvements** — source toggles (semantic/tags/objects/people/text/filename) and per-result match explanations.
-- **AI tag details panel** — source-aware tag details, related tags, and one-click "create album" flow from tag context.
+- **AI tag details panel** — source-aware tag details, related tags, and one-click "create album" flow.
 - **AI people tab upgrades** — recency/filter controls and merge suggestions for likely duplicate clusters.
-- **Durable scan-state model** — persistent maintenance job and per-media scanner state tracking for crash-safe progress + retries.
-- **Smart Albums runtime controls** — new preview/runtime/rebuild-all surfaces:
-  - `POST /api/ai/smart-albums/preview`
-  - `GET /api/ai/smart-albums/runtime`
-  - `POST /api/ai/smart-albums/rebuild-all`
-- **NL Smart Album builder polish** — auto-preview after parse, preview-count header above rule JSON, "Apply recommended fixes" action, and better create-error context.
+- **Durable scan-state model** — persistent maintenance job and per-media scanner state for crash-safe progress + retries.
+- **Smart Albums runtime controls** — `POST /api/ai/smart-albums/preview`, `GET /api/ai/smart-albums/runtime`, `POST /api/ai/smart-albums/rebuild-all`.
+- **NL Smart Album builder polish** — auto-preview after parse, preview-count header, "Apply recommended fixes" action.
 
 ### Changed
-- **Semantic search API compatibility restored** — supports both `GET /api/ai/search` and `POST /api/ai/search`, plus `POST /api/ai/search/similar` for viewer/gallery flows.
-- **Search response back-compat aliases** — semantic-search rows now include both camelCase and legacy snake_case fields so older UI callers continue to work.
-- **AI config alignment** — added/normalized `advanced.ai.semanticSearch` and `advanced.ai.smartAlbums` blocks (deep-merged + validated in config route).
-- **Embedding model resolution unified** — semantic-index producers/consumers now resolve CLIP model consistently (`searchModel` → `model` → legacy `clipModel` fallback).
-- **Smart Albums scheduling** — optional periodic rebuild loop driven by `advanced.ai.smartAlbums.refreshIntervalMin` when smart albums are enabled.
+- **File retention UI** — Settings card renamed "File retention"; group setting renamed "Retain files". `retentionHours` field hidden (retention is now permanent, not windowed).
+- **Backfill presets standardised** — backfill page now includes Last 5 and Last 10 chips to match group settings shortcuts.
+- **Sidebar width** — 16 rem on sm+, `min(85vw, 14rem)` on mobile; long group names truncate cleanly.
+- **AI cache TTL** — `/api/ai/llm/status` and `/api/ai/doctor` probe cache raised from 15 s to 60 s (Tailscale RTT + cold Ollama model made 15 s too short).
+- **Semantic search API compatibility** — supports both `GET` and `POST /api/ai/search`, plus `POST /api/ai/search/similar`.
+- **Search response back-compat aliases** — semantic-search rows include both camelCase and snake_case fields.
+- **AI config alignment** — `advanced.ai.semanticSearch` and `advanced.ai.smartAlbums` blocks normalised.
+- **Embedding model resolution unified** — `searchModel` → `model` → `clipModel` fallback chain.
+- **Smart Albums scheduling** — optional periodic rebuild via `advanced.ai.smartAlbums.refreshIntervalMin`.
 
 ### Fixed
-- **Scanner card action wiring** — event delegation + direct start path removed stale handlers that could noop on action clicks.
-- **Downloader empty-file/race hardening** — prevents duplicate enqueue of the same `(groupId,messageId)`, adds in-worker same-key guard, and always removes stale `.part` before download attempts.
-- **Embedding reindex failure visibility** — sidecar-offline conditions now return explicit `503 SIDECAR_OFFLINE` instead of silent batch error drift.
-- **Smart Album validation errors** — parse/create flows now return structured `INVALID_RULE` payloads with `details.section` for clearer UI/operator feedback.
+- **Backfill empty-state button** — "Run Backfill" from an empty group gallery now navigates to `#/backfill/<groupId>` and pre-selects that group.
+- **Viewer group chip** — clicking the group chip opens the group gallery; `window.openGroup` was never set.
+- **Keyboard shortcut context guard** — `gs` in viewer no longer leaks `s` into select-mode; `/` focuses correct search input (`#sidebar-groups-search`).
+- **Shortcuts navigation** — `gv`/`gg`/`ge`/`gs` now work; `window.navigateTo` was never set on `window`.
+- **Sidebar group type persistence** — discovered types written through to DB and config so categories survive server restarts and disconnects.
+- **Viewer crossfade** — opacity stuck at 0 on cached/failed images fixed.
+- **Monitor boot crash** — `reloadConfig` guarded against empty groups array (was root cause of `_sharedMonitor` boot failure).
+- **GDrive OAuth** — rewritten from dead OOB flow to loopback redirect; token expiry resolved by publishing consent screen to Production.
+- **HSTS** — `max-age=0` sent when `forceHttps` disabled to prevent browser lock-in.
+- **Cookie `secure` flag** — tied to `forceHttps` config, not `NODE_ENV`.
+- **Scanner card action wiring** — event delegation removed stale handlers that noop'd on action clicks.
+- **Downloader empty-file/race hardening** — dedupes `(groupId,messageId)` enqueue, in-worker same-key guard, removes stale `.part` before attempt.
+- **Embedding reindex failure visibility** — sidecar-offline returns explicit `503 SIDECAR_OFFLINE`.
+- **Smart Album validation errors** — structured `INVALID_RULE` payloads with `details.section`.
+
+### Performance
+- **Pre-download dedup fast-path** — skips download when a hash-verified file with matching size + extension already exists on disk; saves bandwidth on cross-group reposts.
+- **`toPosixPath()` helper** — replaced 42 scattered `replace(/\\/g, '/')` calls across 22 files.
+
+### Security
+- **GDrive OAuth** — fixed dead OOB flow; sidecar binary SHA-256 verification before exec.
+- **`/metrics`** — default-denies non-loopback when `TGDL_METRICS_TOKEN` unset.
+- **npm audit** — 30 vulnerabilities resolved (OTel stack, grpc, protobuf, vite, form-data).
+
+### Dependencies
+- `ssh2-sftp-client` 11 → 12.1.1
+- `express-rate-limit` 7.5.1 → 8.5.2
+- `better-sqlite3` 12.9.0 → 12.11.1
+- `@aws-sdk/client-s3` 3.1043.0 → 3.1061.0
+- `helmet` 8.1.0 → 8.2.0
+- `node` 26.2.0 → 26.3.1
+- `actions/checkout` 6 → 7, `docker/setup-qemu-action` 3 → 4, `docker/login-action` 3 → 4
 
 ### Database
-- Additive schema for durable scan tracking:
-  - `maintenance_jobs`
-  - `media_scan_state`
+- Migration 022: `downloads.caption TEXT`
+- Migration 023: `downloads.last_viewed_at INTEGER`
+- Migration 024: `backup_destinations.paused INTEGER NOT NULL DEFAULT 0`
+- Additive schema for durable scan tracking: `maintenance_jobs`, `media_scan_state`
 
 ## [2.18.0] — 2026-05-13
 
