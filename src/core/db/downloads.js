@@ -214,12 +214,13 @@ export function insertDownload(data) {
         // after the timestamp unless the source is deleted first.
         pendingUntil: data.pendingUntil ?? null,
         caption: data.caption ?? null,
+        tgFileId: data.tgFileId ?? null,
     };
     const stmt = db.prepare(`
         INSERT OR IGNORE INTO downloads (
-            group_id, group_name, message_id, file_name, file_size, file_type, file_path, ttl_seconds, file_hash, pending_until, caption
+            group_id, group_name, message_id, file_name, file_size, file_type, file_path, ttl_seconds, file_hash, pending_until, caption, tg_file_id
         ) VALUES (
-            @groupId, @groupName, @messageId, @fileName, @fileSize, @fileType, @filePath, @ttlSeconds, @fileHash, @pendingUntil, @caption
+            @groupId, @groupName, @messageId, @fileName, @fileSize, @fileType, @filePath, @ttlSeconds, @fileHash, @pendingUntil, @caption, @tgFileId
         )
     `);
     return stmt.run(row);

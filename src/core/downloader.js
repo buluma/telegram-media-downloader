@@ -605,65 +605,55 @@ export class DownloadManager extends EventEmitter {
                 throw err;
             }
 
-            // 2b. Pre-download dedup: if a hash-verified file with the
-            // same original Telegram filename + size already exists, skip
-            // the download entirely and register a DB row pointing at the
-            // existing file. Catches cross-group reposts without wasting
-            // bandwidth on a full download + hash cycle.
-            if (fileSize > 0 && attempt === 1) {
-                const origName = this._getOriginalFilename(job.message);
-                if (origName) {
+            // 2b. Pre-download dedup: if a hash-verified file with the same
+            // Telegram document/photo ID already exists, skip the download and
+            // register a DB row pointing at the existing file. Telegram assigns
+            // a stable document.id to each unique file — the same ID across
+            // groups guarantees identical content (e.g. cross-posts, comment
+            // threads mirroring the parent channel). Extension/size heuristics
+            // are intentionally omitted: only the Telegram file identity counts.
+            if (attempt === 1) {
+                const tgFileId = this._getTgFileId(job.message);
+                if (tgFileId) {
                     try {
-                        const existing = getDb()
+                        const match = getDb()
                             .prepare(`
-                                SELECT id, file_path, file_size, file_hash FROM downloads
-                                 WHERE file_size = ? AND file_hash IS NOT NULL
-                                 ORDER BY id ASC LIMIT 20
+                                SELECT id, file_path, file_size, file_hash, file_type FROM downloads
+                                 WHERE tg_file_id = ? AND file_hash IS NOT NULL AND file_path IS NOT NULL
+                                 ORDER BY id ASC LIMIT 1
                             `)
-                            .all(fileSize);
-                        const match = existing.find((r) => {
-                            const base = path.basename(r.file_path || '');
-                            const ext = path.extname(base);
-                            const origExt = path.extname(origName);
-                            return (
-                                ext === origExt &&
-                                r.file_path &&
-                                existsSync(
-                                    path.isAbsolute(r.file_path)
-                                        ? r.file_path
-                                        : path.resolve(DOWNLOADS_DIR, r.file_path),
-                                )
-                            );
-                        });
+                            .get(tgFileId);
                         if (match) {
-                            const storedPath = path.isAbsolute(match.file_path)
+                            const absPath = path.isAbsolute(match.file_path)
                                 ? match.file_path
                                 : path.resolve(DOWNLOADS_DIR, match.file_path);
-                            const sniffedType = fileTypeFromExtension(storedPath);
-                            const relPath = path.relative(DOWNLOADS_DIR, storedPath);
-                            insertDownload({
-                                groupId: String(job.groupId || 'unknown'),
-                                groupName: job.groupName || null,
-                                messageId: job.message.id,
-                                fileName: path.basename(storedPath),
-                                fileSize: match.file_size,
-                                fileType: sniffedType,
-                                filePath: relPath,
-                                ttlSeconds: job.ttlSeconds || null,
-                                fileHash: match.file_hash,
-                                pendingUntil: job.pendingUntil || null,
-                            });
-                            this.emit('download_complete', {
-                                filePath: relPath,
-                                fileName: path.basename(storedPath),
-                                size: match.file_size,
-                                groupId: job.groupId,
-                                groupName: job.groupName,
-                                mediaType: job.mediaType,
-                                message: job.message,
-                                deduped: true,
-                            });
-                            return;
+                            if (existsSync(absPath)) {
+                                const relPath = path.relative(DOWNLOADS_DIR, absPath);
+                                insertDownload({
+                                    groupId: String(job.groupId || 'unknown'),
+                                    groupName: job.groupName || null,
+                                    messageId: job.message.id,
+                                    fileName: path.basename(absPath),
+                                    fileSize: match.file_size,
+                                    fileType: match.file_type,
+                                    filePath: relPath,
+                                    ttlSeconds: job.ttlSeconds || null,
+                                    fileHash: match.file_hash,
+                                    pendingUntil: job.pendingUntil || null,
+                                    tgFileId,
+                                });
+                                this.emit('download_complete', {
+                                    filePath: relPath,
+                                    fileName: path.basename(absPath),
+                                    size: match.file_size,
+                                    groupId: job.groupId,
+                                    groupName: job.groupName,
+                                    mediaType: job.mediaType,
+                                    message: job.message,
+                                    deduped: true,
+                                });
+                                return;
+                            }
                         }
                     } catch {
                         // Non-fatal — fall through to normal download.
@@ -1049,6 +1039,7 @@ export class DownloadManager extends EventEmitter {
                 // it first).
                 pendingUntil: job.pendingUntil || null,
                 caption: job.caption || null,
+                tgFileId: this._getTgFileId(job.message),
             });
             // Pre-generate the default-width thumbnail in the background so
             // the FIRST gallery scroll already finds the WebP in cache. The
@@ -1222,6 +1213,18 @@ export class DownloadManager extends EventEmitter {
         for (const attr of doc.attributes || []) {
             if (attr.fileName) return attr.fileName;
         }
+        return null;
+    }
+
+    // Stable Telegram file identity: document.id for documents, photo.id for
+    // photos. Same ID across all reposts/forwards of the same file — used as
+    // the pre-download dedup key instead of fragile size+extension heuristics.
+    _getTgFileId(message) {
+        if (!message || typeof message !== 'object') return null;
+        const doc = message.document || message.media?.document;
+        if (doc?.id != null) return String(doc.id);
+        const photo = message.photo || message.media?.photo;
+        if (photo?.id != null) return String(photo.id);
         return null;
     }
 

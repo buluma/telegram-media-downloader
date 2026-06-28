@@ -117,6 +117,15 @@ const MIGRATIONS = [
         up: (db) =>
             db.exec('ALTER TABLE backup_destinations ADD COLUMN paused INTEGER NOT NULL DEFAULT 0'),
     },
+    {
+        name: '025_downloads_tg_file_id',
+        up: (db) => {
+            db.exec('ALTER TABLE downloads ADD COLUMN tg_file_id TEXT');
+            db.exec(
+                'CREATE INDEX IF NOT EXISTS idx_downloads_tg_file_id ON downloads (tg_file_id) WHERE tg_file_id IS NOT NULL',
+            );
+        },
+    },
 ];
 
 export function runMigrations(db) {
