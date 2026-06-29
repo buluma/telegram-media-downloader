@@ -267,3 +267,71 @@ describe('_migrateGroupsFromKv', () => {
         expect(all[0].id).toBe('existing');
     });
 });
+
+describe('deleteGroupDownloads', () => {
+    it('deletes all rows when skipPinned is false (default)', async () => {
+        const { db: dbModule, groups } = await getModules();
+        const db = dbModule.getDb();
+        db.prepare(
+            "INSERT INTO downloads (group_id, message_id, file_path, pinned) VALUES ('G1', 1, 'a.mp4', 0), ('G1', 2, 'b.mp4', 1)",
+        ).run();
+        groups.deleteGroupDownloads('G1');
+        const rows = db.prepare('SELECT * FROM downloads WHERE group_id = ?').all('G1');
+        expect(rows).toHaveLength(0);
+    });
+
+    it('skips pinned rows when skipPinned is true', async () => {
+        const { db: dbModule, groups } = await getModules();
+        const db = dbModule.getDb();
+        db.prepare(
+            "INSERT INTO downloads (group_id, message_id, file_path, pinned) VALUES ('G1', 1, 'a.mp4', 0), ('G1', 2, 'b.mp4', 1)",
+        ).run();
+        const result = groups.deleteGroupDownloads('G1', { skipPinned: true });
+        expect(result.deletedDownloads).toBe(1);
+        const remaining = db.prepare('SELECT pinned FROM downloads WHERE group_id = ?').all('G1');
+        expect(remaining).toHaveLength(1);
+        expect(remaining[0].pinned).toBe(1);
+    });
+
+    it('treats NULL pinned as non-pinned when skipPinned is true', async () => {
+        const { db: dbModule, groups } = await getModules();
+        const db = dbModule.getDb();
+        db.prepare(
+            "INSERT INTO downloads (group_id, message_id, file_path, pinned) VALUES ('G1', 1, 'a.mp4', NULL), ('G1', 2, 'b.mp4', 1)",
+        ).run();
+        const result = groups.deleteGroupDownloads('G1', { skipPinned: true });
+        expect(result.deletedDownloads).toBe(1);
+        const remaining = db.prepare('SELECT pinned FROM downloads WHERE group_id = ?').all('G1');
+        expect(remaining).toHaveLength(1);
+        expect(remaining[0].pinned).toBe(1);
+    });
+
+    it('skips photos when skipPhotos is true', async () => {
+        const { db: dbModule, groups } = await getModules();
+        const db = dbModule.getDb();
+        db.prepare(
+            "INSERT INTO downloads (group_id, message_id, file_path, file_type, pinned) VALUES ('G1', 1, 'a.jpg', 'photo', 0), ('G1', 2, 'b.mp4', 'video', 0)",
+        ).run();
+        const result = groups.deleteGroupDownloads('G1', { skipPhotos: true });
+        expect(result.deletedDownloads).toBe(1);
+        const remaining = db
+            .prepare('SELECT file_type FROM downloads WHERE group_id = ?')
+            .all('G1');
+        expect(remaining).toHaveLength(1);
+        expect(remaining[0].file_type).toBe('photo');
+    });
+
+    it('skips both pinned and photos when both flags set', async () => {
+        const { db: dbModule, groups } = await getModules();
+        const db = dbModule.getDb();
+        db.prepare(
+            "INSERT INTO downloads (group_id, message_id, file_path, file_type, pinned) VALUES ('G1', 1, 'a.jpg', 'photo', 0), ('G1', 2, 'b.mp4', 'video', 1), ('G1', 3, 'c.mp4', 'video', 0)",
+        ).run();
+        const result = groups.deleteGroupDownloads('G1', { skipPinned: true, skipPhotos: true });
+        expect(result.deletedDownloads).toBe(1);
+        const remaining = db
+            .prepare('SELECT message_id FROM downloads WHERE group_id = ? ORDER BY message_id')
+            .all('G1');
+        expect(remaining.map((r) => r.message_id)).toEqual([1, 2]);
+    });
+});

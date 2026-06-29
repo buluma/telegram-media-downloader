@@ -419,13 +419,19 @@ export function listGroupFiles({
 }
 
 /**
- * Delete all download records for a specific group
+ * Delete download records for a specific group.
  * @param {string} groupId - Telegram group ID
+ * @param {{ skipPinned?: boolean, skipPhotos?: boolean }} [opts]
  * @returns {{ deletedDownloads: number, deletedQueue: number }}
  */
-export function deleteGroupDownloads(groupId) {
+export function deleteGroupDownloads(groupId, { skipPinned = false, skipPhotos = false } = {}) {
     const db = getDb();
-    const del1 = db.prepare('DELETE FROM downloads WHERE group_id = ?').run(String(groupId));
+    const clauses = ['group_id = ?'];
+    if (skipPinned) clauses.push('COALESCE(pinned, 0) = 0');
+    if (skipPhotos) clauses.push("COALESCE(file_type, '') != 'photo'");
+    const del1 = db
+        .prepare(`DELETE FROM downloads WHERE ${clauses.join(' AND ')}`)
+        .run(String(groupId));
     const del2 = db.prepare('DELETE FROM queue WHERE group_id = ?').run(String(groupId));
     return { deletedDownloads: del1.changes, deletedQueue: del2.changes };
 }

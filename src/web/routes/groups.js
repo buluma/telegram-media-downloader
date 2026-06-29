@@ -366,27 +366,42 @@ export function createGroupsRouter({
             const folderPath = path.join(DOWNLOADS_DIR, folderName);
             let filesDeleted = 0;
             if (existsSync(folderPath)) {
-                const countFiles = (dir) => {
-                    let count = 0;
-                    const items = readdirSync(dir, { withFileTypes: true });
-                    for (const item of items) {
-                        if (item.isDirectory()) count += countFiles(path.join(dir, item.name));
-                        else count++;
-                    }
-                    return count;
-                };
-                filesDeleted = countFiles(folderPath);
-                onProgress({ stage: 'deleting_files', groupId, total: filesDeleted, processed: 0 });
-                await fs.rm(folderPath, { recursive: true, force: true });
+                const db = getDb();
+                // Only delete files that are non-pinned and non-photo.
+                // Photos are small and manually managed; pinned files must survive.
+                const deletableRows = db
+                    .prepare(
+                        "SELECT file_path FROM downloads WHERE group_id = ? AND COALESCE(pinned, 0) = 0 AND COALESCE(file_type, '') != 'photo' AND file_path IS NOT NULL",
+                    )
+                    .all(String(groupId));
                 onProgress({
                     stage: 'deleting_files',
                     groupId,
-                    total: filesDeleted,
+                    total: deletableRows.length,
+                    processed: 0,
+                });
+                for (const row of deletableRows) {
+                    const normalized = path.normalize(String(row.file_path));
+                    if (path.isAbsolute(normalized) || normalized.includes('..')) continue;
+                    const target = path.join(DOWNLOADS_DIR, normalized);
+                    try {
+                        await fs.unlink(target);
+                        filesDeleted++;
+                    } catch (e) {
+                        if (e.code !== 'ENOENT') {
+                            console.error('delete-files unlink:', target, e.message);
+                        }
+                    }
+                }
+                onProgress({
+                    stage: 'deleting_files',
+                    groupId,
+                    total: deletableRows.length,
                     processed: filesDeleted,
                 });
             }
             onProgress({ stage: 'deleting_rows', groupId });
-            const dbResult = deleteGroupDownloads(groupId);
+            const dbResult = deleteGroupDownloads(groupId, { skipPinned: true, skipPhotos: true });
             onProgress({ stage: 'done', groupId });
             try {
                 broadcast({
