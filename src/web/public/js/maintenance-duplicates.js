@@ -656,6 +656,10 @@ function _wireWs() {
     if (_wsWired) return;
     _wsWired = true;
 
+    // Re-sync when WS reconnects — we may have missed dedup_done while
+    // the connection was down (e.g. container restart during a scan).
+    ws.on('__ws_open', () => _recoverScanState());
+
     ws.on('dedup_progress', (m) => {
         // Make sure the running UI is visible — handles the case where a
         // sibling client started the scan and we're seeing it second-hand.
