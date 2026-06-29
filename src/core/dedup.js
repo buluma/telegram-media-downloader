@@ -158,29 +158,34 @@ export async function findDuplicates(opts = {}) {
         // `.all()` closes the statement before we hit any await below.
         const page = pageStmt.all(beforeId, PAGE_SIZE);
         if (!page.length) break;
-        for (const row of page) {
-            if (signal?.aborted) break;
-            processed++;
-            const abs = resolveStoredPath(row.file_path);
-            if (!abs) {
-                errored++;
-                markFailed.run(row.id);
-                continue;
-            }
-            try {
-                const digest = await hashFile(abs, signal);
-                if (signal?.aborted) break;
-                update.run(digest, row.id);
-                hashed++;
-            } catch {
-                if (signal?.aborted) break;
-                errored++;
-                markFailed.run(row.id);
-            }
-            if (onProgress && (processed % 25 === 0 || processed === total)) {
-                onProgress({ stage: 'hashing', processed, total, hashed, errored });
-            }
-        }
+        // Hash all rows in the page in parallel so every worker-pool slot
+        // is occupied rather than one file at a time. Better-sqlite3 is
+        // synchronous so the update/markFailed calls are naturally serialised
+        // by the event loop even when multiple hashes resolve concurrently.
+        await Promise.all(
+            page.map(async (row) => {
+                if (signal?.aborted) return;
+                const abs = resolveStoredPath(row.file_path);
+                if (!abs) {
+                    markFailed.run(row.id);
+                    errored++;
+                    processed++;
+                    return;
+                }
+                try {
+                    const digest = await hashFile(abs, signal);
+                    if (signal?.aborted) return;
+                    update.run(digest, row.id);
+                    hashed++;
+                } catch {
+                    if (signal?.aborted) return;
+                    markFailed.run(row.id);
+                    errored++;
+                }
+                processed++;
+            }),
+        );
+        if (onProgress) onProgress({ stage: 'hashing', processed, total, hashed, errored });
         beforeId = Number(page[page.length - 1].id);
         await new Promise((r) => setImmediate(r));
         if (page.length < PAGE_SIZE) break;

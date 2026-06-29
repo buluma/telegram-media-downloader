@@ -26,6 +26,7 @@ const $ = (id) => document.getElementById(id);
 let _wsWired = false;
 let _pageWired = false;
 let _sets = []; // last scan result
+let _scanPollTimer = null;
 
 function _formatBytes(bytes) {
     const n = Number(bytes) || 0;
@@ -370,6 +371,30 @@ function _applyDefaultSelection(setsSlice) {
     }
 }
 
+function _startScanPoll() {
+    if (_scanPollTimer) return;
+    _scanPollTimer = setInterval(async () => {
+        try {
+            const r = await api.get('/api/maintenance/dedup/status');
+            if (!r?.running) {
+                _stopScanPoll();
+                _setScanUi(false);
+                if (r?.result?.duplicateSets) _renderSets(r.result.duplicateSets);
+                _refreshStats();
+            }
+        } catch {
+            /* non-fatal */
+        }
+    }, 6000);
+}
+
+function _stopScanPoll() {
+    if (_scanPollTimer) {
+        clearInterval(_scanPollTimer);
+        _scanPollTimer = null;
+    }
+}
+
 function _setScanUi(running) {
     const btn = $('dup-scan-btn');
     const cancelBtn = $('dup-scan-cancel-btn');
@@ -392,12 +417,21 @@ function _setScanUi(running) {
     if (!running) {
         if (bar) bar.style.width = '0%';
         if (pct) pct.textContent = '';
+        _stopScanPoll();
+    } else {
+        _startScanPoll();
     }
 }
 
 async function _cancelScan() {
     try {
-        await api.post('/api/maintenance/dedup/scan/cancel', {});
+        const r = await api.post('/api/maintenance/dedup/scan/cancel', {});
+        if (!r?.cancelled) {
+            // Nothing was running — scan finished while we weren't watching
+            // (missed dedup_done WS event). Sync state from server now.
+            await _recoverScanState();
+            return;
+        }
         showToast(i18nT('maintenance.dedup.cancelling', 'Cancelling…'), 'info');
     } catch (e) {
         showToast(e?.data?.error || e.message || 'Cancel failed', 'error');
