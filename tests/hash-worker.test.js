@@ -59,6 +59,33 @@ describe('hash-worker pool', () => {
     });
 });
 
+describe('hash-worker timeout', () => {
+    it('rejects when per-job timeout fires and pool recovers', async () => {
+        // /dev/urandom is an infinite stream with no EOF: createReadStream reads
+        // return immediately (no blocking libuv op outstanding), so worker.terminate()
+        // is clean — no libuv thread-pool threads are left stuck after termination.
+        const infinitePath = '/dev/urandom';
+
+        const prevTimeout = process.env.HASH_WORKER_TIMEOUT_MS;
+        process.env.HASH_WORKER_TIMEOUT_MS = '100';
+        const { hashFile, shutdownHashPool } = await import('../src/core/hash-worker.js');
+        try {
+            // Reset pool so new timeout value is picked up on next dispatch.
+            await shutdownHashPool();
+
+            const stalledPromise = hashFile(infinitePath);
+            await expect(stalledPromise).rejects.toThrow(/timed out/i);
+
+            // Pool must recover: normal hash works on the replacement slot.
+            const hex = await hashFile(TEST_FILE);
+            expect(hex).toBe(EXPECTED);
+        } finally {
+            if (prevTimeout === undefined) delete process.env.HASH_WORKER_TIMEOUT_MS;
+            else process.env.HASH_WORKER_TIMEOUT_MS = prevTimeout;
+        }
+    }, 8000);
+});
+
 describe('hash-worker disabled fallback', () => {
     it('produces the same digest with HASH_WORKER_DISABLE=1', async () => {
         // We can't `delete process.env.HASH_WORKER_DISABLE` mid-suite

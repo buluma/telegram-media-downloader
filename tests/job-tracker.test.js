@@ -171,6 +171,64 @@ describe('createJobTracker', () => {
     });
 });
 
+describe('createJobTracker — cancel grace period', () => {
+    it('force-clears a stuck runFn that ignores the abort signal', async () => {
+        const broadcasts = [];
+        const t = createJobTracker({
+            kind: 'stuck',
+            broadcast: (m) => broadcasts.push(m),
+            cancelGraceMs: 80,
+        });
+
+        t.tryStart(async () => {
+            // Hangs forever — never checks signal, never rejects.
+            await new Promise(() => {});
+        });
+
+        expect(t.isRunning()).toBe(true);
+        t.cancel();
+
+        // Grace period not yet expired — still running.
+        expect(t.isRunning()).toBe(true);
+
+        await new Promise((r) => setTimeout(r, 120));
+        expect(t.isRunning()).toBe(false);
+
+        const done = broadcasts.find((m) => m.type === 'stuck_done');
+        expect(done?.cancelled).toBe(true);
+
+        // Next tryStart should succeed immediately.
+        const second = t.tryStart(async () => ({ recovered: true }));
+        expect(second.started).toBe(true);
+        await flushAsync(10);
+        expect(t.getStatus().result).toEqual({ recovered: true });
+    }, 1000);
+
+    it('grace timer is cleared when runFn settles normally via abort', async () => {
+        const broadcasts = [];
+        const t = createJobTracker({
+            kind: 'fast-settle',
+            broadcast: (m) => broadcasts.push(m),
+            cancelGraceMs: 200,
+        });
+
+        t.tryStart(async ({ signal }) => {
+            await new Promise((_, rej) =>
+                signal.addEventListener('abort', () => rej(new Error('aborted')), { once: true }),
+            );
+        });
+
+        t.cancel();
+        // runFn rejects via abort — settles before grace period fires.
+        await new Promise((r) => setTimeout(r, 20));
+        expect(t.isRunning()).toBe(false);
+
+        // No double done broadcast (grace timer should have been cleared).
+        const dones = broadcasts.filter((m) => m.type === 'fast-settle_done');
+        expect(dones.length).toBe(1);
+    }, 1000);
+});
+
 describe('createJobTracker — multi-client WS guarantees', () => {
     it('every progress + done frame reaches every connected client', async () => {
         // Two virtual WS clients reading the same broadcast pipe.

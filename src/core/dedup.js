@@ -230,7 +230,9 @@ export async function findDuplicates(opts = {}) {
          WHERE file_hash = ?
          ORDER BY created_at ASC, id ASC
     `);
+    let _setIdx = 0;
     for (const d of duplicates) {
+        if (signal?.aborted) break;
         const files = filesQ.all(d.hash).map((r) => ({
             id: r.id,
             groupId: r.group_id,
@@ -247,6 +249,7 @@ export async function findDuplicates(opts = {}) {
             count: d.cnt,
             files,
         });
+        if (++_setIdx % 100 === 0) await new Promise((r) => setImmediate(r));
     }
 
     if (onProgress) onProgress({ stage: 'done', processed: total, total, hashed, errored });

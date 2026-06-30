@@ -1672,9 +1672,33 @@ app.get('/api/maintenance/logs/recent', async (req, res) => {
 });
 
 wss.on('connection', (ws) => {
+    ws.isAlive = true;
+    ws.on('pong', () => {
+        ws.isAlive = true;
+    });
     clients.add(ws);
     ws.on('close', () => clients.delete(ws));
 });
+
+// Heartbeat: ping every connected client every 30 s.  If a client fails
+// to respond with a pong (half-open socket, event-loop stall recovery,
+// network hiccup), terminate it so the browser fires 'close' → reconnects
+// → dispatches '__ws_open' → _recoverScanState() re-syncs the UI.
+const _wsPingTimer = setInterval(() => {
+    for (const ws of wss.clients) {
+        if (!ws.isAlive) {
+            ws.terminate();
+            continue;
+        }
+        ws.isAlive = false;
+        try {
+            ws.ping();
+        } catch {
+            /* dead socket */
+        }
+    }
+}, 30_000);
+_wsPingTimer.unref();
 
 // Last-resort handler — converts any throw or rejected promise that
 // escaped a route into a JSON 500 instead of leaving the response open
@@ -1983,6 +2007,7 @@ async function gracefulShutdown(signal) {
 
     // Stop background sweepers first so their setInterval callbacks
     // don't try to write to a closing DB / broadcast to dead clients.
+    clearInterval(_wsPingTimer);
     try {
         stopDrain();
     } catch (e) {

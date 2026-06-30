@@ -87,6 +87,12 @@ function resolvePoolSize() {
 
 const DISABLED = process.env.HASH_WORKER_DISABLE === '1';
 
+function _resolveTimeoutMs() {
+    const env = parseInt(process.env.HASH_WORKER_TIMEOUT_MS, 10);
+    if (Number.isFinite(env) && env > 0) return env;
+    return 120_000; // 2 min — generous for large files on slow mounts
+}
+
 /** @type {{worker: Worker, busy: boolean}[] | null} */
 let _pool = null;
 let _nextJobId = 1;
@@ -115,6 +121,7 @@ function _makeSlot() {
         const { jobId, ok, hex, error } = msg || {};
         const pending = _inFlight.get(jobId);
         if (!pending) return; // late delivery after timeout / worker reset
+        clearTimeout(pending.timer);
         _inFlight.delete(jobId);
         slot.busy = false;
         if (ok) pending.resolve(hex);
@@ -123,14 +130,15 @@ function _makeSlot() {
     });
     worker.on('error', (err) => {
         // Reject any in-flight job assigned to this slot.
+        const idx = _slotForWorker(slot.worker);
         for (const [jid, p] of _inFlight) {
-            if (p.slotIdx === _slotForWorker(slot.worker)) {
+            if (p.slotIdx === idx) {
+                clearTimeout(p.timer);
                 _inFlight.delete(jid);
                 p.reject(err);
             }
         }
         // Replace the dead worker so the pool keeps draining.
-        const idx = _slotForWorker(slot.worker);
         if (idx >= 0 && _pool) _pool[idx] = _makeSlot();
         _drainWaiters();
     });
@@ -147,16 +155,31 @@ function _makeSlot() {
 
 function _drainWaiters() {
     if (!_pool || !_waiters.length) return;
+    const timeoutMs = _resolveTimeoutMs();
     for (const slot of _pool) {
         if (!_waiters.length) break;
         if (slot.busy) continue;
         const job = _waiters.shift();
         const jobId = _nextJobId++;
+        const slotIdx = _slotForWorker(slot.worker);
         slot.busy = true;
+
+        const timer = setTimeout(() => {
+            const pending = _inFlight.get(jobId);
+            if (!pending) return;
+            _inFlight.delete(jobId);
+            pending.reject(new Error(`hash worker job timed out after ${timeoutMs} ms`));
+            // Terminate the stuck worker. Keep slot.busy=true so _drainWaiters
+            // doesn't dispatch to the dying worker. The 'exit' handler creates
+            // a fresh replacement slot (busy=false) and calls _drainWaiters.
+            slot.worker.terminate().catch(() => {});
+        }, timeoutMs);
+
         _inFlight.set(jobId, {
             resolve: job.resolve,
             reject: job.reject,
-            slotIdx: _slotForWorker(slot.worker),
+            slotIdx,
+            timer,
         });
         try {
             slot.worker.postMessage({
@@ -165,6 +188,7 @@ function _drainWaiters() {
                 algo: job.algo || CHECKSUM_ALGO,
             });
         } catch (err) {
+            clearTimeout(timer);
             slot.busy = false;
             _inFlight.delete(jobId);
             job.reject(err);
@@ -218,6 +242,7 @@ export async function shutdownHashPool() {
         w.reject(new Error('hash worker pool shut down'));
     }
     for (const [jid, p] of _inFlight) {
+        clearTimeout(p.timer);
         _inFlight.delete(jid);
         p.reject(new Error('hash worker pool shut down'));
     }

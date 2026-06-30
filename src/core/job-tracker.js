@@ -34,6 +34,7 @@
 // just start fresh, which is the right behaviour after a crash.
 
 const PROGRESS_LOG_INTERVAL_MS = 5000;
+const CANCEL_GRACE_MS = 5000;
 
 /**
  * Create a JobTracker.
@@ -45,15 +46,20 @@ const PROGRESS_LOG_INTERVAL_MS = 5000;
  * @param {(entry:object) => void} [opts.log]    Structured log fn.
  * @param {string} [opts.eventPrefix] Override WS event prefix (default = kind).
  *                                    Emits `${prefix}_progress` / `${prefix}_done`.
+ * @param {number} [opts.cancelGraceMs] Ms after cancel() before a stuck runFn
+ *                                    is force-cleared. Default 5000.
  */
-export function createJobTracker({ kind, broadcast, log, eventPrefix } = {}) {
+export function createJobTracker({ kind, broadcast, log, eventPrefix, cancelGraceMs } = {}) {
     if (!kind) throw new Error('createJobTracker: kind is required');
     const _broadcast = typeof broadcast === 'function' ? broadcast : () => {};
     const _log = typeof log === 'function' ? log : () => {};
     const _prefix = eventPrefix || kind;
+    const _cancelGraceMs =
+        typeof cancelGraceMs === 'number' && cancelGraceMs > 0 ? cancelGraceMs : CANCEL_GRACE_MS;
 
     let _running = false;
     let _abort = null;
+    let _forceCancelTimer = null;
     let _lastProgressLogAt = 0;
     let _state = _initialState();
 
@@ -214,6 +220,12 @@ export function createJobTracker({ kind, broadcast, log, eventPrefix } = {}) {
                 });
                 _safeLog({ source: kind, level: 'error', msg: `${kind} failed: ${msg}` });
             } finally {
+                // If runFn settled naturally, cancel's grace timer is no
+                // longer needed — clear it so it can't fire a double-done.
+                if (_forceCancelTimer) {
+                    clearTimeout(_forceCancelTimer);
+                    _forceCancelTimer = null;
+                }
                 _running = false;
                 _abort = null;
             }
@@ -235,6 +247,34 @@ export function createJobTracker({ kind, broadcast, log, eventPrefix } = {}) {
             /* swallow */
         }
         _safeLog({ source: kind, level: 'warn', msg: `${kind} cancel requested` });
+
+        // Grace period: if the runFn honours the abort signal it will reject
+        // and the finally block clears this timer. If it never settles (e.g.
+        // a worker-pool slot is stuck), force-clear so the next tryStart()
+        // isn't permanently blocked by a hung job.
+        if (_forceCancelTimer) clearTimeout(_forceCancelTimer);
+        _forceCancelTimer = setTimeout(() => {
+            _forceCancelTimer = null;
+            if (!_running) return; // settled naturally — nothing to do
+            const finishedAt = Date.now();
+            _state = {
+                ..._state,
+                running: false,
+                stage: 'cancelled',
+                finishedAt,
+                durationMs: finishedAt - (_state.startedAt || finishedAt),
+                error: null,
+            };
+            _running = false;
+            _abort = null;
+            _safeBroadcast({ type: `${_prefix}_done`, cancelled: true, kind });
+            _safeLog({
+                source: kind,
+                level: 'warn',
+                msg: `${kind} cancel grace period expired — forced cleanup`,
+            });
+        }, _cancelGraceMs);
+
         return true;
     }
 

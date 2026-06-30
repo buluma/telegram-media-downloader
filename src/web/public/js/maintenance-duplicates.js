@@ -27,6 +27,7 @@ let _wsWired = false;
 let _pageWired = false;
 let _sets = []; // last scan result
 let _scanPollTimer = null;
+let _scanKnownDone = false; // guards against stale dedup_progress re-locking UI
 
 function _formatBytes(bytes) {
     const n = Number(bytes) || 0;
@@ -429,6 +430,7 @@ async function _cancelScan() {
         if (!r?.cancelled) {
             // Nothing was running — scan finished while we weren't watching
             // (missed dedup_done WS event). Sync state from server now.
+            _scanKnownDone = true;
             await _recoverScanState();
             return;
         }
@@ -444,6 +446,7 @@ async function _cancelScan() {
 // the request open. Result lands via `dedup_done` WS event; status
 // recovery on re-mount via GET /dedup/status.
 async function _runScan() {
+    _scanKnownDone = false;
     _setScanUi(true);
     try {
         const r = await api.post('/api/maintenance/dedup/scan', {});
@@ -480,6 +483,7 @@ async function _runScan() {
 async function _recoverScanState() {
     try {
         const r = await api.get('/api/maintenance/dedup/status');
+        if (!r?.running) _scanKnownDone = true;
         _setScanUi(!!r?.running);
         if (r?.result?.duplicateSets) _renderSets(r.result.duplicateSets);
         else if (!r?.running) _renderSets([]);
@@ -663,6 +667,10 @@ function _wireWs() {
     ws.on('dedup_progress', (m) => {
         // Make sure the running UI is visible — handles the case where a
         // sibling client started the scan and we're seeing it second-hand.
+        // Guard: don't re-lock UI if we already received dedup_done or
+        // _recoverScanState confirmed the scan is not running (stale event
+        // buffered while WS was reconnecting).
+        if (_scanKnownDone) return;
         _setScanUi(true);
         const bar = $('dup-progress-bar');
         const stage = $('dup-progress-stage');
@@ -706,6 +714,7 @@ function _wireWs() {
     });
 
     ws.on('dedup_done', (m) => {
+        _scanKnownDone = true;
         _setScanUi(false);
         if (m?.cancelled) {
             showToast(i18nT('maintenance.dedup.cancelled', 'Scan cancelled'), 'info');
