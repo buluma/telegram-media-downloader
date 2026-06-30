@@ -214,6 +214,15 @@ describe('runMigrations', () => {
         expect(indexes).toContain('idx_wd14_tags_tag_score');
     });
 
+    it('adds duration_sec to downloads (migration 027)', () => {
+        runMigrations(db);
+        const cols = db
+            .prepare('PRAGMA table_info(downloads)')
+            .all()
+            .map((r) => r.name);
+        expect(cols).toContain('duration_sec');
+    });
+
     it('throws on genuinely bad migration SQL', () => {
         const badMigrations = [
             {

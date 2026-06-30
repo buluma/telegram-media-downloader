@@ -139,6 +139,10 @@ const MIGRATIONS = [
                 'CREATE INDEX IF NOT EXISTS idx_wd14_tags_tag_score ON image_tags_wd14 (tag, score)',
             ),
     },
+    {
+        name: '027_downloads_duration_sec',
+        up: (db) => db.exec('ALTER TABLE downloads ADD COLUMN duration_sec REAL'),
+    },
 ];
 
 export function runMigrations(db) {

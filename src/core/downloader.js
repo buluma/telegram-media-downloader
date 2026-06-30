@@ -641,6 +641,7 @@ export class DownloadManager extends EventEmitter {
                                     fileHash: match.file_hash,
                                     pendingUntil: job.pendingUntil || null,
                                     tgFileId,
+                                    durationSec: this._getVideoDurationSec(job.message),
                                 });
                                 this.emit('download_complete', {
                                     filePath: relPath,
@@ -1040,6 +1041,7 @@ export class DownloadManager extends EventEmitter {
                 pendingUntil: job.pendingUntil || null,
                 caption: job.caption || null,
                 tgFileId: this._getTgFileId(job.message),
+                durationSec: this._getVideoDurationSec(job.message),
             });
             // Pre-generate the default-width thumbnail in the background so
             // the FIRST gallery scroll already finds the WebP in cache. The
@@ -1212,6 +1214,18 @@ export class DownloadManager extends EventEmitter {
         if (!doc) return null;
         for (const attr of doc.attributes || []) {
             if (attr.fileName) return attr.fileName;
+        }
+        return null;
+    }
+
+    _getVideoDurationSec(message) {
+        if (!message || typeof message !== 'object') return null;
+        const doc = message.document || message.media?.document;
+        if (!doc) return null;
+        for (const attr of doc.attributes || []) {
+            if (attr.className === 'DocumentAttributeVideo' && attr.duration != null) {
+                return Number(attr.duration) || null;
+            }
         }
         return null;
     }

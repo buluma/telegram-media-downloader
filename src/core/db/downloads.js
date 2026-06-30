@@ -215,12 +215,13 @@ export function insertDownload(data) {
         pendingUntil: data.pendingUntil ?? null,
         caption: data.caption ?? null,
         tgFileId: data.tgFileId ?? null,
+        durationSec: data.durationSec ?? null,
     };
     const stmt = db.prepare(`
         INSERT OR IGNORE INTO downloads (
-            group_id, group_name, message_id, file_name, file_size, file_type, file_path, ttl_seconds, file_hash, pending_until, caption, tg_file_id
+            group_id, group_name, message_id, file_name, file_size, file_type, file_path, ttl_seconds, file_hash, pending_until, caption, tg_file_id, duration_sec
         ) VALUES (
-            @groupId, @groupName, @messageId, @fileName, @fileSize, @fileType, @filePath, @ttlSeconds, @fileHash, @pendingUntil, @caption, @tgFileId
+            @groupId, @groupName, @messageId, @fileName, @fileSize, @fileType, @filePath, @ttlSeconds, @fileHash, @pendingUntil, @caption, @tgFileId, @durationSec
         )
     `);
     return stmt.run(row);
@@ -408,7 +409,7 @@ export function getAllDownloads(limit = 50, offset = 0, type = 'all', opts = {})
     const orderBy = opts.pinnedFirst ? `COALESCE(pinned, 0) DESC, ${baseSort}` : baseSort;
     const rows = getDb()
         .prepare(
-            `SELECT d.*, ss.duration_sec,
+            `SELECT d.*, COALESCE(ss.duration_sec, d.duration_sec) AS duration_sec,
                 (SELECT COUNT(DISTINCT group_id) FROM downloads cx
                   WHERE cx.file_hash = d.file_hash AND d.file_hash IS NOT NULL) AS crosspost_count
                FROM downloads d
@@ -464,7 +465,7 @@ export function getDownloads(groupId, limit = 50, offset = 0, type = 'all', opts
 
     const rows = db
         .prepare(
-            `SELECT d.*, ss.duration_sec,
+            `SELECT d.*, COALESCE(ss.duration_sec, d.duration_sec) AS duration_sec,
                 (SELECT COUNT(DISTINCT group_id) FROM downloads cx
                   WHERE cx.file_hash = d.file_hash AND d.file_hash IS NOT NULL) AS crosspost_count
                FROM downloads d
@@ -511,7 +512,7 @@ export function searchDownloads(query, opts = {}) {
             const params = [ftsQuery, ...(opts.groupId ? [String(opts.groupId)] : [])];
             const rows = db
                 .prepare(
-                    `SELECT d.*, ss.duration_sec
+                    `SELECT d.*, COALESCE(ss.duration_sec, d.duration_sec) AS duration_sec
                        FROM downloads d
                        LEFT JOIN seekbar_sprites ss ON ss.download_id = d.id
                        INNER JOIN downloads_fts fts ON fts.rowid = d.id
@@ -601,7 +602,7 @@ const _FED_COLS_LOCAL = `
     d.file_path, d.file_hash, d.status, d.created_at, d.nsfw_score,
     COALESCE(d.pinned, 0) AS pinned,
     d.pending_until, d.rescued_at,
-    ss.duration_sec,
+    COALESCE(ss.duration_sec, d.duration_sec) AS duration_sec,
     d.caption,
     d.last_viewed_at,
     (SELECT COUNT(DISTINCT group_id) FROM downloads cx
