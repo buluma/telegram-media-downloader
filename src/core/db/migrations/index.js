@@ -126,6 +126,19 @@ const MIGRATIONS = [
             );
         },
     },
+    {
+        // Composite index on (tag, score) for the listWd14Tags GROUP BY
+        // aggregation. The query filters WHERE score >= ? AND tag != '...'
+        // then GROUP BY tag — a (tag, score) covering index lets SQLite
+        // group + filter without reading the table rows or a temp B-tree.
+        // Supersedes the single-column idx_wd14_tags_tag as a prefix;
+        // the old index is kept for other queries that only filter by tag.
+        name: '026_wd14_tags_tag_score',
+        up: (db) =>
+            db.exec(
+                'CREATE INDEX IF NOT EXISTS idx_wd14_tags_tag_score ON image_tags_wd14 (tag, score)',
+            ),
+    },
 ];
 
 export function runMigrations(db) {

@@ -65,6 +65,13 @@ function createTestDb() {
             error          TEXT,
             remote_path    TEXT
         );
+        CREATE TABLE IF NOT EXISTS image_tags_wd14 (
+            download_id INTEGER NOT NULL,
+            tag         TEXT    NOT NULL,
+            score       REAL    NOT NULL,
+            PRIMARY KEY (download_id, tag)
+        );
+        CREATE INDEX IF NOT EXISTS idx_wd14_tags_tag ON image_tags_wd14(tag);
     `);
     return db;
 }
@@ -181,6 +188,30 @@ describe('runMigrations', () => {
             .all()
             .map((r) => r.name);
         expect(applied.length).toBe(MIGRATIONS.length);
+    });
+
+    it('creates idx_wd14_tags_tag_score on image_tags_wd14 (migration 026)', () => {
+        runMigrations(db);
+        const indexes = db
+            .prepare(
+                "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='image_tags_wd14'",
+            )
+            .all()
+            .map((r) => r.name);
+        expect(indexes).toContain('idx_wd14_tags_tag_score');
+    });
+
+    it('migration 026 is idempotent — re-run does not throw', () => {
+        runMigrations(db);
+        // Second call — migration already recorded, must skip cleanly.
+        expect(() => runMigrations(db)).not.toThrow();
+        const indexes = db
+            .prepare(
+                "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='image_tags_wd14'",
+            )
+            .all()
+            .map((r) => r.name);
+        expect(indexes).toContain('idx_wd14_tags_tag_score');
     });
 
     it('throws on genuinely bad migration SQL', () => {

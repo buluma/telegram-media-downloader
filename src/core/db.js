@@ -26,6 +26,7 @@ const DATA_DIR = process.env.TGDL_DATA_DIR
     ? path.resolve(process.env.TGDL_DATA_DIR)
     : path.join(__dirname, '../../data');
 const DB_PATH = path.join(DATA_DIR, 'db.sqlite');
+export { DB_PATH };
 
 // Singleton connection
 let db;
@@ -249,6 +250,7 @@ function initSchema() {
             FOREIGN KEY (download_id) REFERENCES downloads(id) ON DELETE CASCADE
         );
         CREATE INDEX IF NOT EXISTS idx_wd14_tags_tag ON image_tags_wd14(tag);
+        CREATE INDEX IF NOT EXISTS idx_wd14_tags_tag_score ON image_tags_wd14 (tag, score);
     `);
     // v2.16 Phase 4 — peer_face_centroids. Stores the
     // average-of-cluster face vectors that paired peers push to us.

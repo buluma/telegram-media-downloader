@@ -888,8 +888,11 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             const key = `/api/ai/wd14/tags:${limit}:${minCount}:${minScore}`;
             res.json(
                 await _cachedAiRoute(key, 30_000, async () => {
-                    const { listWd14Tags } = await import('../../core/db/faces.js');
-                    return { success: true, tags: listWd14Tags({ limit, minCount, minScore }) };
+                    const { listWd14TagsAsync } = await import('../../core/db/faces.js');
+                    return {
+                        success: true,
+                        tags: await listWd14TagsAsync({ limit, minCount, minScore }),
+                    };
                 }),
             );
         } catch (e) {

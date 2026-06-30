@@ -1646,6 +1646,15 @@ export function countUnscannedWd14({ fileTypes = ['photo'] } = {}) {
         .get(...types).n;
 }
 
+// Async variant — routes the aggregation through the read-only worker pool so
+// a cache miss on GET /api/ai/wd14/tags can never stall the main event loop.
+// The route layer calls this; in-process callers (getWd14TagsForDownload etc.)
+// keep using the sync form below since they already run off the hot path.
+export async function listWd14TagsAsync(opts = {}) {
+    const { listWd14TagsAsync: workerFn } = await import('./read-worker.js');
+    return workerFn(opts);
+}
+
 export function listWd14Tags({ minCount = 1, minScore = 0.2, limit = 500 } = {}) {
     const db = getDb();
     const lim = Math.max(1, Math.min(2000, Number(limit) || 500));
