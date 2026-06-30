@@ -2020,6 +2020,27 @@ function _currentFilterIsNonDefault() {
     );
 }
 
+function _updatePinnedPill(el, pinnedState) {
+    const icon = el.querySelector('i');
+    const label = el.querySelector('span');
+    if (pinnedState === 'pinned') {
+        el.setAttribute('aria-pressed', 'true');
+        el.setAttribute('data-pinned-state', 'pinned');
+        if (icon) icon.className = 'ri-pushpin-2-fill mr-1';
+        if (label) label.textContent = i18nT('favorites.filter', 'Pinned');
+    } else if (pinnedState === 'unpinned') {
+        el.setAttribute('aria-pressed', 'true');
+        el.setAttribute('data-pinned-state', 'unpinned');
+        if (icon) icon.className = 'ri-pushpin-2-line mr-1';
+        if (label) label.textContent = i18nT('favorites.filter_unpinned', 'Unpinned');
+    } else {
+        el.setAttribute('aria-pressed', 'false');
+        el.removeAttribute('data-pinned-state');
+        if (icon) icon.className = 'ri-pushpin-2-line mr-1';
+        if (label) label.textContent = i18nT('favorites.filter', 'Pinned');
+    }
+}
+
 function _renderSavedFiltersMenu() {
     const menu = document.getElementById('saved-filters-menu');
     if (!menu) return;
@@ -2065,7 +2086,7 @@ function _renderSavedFiltersMenu() {
             sortBy: state.sortBy || 'date_desc',
             dateFrom: state.dateFrom || null,
             dateTo: state.dateTo || null,
-            pinnedFilter: state.pinnedFilter || false,
+            pinnedFilter: state.pinnedFilter || null,
         });
         _setSavedFilters(filters2);
         _renderSavedFiltersMenu();
@@ -2168,7 +2189,12 @@ async function loadAllFiles() {
     try {
         const type =
             state.currentFilter && state.currentFilter !== 'all' ? state.currentFilter : 'all';
-        const pinQs = state.pinnedFilter ? '&pinned=1' : '';
+        const pinQs =
+            state.pinnedFilter === 'pinned'
+                ? '&pinned=1'
+                : state.pinnedFilter === 'unpinned'
+                  ? '&pinned=0'
+                  : '';
         const watchedQs = state.watchedFilter ? '&watched=1' : '';
         const pinFirstQs =
             localStorage.getItem('tgdl-pinned-first') === '1' ? '&pinnedFirst=1' : '';
@@ -2236,7 +2262,12 @@ async function loadGroupFiles(groupId) {
     try {
         const type =
             state.currentFilter && state.currentFilter !== 'all' ? state.currentFilter : 'all';
-        const pinQs = state.pinnedFilter ? '&pinned=1' : '';
+        const pinQs =
+            state.pinnedFilter === 'pinned'
+                ? '&pinned=1'
+                : state.pinnedFilter === 'unpinned'
+                  ? '&pinned=0'
+                  : '';
         const watchedQs = state.watchedFilter ? '&watched=1' : '';
         const pinFirstQs =
             localStorage.getItem('tgdl-pinned-first') === '1' ? '&pinnedFirst=1' : '';
@@ -4395,9 +4426,11 @@ function resetGalleryFilter() {
     state.dateFrom = null;
     state.dateTo = null;
     state.watchedFilter = false;
+    state.pinnedFilter = null;
     document.querySelectorAll('#media-tabs .tab-item').forEach((t) => {
         t.classList.toggle('active', (t.dataset.type || 'all') === 'all');
         if (t.dataset.watchedToggle !== undefined) t.setAttribute('aria-pressed', 'false');
+        if (t.dataset.pinnedToggle !== undefined) _updatePinnedPill(t, null);
     });
     const labelEl = document.getElementById('date-chip-label');
     if (labelEl) labelEl.textContent = i18nT('filter.date.label', 'Date');
@@ -4415,9 +4448,10 @@ function setupMediaTabs() {
             // The pinned toggle is a chip, NOT a type tab — it stacks with
             // the type filter instead of replacing it. Handle it separately.
             if (tab.dataset.pinnedToggle !== undefined) {
-                const next = tab.getAttribute('aria-pressed') !== 'true';
-                tab.setAttribute('aria-pressed', next ? 'true' : 'false');
+                const cur = state.pinnedFilter || null;
+                const next = cur === null ? 'pinned' : cur === 'pinned' ? 'unpinned' : null;
                 state.pinnedFilter = next;
+                _updatePinnedPill(tab, next);
                 state.page = 1;
                 state.hasMore = true;
                 state.files = [];

@@ -380,6 +380,9 @@ export function getAllDownloads(limit = 50, offset = 0, type = 'all', opts = {})
     if (opts.pinnedOnly) {
         clauses.push('COALESCE(pinned, 0) = 1');
     }
+    if (opts.unpinnedOnly) {
+        clauses.push('COALESCE(pinned, 0) = 0');
+    }
     if (opts.watchedOnly) {
         clauses.push('last_viewed_at IS NOT NULL');
     }
@@ -438,6 +441,7 @@ export function getDownloads(groupId, limit = 50, offset = 0, type = 'all', opts
     }
 
     if (opts.pinnedOnly) whereParts.push('COALESCE(pinned, 0) = 1');
+    if (opts.unpinnedOnly) whereParts.push('COALESCE(pinned, 0) = 0');
     if (opts.watchedOnly) whereParts.push('last_viewed_at IS NOT NULL');
     if (opts.dateFrom) {
         whereParts.push('date(created_at) >= ?');
@@ -674,6 +678,12 @@ export function getAllDownloadsFederated(limit = 50, offset = 0, type = 'all', o
         // be locally pinned. Drop a never-true predicate to short-circuit.
         peerWhereParts.push('0 = 1');
     }
+    if (opts.unpinnedOnly) {
+        localWhereParts.push('COALESCE(pinned, 0) = 0');
+        localWherePartsD.push('COALESCE(d.pinned, 0) = 0');
+        // Peer files are never locally pinned so they always satisfy unpinnedOnly.
+        // No predicate needed on the peer side.
+    }
     if (opts.watchedOnly) {
         localWhereParts.push('last_viewed_at IS NOT NULL');
         localWherePartsD.push('d.last_viewed_at IS NOT NULL');
@@ -764,6 +774,10 @@ export function getDownloadsForGroupFederated(
         localWhereParts.push('COALESCE(pinned, 0) = 1');
         localWherePartsD.push('COALESCE(d.pinned, 0) = 1');
         peerWhereParts.push('0 = 1');
+    }
+    if (opts.unpinnedOnly) {
+        localWhereParts.push('COALESCE(pinned, 0) = 0');
+        localWherePartsD.push('COALESCE(d.pinned, 0) = 0');
     }
     if (opts.watchedOnly) {
         localWhereParts.push('last_viewed_at IS NOT NULL');

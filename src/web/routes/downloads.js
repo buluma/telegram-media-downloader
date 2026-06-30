@@ -224,6 +224,7 @@ export function createDownloadsRouter({
             // setting (`?pinnedFirst=1`) — both opt-in, both default off so
             // existing callers behave identically.
             const pinnedOnly = req.query.pinned === '1' || req.query.pinned === 'true';
+            const unpinnedOnly = req.query.pinned === '0';
             const pinnedFirst = req.query.pinnedFirst === '1' || req.query.pinnedFirst === 'true';
             const watchedOnly = req.query.watched === '1';
             const VALID_SORTS = new Set(['date_desc', 'date_asc', 'size_desc', 'name_asc']);
@@ -252,6 +253,7 @@ export function createDownloadsRouter({
                 req.role !== 'guest' && req.query.peerId ? String(req.query.peerId) : null;
             const result = getAllDownloadsFederated(limit, offset, type, {
                 pinnedOnly,
+                unpinnedOnly,
                 pinnedFirst,
                 watchedOnly,
                 sortBy,
@@ -373,6 +375,7 @@ export function createDownloadsRouter({
             const groupFolder = sanitizeName(configGroup?.name || dbRow?.group_name || 'unknown');
 
             const pinnedOnly = req.query.pinned === '1' || req.query.pinned === 'true';
+            const unpinnedOnly = req.query.pinned === '0';
             const pinnedFirst = req.query.pinnedFirst === '1' || req.query.pinnedFirst === 'true';
             const watchedOnly = req.query.watched === '1';
             const VALID_SORTS = new Set(['date_desc', 'date_asc', 'size_desc', 'name_asc']);
@@ -392,6 +395,7 @@ export function createDownloadsRouter({
                 req.role !== 'guest' && req.query.peerId ? String(req.query.peerId) : null;
             const result = getDownloadsForGroupFederated(groupId, limit, offset, type, {
                 pinnedOnly,
+                unpinnedOnly,
                 pinnedFirst,
                 watchedOnly,
                 sortBy,

@@ -3718,6 +3718,15 @@ body[data-page="maintenance-recovery"] {
     color: #ffffff;
     transform: rotate(-12deg);
 }
+#media-tabs [data-pinned-toggle][data-pinned-state="unpinned"][aria-pressed="true"] {
+    background: #d97706;
+    border-color: #d97706;
+    color: #ffffff;
+}
+#media-tabs [data-pinned-toggle][data-pinned-state="unpinned"][aria-pressed="true"] i {
+    color: #ffffff;
+    transform: rotate(12deg);
+}
 #media-tabs .tab-item--toggle:active {
     transform: scale(0.97);
 }
