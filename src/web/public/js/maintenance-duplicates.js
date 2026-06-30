@@ -994,6 +994,11 @@ async function _deleteAllExtras(keep) {
 
 export function init() {
     _wireWs();
+    // Sync scan + delete + stats state on every navigation — not just on
+    // WS reconnect. In this multi-panel SPA the WS connection is opened
+    // once at app boot, so __ws_open (the only other _recoverScanState
+    // trigger) never fires again on subsequent navigations to this page.
+    _recoverScanState();
 
     if (!_pageWired) {
         _pageWired = true;
