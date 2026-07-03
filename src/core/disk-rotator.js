@@ -38,6 +38,7 @@ const DOWNLOADS_DIR = path.join(__dirname, '../../data/downloads');
 const DEFAULT_SWEEP_MIN = 10;
 const SWEEP_BATCH = 50; // candidate rows fetched per pass
 const MAX_DELETES_PER_SWEEP = 5000; // hard ceiling to avoid runaway loops
+const MAX_FETCH_WINDOW = 10000; // cap on how deep a sweep searches past a skippable prefix (matches getOldestDownloads' own limit ceiling)
 
 /**
  * Parse a human-readable size string into bytes.
@@ -219,12 +220,27 @@ export class DiskRotator {
                 skipUnconfirmed = true;
             }
 
+            // Skipping a row (in-flight write, or its group has rescue mode
+            // on) doesn't shrink `safety` or remove the row from the "oldest
+            // N" window — re-fetching the same `batch` size forever would
+            // spin indefinitely if the oldest rows are ALL skippable (e.g.
+            // every group has rescue mode on). `consideredIds` remembers
+            // what this sweep already looked at so each re-fetch only picks
+            // up the NEW tail of the window; `fetchLimit` grows to search
+            // past a long skippable prefix instead of re-hitting it, capped
+            // at MAX_FETCH_WINDOW so a sweep can't scan the entire table.
+            const consideredIds = new Set();
+            let fetchLimit = batch;
             outer: while (total > capBytes && safety > 0) {
-                const candidates = getOldestDownloads(batch, { skipUnconfirmed });
+                const candidates = getOldestDownloads(fetchLimit, { skipUnconfirmed }).filter(
+                    (row) => !consideredIds.has(row.id),
+                );
                 if (!candidates.length) break;
                 const groups = cfg?.groups || [];
+                let progressed = false;
                 for (const row of candidates) {
                     if (total <= capBytes || safety <= 0) break outer;
+                    consideredIds.add(row.id);
                     if (isInFlight(row)) continue; // skip — downloader is mid-write
                     const group = groups.find((g) => g.id === row.group_id);
                     if (isRescueProtected(group, cfg)) continue; // skip — group is retention-protected
@@ -236,6 +252,7 @@ export class DiskRotator {
                     total -= sz;
                     deleted += 1;
                     safety -= 1;
+                    progressed = true;
                     purgeThumbsForDownload(row.id).catch(() => {});
                     purgeSeekbarForDownload(row.id).catch(() => {});
                     try {
@@ -245,6 +262,13 @@ export class DiskRotator {
                             path: row.file_path || null,
                         });
                     } catch {}
+                }
+                if (!progressed) {
+                    // The whole fetched window was skip-only (in-flight or
+                    // rescue-protected). Widen the search instead of
+                    // re-fetching the identical rows forever.
+                    if (fetchLimit >= MAX_FETCH_WINDOW) break; // exhausted a sane search window
+                    fetchLimit = Math.min(MAX_FETCH_WINDOW, fetchLimit * 4);
                 }
             }
 
