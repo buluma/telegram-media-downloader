@@ -179,6 +179,15 @@ class Runtime extends EventEmitter {
 
         this._monitor.on('configReloaded', (newConfig) => {
             if (this._forwarder) this._forwarder.config = newConfig;
+            // Downloader reads this.config live on every _autoScale()/throttle()
+            // tick and every download() call, so just swapping the reference
+            // is enough — no restart needed for download.concurrent,
+            // advanced.downloader.{min,max}Concurrency, diskManagement, etc.
+            if (this._downloader) this._downloader.config = newConfig;
+            // RateLimiter's tunables are plain fields read once at
+            // construction (maxPerMinute/delayMin/delayMax) — no live
+            // config reference to swap, so push the new values in directly.
+            if (this._rateLimiter) this._rateLimiter.updateConfig(newConfig.rateLimits);
         });
         this._monitor.on('download', fwd('monitor_download'));
         this._monitor.on('urls', fwd('monitor_urls'));

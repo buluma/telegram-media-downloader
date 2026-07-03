@@ -14,6 +14,18 @@ export class RateLimiter extends EventEmitter {
         this.paused = false;
     }
 
+    /**
+     * Applies a fresh rateLimits config live — same fallback shape as the
+     * constructor. Settings changes (requests/minute, delay jitter) used to
+     * need a full engine restart to take effect since these are plain
+     * fields read once at construction, not a live config reference.
+     */
+    updateConfig(config = {}) {
+        this.maxPerMinute = config.requestsPerMinute || 15;
+        this.delayMin = config.delayMs?.min || 500;
+        this.delayMax = config.delayMs?.max || 2000;
+    }
+
     async acquire() {
         while (this.paused) {
             await this.sleep(1000);

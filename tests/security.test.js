@@ -68,4 +68,43 @@ describe('RateLimiter', () => {
         rl.paused = false;
         await p;
     }, 30000);
+
+    describe('updateConfig', () => {
+        // Settings changes to requests/minute + delay jitter used to need a
+        // full engine restart — these were plain fields read once at
+        // construction, no live config reference to swap. updateConfig()
+        // lets runtime.js push a fresh rateLimits block in on every config
+        // save instead.
+        it('applies new values live', () => {
+            const rl = new RateLimiter({ requestsPerMinute: 15, delayMs: { min: 500, max: 2000 } });
+            rl.updateConfig({ requestsPerMinute: 60, delayMs: { min: 10, max: 20 } });
+            expect(rl.maxPerMinute).toBe(60);
+            expect(rl.delayMin).toBe(10);
+            expect(rl.delayMax).toBe(20);
+        });
+
+        it('matches the constructor fallback shape for missing/empty config', () => {
+            const rl = new RateLimiter({ requestsPerMinute: 60, delayMs: { min: 10, max: 20 } });
+            rl.updateConfig({});
+            expect(rl.maxPerMinute).toBe(15);
+            expect(rl.delayMin).toBe(500);
+            expect(rl.delayMax).toBe(2000);
+        });
+
+        it('a lowered limit is enforced on the very next acquire(), no restart needed', async () => {
+            const rl = new RateLimiter({ requestsPerMinute: 60, delayMs: { min: 1, max: 1 } });
+            await rl.acquire();
+            await rl.acquire();
+            rl.updateConfig({ requestsPerMinute: 2, delayMs: { min: 1, max: 1 } });
+            // Already at the new (lower) cap — the next acquire() must wait,
+            // not sail through as if still under the old limit of 60.
+            const waited = vi.fn();
+            rl.on('wait', waited);
+            const p = rl.acquire();
+            await new Promise((r) => setImmediate(r));
+            expect(waited).toHaveBeenCalled();
+            rl.requests = []; // unblock without a real 60s wait
+            await p;
+        }, 15000);
+    });
 });

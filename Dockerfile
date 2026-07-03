@@ -107,7 +107,11 @@ RUN mkdir -p /app/data /app/data/downloads /app/data/logs /app/data/sessions /ap
 # CMD, so the actual app process is still non-root.
 EXPOSE 3000
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+# --timeout must stay above healthcheck.js's own internal request timeout
+# (8s) or Docker kills the check process before that timeout ever fires.
+# docker-compose.yml's healthcheck block overrides this for compose-based
+# deployments; kept in sync here for anyone running the bare image.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
   CMD node scripts/healthcheck.js || exit 1
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/app/scripts/docker-entrypoint.sh"]

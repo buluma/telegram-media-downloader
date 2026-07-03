@@ -139,7 +139,13 @@ services:
     healthcheck:
       test: ["CMD", "node", "scripts/healthcheck.js"]
       interval: 30s
-      timeout: 5s
+      # Must stay above healthcheck.js's own internal request timeout (8s)
+      # or Docker kills the check process before that timeout ever fires.
+      # Was 5s (script's internal timeout was 4s) — too tight for a
+      # Pi-class host under a legitimate but transient load spike; see
+      # scripts/healthcheck.js's comment for the 2026-07-03 incident this
+      # caused (auth_check took 3.6s while genuinely healthy).
+      timeout: 10s
       retries: 3
       # 30 s gives the cold-start path room for state-migration + first
       # WAL checkpoint on slow disks. Healthcheck failures during this

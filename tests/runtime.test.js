@@ -4,6 +4,7 @@
 // runtime through public methods that don't require a wired engine.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { EventEmitter } from 'events';
 
 let Runtime;
 
@@ -150,5 +151,59 @@ describe('Runtime.status', () => {
             accounts: 3,
             stats: { messages: 10 },
         });
+    });
+});
+
+describe('Runtime._wireEvents — config hot-reload on configReloaded', () => {
+    // Found 2026-07-03: a Settings save only ever live-updated
+    // forwarder.config. downloader.config and the rate limiter's tunables
+    // were set once at construction and never refreshed, so changing
+    // concurrency or requests/minute silently did nothing until a full
+    // engine restart. _wireEvents() is exercised directly (not via start())
+    // since downloader/monitor/forwarder are heavyweight Telegram-coupled
+    // classes — real EventEmitters stand in for the ones _wireEvents()
+    // calls .on() against.
+    function wireFakeRuntime() {
+        const rt = new Runtime();
+        rt._monitor = new EventEmitter();
+        rt._downloader = new EventEmitter();
+        rt._downloader.config = { stale: true };
+        rt._forwarder = { config: { stale: true } };
+        rt._rateLimiter = new EventEmitter();
+        rt._rateLimiter.updateConfig = vi.fn();
+        rt._wireEvents();
+        return rt;
+    }
+
+    it('swaps downloader.config to the fresh reference (no restart needed)', () => {
+        const rt = wireFakeRuntime();
+        const newConfig = { fresh: true, rateLimits: {} };
+        rt._monitor.emit('configReloaded', newConfig);
+        expect(rt._downloader.config).toBe(newConfig);
+    });
+
+    it('still updates forwarder.config (pre-existing behaviour, not regressed)', () => {
+        const rt = wireFakeRuntime();
+        const newConfig = { fresh: true, rateLimits: {} };
+        rt._monitor.emit('configReloaded', newConfig);
+        expect(rt._forwarder.config).toBe(newConfig);
+    });
+
+    it('pushes the new rateLimits block into the live RateLimiter', () => {
+        const rt = wireFakeRuntime();
+        const newConfig = { rateLimits: { requestsPerMinute: 5, delayMs: { min: 1, max: 2 } } };
+        rt._monitor.emit('configReloaded', newConfig);
+        expect(rt._rateLimiter.updateConfig).toHaveBeenCalledWith(newConfig.rateLimits);
+    });
+
+    it('tolerates a not-yet-wired forwarder (pre-existing guard, still respected)', () => {
+        const rt = new Runtime();
+        rt._monitor = new EventEmitter();
+        rt._downloader = new EventEmitter();
+        rt._forwarder = null;
+        rt._rateLimiter = new EventEmitter();
+        rt._rateLimiter.updateConfig = vi.fn();
+        rt._wireEvents();
+        expect(() => rt._monitor.emit('configReloaded', { rateLimits: {} })).not.toThrow();
     });
 });
