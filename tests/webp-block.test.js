@@ -4,6 +4,7 @@
 // of what any individual group's sticker filter says.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { _isBlockedByPostSniffWebpRule } from '../src/core/downloader.js';
 
 // ── mock config manager so we can swap download.blockWebp at will ──────────
 const _config = { download: { blockWebp: false }, groups: [], advanced: {} };
@@ -97,5 +98,49 @@ describe('isBlockedByGlobalWebpRule', () => {
     it('returns false for videos even when blockWebp is true', () => {
         _config.download.blockWebp = true;
         expect(isBlockedByGlobalWebpRule('videos', _config)).toBe(false);
+    });
+});
+
+// ── _isBlockedByPostSniffWebpRule ─────────────────────────────────────────
+//
+// Companion to isBlockedByGlobalWebpRule for the case that check can't see:
+// Telegram's own metadata says "photo" (mediaType 'photos', not blocked by
+// the pre-download filter above), but the file that actually lands on disk
+// is real WebP bytes. registerDownload's post-download sniff discovers the
+// true type and this rule decides whether to delete it after the fact.
+
+describe('_isBlockedByPostSniffWebpRule', () => {
+    it('returns false when blockWebp is false, even for sniffed webp', () => {
+        expect(
+            _isBlockedByPostSniffWebpRule('image/webp', { download: { blockWebp: false } }),
+        ).toBe(false);
+    });
+
+    it('returns true for sniffed image/webp when blockWebp is true', () => {
+        expect(_isBlockedByPostSniffWebpRule('image/webp', { download: { blockWebp: true } })).toBe(
+            true,
+        );
+    });
+
+    it('returns true for sniffed animated-sticker mime when blockWebp is true', () => {
+        expect(
+            _isBlockedByPostSniffWebpRule('application/x-tgsticker', {
+                download: { blockWebp: true },
+            }),
+        ).toBe(true);
+    });
+
+    it('returns false for a real photo mime (jpeg) even when blockWebp is true', () => {
+        expect(_isBlockedByPostSniffWebpRule('image/jpeg', { download: { blockWebp: true } })).toBe(
+            false,
+        );
+    });
+
+    it('returns false for null/unknown sniff result', () => {
+        expect(_isBlockedByPostSniffWebpRule(null, { download: { blockWebp: true } })).toBe(false);
+    });
+
+    it('tolerates a missing download config block', () => {
+        expect(_isBlockedByPostSniffWebpRule('image/webp', {})).toBe(false);
     });
 });

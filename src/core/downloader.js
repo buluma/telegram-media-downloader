@@ -93,6 +93,21 @@ export function sanitizeName(name) {
     return _truncUtf8(s, 80);
 }
 
+/**
+ * Post-download companion to monitor.js's `_isBlockedByGlobalWebpRule`.
+ * That pre-download check only sees Telegram's own metadata (message type
+ * says "photo") and can't catch a photo whose real bytes are WebP — the
+ * media sniffer in `registerDownload` discovers that only after the file
+ * is already on disk. `sniffedMime` is whatever `sniffMediaFile()` found by
+ * reading the file's actual magic bytes, not what Telegram claimed.
+ */
+export function _isBlockedByPostSniffWebpRule(sniffedMime, config) {
+    return !!(
+        config?.download?.blockWebp &&
+        (sniffedMime === 'image/webp' || sniffedMime === 'application/x-tgsticker')
+    );
+}
+
 function _truncUtf8(s, maxBytes) {
     const enc = new TextEncoder();
     const dec = new TextDecoder('utf-8', { fatal: false });
@@ -847,6 +862,14 @@ export class DownloadManager extends EventEmitter {
                 return; // swallow — runWorker treats absence of throw as "done"
             }
 
+            // Post-download blockWebp policy hit (registerDownload already
+            // deleted the file) — not a failure, don't retry, don't log as
+            // FAILED. Same swallow shape as the cancel path above.
+            if (error?.blockedByPolicy) {
+                this.emit('blocked', { key: job.key, groupId: job.groupId, reason: error.message });
+                return; // swallow — runWorker treats absence of throw as "done"
+            }
+
             if (error?.nonRetryable) throw error;
 
             if (error.errorMessage === 'FLOOD_WAIT' || error.message?.includes('FLOOD_WAIT')) {
@@ -903,6 +926,52 @@ export class DownloadManager extends EventEmitter {
         const groupId = job.groupId || 'unknown';
         const msgId = job.message.id;
 
+        let storedPath = filePath;
+        let sniffedType = null;
+        let sniffedMime = null;
+        // Trust bytes over Telegram metadata/extension. Some Telegram
+        // uploads arrive as `photo` with a .jpg name while the payload is
+        // actually MP4/TGS. Normalise before hashing/inserting so image
+        // scanners never try to decode videos as JPEGs. Runs outside the
+        // dedup/insert try below (not just its own inner one) so the
+        // blockWebp re-check right after can throw straight out of this
+        // function instead of being swallowed by that try's catch-and-log.
+        try {
+            const normalised = await this.normaliseDownloadedMediaPath(storedPath);
+            storedPath = normalised.filePath;
+            sniffedType = normalised.fileType;
+            sniffedMime = normalised.mime;
+            if (normalised.changed) {
+                console.warn(
+                    `[downloader] corrected media type ${normalised.mime || 'unknown'}: ${path.basename(filePath)} -> ${path.basename(storedPath)} (${sniffedType})`,
+                );
+            }
+        } catch (e) {
+            console.warn('[downloader] media sniff failed:', e?.message || e);
+        }
+
+        // Post-download policy re-check. The pre-download filter in
+        // monitor.js only sees Telegram's own metadata (e.g. "this is a
+        // photo") and can't catch a photo whose real bytes are WebP —
+        // exactly the case download.blockWebp exists for. Now that the
+        // sniff above knows the truth, delete the file and abort the
+        // registration instead of quietly keeping a renamed .webp.
+        if (_isBlockedByPostSniffWebpRule(sniffedMime, this.config)) {
+            try {
+                await fs.unlink(storedPath);
+            } catch (e) {
+                logger.debug(
+                    { err: e.message, path: storedPath },
+                    'Failed to remove blocked webp/sticker file',
+                );
+            }
+            const err = new Error(
+                `Blocked by download.blockWebp: post-download sniff found ${sniffedMime}`,
+            );
+            err.blockedByPolicy = true;
+            throw err;
+        }
+
         // ---- Download-time dedup (SHA-256) -------------------------------
         //
         // Hash the just-written file and check whether the same content is
@@ -915,28 +984,9 @@ export class DownloadManager extends EventEmitter {
         // falls through and stores the row with the file in place. The
         // /api/maintenance/dedup catch-up scan will pick it up later.
         let fileHash = null;
-        let storedPath = filePath;
         let storedSize = size;
         let bytesAddedToDisk = size;
-        let sniffedType = null;
         try {
-            // Trust bytes over Telegram metadata/extension. Some Telegram
-            // uploads arrive as `photo` with a .jpg name while the payload is
-            // actually MP4/TGS. Normalise before hashing/inserting so image
-            // scanners never try to decode videos as JPEGs.
-            try {
-                const normalised = await this.normaliseDownloadedMediaPath(storedPath);
-                storedPath = normalised.filePath;
-                sniffedType = normalised.fileType;
-                if (normalised.changed) {
-                    console.warn(
-                        `[downloader] corrected media type ${normalised.mime || 'unknown'}: ${path.basename(filePath)} -> ${path.basename(storedPath)} (${sniffedType})`,
-                    );
-                }
-            } catch (e) {
-                console.warn('[downloader] media sniff failed:', e?.message || e);
-            }
-
             // Hash on a worker thread so the main event loop stays free
             // during multi-GB post-write hashing. Falls back automatically
             // to the in-process streamer if the pool is disabled.
