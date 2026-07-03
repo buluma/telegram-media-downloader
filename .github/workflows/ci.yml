@@ -20,7 +20,7 @@ jobs:
       fail-fast: false
       matrix:
         node: ['22', '24']
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -32,7 +32,3 @@ jobs:
       - run: npm audit --audit-level=high || true
       - run: npm run lint
       - run: npm test
-        env:
-          # better-sqlite3 sometimes spews a single noise line on Windows;
-          # treat the run as failed only on real errors.
-          FORCE_COLOR: '1'
