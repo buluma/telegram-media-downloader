@@ -10,7 +10,7 @@
 # Pin a specific patch version. Floating tags drift; this image is reproducible.
 ARG RUNTIME_BASE_IMAGE=runtime-base
 
-FROM node:26.3.1-bookworm-slim AS deps
+FROM node:26.4.0-bookworm-slim AS deps
 WORKDIR /app
 RUN apt-get update \
     && apt-get install -y --no-install-recommends python3 make g++ \
@@ -18,7 +18,7 @@ RUN apt-get update \
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
 
-FROM node:26.3.1-bookworm-slim AS runtime-base
+FROM node:26.4.0-bookworm-slim AS runtime-base
 
 # tini    — proper PID 1 (signal handling + zombie reaping). Debian ships
 #           the binary at /usr/bin/tini.
