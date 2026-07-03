@@ -29,6 +29,30 @@ const DB_PATH = path.join(DATA_DIR, 'db.sqlite');
 export { DB_PATH };
 
 // Singleton connection
+const GLOBAL_DB_KEY = '__tgdl_db__';
+
+function setGlobalDb(instance) {
+    try {
+        globalThis[GLOBAL_DB_KEY] = instance;
+    } catch {
+        /* noop */
+    }
+}
+function getGlobalDb() {
+    try {
+        return globalThis[GLOBAL_DB_KEY] || null;
+    } catch {
+        return null;
+    }
+}
+function clearGlobalDb() {
+    try {
+        delete globalThis[GLOBAL_DB_KEY];
+    } catch {
+        /* noop */
+    }
+}
+
 let db;
 // Run the JSON→SQLite state migration exactly once per process. Cheap to
 // re-check (idempotent), but we'd still rather skip the fs.existsSync calls
@@ -39,7 +63,24 @@ export function getDataDir() {
     return DATA_DIR;
 }
 
+export function closeDb() {
+    // Close whichever reference is live — the module-local one or the
+    // globalThis survivor (persists across vi.resetModules).
+    const conn = db || getGlobalDb();
+    if (conn) {
+        conn.close();
+        db = null;
+    }
+    clearGlobalDb();
+}
+
 export function getDb() {
+    // Reuse any connection stored on globalThis (survives vi.resetModules).
+    const existing = getGlobalDb();
+    if (existing) {
+        db = existing;
+        return db;
+    }
     if (db) return db;
 
     if (!fs.existsSync(DATA_DIR)) {
@@ -48,6 +89,7 @@ export function getDb() {
 
     try {
         db = new Database(DB_PATH);
+        setGlobalDb(db);
     } catch (e) {
         if (/NODE_MODULE_VERSION/.test(e?.message)) {
             const match = e.message.match(

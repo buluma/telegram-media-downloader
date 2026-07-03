@@ -211,16 +211,19 @@ describe('AutoForwarder.resolveDestination — storage channel discovery', () =>
 
 describe('AutoForwarder.process — 60-second delete grace period', () => {
     it('delays deferDelete by 60s after a successful forward', async () => {
+        // Dynamic imports before fake timers — vitest + fake-timers can
+        // deadlock when import() is called inside a mocked timer context.
+        const deleteQueue = await import('../src/core/delete-queue.js');
+        const dbModule = await import('../src/core/db.js');
+
         vi.useFakeTimers();
         const tmpFile = path.join(os.tmpdir(), `fwd-grace-${Date.now()}.jpg`);
         await fs.writeFile(tmpFile, 'data');
 
         // Stub deferDelete so the test doesn't touch the real filesystem.
-        const deleteQueue = await import('../src/core/delete-queue.js');
         const deleteSpy = vi.spyOn(deleteQueue, 'deferDelete').mockResolvedValue(undefined);
 
         // Stub getDb so the sharedCount check doesn't need a real DB.
-        const dbModule = await import('../src/core/db.js');
         vi.spyOn(dbModule, 'getDb').mockReturnValue({
             prepare: () => ({ get: () => ({ n: 1 }) }),
         });

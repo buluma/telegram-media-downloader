@@ -14,7 +14,10 @@ beforeEach(() => {
     // Reset the singleton between tests
     vi.resetModules();
 });
-afterEach(() => {
+afterEach(async () => {
+    // Close the DB connection so Windows can delete the temp SQLite files.
+    const { closeDb } = await import('../src/core/db.js');
+    closeDb();
     delete process.env.TGDL_DATA_DIR;
     fs.rmSync(tmpDir, { recursive: true, force: true });
 });

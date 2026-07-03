@@ -15,7 +15,9 @@ beforeAll(async () => {
     ));
 });
 
-afterAll(() => {
+afterAll(async () => {
+    const { closeDb } = await import('../../src/core/db.js');
+    closeDb();
     delete process.env.TGDL_DATA_DIR;
     fs.rmSync(DATA_DIR, { recursive: true, force: true });
 });
