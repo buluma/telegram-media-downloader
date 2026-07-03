@@ -3,7 +3,7 @@
 // the DELETE statement so a sweep with >999 dead rows doesn't blow up on
 // SQLite's SQLITE_LIMIT_VARIABLE_NUMBER cap (default 999 on older builds).
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -18,19 +18,21 @@ beforeAll(async () => {
     process.env.TGDL_DATA_DIR = DATA_DIR;
     dbApi = await import('../src/core/db.js');
     db = dbApi.getDb();
+});
+
+beforeEach(async () => {
+    db.exec('DELETE FROM downloads');
+    // Re-import integrity module to reset its _running guard. If the
+    // previous test timed out, sweep() holds _running=true and the next
+    // test instantly returns { scanned:0, pruned:0, skipped:true }.
+    vi.resetModules();
     integrity = await import('../src/core/integrity.js');
 });
 
 afterAll(() => {
-    try {
-        db.close();
-    } catch {}
+    dbApi.closeDb();
     delete process.env.TGDL_DATA_DIR;
     fs.rmSync(DATA_DIR, { recursive: true, force: true });
-});
-
-beforeEach(() => {
-    db.exec('DELETE FROM downloads');
 });
 
 function insertRow(i, { withFile } = {}) {
