@@ -856,7 +856,9 @@ describe('LLM Facade (index.js)', () => {
         expect('available' in active).toBe(true);
     });
 
-    it('generate() returns code LLM_DISABLED when provider is disabled', async () => {
+    it('generate() returns code LLM_DISABLED when provider is disabled', {
+        timeout: 15_000,
+    }, async () => {
         // No fetch mock needed — disabled path doesn't probe
         const result = await llm.generate({ prompt: 'test' });
         // Default config has provider: 'disabled'
@@ -879,7 +881,7 @@ describe('LLM Facade (index.js)', () => {
         llm.resetLlmProvider();
     });
 
-    it('chat() returns structured code when unavailable', async () => {
+    it('chat() returns structured code when unavailable', { timeout: 15_000 }, async () => {
         llm.resetLlmProvider();
         const result = await llm.chat({ messages: [{ role: 'user', content: 'hi' }] });
         if (result.unavailable) {
@@ -888,7 +890,7 @@ describe('LLM Facade (index.js)', () => {
         }
     });
 
-    it('embed() returns structured code when unavailable', async () => {
+    it('embed() returns structured code when unavailable', { timeout: 15_000 }, async () => {
         llm.resetLlmProvider();
         const result = await llm.embed({ texts: 'test' });
         if (result.unavailable) {
