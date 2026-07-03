@@ -154,7 +154,14 @@ export function createJobTracker({ kind, broadcast, log, eventPrefix, cancelGrac
             try {
                 const onProgress = (p) => {
                     if (!_running) return; // post-cancel suppress
-                    const merged = p && typeof p === 'object' ? p : {};
+                    // The tracker is the sole owner of the `running` flag.
+                    // Strip it from caller payloads: a `running:true` kept in
+                    // `progress` outlives the run, and the /status endpoints
+                    // flatten `progress` over the snapshot — a stale true
+                    // would report a finished job as in-flight forever (UI
+                    // locks at "Scanning…", Cancel becomes a no-op).
+                    const { running: _callerRunning, ...merged } =
+                        p && typeof p === 'object' ? p : {};
                     _state = {
                         ..._state,
                         running: true,
