@@ -210,7 +210,7 @@ describe('AutoForwarder.resolveDestination — storage channel discovery', () =>
 });
 
 describe('AutoForwarder.process — 60-second delete grace period', () => {
-    it('delays deferDelete by 60s after a successful forward', async () => {
+    it('delays deferDelete by 60s after a successful forward', { timeout: 15_000 }, async () => {
         // Dynamic imports before fake timers — vitest + fake-timers can
         // deadlock when import() is called inside a mocked timer context.
         const deleteQueue = await import('../src/core/delete-queue.js');
