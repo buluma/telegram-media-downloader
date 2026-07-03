@@ -103,7 +103,7 @@
     "devDependencies": {
         "@biomejs/biome": "^2.5.1",
         "lefthook": "^2.1.6",
-        "tailwindcss": "^4.3.0",
+        "tailwindcss": "^4.3.2",
         "vitest": "^4.1.6"
     },
     "engines": {
