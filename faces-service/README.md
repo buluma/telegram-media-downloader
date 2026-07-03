@@ -204,13 +204,9 @@ only when a sidecar URL is configured.
 
 ## Production binary
 
-Track D of the rollout produces:
-
-* **PyInstaller one-file binaries** per platform — uploaded as GitHub Release assets
-  under tags `faces-v<X>`. The Node spawn module downloads and caches the right
-  binary on first use.
-* **Multi-arch container image** — `ghcr.io/buluma/tgdl-faces:<tag>` (and `:latest`),
-  pulled by `docker compose --profile faces up`.
-
-Neither build is produced from this README; see Track D's workflow at
-`.github/workflows/release-faces-service.yml` once that ships.
+The Node spawn module and the `docker compose --profile faces` service still
+expect, respectively, a PyInstaller one-file binary under GitHub Release tag
+`faces-v<X>` and a `ghcr.io/buluma/tgdl-faces:<tag>` image — but the CI
+pipeline that built and published both (`release-faces-service.yml`) was
+removed: it never had a successful run and nothing consumed its output.
+Build and publish these yourself if you need either install path.

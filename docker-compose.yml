@@ -189,9 +189,11 @@ services:
   # rather pull a prebuilt multi-arch image than pin a binary to the
   # host filesystem.
   #
-  # The images are built by .github/workflows/release-faces-service.yml
-  # and tagged `:latest` (CPU), `:cuda-latest`, `:openvino-latest`.
-  # Watchtower picks them up via the label below.
+  # The CI pipeline that built and pushed these images was removed
+  # (broken since May, never fixed, no known consumers) — pulling this
+  # profile now gets whatever was last pushed, which will grow stale.
+  # Build and push the image yourself if you want to keep using it.
+  # Watchtower picks up new pushes to `:latest` via the label below.
   tgdl-faces:
     image: buluma/tgdl-faces:latest
     pull_policy: always
