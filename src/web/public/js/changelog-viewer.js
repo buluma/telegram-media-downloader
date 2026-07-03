@@ -101,6 +101,32 @@ async function _load() {
     return _cache;
 }
 
+/**
+ * The full CHANGELOG.md accumulates every release ever shipped; the
+ * release-notes sheet only wants "what did we just get", i.e. the most
+ * recent `## [x.y.z]` section. `[Unreleased]` is a standing placeholder
+ * (usually empty) and is skipped in favour of the first real version.
+ * Falls back to the whole doc if the heading shape isn't found, so a
+ * format change degrades to the old full-dump behaviour instead of
+ * showing nothing.
+ */
+function _latestVersionSection(md) {
+    const lines = String(md || '').split(/\r?\n/);
+    let start = -1;
+    let end = lines.length;
+    for (let i = 0; i < lines.length; i++) {
+        if (!/^## \[/.test(lines[i])) continue;
+        if (start === -1) {
+            if (/^## \[Unreleased\]/i.test(lines[i])) continue;
+            start = i;
+            continue;
+        }
+        end = i;
+        break;
+    }
+    return start === -1 ? md : lines.slice(start, end).join('\n').trim();
+}
+
 export async function openChangelogViewer() {
     const wrap = document.createElement('div');
     wrap.className = 'changelog-body text-tg-text text-sm leading-relaxed';
@@ -112,7 +138,13 @@ export async function openChangelogViewer() {
     });
     try {
         const md = await _load();
-        wrap.innerHTML = mdToHtml(md);
+        const repoUrl =
+            document.getElementById('status-version')?.href ||
+            'https://github.com/buluma/telegram-media-downloader';
+        wrap.innerHTML = `${mdToHtml(_latestVersionSection(md))}
+<p class="pt-2 border-t border-tg-border mt-3">
+  <a href="${escapeHtml(repoUrl)}/blob/main/CHANGELOG.md" target="_blank" rel="noopener noreferrer">${i18nT('changelog.viewer.full_history', 'View full changelog →')}</a>
+</p>`;
     } catch (e) {
         wrap.innerHTML = `<div class="text-red-400">${escapeHtml(e?.message || 'Failed to load CHANGELOG.md')}</div>`;
     }
