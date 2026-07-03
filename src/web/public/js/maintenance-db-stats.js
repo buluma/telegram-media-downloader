@@ -119,16 +119,35 @@ function donutChart(segments, total, { size = 120, stroke = 18 } = {}) {
     return `<div class="flex flex-col items-center">${svg}${legend}</div>`;
 }
 
-/** Simple vertical bar chart (SVG). Supports optional `subLabel` per bar. */
+/**
+ * Simple vertical bar chart (SVG). Supports optional `subLabel` per bar.
+ *
+ * `targetWidth`, when given, stretches the chart to fill that many px
+ * instead of the fixed `count * barWidth` size — e.g. a 14-bar chart in
+ * a full-width card otherwise renders at a fixed ~450px and leaves the
+ * rest of the card blank. Clamped so bars don't go absurdly thin (many
+ * bars on a narrow screen) or absurdly fat (few bars on a wide one).
+ */
 function vbarChart(
     bars,
-    { height = 120, barColor = 'var(--tg-theme-accent, #2ea6ff)', barWidth = 24 } = {},
+    {
+        height = 120,
+        barColor = 'var(--tg-theme-accent, #2ea6ff)',
+        barWidth = 24,
+        targetWidth = null,
+    } = {},
 ) {
     const max = bars.reduce((m, b) => Math.max(m, b.value), 0) || 1;
     const hasSubLabels = bars.some((b) => b.subLabel);
-    const pad = { top: 6, bottom: hasSubLabels ? 30 : 20, left: 4, right: 4 };
+    // top must clear the value-label text drawn above the tallest bar
+    // (font-size 9 + a few px buffer) — 6 was too tight and clipped it.
+    const pad = { top: 16, bottom: hasSubLabels ? 30 : 20, left: 4, right: 4 };
     const count = bars.length;
-    const totalW = count * (barWidth + 4) + pad.left + pad.right;
+    const gap = 4;
+    const bw = targetWidth
+        ? Math.max(16, Math.min(100, (targetWidth - pad.left - pad.right) / count - gap))
+        : barWidth;
+    const totalW = count * (bw + gap) + pad.left + pad.right;
     const h = height;
     const scale = (v) => (v / max) * (h - pad.top - pad.bottom);
 
@@ -137,18 +156,18 @@ function vbarChart(
     for (let i = 0; i < bars.length; i++) {
         const b = bars[i];
         const barH = Math.max(0, scale(b.value));
-        const x = pad.left + i * (barWidth + 4);
+        const x = pad.left + i * (bw + gap);
         const y = h - pad.bottom - barH;
         // Always render axis labels — keeps zero-value days visible on the time axis
         const labelY = h - pad.bottom + (hasSubLabels ? 11 : 14);
-        svg += `<text x="${x + barWidth / 2}" y="${labelY}" text-anchor="middle" fill="var(--tg-theme-text-secondary,#7f8c8d)" font-size="9">${escapeHtml((b.label || '').slice(0, 6))}</text>`;
+        svg += `<text x="${x + bw / 2}" y="${labelY}" text-anchor="middle" fill="var(--tg-theme-text-secondary,#7f8c8d)" font-size="9">${escapeHtml((b.label || '').slice(0, 6))}</text>`;
         if (b.subLabel) {
-            svg += `<text x="${x + barWidth / 2}" y="${labelY + 11}" text-anchor="middle" fill="var(--tg-theme-text-secondary,#7f8c8d)" font-size="8">${escapeHtml((b.subLabel || '').slice(0, 5))}</text>`;
+            svg += `<text x="${x + bw / 2}" y="${labelY + 11}" text-anchor="middle" fill="var(--tg-theme-text-secondary,#7f8c8d)" font-size="8">${escapeHtml((b.subLabel || '').slice(0, 5))}</text>`;
         }
         if (b.value === 0) continue;
-        svg += `<rect class="vbar" x="${x}" y="${y}" width="${barWidth}" height="${barH}" rx="2" fill="${barColor}" opacity="0.85"/>`;
+        svg += `<rect class="vbar" x="${x}" y="${y}" width="${bw}" height="${barH}" rx="2" fill="${barColor}" opacity="0.85"/>`;
         if (barH > 14) {
-            svg += `<text x="${x + barWidth / 2}" y="${y - 2}" text-anchor="middle" fill="var(--tg-theme-text-color,#fff)" font-size="9" font-weight="600">${fmt(b.value)}</text>`;
+            svg += `<text x="${x + bw / 2}" y="${y - 2}" text-anchor="middle" fill="var(--tg-theme-text-color,#fff)" font-size="9" font-weight="600">${fmt(b.value)}</text>`;
         }
     }
     svg += '</svg>';
@@ -375,9 +394,17 @@ async function load() {
                 const dow = DAY_ABBREVS[new Date(`${d.day}T00:00:00`).getDay()];
                 return { label: dow, subLabel: d.day.slice(5), value: d.n };
             });
+            // Stretch bars to fill the card's actual width instead of the
+            // fixed 14 * barWidth size, which left most of a full-width
+            // card blank. `db-stats-root` is already mounted at this point
+            // (this render replaces its content, doesn't create it), so its
+            // clientWidth is a stable stand-in for the card's inner width —
+            // minus the card's own `p-3` padding (12px each side).
+            const rootWidth = $('db-stats-root')?.clientWidth;
+            const targetWidth = rootWidth ? rootWidth - 24 : null;
             html += renderCard(
                 `14-day download trend  ·  ${fmt(total14)} total`,
-                `<div class="overflow-x-auto">${vbarChart(bars, { height: 140, barWidth: 30 })}</div>`,
+                `<div class="overflow-x-auto">${vbarChart(bars, { height: 180, barWidth: 30, targetWidth })}</div>`,
             );
         }
 
