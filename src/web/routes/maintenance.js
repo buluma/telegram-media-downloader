@@ -544,7 +544,10 @@ export function createMaintenanceRouter({
         const tracker = jobTrackers.dedupScan;
         const r = tracker.tryStart(async ({ onProgress, signal }) => {
             const result = await dedupFindDuplicates({
-                onProgress: (p) => onProgress({ ...p, running: true }),
+                // No `running` flag here — the tracker owns it, and a copy
+                // stored in `progress` would outlive the run and poison the
+                // flattened /dedup/status response (stuck "Scanning…" UI).
+                onProgress,
                 signal,
             });
             if (signal.aborted) return { ...result, cancelled: true };
