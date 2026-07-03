@@ -4,6 +4,37 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+## [2.25.1] — 2026-07-03
+
+Dedup scan reliability pass — five separate root causes of the "stuck Scanning…" bug fixed, plus a couple of small viewer/gallery additions and a watchdog-stall fix.
+
+### Added
+- **Video duration display** — Telegram's own `DocumentAttributeVideo.duration` is now stored at download time (migration 027) and shown immediately for every video, no sprite generation required. Sprite-generated precision still takes precedence once available.
+- **Viewer unpinned filter pill** — the pinned chip now cycles three states (off → pinned-only → unpinned-only) instead of two; amber accent distinguishes unpinned from pinned.
+- **Delete-files safety** — bulk "delete files" on a group now preserves pinned media and photos; only non-pinned videos/documents are removed.
+
+### Fixed
+- **Dedup scan stuck on "Scanning…" (5 root causes)** — hash-worker pool slots could pin forever on a stuck job (now has a per-job timeout with terminate+replace); job cancellation could no-op if the run function ignored its abort signal (now force-settles after a grace period); the grouping phase could hold the event loop long enough to make Cancel unresponsive (now yields periodically and checks the abort signal every iteration); a dead WebSocket could sit unnoticed instead of reconnecting and re-syncing scan state (added a 30s ping/pong heartbeat); and a stale buffered WS event on reconnect could re-lock the UI into "Scanning…" after the scan had already finished.
+- **Dedup progress/status desync** — the scan route was injecting `running:true` into every progress payload, which outlived the run and clobbered the tracker's real `running:false` after completion, permanently showing "Scanning…" with a no-op Cancel button.
+- **Dedup scan state not resynced on page navigation** — in this multi-panel SPA the WebSocket only opens once at app boot, so navigating away from and back to the Duplicates page never re-triggered a state sync; now happens on every navigation, not just on WS reconnect.
+- **Dedup pre-download false positives** — the pre-download fast path matched on file size + extension, which could falsely match unrelated same-size files. Now matches on Telegram's own stable file ID instead.
+
+### Performance
+- **wd14 tag aggregation off the main thread** — a 5.6s synchronous SQLite aggregation was the confirmed source of watchdog event-loop stalls; a composite index plus a read-only worker pool turns it into a sub-millisecond, off-main-thread operation.
+
+### Dependencies
+- `node` 26.3.1 → 26.4.0-bookworm-slim
+- `@aws-sdk/client-s3` 3.1061.0 → 3.1077.0
+- `basic-ftp` 5.3.1 → 6.0.1
+- `@biomejs/biome` 2.4.16 → 2.5.1
+- `tailwindcss` 4.3.0 → 4.3.2
+- `lefthook` 2.1.6 → 2.1.9
+
+### Database
+- Migration 025: `downloads.tg_file_id TEXT` + index
+- Migration 026: composite index `(tag, score)` on `image_tags_wd14`
+- Migration 027: `downloads.duration_sec INTEGER`
+
 ## [2.25.0] — 2026-06-28
 
 Viewer overhaul, file retention redesign, backfill UX fixes, sidebar hardening, backup observability, pre-download dedup, security hardening, and a full AI workflow pass (scanner cards, search/tag/people tooling, durable scan state, Smart Albums v2).
