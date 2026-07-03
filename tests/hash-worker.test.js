@@ -20,6 +20,8 @@ fs.writeFileSync(TEST_FILE, PAYLOAD);
 const EXPECTED = crypto.createHash('sha256').update(PAYLOAD).digest('hex');
 
 afterAll(async () => {
+    // Stop the infinite-writer background loop if it's still running.
+    if (typeof infiniteWriterCleanup === 'function') infiniteWriterCleanup();
     try {
         const mod = await import('../src/core/hash-worker.js');
         await mod.shutdownHashPool();
@@ -61,10 +63,13 @@ describe('hash-worker pool', () => {
 
 describe('hash-worker timeout', () => {
     it('rejects when per-job timeout fires and pool recovers', async () => {
-        // /dev/urandom is an infinite stream with no EOF: createReadStream reads
-        // return immediately (no blocking libuv op outstanding), so worker.terminate()
-        // is clean — no libuv thread-pool threads are left stuck after termination.
-        const infinitePath = '/dev/urandom';
+        // We need a file path that never reaches EOF so the hash worker
+        // stalls and eventually times out.
+        //   - Unix:  /dev/urandom is an infinite character device.
+        //   - Win32: no direct equivalent; we create a temp file and
+        //     keep appending data from a background writer.
+        const infinitePath =
+            process.platform === 'win32' ? await createInfiniteTempFile() : '/dev/urandom';
 
         const prevTimeout = process.env.HASH_WORKER_TIMEOUT_MS;
         process.env.HASH_WORKER_TIMEOUT_MS = '100';
@@ -85,6 +90,39 @@ describe('hash-worker timeout', () => {
         }
     }, 8000);
 });
+
+/**
+ * Create a temp file and start a background writer that appends chunks
+ * until the returned path is deleted.  This gives Windows a way to
+ * produce an "infinite" file that never hits EOF.
+ */
+async function createInfiniteTempFile() {
+    const p = path.join(TMP_DIR, 'infinite-writer.bin');
+    const buf = Buffer.alloc(65536, 0xda);
+    let stopped = false;
+
+    // Background writer: writes a 64 KiB chunk every 10 ms.
+    (async () => {
+        while (!stopped) {
+            try {
+                await fs.promises.appendFile(p, buf);
+                await new Promise((r) => setTimeout(r, 10));
+            } catch {
+                // File was deleted or pool shut down — stop writing.
+                break;
+            }
+        }
+    })();
+
+    // Return the path and a cleanup handle so the test can stop the
+    // writer when the hashFile promise resolves or the test ends.
+    infiniteWriterCleanup = () => {
+        stopped = true;
+    };
+    return p;
+}
+
+let infiniteWriterCleanup = null;
 
 describe('hash-worker disabled fallback', () => {
     it('produces the same digest with HASH_WORKER_DISABLE=1', async () => {
