@@ -95,7 +95,22 @@ function mdToHtml(md) {
 
 async function _load() {
     if (_cache) return _cache;
-    const res = await fetch('/CHANGELOG.md', { credentials: 'same-origin' });
+    // The server sends `Cache-Control: max-age=3600` on this route (its own
+    // comment says the SPA "invalidates it via the ?v= token" — it never
+    // actually did, so a stale CHANGELOG.md could sit in the browser cache
+    // for up to an hour after a deploy, surviving even a manual reload on
+    // browsers that don't force-revalidate fetch() on hard-refresh). Bust
+    // it with the running build's commit so each deploy gets a new URL.
+    let v = '';
+    try {
+        const ver = await fetch('/api/version', { credentials: 'same-origin' }).then((r) =>
+            r.ok ? r.json() : null,
+        );
+        if (ver?.commit && ver.commit !== 'dev') v = `?v=${encodeURIComponent(ver.commit)}`;
+    } catch {
+        /* best-effort cache-bust; fall through without it */
+    }
+    const res = await fetch(`/CHANGELOG.md${v}`, { credentials: 'same-origin' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     _cache = await res.text();
     return _cache;
@@ -138,9 +153,12 @@ export async function openChangelogViewer() {
     });
     try {
         const md = await _load();
-        const repoUrl =
-            document.getElementById('status-version')?.href ||
-            'https://github.com/buluma/telegram-media-downloader';
+        // NOT `#status-version`'s href — statusbar.js rewrites that to a
+        // commit-specific `.../commit/<sha>` URL once the version loads,
+        // which turned "view full changelog" into
+        // `.../commit/<sha>/blob/main/CHANGELOG.md` (404). This link needs
+        // the bare repo URL, not wherever the version chip happens to point.
+        const repoUrl = 'https://github.com/buluma/telegram-media-downloader';
         wrap.innerHTML = `${mdToHtml(_latestVersionSection(md))}
 <p class="pt-2 border-t border-tg-border mt-3">
   <a href="${escapeHtml(repoUrl)}/blob/main/CHANGELOG.md" target="_blank" rel="noopener noreferrer">${i18nT('changelog.viewer.full_history', 'View full changelog →')}</a>
