@@ -1924,5 +1924,17 @@
     "groups.bulk.retention_auto": "Retention auto",
     "groups.bulk.select_visible": "Select visible",
     "groups.bulk.none_selected": "No groups selected",
-    "groups.bulk.applied": "Updated {n} group(s), {skipped} skipped"
+    "groups.bulk.applied": "Updated {n} group(s), {skipped} skipped",
+    "groups.presets.placeholder": "Preset…",
+    "groups.presets.apply": "Apply preset",
+    "groups.presets.save": "Save preset…",
+    "groups.presets.export": "Export",
+    "groups.presets.import": "Import",
+    "groups.presets.pick_first": "Pick a preset first",
+    "groups.presets.pick_one": "Select exactly one group to snapshot",
+    "groups.presets.name_prompt": "Preset name:",
+    "groups.presets.saved": "Preset \"{name}\" saved",
+    "groups.presets.applied": "Preset \"{name}\" applied to {n} group(s)",
+    "groups.presets.imported": "Imported {n} preset(s)",
+    "groups.presets.import_failed": "Import failed: {msg}"
 }

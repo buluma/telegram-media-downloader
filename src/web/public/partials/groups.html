@@ -45,6 +45,15 @@
                         <button data-bulk-op="retention-on" type="button" class="tg-btn text-xs" data-i18n="groups.bulk.retention_on">Retention on</button>
                         <button data-bulk-op="retention-off" type="button" class="tg-btn text-xs" data-i18n="groups.bulk.retention_off">Retention off</button>
                         <button data-bulk-op="retention-auto" type="button" class="tg-btn text-xs" data-i18n="groups.bulk.retention_auto">Retention auto</button>
+                        <span class="w-px h-5 bg-tg-border mx-1" aria-hidden="true"></span>
+                        <select id="groups-preset-select" class="tg-input text-xs py-1 max-w-[160px]" aria-label="Preset">
+                            <option value="" data-i18n="groups.presets.placeholder">Preset…</option>
+                        </select>
+                        <button id="groups-preset-apply" type="button" class="tg-btn text-xs" data-i18n="groups.presets.apply">Apply preset</button>
+                        <button id="groups-preset-save" type="button" class="tg-btn text-xs" data-i18n="groups.presets.save" title="Select exactly one group to snapshot its settings">Save preset…</button>
+                        <button id="groups-preset-export" type="button" class="tg-btn text-xs" data-i18n="groups.presets.export">Export</button>
+                        <button id="groups-preset-import" type="button" class="tg-btn text-xs" data-i18n="groups.presets.import">Import</button>
+                        <input id="groups-preset-import-file" type="file" accept="application/json" class="hidden">
                         <span class="flex-1"></span>
                         <button id="groups-bulk-all" type="button" class="tg-btn text-xs" data-i18n="groups.bulk.select_visible">Select visible</button>
                         <button id="groups-bulk-clear" type="button" class="tg-btn text-xs" data-i18n="common.clear_selection">Clear selection</button>

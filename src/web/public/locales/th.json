@@ -1924,5 +1924,17 @@
     "groups.bulk.retention_auto": "เก็บถาวรอัตโนมัติ",
     "groups.bulk.select_visible": "เลือกที่แสดง",
     "groups.bulk.none_selected": "ยังไม่ได้เลือกกลุ่ม",
-    "groups.bulk.applied": "อัปเดต {n} กลุ่ม ข้าม {skipped}"
+    "groups.bulk.applied": "อัปเดต {n} กลุ่ม ข้าม {skipped}",
+    "groups.presets.placeholder": "พรีเซ็ต…",
+    "groups.presets.apply": "ใช้พรีเซ็ต",
+    "groups.presets.save": "บันทึกพรีเซ็ต…",
+    "groups.presets.export": "ส่งออก",
+    "groups.presets.import": "นำเข้า",
+    "groups.presets.pick_first": "เลือกพรีเซ็ตก่อน",
+    "groups.presets.pick_one": "เลือกกลุ่มเดียวเพื่อบันทึกการตั้งค่า",
+    "groups.presets.name_prompt": "ชื่อพรีเซ็ต:",
+    "groups.presets.saved": "บันทึกพรีเซ็ต \"{name}\" แล้ว",
+    "groups.presets.applied": "ใช้พรีเซ็ต \"{name}\" กับ {n} กลุ่มแล้ว",
+    "groups.presets.imported": "นำเข้า {n} พรีเซ็ตแล้ว",
+    "groups.presets.import_failed": "นำเข้าล้มเหลว: {msg}"
 }

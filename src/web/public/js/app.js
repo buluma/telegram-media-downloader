@@ -3516,6 +3516,150 @@ function _setupGroupsBulkControls() {
             if (patch) _bulkApply(patch);
         });
     });
+
+    _setupGroupsPresetControls();
+}
+
+// ---- Group config presets (bulk bar) --------------------------------------
+
+async function _refreshPresetSelect() {
+    const sel = document.getElementById('groups-preset-select');
+    if (!sel) return;
+    try {
+        const r = await api.get('/api/groups/presets');
+        const current = sel.value;
+        sel.innerHTML = `<option value="">${escapeHtml(i18nT('groups.presets.placeholder', 'Preset…'))}</option>`;
+        for (const p of r?.presets || []) {
+            const opt = document.createElement('option');
+            opt.value = p.name;
+            opt.textContent = p.name;
+            sel.appendChild(opt);
+        }
+        if ([...sel.options].some((o) => o.value === current)) sel.value = current;
+    } catch (e) {
+        console.warn('presets load:', e);
+    }
+}
+
+function _setupGroupsPresetControls() {
+    const sel = document.getElementById('groups-preset-select');
+    if (!sel || sel.dataset.bound) return;
+    sel.dataset.bound = '1';
+    _refreshPresetSelect();
+
+    document.getElementById('groups-preset-apply')?.addEventListener('click', async () => {
+        const name = sel.value;
+        if (!name) {
+            showToast(i18nT('groups.presets.pick_first', 'Pick a preset first'), 'info');
+            return;
+        }
+        const ids = Array.from(_groupsBulk.sel);
+        if (ids.length === 0) {
+            showToast(i18nT('groups.bulk.none_selected', 'No groups selected'), 'info');
+            return;
+        }
+        try {
+            const r = await api.post(`/api/groups/presets/${encodeURIComponent(name)}/apply`, {
+                ids,
+            });
+            showToast(
+                i18nTf(
+                    'groups.presets.applied',
+                    { name, n: r?.updated ?? 0 },
+                    `Preset "${name}" applied to ${r?.updated ?? 0} group(s)`,
+                ),
+                'success',
+            );
+            _bulkSetMode(false);
+            await renderGroupsConfig();
+        } catch (e) {
+            showToast(
+                i18nTf('toast.save_failed', { msg: e.message }, `Save failed: ${e.message}`),
+                'error',
+            );
+        }
+    });
+
+    document.getElementById('groups-preset-save')?.addEventListener('click', async () => {
+        const ids = Array.from(_groupsBulk.sel);
+        if (ids.length !== 1) {
+            showToast(
+                i18nT('groups.presets.pick_one', 'Select exactly one group to snapshot'),
+                'info',
+            );
+            return;
+        }
+        const name = prompt(
+            i18nT('groups.presets.name_prompt', 'Preset name:'),
+            getGroupName(ids[0]) || '',
+        )?.trim();
+        if (!name) return;
+        try {
+            await api.post('/api/groups/presets', { name, fromGroupId: ids[0] });
+            showToast(
+                i18nTf('groups.presets.saved', { name }, `Preset "${name}" saved`),
+                'success',
+            );
+            await _refreshPresetSelect();
+        } catch (e) {
+            showToast(
+                i18nTf('toast.save_failed', { msg: e.message }, `Save failed: ${e.message}`),
+                'error',
+            );
+        }
+    });
+
+    document.getElementById('groups-preset-export')?.addEventListener('click', async () => {
+        try {
+            const r = await api.get('/api/groups/presets');
+            const blob = new Blob([JSON.stringify({ presets: r?.presets || [] }, null, 2)], {
+                type: 'application/json',
+            });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'tgdl-group-presets.json';
+            a.click();
+            URL.revokeObjectURL(a.href);
+        } catch (e) {
+            showToast(
+                i18nTf('toast.save_failed', { msg: e.message }, `Export failed: ${e.message}`),
+                'error',
+            );
+        }
+    });
+
+    const fileInput = document.getElementById('groups-preset-import-file');
+    document
+        .getElementById('groups-preset-import')
+        ?.addEventListener('click', () => fileInput?.click());
+    fileInput?.addEventListener('change', async () => {
+        const f = fileInput.files?.[0];
+        fileInput.value = '';
+        if (!f) return;
+        try {
+            const parsed = JSON.parse(await f.text());
+            const presets = Array.isArray(parsed) ? parsed : parsed?.presets;
+            const r = await api.post('/api/groups/presets/import', { presets });
+            showToast(
+                i18nTf(
+                    'groups.presets.imported',
+                    { n: r?.imported ?? 0 },
+                    `Imported ${r?.imported ?? 0} preset(s)`,
+                ),
+                'success',
+            );
+            await _refreshPresetSelect();
+        } catch (e) {
+            showToast(
+                i18nTf(
+                    'groups.presets.import_failed',
+                    { msg: e.message },
+                    `Import failed: ${e.message}`,
+                ),
+                'error',
+            );
+        }
+    });
 }
 
 function filterDialogs(query) {

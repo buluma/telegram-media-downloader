@@ -62,6 +62,10 @@ const DEFAULT_CONFIG = {
         failureStreak: 5, // consecutive failures before an alert; 0 = off
         silentGroupDays: 0, // alert when a monitored group is silent N+ days; 0 = off
     },
+    // Named snapshots of per-group settings (filters/retention/forward/
+    // comments) that can be applied to other groups in bulk. Managed by
+    // /api/groups/presets; each entry is { name, createdAt, settings }.
+    groupPresets: [],
     // Advanced runtime tuning. Every value here mirrors a previously-hardcoded
     // constant in the hot path; consumers MUST read with the inline literal
     // as fallback (config.advanced?.x?.y ?? <existing-default>) so a fresh

@@ -464,6 +464,160 @@ export function createGroupsRouter({
     // admin action we have. Returns 200 immediately; final counts via
     // `purge_all_done`. Single-flight via the shared tracker.
 
+    // ---- Group config presets -------------------------------------------
+    // Named snapshots of a group's shareable settings, applied to other
+    // groups in bulk. Identity/runtime fields (id, name, enabled, accounts)
+    // are deliberately never captured — a preset is a template, not a clone.
+    const PRESET_FIELDS = ['filters', 'autoForward', 'rescueMode', 'trackComments', 'topics'];
+    const PRESET_MAX = 50;
+
+    function _presetSettingsFrom(source) {
+        const out = {};
+        for (const f of PRESET_FIELDS) {
+            if (source[f] === undefined) continue;
+            out[f] =
+                typeof source[f] === 'object' && source[f] !== null
+                    ? JSON.parse(JSON.stringify(source[f]))
+                    : source[f];
+        }
+        return out;
+    }
+
+    function _validPresetName(name) {
+        return typeof name === 'string' && name.trim().length > 0 && name.trim().length <= 64;
+    }
+
+    router.get('/groups/presets', async (req, res) => {
+        const config = loadConfig();
+        res.json({ success: true, presets: config.groupPresets || [] });
+    });
+
+    router.post('/groups/presets', async (req, res) => {
+        try {
+            const name = String(req.body?.name || '').trim();
+            if (!_validPresetName(name)) {
+                return res.status(400).json({ error: 'Preset name required (1-64 chars)' });
+            }
+            const config = loadConfig();
+            let settings;
+            if (req.body.fromGroupId !== undefined) {
+                const source = (config.groups || []).find(
+                    (g) => String(g.id) === String(req.body.fromGroupId),
+                );
+                if (!source) return res.status(404).json({ error: 'Source group not found' });
+                settings = _presetSettingsFrom(source);
+            } else if (req.body.settings && typeof req.body.settings === 'object') {
+                settings = _presetSettingsFrom(req.body.settings);
+            } else {
+                return res.status(400).json({ error: 'fromGroupId or settings{} required' });
+            }
+            const presets = (config.groupPresets || []).filter((p) => p.name !== name);
+            if (presets.length >= PRESET_MAX) {
+                return res.status(400).json({ error: `Too many presets (max ${PRESET_MAX})` });
+            }
+            presets.push({ name, createdAt: new Date().toISOString(), settings });
+            config.groupPresets = presets;
+            await writeConfigAtomic(config);
+            broadcast({ type: 'config_updated', config });
+            res.json({ success: true, presets });
+        } catch (error) {
+            console.error('POST /api/groups/presets:', error);
+            res.status(500).json({ error: 'Internal error' });
+        }
+    });
+
+    router.delete('/groups/presets/:name', async (req, res) => {
+        try {
+            const config = loadConfig();
+            const before = (config.groupPresets || []).length;
+            config.groupPresets = (config.groupPresets || []).filter(
+                (p) => p.name !== req.params.name,
+            );
+            if (config.groupPresets.length === before) {
+                return res.status(404).json({ error: 'Preset not found' });
+            }
+            await writeConfigAtomic(config);
+            broadcast({ type: 'config_updated', config });
+            res.json({ success: true });
+        } catch (error) {
+            console.error('DELETE /api/groups/presets:', error);
+            res.status(500).json({ error: 'Internal error' });
+        }
+    });
+
+    router.post('/groups/presets/:name/apply', async (req, res) => {
+        try {
+            const config = loadConfig();
+            const preset = (config.groupPresets || []).find((p) => p.name === req.params.name);
+            if (!preset) return res.status(404).json({ error: 'Preset not found' });
+            const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String) : [];
+            if (ids.length === 0) return res.status(400).json({ error: 'ids[] required' });
+
+            const byId = new Map((config.groups || []).map((g) => [String(g.id), g]));
+            const skipped = [];
+            let updated = 0;
+            for (const id of ids) {
+                const group = byId.get(id);
+                if (!group) {
+                    skipped.push(id);
+                    continue;
+                }
+                const s = preset.settings || {};
+                if (s.filters) group.filters = { ...group.filters, ...s.filters };
+                if (s.autoForward) group.autoForward = { ...group.autoForward, ...s.autoForward };
+                if (s.rescueMode !== undefined) group.rescueMode = s.rescueMode;
+                if (s.trackComments !== undefined) group.trackComments = !!s.trackComments;
+                if (s.topics !== undefined) group.topics = s.topics;
+                updated += 1;
+            }
+            if (updated > 0) {
+                await writeConfigAtomic(config);
+                invalidateDialogsCache();
+                broadcast({ type: 'config_updated', config });
+            }
+            res.json({ success: true, updated, skipped });
+        } catch (error) {
+            console.error('POST /api/groups/presets/:name/apply:', error);
+            res.status(500).json({ error: 'Internal error' });
+        }
+    });
+
+    // Import an exported presets array (export = GET /groups/presets, saved
+    // client-side as JSON). Same-name presets are overwritten.
+    router.post('/groups/presets/import', async (req, res) => {
+        try {
+            const incoming = req.body?.presets;
+            if (!Array.isArray(incoming) || incoming.length === 0) {
+                return res.status(400).json({ error: 'presets[] required' });
+            }
+            for (const p of incoming) {
+                if (!_validPresetName(p?.name) || !p?.settings || typeof p.settings !== 'object') {
+                    return res
+                        .status(400)
+                        .json({ error: 'Each preset needs a name and settings{}' });
+                }
+            }
+            const config = loadConfig();
+            const incomingNames = new Set(incoming.map((p) => p.name.trim()));
+            const kept = (config.groupPresets || []).filter((p) => !incomingNames.has(p.name));
+            const merged = [
+                ...kept,
+                ...incoming.map((p) => ({
+                    name: p.name.trim(),
+                    createdAt: p.createdAt || new Date().toISOString(),
+                    settings: _presetSettingsFrom(p.settings),
+                })),
+            ].slice(0, PRESET_MAX);
+            config.groupPresets = merged;
+            await writeConfigAtomic(config);
+            broadcast({ type: 'config_updated', config });
+            res.json({ success: true, imported: incoming.length, presets: merged });
+        } catch (error) {
+            console.error('POST /api/groups/presets/import:', error);
+            res.status(500).json({ error: 'Internal error' });
+        }
+    });
+
     // Bulk config update — apply the same settings patch to many groups in
     // one atomic config write. Grew out of the rescue-mode cleanup where ~50
     // groups needed the same flag flipped and the only options were 50 sheet
