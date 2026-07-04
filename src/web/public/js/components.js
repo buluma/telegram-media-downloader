@@ -42,6 +42,7 @@ export function renderChatRow(opts) {
         avatarRing = null,
         avatarDot = null,
         avatarSize = 'lg',
+        avatarNoPhotoKnown = false,
         unread = null,
         unreadMuted = false,
         statusPill = null,
@@ -77,6 +78,7 @@ export function renderChatRow(opts) {
         ring: avatarRing,
         dot: avatarDot,
         size: avatarSize,
+        noPhotoKnown: avatarNoPhotoKnown,
     });
 
     const t = time || (lastDownloadAt ? formatRelativeTime(lastDownloadAt) : '');

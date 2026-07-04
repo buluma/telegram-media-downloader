@@ -1354,6 +1354,7 @@ function renderGroupsList() {
                                     avatarType: g.type,
                                     avatarRing: ring,
                                     avatarDot: ring ? 'monitor' : null,
+                                    avatarNoPhotoKnown: g.noPhotoKnown === true,
                                     time: g.lastDownloadAt
                                         ? formatRelativeTime(g.lastDownloadAt)
                                         : '',
@@ -3362,6 +3363,7 @@ function renderDialogsList(dialogs) {
                 id: d.id,
                 name: dispName,
                 avatarType: d.type,
+                avatarNoPhotoKnown: d.hasPhoto === false,
                 subtitle: subParts.join(' · '),
                 statusPill,
                 accountChips,

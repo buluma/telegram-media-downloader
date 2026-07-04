@@ -27,6 +27,11 @@ let _dialogsNameCache = { at: 0, byId: new Map() };
 // Groups already shows). Keyed by the same string id; values are one
 // of 'channel' | 'group' | 'user' | 'bot'.
 let _dialogsTypeCache = new Map();
+// Parallel hasPhoto cache — mirrors _dialogsTypeCache but records whether
+// Telegram itself reports a profile photo on the entity. Used by /api/groups
+// so the sidebar can skip firing the (guaranteed-404) avatar request for
+// entities that definitively have none, same rationale as dialogsTypeFor.
+let _dialogsHasPhotoCache = new Map();
 export async function getDialogsNameCache() {
     const now = Date.now();
     if (
@@ -37,6 +42,7 @@ export async function getDialogsNameCache() {
     }
     const byId = new Map();
     const typeById = new Map();
+    const hasPhotoById = new Map();
     try {
         const am = await _getAccountManager();
         const clients = [];
@@ -72,6 +78,7 @@ export async function getDialogsNameCache() {
                         else if (d.isUser) t = 'user';
                         typeById.set(id, t);
                     }
+                    if (!hasPhotoById.has(id)) hasPhotoById.set(id, !!d.entity?.photo);
                     // Hard cap so a runaway upstream (multi-account user
                     // with 50 k+ joined dialogs) can't blow the heap. See
                     // CLAUDE.md → Big-data patterns rule 3.
@@ -86,6 +93,7 @@ export async function getDialogsNameCache() {
     }
     _dialogsNameCache = { at: now, byId };
     _dialogsTypeCache = typeById;
+    _dialogsHasPhotoCache = hasPhotoById;
     return byId;
 }
 
@@ -96,6 +104,14 @@ export async function getDialogsNameCache() {
 // channels because both share the `-100…` id prefix).
 export function dialogsTypeFor(id) {
     return _dialogsTypeCache.get(String(id)) || null;
+}
+
+// Returns true/false when Telegram's dialog metadata has confirmed whether
+// this entity has a profile photo, or null when we haven't seen it yet
+// (e.g. fresh install, cache not warmed) — callers should treat null as
+// "unknown, don't skip the request" rather than "no photo".
+export function dialogsHasPhotoFor(id) {
+    return _dialogsHasPhotoCache.has(String(id)) ? _dialogsHasPhotoCache.get(String(id)) : null;
 }
 
 export function createDialogsRouter({ getAccountManager, getTelegramClient }) {
@@ -274,6 +290,12 @@ export function createDialogsRouter({ getAccountManager, getTelegramClient }) {
                         trackComments: configGroup?.trackComments ?? GROUP_DEFAULTS.trackComments,
                         autoForward: configGroup?.autoForward || { ...GROUP_DEFAULTS.autoForward },
                         photoUrl: `/api/groups/${id}/photo`,
+                        // Telegram's own dialog metadata already tells us whether
+                        // this entity has a profile photo at all — no extra round
+                        // trip. Lets the SPA skip the (guaranteed-404) avatar
+                        // request entirely for bots/users with none set, instead
+                        // of firing it on every render forever.
+                        hasPhoto: !!d.entity?.photo,
                         accountIds: accIds,
                     };
                 });

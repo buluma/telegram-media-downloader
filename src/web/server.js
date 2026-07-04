@@ -94,6 +94,7 @@ import {
     invalidateDialogsCache as _invalidateDialogsCache,
     getDialogsNameCache,
     dialogsTypeFor,
+    dialogsHasPhotoFor,
 } from './routes/dialogs.js';
 import { createStatsRouter, broadcastStatsSoon } from './routes/stats.js';
 import { createLinkDownloadRouter } from './routes/link-download.js';
@@ -1620,6 +1621,7 @@ app.use(
         invalidateDialogsCache: _invalidateDialogsCache,
         getDialogsNameCache,
         dialogsTypeFor,
+        dialogsHasPhotoFor,
         resolveEntityAcrossAccounts,
         downloadProfilePhoto,
         jobTrackers: _jobTrackers,

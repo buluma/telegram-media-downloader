@@ -125,7 +125,7 @@ export function getAvatarClass(id) {
  */
 export function createAvatar(idOrOpts, name, type) {
     const opts = typeof idOrOpts === 'object' ? idOrOpts : { id: idOrOpts, name, type };
-    const { id, ring, dot, size = 'lg' } = opts;
+    const { id, ring, dot, size = 'lg', noPhotoKnown = false } = opts;
     name = opts.name ?? name;
     type = opts.type ?? type;
 
@@ -160,14 +160,23 @@ export function createAvatar(idOrOpts, name, type) {
               ? 'avatar-ring'
               : '';
 
-    return `
-        <div class="relative flex-shrink-0 ${ringClass}" style="width:${sizePx}px;height:${sizePx}px">
-            <img src="/api/groups/${encodeURIComponent(id)}/photo"
+    // `noPhotoKnown` means the server already confirmed (from Telegram's own
+    // dialog metadata) that this entity has no profile photo — skip the <img>
+    // entirely instead of firing a request that's guaranteed to 404 on every
+    // render, forever. Falls back to the same onerror path for every other
+    // case (photo exists but isn't cached yet, or presence is unknown).
+    const imgHtml = noPhotoKnown
+        ? ''
+        : `<img src="/api/groups/${encodeURIComponent(id)}/photo"
                  class="w-full h-full rounded-full object-cover bg-tg-bg"
                  onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'"
                  loading="lazy"
-                 alt="${escapeHtml(String(name || id))}">
-            <div class="absolute inset-0 w-full h-full rounded-full ${gradient} flex items-center justify-center text-white hidden shadow-inner">
+                 alt="${escapeHtml(String(name || id))}">`;
+
+    return `
+        <div class="relative flex-shrink-0 ${ringClass}" style="width:${sizePx}px;height:${sizePx}px">
+            ${imgHtml}
+            <div class="absolute inset-0 w-full h-full rounded-full ${gradient} flex items-center justify-center text-white ${noPhotoKnown ? 'flex' : 'hidden'} shadow-inner">
                 <span class="font-bold drop-shadow-md" style="font-size:${initialPx}px">${initial}</span>
             </div>
             ${

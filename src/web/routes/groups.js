@@ -41,6 +41,7 @@ export function createGroupsRouter({
     invalidateDialogsCache,
     getDialogsNameCache,
     dialogsTypeFor,
+    dialogsHasPhotoFor,
     resolveEntityAcrossAccounts,
     downloadProfilePhoto,
     jobTrackers,
@@ -135,6 +136,11 @@ export function createGroupsRouter({
                         ),
                         type: resolvedType,
                         photoUrl: hasPhoto ? `/photos/${safeGroupId}.jpg` : null,
+                        // Telegram-confirmed absence of a profile photo (vs. just
+                        // "not cached to disk yet") — lets the SPA skip firing the
+                        // avatar request instead of hitting a guaranteed 404 on
+                        // every render, forever, for photo-less bots/users.
+                        noPhotoKnown: dialogsHasPhotoFor(lookupId) === false,
                         peerId: null,
                         peerName: null,
                     };
