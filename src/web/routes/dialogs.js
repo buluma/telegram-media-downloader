@@ -32,6 +32,36 @@ let _dialogsTypeCache = new Map();
 // so the sidebar can skip firing the (guaranteed-404) avatar request for
 // entities that definitively have none, same rationale as dialogsTypeFor.
 let _dialogsHasPhotoCache = new Map();
+
+// Absolute ceiling on a single folder sweep — protects the heap against a
+// pathological account with tens of thousands of joined dialogs. Distinct
+// from the 50k name-cache cap below, which bounds the merged map across
+// accounts; this bounds one iterDialogs walk.
+export const DIALOG_SWEEP_MAX = 5000;
+
+// Walk EVERY dialog in the given folder via iterDialogs instead of the old
+// getDialogs({limit:500}) snapshot — a capped snapshot silently hides chats
+// past the cap from the Chats picker with no warning. Falls back to the
+// capped call when the sweep throws before yielding anything (FLOOD_WAIT,
+// mid-reconnect) so the picker still renders a partial list rather than
+// nothing.
+async function sweepDialogs(client, { archived }) {
+    const out = [];
+    try {
+        for await (const d of client.iterDialogs({ archived })) {
+            out.push(d);
+            if (out.length >= DIALOG_SWEEP_MAX) break;
+        }
+    } catch {
+        if (out.length === 0) {
+            return client
+                .getDialogs(archived ? { limit: 200, archived: true } : { limit: 500 })
+                .catch(() => []);
+        }
+        // Partial sweep — keep what we got; next cache refresh retries.
+    }
+    return out;
+}
 export async function getDialogsNameCache() {
     const now = Date.now();
     if (
@@ -54,8 +84,8 @@ export async function getDialogsNameCache() {
             if (!client?.connected) continue;
             try {
                 const [active, archived] = await Promise.all([
-                    client.getDialogs({ limit: 500 }).catch(() => []),
-                    client.getDialogs({ limit: 200, archived: true }).catch(() => []),
+                    sweepDialogs(client, { archived: false }),
+                    sweepDialogs(client, { archived: true }),
                 ]);
                 for (const d of [...active, ...archived]) {
                     const id = String(d.id);
@@ -132,12 +162,29 @@ export function createDialogsRouter({ getAccountManager, getTelegramClient }) {
         try {
             const wantFresh = req.query.fresh === '1';
             const now = Date.now();
+            // Server-side search: `?q=` filters the full (cached) result by
+            // name / username / id substring. The cache always stores the
+            // UNFILTERED body — the filter is applied per-request on the way
+            // out so different queries share one Telegram round-trip.
+            const q = typeof req.query.q === 'string' ? req.query.q.trim().toLowerCase() : '';
+            const applyQ = (body) => {
+                if (!q) return body;
+                return {
+                    ...body,
+                    dialogs: body.dialogs.filter(
+                        (d) =>
+                            (d.name || '').toLowerCase().includes(q) ||
+                            (d.username || '').toLowerCase().includes(q) ||
+                            String(d.id).includes(q),
+                    ),
+                };
+            };
             if (
                 !wantFresh &&
                 _dialogsResponseCache.body &&
                 Math.max(0, now - _dialogsResponseCache.at) < DIALOG_CACHE_TTL_MS
             ) {
-                return res.json(_dialogsResponseCache.body);
+                return res.json(applyQ(_dialogsResponseCache.body));
             }
 
             // Collect every connected client + its account metadata. Manage
@@ -199,8 +246,8 @@ export function createDialogsRouter({ getAccountManager, getTelegramClient }) {
             const perClient = await Promise.all(
                 clientPairs.map(async (p) => {
                     const [a, ar] = await Promise.all([
-                        p.client.getDialogs({ limit: 500 }).catch(() => []),
-                        p.client.getDialogs({ limit: 200, archived: true }).catch(() => []),
+                        sweepDialogs(p.client, { archived: false }),
+                        sweepDialogs(p.client, { archived: true }),
                     ]);
                     return { accountId: p.id, accountMeta: p.meta, active: a, archived: ar };
                 }),
@@ -302,7 +349,7 @@ export function createDialogsRouter({ getAccountManager, getTelegramClient }) {
 
             const body = { success: true, dialogs: results, allowDM, accounts };
             _dialogsResponseCache = { at: now, body };
-            res.json(body);
+            res.json(applyQ(body));
         } catch (error) {
             console.error('GET /api/dialogs:', error);
             res.status(500).json({ error: 'Internal error' });
