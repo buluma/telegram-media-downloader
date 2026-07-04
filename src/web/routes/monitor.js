@@ -1,7 +1,7 @@
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import fsSync, { existsSync } from 'fs';
+import fs from 'fs/promises';
 import { runtime } from '../../core/runtime.js';
 import { loadConfig } from '../../config/manager.js';
 import { tgAuthErrorBody } from '../lib/tg-error.js';
@@ -19,11 +19,8 @@ async function _buildMonitorStatusSnapshot(getAccountManager) {
         } catch {
             try {
                 const dir = path.join(DATA_DIR, 'sessions');
-                if (existsSync(dir)) {
-                    status.accounts = fsSync
-                        .readdirSync(dir)
-                        .filter((f) => f.endsWith('.enc')).length;
-                }
+                const names = await fs.readdir(dir).catch(() => []);
+                status.accounts = names.filter((f) => f.endsWith('.enc')).length;
             } catch {
                 /* ignore */
             }

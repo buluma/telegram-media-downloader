@@ -2,7 +2,6 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
-import fsSync, { existsSync } from 'fs';
 import { getDb, getStats as getDbStats, getStatsFederated, kvSet } from '../../core/db.js';
 import { loadConfig } from '../../config/manager.js';
 import { runtime } from '../../core/runtime.js';
@@ -81,9 +80,8 @@ async function _computeStatsPayload(role) {
     } catch {
         try {
             const dir = path.join(DATA_DIR, 'sessions');
-            if (existsSync(dir)) {
-                accountCount = fsSync.readdirSync(dir).filter((f) => f.endsWith('.enc')).length;
-            }
+            const names = await fs.readdir(dir).catch(() => []);
+            accountCount = names.filter((f) => f.endsWith('.enc')).length;
         } catch (e) {
             swallow(e, 'stats');
         }

@@ -12,15 +12,21 @@ const UPDATE_CHECK_TTL_MS = 10 * 60 * 1000;
 const UPDATE_CHECK_REPO = 'buluma/telegram-media-downloader';
 let _updateCache = { fetchedAt: 0, data: null };
 
+// package.json never changes while the process is alive — read it once and
+// serve the cached value on every subsequent call instead of a sync disk
+// read per request.
+let _versionCache = null;
 function _readCurrentVersion() {
     if (process.env.npm_package_version) return process.env.npm_package_version;
+    if (_versionCache) return _versionCache;
     try {
-        return JSON.parse(
+        _versionCache = JSON.parse(
             fsSync.readFileSync(path.join(__dirname, '../../../package.json'), 'utf8'),
         ).version;
     } catch {
-        return 'unknown';
+        _versionCache = 'unknown';
     }
+    return _versionCache;
 }
 
 function _cmpSemver(a, b) {

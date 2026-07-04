@@ -61,8 +61,8 @@ export async function streamFileResponse(id, res, dataDir = DEFAULT_DATA_DIR) {
         ...norm.split('/').filter(Boolean),
     );
 
-    if (fs.existsSync(localPath)) {
-        const st = fs.statSync(localPath);
+    const st = await fs.promises.stat(localPath).catch(() => null);
+    if (st) {
         if (!st.isFile()) {
             res.status(404).json({ error: 'Not found' });
             return;

@@ -1,14 +1,13 @@
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import fs, { existsSync } from 'fs';
+import fs from 'fs';
 import { loadConfig, GROUP_DEFAULTS } from '../../config/manager.js';
 import { DIALOG_CACHE_TTL_MS } from '../../core/constants.js';
 import { nameLooksUnresolved } from '../lib/format.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, '../../../data');
-const fsSync = fs;
 
 // Module-level dialogs response cache — shared via export so other routers
 // can invalidate it without importing an entire response object.
@@ -222,9 +221,10 @@ export function createDialogsRouter({ getAccountManager, getTelegramClient }) {
                 // an Add Account CTA for the former, vs. a red error for the
                 // latter.
                 const sessionsDir = path.join(DATA_DIR, 'sessions');
-                const hasSession =
-                    existsSync(sessionsDir) &&
-                    fsSync.readdirSync(sessionsDir).some((f) => f.endsWith('.enc'));
+                const hasSession = await fs.promises
+                    .readdir(sessionsDir)
+                    .then((names) => names.some((f) => f.endsWith('.enc')))
+                    .catch(() => false);
                 if (!hasSession) {
                     return res
                         .status(503)

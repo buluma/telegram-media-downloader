@@ -1,7 +1,6 @@
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
-import { existsSync, readdirSync } from 'fs';
 import { spawn } from 'child_process';
 import express from 'express';
 import { loadConfig } from '../../config/manager.js';
@@ -150,6 +149,16 @@ export function createDownloadsRouter({
 
             const dialogsNames = await getDialogsNameCache();
 
+            // One async directory listing instead of two sync existsSync()
+            // probes per row — this route renders the sidebar so it's hot,
+            // and sync fs here blocks the event loop under Pi disk load.
+            let photoFiles = new Set();
+            try {
+                photoFiles = new Set(await fs.readdir(PHOTOS_DIR));
+            } catch (e) {
+                swallow(e, 'downloads:photos-listing');
+            }
+
             const results = rows
                 .map((r) => {
                     // Detect comment: groups and derive display info from the parent group.
@@ -180,8 +189,8 @@ export function createDownloadsRouter({
                           );
 
                     const hasPhoto = isCommentGroup
-                        ? existsSync(path.join(PHOTOS_DIR, `${parentGroupId}.jpg`))
-                        : existsSync(path.join(PHOTOS_DIR, `${r.group_id}.jpg`));
+                        ? photoFiles.has(`${parentGroupId}.jpg`)
+                        : photoFiles.has(`${r.group_id}.jpg`);
 
                     return {
                         id: r.group_id,
@@ -1325,9 +1334,7 @@ export function createDownloadsRouter({
                 });
             }
             let totalFiles = 0;
-            const dirs = existsSync(DOWNLOADS_DIR)
-                ? readdirSync(DOWNLOADS_DIR, { withFileTypes: true })
-                : [];
+            const dirs = await fs.readdir(DOWNLOADS_DIR, { withFileTypes: true }).catch(() => []);
             const groupDirs = dirs.filter((d) => d.isDirectory());
             const totalGroups = groupDirs.length;
             let processed = 0;
@@ -1335,7 +1342,7 @@ export function createDownloadsRouter({
             for (const dir of groupDirs) {
                 const dirPath = path.join(DOWNLOADS_DIR, dir.name);
                 try {
-                    totalFiles += readdirSync(dirPath, { recursive: true }).length;
+                    totalFiles += (await fs.readdir(dirPath, { recursive: true })).length;
                 } catch (e) {
                     swallow(e, 'downloads');
                 }
@@ -1351,11 +1358,9 @@ export function createDownloadsRouter({
             config.groups = [];
             await writeConfigAtomic(config);
 
-            if (existsSync(PHOTOS_DIR)) {
-                const photos = readdirSync(PHOTOS_DIR);
-                for (const photo of photos) {
-                    await fs.unlink(path.join(PHOTOS_DIR, photo)).catch(() => {});
-                }
+            const photos = await fs.readdir(PHOTOS_DIR).catch(() => []);
+            for (const photo of photos) {
+                await fs.unlink(path.join(PHOTOS_DIR, photo)).catch(() => {});
             }
 
             log({

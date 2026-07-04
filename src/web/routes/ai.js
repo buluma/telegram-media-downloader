@@ -1,4 +1,4 @@
-import { existsSync } from 'fs';
+import fsp from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import express from 'express';
@@ -67,14 +67,19 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
 
     // Resolve a stored file_path to an absolute path on disk. Mirrors
     // the same logic in scan-runner.js and ai/index.js.
-    function _resolveAiPath(storedPath) {
+    async function _resolveAiPath(storedPath) {
         if (!storedPath) return null;
-        if (path.isAbsolute(storedPath) && existsSync(storedPath)) return storedPath;
+        const exists = (p_) =>
+            fsp
+                .access(p_)
+                .then(() => true)
+                .catch(() => false);
+        if (path.isAbsolute(storedPath) && (await exists(storedPath))) return storedPath;
         let s = toPosixPath(storedPath);
         while (s.startsWith('data/downloads/')) s = s.slice('data/downloads/'.length);
         const candidate = path.join(DATA_DIR, 'downloads', s);
-        if (existsSync(candidate)) return candidate;
-        if (existsSync(storedPath)) return storedPath;
+        if (await exists(candidate)) return candidate;
+        if (await exists(storedPath)) return storedPath;
         return null;
     }
 
@@ -461,7 +466,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             for (const row of rows) {
                 const fp = toPosixPath(row.file_path);
                 if (fp.startsWith('_clusterref/')) continue;
-                const abs = _resolveAiPath(fp);
+                const abs = await _resolveAiPath(fp);
                 if (!abs) {
                     missing += 1;
                     if (missingSamples.length < 20) missingSamples.push(row);
@@ -2095,7 +2100,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             const errors_ = [];
 
             for (const row of missing) {
-                const abs = _resolveAiPath(row.file_path);
+                const abs = await _resolveAiPath(row.file_path);
                 if (!abs) {
                     errors++;
                     continue;

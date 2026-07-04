@@ -1,7 +1,6 @@
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
-import fsSync, { existsSync } from 'fs';
 import express from 'express';
 import { loadConfig } from '../../config/manager.js';
 import { getDb } from '../../core/db.js';
@@ -1292,15 +1291,18 @@ export function createMaintenanceRouter({
                 return res.status(404).end();
             }
             const spritePath = getSeekbarSpritePath(id, row.format || 'webp');
-            const finalPath = (await import('fs')).existsSync(row.sprite_path)
+            const finalPath = (await fs
+                .access(row.sprite_path)
+                .then(() => true)
+                .catch(() => false))
                 ? row.sprite_path
                 : spritePath;
             // Defense in depth: sprite paths should always live under
             // data/seekbar. Reject escaped/symlinked targets even if a row
             // in DB is tampered.
             try {
-                const realFile = fsSync.realpathSync(finalPath);
-                const realRoot = fsSync.realpathSync(path.join(DATA_DIR, 'seekbar'));
+                const realFile = await fs.realpath(finalPath);
+                const realRoot = await fs.realpath(path.join(DATA_DIR, 'seekbar'));
                 if (realFile !== realRoot && !realFile.startsWith(realRoot + path.sep)) {
                     return res.status(400).end();
                 }
@@ -2313,18 +2315,20 @@ export function createMaintenanceRouter({
     // populate the "Download log" picker.
     router.get('/maintenance/logs', async (req, res) => {
         try {
-            if (!existsSync(LOGS_DIR)) return res.json({ files: [] });
-            const names = fsSync.readdirSync(LOGS_DIR).filter((f) => f.endsWith('.log'));
-            const files = names
-                .map((name) => {
-                    try {
-                        const st = fsSync.statSync(path.join(LOGS_DIR, name));
-                        return { name, size: st.size, modified: st.mtime.toISOString() };
-                    } catch {
-                        return null;
-                    }
-                })
-                .filter(Boolean);
+            const allNames = await fs.readdir(LOGS_DIR).catch(() => []);
+            const names = allNames.filter((f) => f.endsWith('.log'));
+            const files = (
+                await Promise.all(
+                    names.map(async (name) => {
+                        try {
+                            const st = await fs.stat(path.join(LOGS_DIR, name));
+                            return { name, size: st.size, modified: st.mtime.toISOString() };
+                        } catch {
+                            return null;
+                        }
+                    }),
+                )
+            ).filter(Boolean);
             files.sort((a, b) => b.modified.localeCompare(a.modified));
             res.json({ files });
         } catch (e) {
@@ -2348,15 +2352,19 @@ export function createMaintenanceRouter({
             }
             const lines = Math.max(10, Math.min(100000, parseInt(req.query.lines, 10) || 5000));
             const filePath = path.join(LOGS_DIR, name);
-            if (!existsSync(filePath)) return res.status(404).json({ error: 'Log not found' });
+            const logExists = await fs
+                .access(filePath)
+                .then(() => true)
+                .catch(() => false);
+            if (!logExists) return res.status(404).json({ error: 'Log not found' });
 
             // Realpath check defends against symlink escapes that the basename
             // filter can't catch (e.g. logs/foo.log -> /etc/passwd). Resolve
             // both sides so a case-insensitive FS or a symlinked LOGS_DIR still
             // compares cleanly.
             try {
-                const realFile = fsSync.realpathSync(filePath);
-                const realLogs = fsSync.realpathSync(LOGS_DIR);
+                const realFile = await fs.realpath(filePath);
+                const realLogs = await fs.realpath(LOGS_DIR);
                 if (realFile !== realLogs && !realFile.startsWith(realLogs + path.sep)) {
                     return res.status(400).json({ error: 'Path escape detected' });
                 }
@@ -2407,10 +2415,13 @@ export function createMaintenanceRouter({
                 return res.status(400).json({ error: 'Invalid accountId' });
             }
             const sessionFile = path.join(SESSIONS_DIR, `${accountId}.enc`);
-            if (!existsSync(sessionFile)) {
+            const raw = await fs.readFile(sessionFile, 'utf8').catch((e) => {
+                if (e?.code === 'ENOENT') return null;
+                throw e;
+            });
+            if (raw === null) {
                 return res.status(404).json({ error: 'Session file not found for that account' });
             }
-            const raw = await fs.readFile(sessionFile, 'utf8');
             const encrypted = JSON.parse(raw);
             const sessionString = _secureSession.decrypt(encrypted);
             res.json({ success: true, accountId, session: sessionString });

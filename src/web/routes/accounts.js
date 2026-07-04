@@ -1,5 +1,5 @@
 import path from 'path';
-import fsSync from 'fs';
+import fs from 'fs/promises';
 import { fileURLToPath } from 'url';
 import express from 'express';
 import { loadConfig } from '../../config/manager.js';
@@ -15,17 +15,15 @@ export function createAccountsRouter({ getAccountManager }) {
     router.get('/accounts', async (req, res) => {
         try {
             const sessionsDir = path.join(DATA_DIR, 'sessions');
-            if (!fsSync.existsSync(sessionsDir)) {
-                return res.json([]);
-            }
-            const files = fsSync
-                .readdirSync(sessionsDir)
-                .filter((f) => f.endsWith('.enc'))
-                .sort((a, b) => {
-                    const statA = fsSync.statSync(path.join(sessionsDir, a));
-                    const statB = fsSync.statSync(path.join(sessionsDir, b));
-                    return statA.mtimeMs - statB.mtimeMs;
-                });
+            const names = await fs.readdir(sessionsDir).catch(() => []);
+            const encNames = names.filter((f) => f.endsWith('.enc'));
+            const withMtime = await Promise.all(
+                encNames.map(async (f) => ({
+                    f,
+                    mtimeMs: (await fs.stat(path.join(sessionsDir, f))).mtimeMs,
+                })),
+            );
+            const files = withMtime.sort((a, b) => a.mtimeMs - b.mtimeMs).map((x) => x.f);
 
             const config = loadConfig();
             const configAccounts = config.accounts || [];

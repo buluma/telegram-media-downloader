@@ -1,7 +1,7 @@
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
-import { existsSync, readdirSync, realpathSync } from 'fs';
+
 import express from 'express';
 import { loadConfig, GROUP_DEFAULTS } from '../../config/manager.js';
 import { getDb } from '../../core/db.js';
@@ -112,12 +112,21 @@ export function createGroupsRouter({
             // Browse-chats picker uses, so the sidebar shows the same name.
             const dialogsNames = await getDialogsNameCache();
 
+            // One async listing instead of a sync existsSync per group —
+            // this route is hot (sidebar) and sync fs blocks the event loop
+            // under Pi disk load.
+            let photoFiles = new Set();
+            try {
+                photoFiles = new Set(await fs.readdir(PHOTOS_DIR));
+            } catch (e) {
+                swallow(e, 'groups:photos-listing');
+            }
+
             const typesToPersist = [];
             const groupsWithPhotos = await Promise.all(
                 (config.groups || []).map(async (group) => {
                     const safeGroupId = String(group.id).replace(/[^A-Za-z0-9_.-]/g, '_');
-                    const photoPath = path.join(PHOTOS_DIR, `${safeGroupId}.jpg`);
-                    const hasPhoto = existsSync(photoPath);
+                    const hasPhoto = photoFiles.has(`${safeGroupId}.jpg`);
                     const gid = String(group.id);
                     const isComment = gid.startsWith('comment:');
                     const lookupId = isComment ? gid.slice(8) : gid;
@@ -258,17 +267,17 @@ export function createGroupsRouter({
             // determinate bar.
             const folderPath = path.join(DOWNLOADS_DIR, folderName);
             let filesDeleted = 0;
-            if (existsSync(folderPath)) {
-                const countFiles = (dir) => {
-                    let count = 0;
-                    const items = readdirSync(dir, { withFileTypes: true });
-                    for (const item of items) {
-                        if (item.isDirectory()) count += countFiles(path.join(dir, item.name));
-                        else count++;
-                    }
-                    return count;
-                };
-                filesDeleted = countFiles(folderPath);
+            const countFiles = async (dir) => {
+                let count = 0;
+                const items = await fs.readdir(dir, { withFileTypes: true });
+                for (const item of items) {
+                    if (item.isDirectory()) count += await countFiles(path.join(dir, item.name));
+                    else count++;
+                }
+                return count;
+            };
+            try {
+                filesDeleted = await countFiles(folderPath);
                 onProgress({ stage: 'deleting_files', groupId, total: filesDeleted, processed: 0 });
                 await fs.rm(folderPath, { recursive: true, force: true });
                 onProgress({
@@ -277,6 +286,9 @@ export function createGroupsRouter({
                     total: filesDeleted,
                     processed: filesDeleted,
                 });
+            } catch (e) {
+                if (e?.code !== 'ENOENT') throw e;
+                // Folder never existed — nothing on disk to delete.
             }
 
             // 2. Delete DB records
@@ -290,7 +302,9 @@ export function createGroupsRouter({
             // 4. Delete profile photo
             const safeGroupId = String(groupId).replace(/[^A-Za-z0-9_.-]/g, '_');
             const photoPath = path.join(PHOTOS_DIR, `${safeGroupId}.jpg`);
-            if (existsSync(photoPath)) await fs.unlink(photoPath);
+            await fs.unlink(photoPath).catch((e) => {
+                if (e?.code !== 'ENOENT') swallow(e, 'groups:purge-photo');
+            });
 
             console.log(
                 `PURGED: ${groupName} — ${filesDeleted} files, ${dbResult.deletedDownloads} DB records`,
@@ -374,7 +388,11 @@ export function createGroupsRouter({
             onProgress({ stage: 'counting', groupId });
             const folderPath = path.join(DOWNLOADS_DIR, folderName);
             let filesDeleted = 0;
-            if (existsSync(folderPath)) {
+            const folderExists = await fs
+                .access(folderPath)
+                .then(() => true)
+                .catch(() => false);
+            if (folderExists) {
                 const db = getDb();
                 // Only delete files that are non-pinned and non-photo.
                 // Photos are small and manually managed; pinned files must survive.
@@ -782,7 +800,11 @@ export function createGroupsRouter({
             if (synthPath !== photosRoot && !synthPath.startsWith(photosRoot + path.sep)) {
                 return res.status(400).send('Invalid id');
             }
-            if (existsSync(synthPath)) {
+            const synthExists = await fs
+                .access(synthPath)
+                .then(() => true)
+                .catch(() => false);
+            if (synthExists) {
                 res.setHeader(
                     'Cache-Control',
                     'private, max-age=86400, stale-while-revalidate=604800',
@@ -802,8 +824,13 @@ export function createGroupsRouter({
                     // Reuse the numeric photo — fetch on demand if missing.
                     const safeMatchId = String(matchId).replace(/[^A-Za-z0-9_.-]/g, '_');
                     const numericPath = path.join(PHOTOS_DIR, `${safeMatchId}.jpg`);
-                    if (!existsSync(numericPath)) await downloadProfilePhoto(matchId);
-                    if (existsSync(numericPath)) {
+                    const numericExists = () =>
+                        fs
+                            .access(numericPath)
+                            .then(() => true)
+                            .catch(() => false);
+                    if (!(await numericExists())) await downloadProfilePhoto(matchId);
+                    if (await numericExists()) {
                         try {
                             await fs.copyFile(numericPath, synthPath);
                         } catch (e) {
@@ -829,10 +856,10 @@ export function createGroupsRouter({
 
         // Realpath check defends against the case where PHOTOS_DIR or one of
         // its descendants is a symlink that points outside the data dir.
-        const send = () => {
+        const send = async () => {
             try {
-                const real = realpathSync(photoPath);
-                const realRoot = realpathSync(PHOTOS_DIR);
+                const real = await fs.realpath(photoPath);
+                const realRoot = await fs.realpath(PHOTOS_DIR);
                 if (real !== realRoot && !real.startsWith(realRoot + path.sep)) {
                     return res.status(400).send('Path escape detected');
                 }
@@ -852,11 +879,16 @@ export function createGroupsRouter({
             }
         };
 
-        if (existsSync(photoPath)) return send();
+        const photoExists = () =>
+            fs
+                .access(photoPath)
+                .then(() => true)
+                .catch(() => false);
+        if (await photoExists()) return send();
 
         // Try download if not exists
         const url = await downloadProfilePhoto(id);
-        if (url && existsSync(photoPath)) return send();
+        if (url && (await photoExists())) return send();
 
         res.status(404).send('Not found');
     });
