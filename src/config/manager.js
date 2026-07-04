@@ -52,6 +52,16 @@ const DEFAULT_CONFIG = {
         retentionHours: 48,
         sweepIntervalMin: 10,
     },
+    // Operator alerting via ntfy (self-hosted or ntfy.sh). Fires on download
+    // failure streaks and monitor-enabled groups gone silent — the two
+    // failure modes that otherwise go unnoticed for days. Disabled until an
+    // operator sets a topic and flips `enabled`.
+    alerts: {
+        enabled: false,
+        ntfy: { url: 'https://ntfy.sh', topic: '', authToken: '' },
+        failureStreak: 5, // consecutive failures before an alert; 0 = off
+        silentGroupDays: 0, // alert when a monitored group is silent N+ days; 0 = off
+    },
     // Advanced runtime tuning. Every value here mirrors a previously-hardcoded
     // constant in the hot path; consumers MUST read with the inline literal
     // as fallback (config.advanced?.x?.y ?? <existing-default>) so a fresh
@@ -771,6 +781,11 @@ function mergeConfig(userConfig) {
         rateLimits: { ...DEFAULT_CONFIG.rateLimits, ...userConfig.rateLimits },
         diskManagement: { ...DEFAULT_CONFIG.diskManagement, ...userConfig.diskManagement },
         rescue: { ...DEFAULT_CONFIG.rescue, ...userConfig.rescue },
+        alerts: {
+            ...DEFAULT_CONFIG.alerts,
+            ...(userConfig.alerts || {}),
+            ntfy: { ...DEFAULT_CONFIG.alerts.ntfy, ...(userConfig.alerts?.ntfy || {}) },
+        },
         // Two-level merge for `advanced`: each sub-namespace (downloader,
         // history, …) gets its own spread so users who only set a single
         // value (e.g. advanced.downloader.maxConcurrency) keep the rest

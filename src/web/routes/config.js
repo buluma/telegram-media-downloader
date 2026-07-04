@@ -1,5 +1,6 @@
 import express from 'express';
 import { loadConfig } from '../../config/manager.js';
+import { sendNtfy } from '../../core/alerts.js';
 import { writeConfigAtomic } from '../lib/config-writer.js';
 import { getRescueStats } from '../../core/db/downloads.js';
 import { getRescueSweeper } from '../../core/rescue.js';
@@ -121,6 +122,15 @@ export function createConfigRouter({
                 };
             if (req.body.rescue)
                 newConfig.rescue = { ...(currentConfig.rescue || {}), ...req.body.rescue };
+            if (req.body.alerts)
+                newConfig.alerts = {
+                    ...(currentConfig.alerts || {}),
+                    ...req.body.alerts,
+                    ntfy: {
+                        ...(currentConfig.alerts?.ntfy || {}),
+                        ...(req.body.alerts.ntfy || {}),
+                    },
+                };
             if (req.body.proxy === null)
                 newConfig.proxy = null; // explicit clear
             else if (req.body.proxy && typeof req.body.proxy === 'object') {
@@ -673,6 +683,27 @@ export function createConfigRouter({
         } catch (error) {
             console.error('POST /api/config:', error);
             res.status(500).json({ error: 'Internal error' });
+        }
+    });
+
+    // Fire a test notification at the given (or saved) ntfy settings so the
+    // operator can verify URL/topic/token from the Settings card without
+    // waiting for a real failure.
+    router.post('/alerts/test', async (req, res) => {
+        try {
+            const ntfyCfg =
+                req.body?.ntfy && typeof req.body.ntfy === 'object'
+                    ? req.body.ntfy
+                    : loadConfig().alerts?.ntfy || {};
+            const ok = await sendNtfy(ntfyCfg, {
+                title: 'tgdl: test notification',
+                message: 'Alerts are wired up correctly.',
+                priority: 3,
+                tags: 'white_check_mark,tgdl',
+            });
+            res.json({ ok });
+        } catch (error) {
+            res.status(500).json({ ok: false, error: error?.message || 'Internal error' });
         }
     });
 

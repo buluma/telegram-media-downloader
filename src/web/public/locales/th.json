@@ -1898,5 +1898,20 @@
     "offline.giveup": "ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์",
     "offline.reconnecting": "ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ — กำลังเชื่อมต่อใหม่…",
     "offline.retry": "ลองใหม่",
-    "viewer.error.pin": "อัปเดตการปักหมุดไม่สำเร็จ"
+    "viewer.error.pin": "อัปเดตการปักหมุดไม่สำเร็จ",
+    "settings.alerts.title": "การแจ้งเตือน (ntfy)",
+    "settings.alerts.help": "ส่งการแจ้งเตือนไปยังหัวข้อ ntfy เมื่อดาวน์โหลดล้มเหลวติดต่อกันหรือกลุ่มที่ติดตามเงียบไป ใช้ได้กับ ntfy.sh หรือเซิร์ฟเวอร์ของคุณเอง",
+    "settings.alerts.enabled": "เปิดการแจ้งเตือน",
+    "settings.alerts.ntfy_url": "URL เซิร์ฟเวอร์ ntfy",
+    "settings.alerts.ntfy_topic": "หัวข้อ",
+    "settings.alerts.ntfy_token": "โทเคนการเข้าถึง (ไม่บังคับ)",
+    "settings.alerts.streak": "จำนวนความล้มเหลวติดต่อกัน (0 = ปิด)",
+    "settings.alerts.silent_days": "กลุ่มเงียบเกิน N วัน (0 = ปิด)",
+    "settings.alerts.save": "บันทึกการแจ้งเตือน",
+    "settings.alerts.test": "ส่งการแจ้งเตือนทดสอบ",
+    "settings.alerts.saved": "บันทึกการตั้งค่าการแจ้งเตือนแล้ว",
+    "settings.alerts.testing": "กำลังส่ง…",
+    "settings.alerts.test_ok": "ส่งสำเร็จ ✓",
+    "settings.alerts.test_fail": "ล้มเหลว — ตรวจสอบ URL/หัวข้อ/โทเคน",
+    "settings.alerts.test_err": "ล้มเหลว: {msg}"
 }

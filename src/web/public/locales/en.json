@@ -1898,5 +1898,20 @@
     "offline.giveup": "Server unreachable.",
     "offline.reconnecting": "Server unreachable — reconnecting…",
     "offline.retry": "Retry",
-    "viewer.error.pin": "Pin update failed"
+    "viewer.error.pin": "Pin update failed",
+    "settings.alerts.title": "Alerts (ntfy)",
+    "settings.alerts.help": "Push a notification to an ntfy topic when downloads fail repeatedly or a monitored group goes silent. Works with ntfy.sh or a self-hosted server.",
+    "settings.alerts.enabled": "Enable alerts",
+    "settings.alerts.ntfy_url": "ntfy server URL",
+    "settings.alerts.ntfy_topic": "Topic",
+    "settings.alerts.ntfy_token": "Access token (optional)",
+    "settings.alerts.streak": "Failure streak threshold (0 = off)",
+    "settings.alerts.silent_days": "Silent group after N days (0 = off)",
+    "settings.alerts.save": "Save alerts",
+    "settings.alerts.test": "Send test notification",
+    "settings.alerts.saved": "Alert settings saved",
+    "settings.alerts.testing": "Sending…",
+    "settings.alerts.test_ok": "Delivered ✓",
+    "settings.alerts.test_fail": "Failed — check URL/topic/token",
+    "settings.alerts.test_err": "Failed: {msg}"
 }

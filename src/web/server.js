@@ -32,6 +32,7 @@ import { SecureSession } from '../core/security.js';
 import { AccountManager } from '../core/accounts.js';
 import { loadConfig } from '../config/manager.js';
 import { runtime } from '../core/runtime.js';
+import { createAlerter } from '../core/alerts.js';
 import { getDiskRotator } from '../core/disk-rotator.js';
 import * as integrity from '../core/integrity.js';
 import { ensureShareSecret, verifyShareToken, applyShareLimits } from '../core/share.js';
@@ -1136,6 +1137,14 @@ app.get('/CHANGELOG.md', async (req, res) => {
 
 runtime.on('state', (s) => broadcast({ type: 'monitor_state', state: s.state, error: s.error }));
 runtime.on('event', (e) => broadcast({ type: 'monitor_event', ...e }));
+
+// Operator alerting (ntfy) — failure-streak alerts ride the same runtime
+// event stream the WS broadcast uses; silent-group detection sweeps hourly
+// (per-group 24h dedupe keeps the effective cadence daily). Config-gated
+// inside the alerter, so this is inert until alerts.enabled is set.
+const _alerter = createAlerter({ getConfig: loadConfig });
+_alerter.attach(runtime);
+_alerter.startSilentGroupTimer();
 
 // Catch-up backfill — fired by monitor when boot-time inspection finds a
 // group whose newest stored message_id lags Telegram's current top by

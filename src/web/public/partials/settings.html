@@ -571,6 +571,48 @@
                         <p id="rescue-stats-line" class="text-xs text-tg-textSecondary mt-3" data-i18n="settings.rescue.stats_loading">Loading rescue stats…</p>
                     </div>
 
+                    <!-- Alerts (ntfy) -->
+                    <div id="settings-card-alerts" data-settings-section="card-alerts" class="bg-tg-panel rounded-xl p-4 mb-4 scroll-mt-24" data-admin-only>
+                        <h3 class="text-tg-text font-medium mb-4 flex items-center gap-2">
+                            <i class="ri-notification-3-line text-tg-blue" aria-hidden="true"></i>
+                            <span data-i18n="settings.alerts.title">Alerts (ntfy)</span>
+                        </h3>
+                        <p class="text-xs text-tg-textSecondary mb-3" data-i18n="settings.alerts.help">Push a notification to an ntfy topic when downloads fail repeatedly or a monitored group goes silent. Works with ntfy.sh or a self-hosted server.</p>
+                        <label class="flex items-center justify-between p-3 bg-tg-bg/40 rounded-lg cursor-pointer mb-3">
+                            <div class="text-tg-text text-sm" data-i18n="settings.alerts.enabled">Enable alerts</div>
+                            <div id="setting-alerts-enabled" class="tg-toggle"></div>
+                        </label>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                            <div>
+                                <label for="setting-alerts-ntfy-url" class="text-tg-textSecondary text-xs block mb-1" data-i18n="settings.alerts.ntfy_url">ntfy server URL</label>
+                                <input id="setting-alerts-ntfy-url" type="url" placeholder="https://ntfy.sh" class="tg-input w-full text-sm" />
+                            </div>
+                            <div>
+                                <label for="setting-alerts-ntfy-topic" class="text-tg-textSecondary text-xs block mb-1" data-i18n="settings.alerts.ntfy_topic">Topic</label>
+                                <input id="setting-alerts-ntfy-topic" type="text" placeholder="tgdl-alerts" class="tg-input w-full text-sm" autocomplete="off" />
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="setting-alerts-ntfy-token" class="text-tg-textSecondary text-xs block mb-1" data-i18n="settings.alerts.ntfy_token">Access token (optional)</label>
+                            <input id="setting-alerts-ntfy-token" type="password" placeholder="tk_…" class="tg-input w-full text-sm" autocomplete="off" data-lpignore="true" data-1p-ignore="true" />
+                        </div>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                            <div>
+                                <label for="setting-alerts-streak" class="text-tg-textSecondary text-xs block mb-1" data-i18n="settings.alerts.streak">Failure streak threshold (0 = off)</label>
+                                <input id="setting-alerts-streak" type="number" min="0" max="1000" placeholder="5" class="tg-input w-full text-sm" />
+                            </div>
+                            <div>
+                                <label for="setting-alerts-silent-days" class="text-tg-textSecondary text-xs block mb-1" data-i18n="settings.alerts.silent_days">Silent group after N days (0 = off)</label>
+                                <input id="setting-alerts-silent-days" type="number" min="0" max="365" placeholder="0" class="tg-input w-full text-sm" />
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <button id="alerts-save-btn" type="button" class="tg-btn tg-btn-primary text-sm" data-i18n="settings.alerts.save">Save alerts</button>
+                            <button id="alerts-test-btn" type="button" class="tg-btn text-sm" data-i18n="settings.alerts.test">Send test notification</button>
+                            <span id="alerts-status-line" class="text-xs text-tg-textSecondary"></span>
+                        </div>
+                    </div>
+
                     <!-- Quick Presets card retired in v2.9. The 3 buttons
                          (Safe / Balanced / Fast) bulk-set rate-limit + size
                          + concurrency knobs and were useful exactly once at

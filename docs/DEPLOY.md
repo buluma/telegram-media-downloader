@@ -109,6 +109,35 @@ Both the faces (`tgdl-faces-*`) and seekbar (`tgdl-seekbar-*`) sidecars are down
 
 Air-gapped installs that set `TGDL_FACES_AUTO_DOWNLOAD=false` or `SEEKBAR_AUTO_DOWNLOAD=false` skip the download entirely; no checksum check runs because no download occurs. Pre-stage the binary manually and the spawn path picks it up without touching the network.
 
+## Rebuild-free frontend deploys (source-checkout installs)
+
+When the compose directory is a git checkout of this repo (as opposed to a
+bare image deploy), frontend-only changes don't need an image rebuild at all.
+Everything the browser loads lives under `src/web/public/` as static files —
+`index.css` is committed prebuilt and the Dockerfile does no asset generation,
+so the baked copy and the checkout copy are interchangeable.
+
+Add a read-only bind mount to `docker-compose.override.yml`:
+
+```yaml
+services:
+  telegram-downloader:
+    volumes:
+      - ./src/web/public:/app/src/web/public:ro
+```
+
+After that, a JS/CSS/HTML/locale change deploys with:
+
+```bash
+git pull   # done — refresh the browser
+```
+
+No rebuild, no container restart. Backend (`src/core`, `src/web/routes`,
+`src/web/server.js`) changes still need the normal image rebuild — the mount
+only covers the static tree. If you change the Tailwind source, run
+`npm run build:css` and commit the regenerated `index.css` as usual; the
+mount serves whatever the checkout contains.
+
 ## One-click in-dashboard auto-update (opt-in)
 
 > **Maintenance status, late 2026.** Upstream `containrrr/watchtower` is in low-maintenance mode (the project banner reads "no longer actively maintained"). The integration here keeps working — the HTTP API and the docker socket contract have not changed in years — but if you want a more actively maintained sidecar the recommended drop-in is **[`whats-up-docker`](https://github.com/fmartinou/whats-up-docker)** (configures the same docker-compose label scoping; the dashboard's "Install update" button is feature-flagged via `WATCHTOWER_*` env vars but the protocol is just HTTP-trigger-then-docker-compose-up, so a thin shim works against any successor). The simplest path that doesn't depend on either sidecar is the manual upgrade documented below.

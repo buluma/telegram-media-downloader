@@ -509,6 +509,87 @@ export async function loadSettings() {
             rlInput.onchange = saveRateLimit;
         }
 
+        // ---- Alerts (ntfy) — self-managed card, saves its own subtree ----
+        const alertsToggle = document.getElementById('setting-alerts-enabled');
+        if (alertsToggle) {
+            const aCfg = config.alerts || {};
+            const nCfg = aCfg.ntfy || {};
+            alertsToggle.classList.toggle('active', aCfg.enabled === true);
+            bind('setting-alerts-ntfy-url', nCfg.url || 'https://ntfy.sh');
+            bind('setting-alerts-ntfy-topic', nCfg.topic || '');
+            bind('setting-alerts-ntfy-token', nCfg.authToken || '');
+            bind('setting-alerts-streak', aCfg.failureStreak ?? 5);
+            bind('setting-alerts-silent-days', aCfg.silentGroupDays ?? 0);
+
+            const gatherAlerts = () => ({
+                enabled: alertsToggle.classList.contains('active'),
+                ntfy: {
+                    url: document.getElementById('setting-alerts-ntfy-url')?.value?.trim() || '',
+                    topic:
+                        document.getElementById('setting-alerts-ntfy-topic')?.value?.trim() || '',
+                    authToken:
+                        document.getElementById('setting-alerts-ntfy-token')?.value?.trim() || '',
+                },
+                failureStreak: Math.max(
+                    0,
+                    Math.min(
+                        1000,
+                        parseInt(document.getElementById('setting-alerts-streak')?.value, 10) || 0,
+                    ),
+                ),
+                silentGroupDays: Math.max(
+                    0,
+                    Math.min(
+                        365,
+                        parseInt(
+                            document.getElementById('setting-alerts-silent-days')?.value,
+                            10,
+                        ) || 0,
+                    ),
+                ),
+            });
+
+            alertsToggle.onclick = (e) => {
+                e.preventDefault();
+                alertsToggle.classList.toggle('active');
+            };
+
+            const alertsStatus = document.getElementById('alerts-status-line');
+            document.getElementById('alerts-save-btn')?.addEventListener('click', async () => {
+                try {
+                    await api.post('/api/config', { alerts: gatherAlerts() });
+                    showToast(i18nT('settings.alerts.saved', 'Alert settings saved'), 'success');
+                } catch (err) {
+                    showToast(
+                        i18nTf(
+                            'toast.save_failed',
+                            { msg: err.message },
+                            `Save failed: ${err.message}`,
+                        ),
+                        'error',
+                    );
+                }
+            });
+            document.getElementById('alerts-test-btn')?.addEventListener('click', async () => {
+                if (alertsStatus)
+                    alertsStatus.textContent = i18nT('settings.alerts.testing', 'Sending…');
+                try {
+                    const r = await api.post('/api/alerts/test', { ntfy: gatherAlerts().ntfy });
+                    if (alertsStatus)
+                        alertsStatus.textContent = r?.ok
+                            ? i18nT('settings.alerts.test_ok', 'Delivered ✓')
+                            : i18nT('settings.alerts.test_fail', 'Failed — check URL/topic/token');
+                } catch (err) {
+                    if (alertsStatus)
+                        alertsStatus.textContent = i18nTf(
+                            'settings.alerts.test_err',
+                            { msg: err.message },
+                            `Failed: ${err.message}`,
+                        );
+                }
+            });
+        }
+
         // Telegram API: only the apiId is exposed; apiHash is server-only.
         const apiIdEl = document.getElementById('setting-api-id');
         if (apiIdEl) apiIdEl.value = tg.apiId || '';
