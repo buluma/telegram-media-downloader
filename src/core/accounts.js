@@ -15,6 +15,7 @@ import { colorize } from '../cli/colors.js';
 import { logger, suppressNoise } from './logger.js';
 import { buildProxy } from './proxy.js';
 import { loadConfig, saveConfig } from '../config/manager.js';
+import { swallow } from './util/swallow.js';
 
 function deferred() {
     let resolve, reject;
@@ -578,7 +579,9 @@ export class AccountManager {
             for (const fn of flow.stateWaiters)
                 try {
                     fn(s);
-                } catch {}
+                } catch (e) {
+                    swallow(e, 'accounts:setState');
+                }
         };
 
         client
@@ -641,7 +644,9 @@ export class AccountManager {
                 setState('error');
                 try {
                     client.disconnect().catch(() => {});
-                } catch {}
+                } catch (e) {
+                    swallow(e, 'accounts');
+                }
                 setTimeout(() => this._authFlows.delete(sessionId), 60000);
             });
 
@@ -704,17 +709,25 @@ export class AccountManager {
         // Reject all deferreds to unblock client.start()
         try {
             flow.phoneDeferred.reject(new Error('cancelled'));
-        } catch {}
+        } catch (e) {
+            swallow(e, 'accounts:cancelAuth');
+        }
         try {
             flow.codeDeferred.reject(new Error('cancelled'));
-        } catch {}
+        } catch (e) {
+            swallow(e, 'accounts');
+        }
         try {
             flow.passwordDeferred.reject(new Error('cancelled'));
-        } catch {}
+        } catch (e) {
+            swallow(e, 'accounts');
+        }
         if (flow.client) {
             try {
                 await flow.client.disconnect();
-            } catch {}
+            } catch (e) {
+                swallow(e, 'accounts');
+            }
         }
         this._authFlows.delete(sessionId);
         return { ok: true };

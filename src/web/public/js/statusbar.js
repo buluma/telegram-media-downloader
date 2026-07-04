@@ -385,7 +385,7 @@ export async function _openUpdateChooser(latest, releaseUrl) {
                                  'update.no_watchtower',
                                  'Watchtower sidecar is not configured. See docker-compose.yml comments to enable the auto-update profile.',
                              )
-                   }">
+}">
               <i class="ri-download-cloud-2-line"></i><span>${i18nT('update.install_disabled', 'Install (unavailable)')}</span>
            </button>`;
 

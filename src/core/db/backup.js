@@ -1,6 +1,7 @@
 import path from 'path';
 import fs from 'fs';
 import { getDb, getDataDir } from '../db.js';
+import { swallow } from '../util/swallow.js';
 
 const MAX_BACKUPS = 5;
 
@@ -35,7 +36,9 @@ export async function backupDb(label = 'backup') {
     for (const old of existing.slice(MAX_BACKUPS)) {
         try {
             fs.unlinkSync(path.join(dir, old));
-        } catch {}
+        } catch (e) {
+            swallow(e, 'backup:backupDb');
+        }
     }
 
     const size = fs.statSync(destPath).size;

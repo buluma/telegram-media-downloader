@@ -42,6 +42,7 @@ import { fileURLToPath } from 'url';
 import { getDb, kvGet, kvSet } from './db.js';
 import { resolveFfmpegBin, hasFfmpeg, purgeThumbsForDownload } from './thumbs.js';
 import { toPosixPath } from './util/paths.js';
+import { swallow } from './util/swallow.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
@@ -294,7 +295,9 @@ async function _remuxInPlace(absPath) {
     if (tmpStat.size < srcStat.size * 0.8 || tmpStat.size > srcStat.size * 1.1) {
         try {
             await fs.unlink(tmp);
-        } catch {}
+        } catch (e) {
+            swallow(e, 'faststart');
+        }
         throw new Error(`tmp size sanity check failed: src=${srcStat.size} tmp=${tmpStat.size}`);
     }
     await _renameWithRetry(tmp, absPath);
@@ -355,7 +358,9 @@ export async function optimizeDownload(id) {
         // the next gallery render regenerate.
         try {
             await purgeThumbsForDownload(dlId);
-        } catch {}
+        } catch (e) {
+            swallow(e, 'faststart');
+        }
         return { status: 'optimized', newSize };
     } catch (e) {
         return { status: 'errored', error: e?.message || String(e) };

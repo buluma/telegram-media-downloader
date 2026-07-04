@@ -5,6 +5,7 @@ import https from 'https';
 import http from 'http';
 import path from 'path';
 import { spawn as _spawn, spawnSync } from 'child_process';
+import { swallow } from '../util/swallow.js';
 
 export const SIDECAR_VERSION = '0.3.2';
 export const GH_RELEASE_BASE = `https://github.com/buluma/telegram-media-downloader/releases/download/faces-v${SIDECAR_VERSION}`;
@@ -543,7 +544,9 @@ export async function downloadAndExtract(
             // extractor doesn't pick up a half-baked tarball.
             try {
                 await fs.unlink(tmpTarball);
-            } catch {}
+            } catch (e) {
+                swallow(e, 'faces-download');
+            }
         }
     }
     if (!downloaded) {
@@ -561,7 +564,9 @@ export async function downloadAndExtract(
         logFn('warn', `checksum verification failed: ${e?.message || e} — aborting install`);
         try {
             await fs.unlink(tmpTarball);
-        } catch {}
+        } catch (e) {
+            swallow(e, 'faces-download');
+        }
         throw e;
     }
 
@@ -574,7 +579,9 @@ export async function downloadAndExtract(
         // would eat the operator's disk fast.
         try {
             await fs.unlink(tmpTarball);
-        } catch {}
+        } catch (e) {
+            swallow(e, 'faces-download');
+        }
     }
 
     if (!existsSync(target.binPath)) {

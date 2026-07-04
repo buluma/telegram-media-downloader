@@ -15,6 +15,7 @@ import {
     finalisePendingUpdates,
     getBootInstanceId,
 } from './db/kv.js';
+import { swallow } from './util/swallow.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // `TGDL_DATA_DIR` overrides the on-disk data root. Used by the test suite to
@@ -949,7 +950,9 @@ function initSchema() {
                 VALUES (new.id, COALESCE(new.file_name, ''), COALESCE(new.group_name, ''));
             END;
         `);
-    } catch {}
+    } catch (e) {
+        swallow(e, 'db');
+    }
 
     // Smoke-test every column the rest of the code path depends on so a
     // failed migration or CREATE TABLE surfaces at boot, not mid-request.
@@ -1016,13 +1019,17 @@ function initSchema() {
                 source     TEXT    DEFAULT 'manual'
             )
         `);
-    } catch {}
+    } catch (e) {
+        swallow(e, 'db');
+    }
 
     // FK enforcement is per-connection in SQLite — flip it on once we know
     // the table exists. Without this, ON DELETE CASCADE silently no-ops.
     try {
         db.pragma('foreign_keys = ON');
-    } catch {}
+    } catch (e) {
+        swallow(e, 'db');
+    }
 }
 
 // ---- Domain module barrel exports -----------------------------------------

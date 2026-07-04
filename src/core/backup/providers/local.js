@@ -15,6 +15,7 @@ import { Transform } from 'stream';
 import { BackupProvider } from './base.js';
 import { encryptStream } from '../encryption.js';
 import { toPosixPath } from '../../util/paths.js';
+import { swallow } from '../../util/swallow.js';
 
 export class LocalProvider extends BackupProvider {
     static get name() {
@@ -100,7 +101,9 @@ export class LocalProvider extends BackupProvider {
         } catch (e) {
             try {
                 await fsp.unlink(tmp);
-            } catch {}
+            } catch (e) {
+                swallow(e, 'local');
+            }
             throw e;
         }
         await fsp.rename(tmp, dest);
@@ -202,7 +205,9 @@ function _makeProgressTransform({ onProgress, throttleBps, signal, onBytes }) {
                 if (typeof onProgress === 'function') {
                     try {
                         onProgress({ bytesUploaded: bytes });
-                    } catch {}
+                    } catch (e) {
+                        swallow(e, 'local');
+                    }
                 }
                 if (throttleBps && throttleBps > 0) {
                     const elapsedMs = Date.now() - start;

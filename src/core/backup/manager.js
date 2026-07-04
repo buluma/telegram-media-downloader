@@ -65,6 +65,7 @@ import { FtpProvider } from './providers/ftp.js';
 import { GoogleDriveProvider } from './providers/gdrive.js';
 import { DropboxProvider } from './providers/dropbox.js';
 import { toPosixPath } from '../util/paths.js';
+import { swallow } from '../util/swallow.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '../../..');
@@ -645,7 +646,9 @@ class Worker {
                 let localSize = 0;
                 try {
                     localSize = (await fsp.stat(localPath)).size;
-                } catch {}
+                } catch (e) {
+                    swallow(e, 'manager');
+                }
                 // For encrypted uploads, the remote is BIGGER than the
                 // local file (header + tag overhead). Skip only when not
                 // encrypted and sizes match.
@@ -730,7 +733,9 @@ class Worker {
         for (const a of this.activeAborters) {
             try {
                 a.abort();
-            } catch {}
+            } catch (e) {
+                swallow(e, 'manager');
+            }
         }
         this.activeAborters.clear();
         this.running = false;

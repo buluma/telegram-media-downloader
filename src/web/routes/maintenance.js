@@ -85,6 +85,7 @@ import { tgAuthErrorBody } from '../lib/tg-error.js';
 import { metrics } from '../../core/metrics.js';
 import { checkJobConflict } from '../../core/job-tracker.js';
 import { backupDb, listBackups } from '../../core/db/backup.js';
+import { swallow } from '../../core/util/swallow.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -226,7 +227,9 @@ export function createMaintenanceRouter({
         const r = tracker.tryStart(async ({ onProgress }) => {
             try {
                 entityCache.clear();
-            } catch {}
+            } catch (e) {
+                swallow(e, 'maintenance');
+            }
             const config = loadConfig();
             const ids = new Set((config.groups || []).map((g) => String(g.id)));
             try {
@@ -234,7 +237,9 @@ export function createMaintenanceRouter({
                     .prepare('SELECT DISTINCT group_id FROM downloads LIMIT 10000')
                     .all();
                 for (const rr of rows) ids.add(String(rr.group_id));
-            } catch {}
+            } catch (e) {
+                swallow(e, 'maintenance');
+            }
 
             let updated = 0;
             let mutated = false;
@@ -392,7 +397,9 @@ export function createMaintenanceRouter({
                     removed: result?.removed ?? result?.dropped ?? 0,
                     scanned: result?.scanned ?? result?.total ?? 0,
                 });
-            } catch {}
+            } catch (e) {
+                swallow(e, 'maintenance:POST /maintenance/files/verify');
+            }
             return result;
         });
         if (!r.started) {
@@ -443,7 +450,9 @@ export function createMaintenanceRouter({
                     added: result?.added ?? result?.indexed ?? 0,
                     scanned: result?.scanned ?? result?.total ?? 0,
                 });
-            } catch {}
+            } catch (e) {
+                swallow(e, 'maintenance:POST /maintenance/reindex');
+            }
             return result;
         });
         if (!r.started) {
@@ -571,7 +580,9 @@ export function createMaintenanceRouter({
                     extraCopies: extras,
                     reclaimableBytes: reclaim,
                 });
-            } catch {}
+            } catch (e) {
+                swallow(e, 'maintenance:POST /maintenance/dedup/scan');
+            }
             return result;
         });
         if (!r.started) {
@@ -631,7 +642,9 @@ export function createMaintenanceRouter({
             try {
                 const stored = kvGet('dedup_last_scan');
                 if (stored && typeof stored === 'object') lastScan = stored;
-            } catch {}
+            } catch (e) {
+                swallow(e, 'maintenance:GET /maintenance/dedup/stats');
+            }
             res.json({ totalFiles, hashed, missing, lastScan });
         } catch (e) {
             res.status(500).json({ error: e?.message || String(e) });
@@ -691,7 +704,9 @@ export function createMaintenanceRouter({
                 for (const id of slice) {
                     try {
                         await purgeThumbsForDownload(id);
-                    } catch {}
+                    } catch (e) {
+                        swallow(e, 'maintenance');
+                    }
                 }
                 processed += slice.length;
                 onProgress({ processed, total, stage: 'deleting' });
@@ -701,13 +716,17 @@ export function createMaintenanceRouter({
             }
             try {
                 broadcast({ type: 'bulk_delete', count: cleanIds.length });
-            } catch {}
+            } catch (e) {
+                swallow(e, 'maintenance');
+            }
             try {
                 // The last dedup scan result contains concrete row ids. Once
                 // those rows are deleted, keeping that result makes a remounted
                 // duplicates page repaint stale rows until the next scan.
                 jobTrackers.dedupScan?.clearResult?.();
-            } catch {}
+            } catch (e) {
+                swallow(e, 'maintenance');
+            }
             return { ...aggregate, requested: cleanIds.length, ids: cleanIds };
         });
         if (!r.started) {
@@ -875,7 +894,9 @@ export function createMaintenanceRouter({
             // on-demand path handles the next request.
             try {
                 await getOrCreateThumb(id, THUMB_DEFAULT_WIDTH);
-            } catch {}
+            } catch (e) {
+                swallow(e, 'maintenance:POST /maintenance/thumbs/rebuild-one/:id');
+            }
             res.json({ success: true, removed, cached: hasCachedThumb(id) });
         } catch (e) {
             res.status(500).json({ error: e?.message || String(e) });
@@ -924,7 +945,9 @@ export function createMaintenanceRouter({
                     errored: result?.errored ?? 0,
                     scanned: result?.scanned ?? 0,
                 });
-            } catch {}
+            } catch (e) {
+                swallow(e, 'maintenance:POST /maintenance/thumbs/build-all');
+            }
             return { ...result, kind };
         });
         if (!r.started) {
@@ -1078,7 +1101,9 @@ export function createMaintenanceRouter({
             const result = await buildAllSeekbar({ onProgress, signal });
             try {
                 kvSet('seekbar_last_build', { finishedAt: Date.now(), ...result });
-            } catch {}
+            } catch (e) {
+                swallow(e, 'maintenance:POST /maintenance/seekbar/build-all');
+            }
             return result;
         });
         if (!r.started) return res.status(409).json(r);
@@ -1107,7 +1132,9 @@ export function createMaintenanceRouter({
             const result = await buildAllSeekbar({ onProgress, signal });
             try {
                 kvSet('seekbar_last_build', { finishedAt: Date.now(), ...result, wiped });
-            } catch {}
+            } catch (e) {
+                swallow(e, 'maintenance:POST /maintenance/seekbar/rebuild');
+            }
             return { wiped, ...result };
         });
         if (!r.started) return res.status(409).json(r);
@@ -1158,7 +1185,9 @@ export function createMaintenanceRouter({
             if (getSeekbarSidecarStatus()?.ok) {
                 try {
                     sidecarStats = await getSeekbarSidecarStats();
-                } catch {}
+                } catch (e) {
+                    swallow(e, 'maintenance:GET /maintenance/seekbar/queue/stats');
+                }
             }
             const cache = getSeekbarCacheStats();
             res.json({
@@ -1344,7 +1373,9 @@ export function createMaintenanceRouter({
                     errored: result?.errored ?? 0,
                     scanned: result?.scanned ?? 0,
                 });
-            } catch {}
+            } catch (e) {
+                swallow(e, 'maintenance:POST /maintenance/faststart/scan');
+            }
             return result;
         });
         if (!r.started) {
@@ -1371,7 +1402,9 @@ export function createMaintenanceRouter({
             let lastRun = null;
             try {
                 lastRun = kvGet('faststart_last_run') || null;
-            } catch {}
+            } catch (e) {
+                swallow(e, 'maintenance:GET /maintenance/faststart/stats');
+            }
             res.json({ success: true, ffmpegAvailable: hasFfmpeg(), ...r, lastRun });
         } catch (e) {
             res.status(500).json({ error: e.message });
@@ -1426,7 +1459,9 @@ export function createMaintenanceRouter({
                 for (const r of rows) {
                     addNsfwBlocklistHash(r.file_hash, r.file_name, 'review');
                 }
-            } catch {}
+            } catch (e) {
+                swallow(e, 'maintenance');
+            }
         }
     }
 
@@ -1503,7 +1538,9 @@ export function createMaintenanceRouter({
                 (p) => {
                     try {
                         broadcast({ type: 'nsfw_progress', ...p });
-                    } catch {}
+                    } catch (e) {
+                        swallow(e, 'maintenance');
+                    }
                     // Throttle log spam — emit at most every 25 rows so a 10 000
                     // row library doesn't pump 10 000 lines into the web log.
                     if (typeof p?.scanned === 'number' && p.scanned - _lastLoggedScanned >= 25) {
@@ -1518,7 +1555,9 @@ export function createMaintenanceRouter({
                 (p) => {
                     try {
                         broadcast({ type: 'nsfw_done', ...p });
-                    } catch {}
+                    } catch (e) {
+                        swallow(e, 'maintenance');
+                    }
                     if (p?.error) {
                         log({
                             source: 'nsfw',
@@ -1536,7 +1575,9 @@ export function createMaintenanceRouter({
                 (p) => {
                     try {
                         broadcast({ type: 'nsfw_model_downloading', ...p });
-                    } catch {}
+                    } catch (e) {
+                        swallow(e, 'maintenance');
+                    }
                     log({
                         source: 'nsfw',
                         level: 'info',
@@ -1584,7 +1625,9 @@ export function createMaintenanceRouter({
                 (p) => {
                     try {
                         broadcast({ type: 'nsfw_model_downloading', ...p });
-                    } catch {}
+                    } catch (e) {
+                        swallow(e, 'maintenance:POST /maintenance/nsfw/preload');
+                    }
                 },
                 (entry) => log(entry),
             );
@@ -1688,14 +1731,20 @@ export function createMaintenanceRouter({
             for (const id of cleanIds) {
                 try {
                     await purgeThumbsForDownload(id);
-                } catch {}
+                } catch (e) {
+                    swallow(e, 'maintenance');
+                }
             }
             try {
                 broadcast({ type: 'bulk_delete', count: cleanIds.length });
-            } catch {}
+            } catch (e) {
+                swallow(e, 'maintenance');
+            }
             try {
                 broadcast({ type: 'nsfw_progress', ..._nsfwStateLight() });
-            } catch {}
+            } catch (e) {
+                swallow(e, 'maintenance');
+            }
             res.json({ success: true, ...r });
         } catch (e) {
             console.error('nsfw/delete:', e);
@@ -1719,7 +1768,9 @@ export function createMaintenanceRouter({
             const updated = whitelistNsfw(cleanIds);
             try {
                 broadcast({ type: 'nsfw_progress', ..._nsfwStateLight() });
-            } catch {}
+            } catch (e) {
+                swallow(e, 'maintenance');
+            }
             res.json({ success: true, updated });
         } catch (e) {
             console.error('nsfw/whitelist:', e);
@@ -1898,7 +1949,9 @@ export function createMaintenanceRouter({
                 for (const id of slice) {
                     try {
                         await purgeThumbsForDownload(id);
-                    } catch {}
+                    } catch (e) {
+                        swallow(e, 'maintenance');
+                    }
                 }
                 processed += slice.length;
                 onProgress({ stage: 'deleting', op: 'delete', processed, total });
@@ -1906,10 +1959,14 @@ export function createMaintenanceRouter({
             }
             try {
                 broadcast({ type: 'bulk_delete', count: ids.length });
-            } catch {}
+            } catch (e) {
+                swallow(e, 'maintenance');
+            }
             try {
                 broadcast({ type: 'nsfw_progress', ..._nsfwStateLight() });
-            } catch {}
+            } catch (e) {
+                swallow(e, 'maintenance');
+            }
             log({
                 source: 'nsfw',
                 level: 'info',
@@ -1937,7 +1994,9 @@ export function createMaintenanceRouter({
             const updated = whitelistNsfw(ids);
             try {
                 broadcast({ type: 'nsfw_progress', ..._nsfwStateLight() });
-            } catch {}
+            } catch (e) {
+                swallow(e, 'maintenance:POST /maintenance/nsfw/v2/bulk-whitelist');
+            }
             log({
                 source: 'nsfw',
                 level: 'info',
@@ -1973,7 +2032,9 @@ export function createMaintenanceRouter({
             const updated = unwhitelistNsfw(ids);
             try {
                 broadcast({ type: 'nsfw_progress', ..._nsfwStateLight() });
-            } catch {}
+            } catch (e) {
+                swallow(e, 'maintenance:POST /maintenance/nsfw/v2/unwhitelist');
+            }
             log({
                 source: 'nsfw',
                 level: 'info',
@@ -2205,7 +2266,9 @@ export function createMaintenanceRouter({
                         // it's keyed by sanitised name not group_id, and the
                         // operator should use /purge for that. The DB delete
                         // is enough to clear the gallery sidebar.
-                    } catch {}
+                    } catch (e) {
+                        swallow(e, 'maintenance');
+                    }
                 }
             }
             res.json({ success: true, removed, purgeDownloads, ...purged });

@@ -35,6 +35,7 @@ import { _hashFile, _parseChecksumFile, _verifyChecksum } from '../ai/faces-down
 import { loadConfig } from '../../config/manager.js';
 import { resolveFfmpegBin, resolveFfprobeBin } from '../thumbs.js';
 import { health, setSidecarUrl } from './client.js';
+import { swallow } from '../util/swallow.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..', '..');
@@ -79,7 +80,9 @@ function _emit() {
     if (!_broadcast) return;
     try {
         _broadcast({ type: 'seekbar_sidecar_status', ..._state });
-    } catch {}
+    } catch (e) {
+        swallow(e, 'spawn:_emit');
+    }
 }
 
 function _setState(partial) {
@@ -164,14 +167,18 @@ async function _autoDownloadBinary() {
             _setState({ checksumVerified: false });
             try {
                 await fsp.unlink(tmpTarball);
-            } catch {}
+            } catch (e) {
+                swallow(e, 'spawn');
+            }
             throw e;
         }
         await _extractTarball(tmpTarball, binDir);
     } finally {
         try {
             await fsp.unlink(tmpTarball);
-        } catch {}
+        } catch (e) {
+            swallow(e, 'spawn');
+        }
     }
     // The release tarball ships a generic name (seekbar-server / .exe);
     // rename to the slugged name so multiple platforms / versions can
@@ -192,7 +199,9 @@ async function _autoDownloadBinary() {
     if (!isWin) {
         try {
             await fsp.chmod(final, 0o755);
-        } catch {}
+        } catch (e) {
+            swallow(e, 'spawn');
+        }
     }
     return final;
 }
@@ -250,7 +259,9 @@ function _streamDownload(url, destPath, redirectsLeft = DOWNLOAD_REDIRECT_LIMIT)
                                     total,
                                     pct,
                                 });
-                            } catch {}
+                            } catch (e) {
+                                swallow(e, 'spawn');
+                            }
                         }
                     }
                 });
@@ -328,11 +339,15 @@ function _extraBinDirs() {
     try {
         const b = resolveFfmpegBin();
         if (b && b !== 'ffmpeg') dirs.add(path.dirname(b));
-    } catch {}
+    } catch (e) {
+        swallow(e, 'spawn:_extraBinDirs');
+    }
     try {
         const b = resolveFfprobeBin();
         if (b && b !== 'ffprobe' && b !== 'ffprobe.exe') dirs.add(path.dirname(b));
-    } catch {}
+    } catch (e) {
+        swallow(e, 'spawn');
+    }
     return [...dirs];
 }
 
@@ -423,7 +438,9 @@ async function _spawnLocal(cfg) {
             if (l)
                 try {
                     _broadcast({ type: 'log', source: 'seekbar-sidecar', level, msg: l });
-                } catch {}
+                } catch (e) {
+                    swallow(e, 'spawn:_pipeLog');
+                }
         }
     };
     thisChild.stdout.on('data', (c) => _pipeLog('info', c));
@@ -451,7 +468,9 @@ async function _spawnLocal(cfg) {
     if (!healthy) {
         try {
             thisChild.kill('SIGTERM');
-        } catch {}
+        } catch (e) {
+            swallow(e, 'spawn');
+        }
         _child = null;
         _setState({ ok: false, url, mode: 'unhealthy', error: 'health probe failed', pid: null });
         return false;
@@ -518,7 +537,9 @@ export async function refreshSidecar() {
     if (_child) {
         try {
             _child.kill('SIGTERM');
-        } catch {}
+        } catch (e) {
+            swallow(e, 'spawn');
+        }
         _child = null;
     }
     return startSidecar();
@@ -529,7 +550,9 @@ export function stopSidecar() {
     if (_child) {
         try {
             _child.kill('SIGTERM');
-        } catch {}
+        } catch (e) {
+            swallow(e, 'spawn');
+        }
         _child = null;
     }
     // Reset client target so no stale URL/token survives a restart.

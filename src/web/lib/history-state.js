@@ -1,6 +1,7 @@
 import { kvGet, kvSet } from '../../core/db.js';
 import { loadConfig } from '../../config/manager.js';
 import { HISTORY_JOB_TTL_MS } from '../../core/constants.js';
+import { swallow } from '../../core/util/swallow.js';
 
 const HISTORY_JOBS_KV = 'history_jobs';
 
@@ -18,7 +19,9 @@ function historyRetentionMs() {
         if (Number.isFinite(days) && days >= 1 && days <= 3650) {
             return days * 24 * 60 * 60 * 1000;
         }
-    } catch {}
+    } catch (e) {
+        swallow(e, 'history-state:historyRetentionMs');
+    }
     return 30 * 24 * 60 * 60 * 1000;
 }
 

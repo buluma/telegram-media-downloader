@@ -47,6 +47,7 @@ import sharp from 'sharp';
 import { getDb } from './db.js';
 import { loadConfig } from '../config/manager.js';
 import { toPosixPath } from './util/paths.js';
+import { swallow } from './util/swallow.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
@@ -114,7 +115,9 @@ function _resolveFfprobeBin() {
                 : ffmpeg.slice(0, -'ffmpeg'.length) + 'ffprobe';
             if (existsSync(sibling)) return (_ffprobeBinResolved = sibling);
         }
-    } catch {}
+    } catch (e) {
+        swallow(e, 'thumbs');
+    }
     try {
         const inst = _localRequire('@ffprobe-installer/ffprobe');
         if (inst?.path && existsSync(inst.path)) return (_ffprobeBinResolved = inst.path);
@@ -218,7 +221,9 @@ export async function probeHwaccel() {
                     const timer = setTimeout(() => {
                         try {
                             p.kill('SIGKILL');
-                        } catch {}
+                        } catch (e) {
+                            swallow(e, 'thumbs:finish');
+                        }
                         finish(false);
                     }, HWACCEL_PROBE_TIMEOUT_MS);
                     p.stdout.on('data', () => {});
@@ -465,7 +470,9 @@ function _runFfmpeg(args) {
             killed = true;
             try {
                 p.kill('SIGKILL');
-            } catch {}
+            } catch (e) {
+                swallow(e, 'thumbs:_runFfmpeg');
+            }
             reject(new Error('does not contain any stream (ffmpeg timeout 120s)'));
         }, FFMPEG_TIMEOUT_MS);
         p.stderr.on('data', (c) => errChunks.push(c));
@@ -815,7 +822,9 @@ async function _generateAudioThumb(srcAbs, width, dstAbs) {
     } finally {
         try {
             if (existsSync(tmpJpg)) await fs.unlink(tmpJpg);
-        } catch {}
+        } catch (e) {
+            swallow(e, 'thumbs:_generateAudioThumb');
+        }
     }
 }
 
@@ -904,7 +913,9 @@ export async function getOrCreateThumb(downloadId, widthHint) {
         } finally {
             try {
                 if (existsSync(tmpAbs)) await fs.unlink(tmpAbs);
-            } catch {}
+            } catch (e) {
+                swallow(e, 'thumbs');
+            }
             sem.release();
         }
     })();
@@ -966,7 +977,9 @@ export async function purgeThumbsForDownload(downloadId) {
             try {
                 await fs.unlink(p);
                 removed++;
-            } catch {}
+            } catch (e) {
+                swallow(e, 'thumbs');
+            }
         }
     }
     return removed;
@@ -1072,7 +1085,9 @@ export async function purgeAllThumbs(opts = {}) {
             try {
                 await fs.unlink(path.join(THUMBS_DIR, n));
                 removed++;
-            } catch {}
+            } catch (e) {
+                swallow(e, 'thumbs');
+            }
         }
         return removed;
     }
@@ -1211,7 +1226,9 @@ export async function getThumbsCacheStats() {
             const st = await fs.stat(path.join(THUMBS_DIR, n));
             count++;
             bytes += st.size;
-        } catch {}
+        } catch (e) {
+            swallow(e, 'thumbs');
+        }
     }
     return { count, bytes };
 }

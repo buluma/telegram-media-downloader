@@ -13,6 +13,7 @@ import {
     scheduleHistoryJobCleanup,
     HISTORY_JOBS_KV,
 } from '../lib/history-state.js';
+import { swallow } from '../../core/util/swallow.js';
 
 export function createHistoryRouter({ getAccountManager, broadcast, log, invalidateDialogsCache }) {
     const router = express.Router();
@@ -60,7 +61,9 @@ export function createHistoryRouter({ getAccountManager, broadcast, log, invalid
                     if (probe?.resolveDialogName) {
                         resolved = await probe.resolveDialogName(String(groupId)).catch(() => null);
                     }
-                } catch {}
+                } catch (e) {
+                    swallow(e, 'history');
+                }
                 let dbName = null;
                 try {
                     const row = getDb()
@@ -69,7 +72,9 @@ export function createHistoryRouter({ getAccountManager, broadcast, log, invalid
                         )
                         .get(String(groupId));
                     if (row?.group_name) dbName = row.group_name;
-                } catch {}
+                } catch (e) {
+                    swallow(e, 'history');
+                }
                 const idForConfig =
                     String(groupId).startsWith('-') &&
                     Number.isSafeInteger(parseInt(String(groupId), 10))

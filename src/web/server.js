@@ -78,6 +78,7 @@ import {
 import { writeConfigAtomic } from './lib/config-writer.js';
 import { createAccountsRouter } from './routes/accounts.js';
 import { createMonitorRouter } from './routes/monitor.js';
+import { swallow } from '../core/util/swallow.js';
 import { createHistoryRouter } from './routes/history.js';
 import { createAiRouter } from './routes/ai.js';
 import { createMaintenanceRouter } from './routes/maintenance.js';
@@ -177,7 +178,9 @@ console.warn = (...args) => {
             'console',
             args.map((a) => (typeof a === 'string' ? a : a?.stack || JSON.stringify(a))).join(' '),
         );
-    } catch {}
+    } catch (e) {
+        swallow(e, 'server:_consoleTee');
+    }
     _origConsoleWarn(...args);
 };
 resilience.init();
@@ -331,7 +334,9 @@ server.on('upgrade', async (req, socket, head) => {
     } catch {
         try {
             socket.destroy();
-        } catch {}
+        } catch (e) {
+            swallow(e, 'server');
+        }
     }
 });
 
@@ -519,7 +524,9 @@ app.use(async (req, res, next) => {
                 res.setHeader('Content-Security-Policy', `${csp};upgrade-insecure-requests`);
             }
         }
-    } catch {}
+    } catch (e) {
+        swallow(e, 'server');
+    }
     next();
 });
 
@@ -818,7 +825,9 @@ app.get('/api/system/health', (req, res) => {
     try {
         getDb().prepare('SELECT 1').get();
         dbOk = true;
-    } catch {}
+    } catch (e) {
+        swallow(e, 'server');
+    }
     res.json({
         ok: dbOk,
         uptime: Math.floor(process.uptime()),
@@ -1355,11 +1364,15 @@ async function resolveEntityAcrossAccounts(idStr) {
         try {
             const e = await c.getEntity(idStr);
             if (e) return cacheHit(e, c);
-        } catch {}
+        } catch (e) {
+            swallow(e, 'server');
+        }
         try {
             const e = await c.getEntity(BigInt(idStr));
             if (e) return cacheHit(e, c);
-        } catch {}
+        } catch (e) {
+            swallow(e, 'server');
+        }
     }
     return null;
 }
@@ -1423,7 +1436,9 @@ function broadcast(data) {
         ) {
             broadcastStatsSoon();
         }
-    } catch {}
+    } catch (e) {
+        swallow(e, 'server');
+    }
 }
 
 // ---- In-memory log ring + WS stream ---------------------------------------
@@ -1439,7 +1454,9 @@ function log({ source = 'app', level = 'info', msg = '' }) {
     const entry = _pushLogEntry(level, source, msg);
     try {
         broadcast({ type: 'log', ...entry });
-    } catch {}
+    } catch (e) {
+        swallow(e, 'server:log');
+    }
     // Mirror to stdout/stderr so the docker logs / journald path keeps
     // working — the web view is additive, not a replacement. The console
     // call goes through the wrapped console.* (which would tee back into
@@ -1463,7 +1480,9 @@ function log({ source = 'app', level = 'info', msg = '' }) {
     try {
         if (level === 'error') process.stderr.write(line + '\n');
         else process.stdout.write(line + '\n');
-    } catch {}
+    } catch (e) {
+        swallow(e, 'server:pad');
+    }
 }
 
 // ---- Shared job-tracker registry -----------------------------------------
@@ -1936,7 +1955,9 @@ server.listen(PORT, async () => {
                 (p) => {
                     try {
                         broadcast({ type: 'nsfw_model_downloading', ...p });
-                    } catch {}
+                    } catch (e) {
+                        swallow(e, 'server');
+                    }
                 },
                 (entry) => log(entry),
             ).catch(() => {
@@ -2041,7 +2062,9 @@ async function gracefulShutdown(signal) {
     try {
         if (eventLoopWatchdog?.timer) clearInterval(eventLoopWatchdog.timer);
         eventLoopWatchdog?.histogram?.disable?.();
-    } catch {}
+    } catch (e) {
+        swallow(e, 'server');
+    }
     try {
         const facesSpawn = await import('../core/ai/faces-spawn.js');
         facesSpawn?.stopSidecar?.();
@@ -2067,16 +2090,22 @@ async function gracefulShutdown(signal) {
         for (const c of clients) {
             try {
                 c.close(1001, 'server shutting down');
-            } catch {}
+            } catch (e) {
+                swallow(e, 'server');
+            }
         }
-    } catch {}
+    } catch (e) {
+        swallow(e, 'server');
+    }
 
     // Let SQLite update its internal query-planner statistics before close.
     // Cheap (microseconds on small DBs, <1 s on large ones); improves
     // index selection accuracy on the next boot.
     try {
         getDb().pragma('optimize');
-    } catch {}
+    } catch (e) {
+        swallow(e, 'server');
+    }
 
     // Stop accepting new HTTP connections; let the in-flight ones drain.
     try {

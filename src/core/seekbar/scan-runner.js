@@ -24,6 +24,7 @@ import {
     upsertSeekbarSprite,
 } from '../db.js';
 import { generateForDownload, getSeekbarConfig } from './generator.js';
+import { swallow } from '../util/swallow.js';
 
 const PAGE_SIZE = 100;
 const DEFAULT_CONCURRENCY = 6;
@@ -76,7 +77,9 @@ export async function buildAllSeekbar({ onProgress, signal } = {}) {
                 sourceMtime: null,
                 generatedAt: Date.now(),
             });
-        } catch {}
+        } catch (e) {
+            swallow(e, 'scan-runner:markTerminal');
+        }
     };
 
     const processOne = async (row) => {

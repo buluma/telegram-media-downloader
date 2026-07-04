@@ -23,6 +23,7 @@ import { Transform } from 'stream';
 import { BackupProvider, optionalDepError, openReadStream } from './base.js';
 import { encryptStream } from '../encryption.js';
 import { toPosixPath } from '../../util/paths.js';
+import { swallow } from '../../util/swallow.js';
 
 const DEFAULT_TIMEOUT_MS =
     Number(process.env.BACKUP_FTP_TIMEOUT_MS) > 0
@@ -153,7 +154,9 @@ export class FtpProvider extends BackupProvider {
             aborted = true;
             try {
                 client.close();
-            } catch {}
+            } catch (e) {
+                swallow(e, 'ftp:onAbort');
+            }
         };
         if (ctx?.signal) {
             if (ctx.signal.aborted) onAbort();
@@ -177,11 +180,15 @@ export class FtpProvider extends BackupProvider {
         } finally {
             try {
                 client.close();
-            } catch {}
+            } catch (e) {
+                swallow(e, 'ftp');
+            }
             if (ctx?.signal) {
                 try {
                     ctx.signal.removeEventListener('abort', onAbort);
-                } catch {}
+                } catch (e) {
+                    swallow(e, 'ftp');
+                }
             }
         }
     }
@@ -214,7 +221,9 @@ export class FtpProvider extends BackupProvider {
                     () => {
                         try {
                             body.destroy(new Error('aborted'));
-                        } catch {}
+                        } catch (e) {
+                            swallow(e, 'ftp');
+                        }
                     },
                     { once: true },
                 );
@@ -228,11 +237,15 @@ export class FtpProvider extends BackupProvider {
             let bytes = 0;
             try {
                 bytes = Number(await client.size(target)) || 0;
-            } catch {}
+            } catch (e) {
+                swallow(e, 'ftp');
+            }
             if (!bytes) {
                 try {
                     bytes = (await fs.promises.stat(localPath)).size;
-                } catch {}
+                } catch (e) {
+                    swallow(e, 'ftp');
+                }
             }
             return {
                 remotePath,
@@ -373,7 +386,9 @@ function _makeProgressTransform({ onProgress, throttleBps, signal }) {
                 if (typeof onProgress === 'function') {
                     try {
                         onProgress({ bytesUploaded: bytes });
-                    } catch {}
+                    } catch (e) {
+                        swallow(e, 'ftp');
+                    }
                 }
                 if (throttleBps && throttleBps > 0) {
                     const elapsedMs = Date.now() - start;

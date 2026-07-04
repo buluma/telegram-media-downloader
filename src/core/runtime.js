@@ -21,6 +21,7 @@ import { RateLimiter } from './security.js';
 import { AutoForwarder } from './forwarder.js';
 import { migrateFolders } from './downloader.js';
 import { metrics } from './metrics.js';
+import { swallow } from './util/swallow.js';
 
 class Runtime extends EventEmitter {
     constructor() {
@@ -80,7 +81,9 @@ class Runtime extends EventEmitter {
         } catch (e) {
             try {
                 await this._cleanup();
-            } catch {}
+            } catch (e) {
+                swallow(e, 'runtime');
+            }
             this.setState('error', e?.message || String(e));
             throw e;
         }
@@ -111,10 +114,14 @@ class Runtime extends EventEmitter {
     async _cleanup() {
         try {
             if (this._monitor) await this._monitor.stop();
-        } catch {}
+        } catch (e) {
+            swallow(e, 'runtime:_cleanup');
+        }
         try {
             if (this._downloader) await this._downloader.stop();
-        } catch {}
+        } catch (e) {
+            swallow(e, 'runtime');
+        }
         this._monitor = null;
         this._downloader = null;
         this._forwarder = null;

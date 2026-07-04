@@ -9,6 +9,7 @@ import fsSync from 'fs';
 import { Api } from 'telegram';
 import { getMessageIdRange } from './db.js';
 import { BACKPRESSURE_CAP_DEFAULT } from './constants.js';
+import { swallow } from './util/swallow.js';
 
 export class HistoryDownloader extends EventEmitter {
     constructor(client, downloader, config, accountManager = null) {
@@ -285,7 +286,9 @@ export class HistoryDownloader extends EventEmitter {
                                             cap,
                                             stallSeconds: Math.round(stallMs / 1000),
                                         });
-                                    } catch {}
+                                    } catch (e) {
+                                        swallow(e, 'history');
+                                    }
                                 }
                                 if (stallMs > MAX_WAIT_MS) {
                                     const mins = Math.round(MAX_WAIT_MS / 60000);

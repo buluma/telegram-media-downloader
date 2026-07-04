@@ -31,6 +31,7 @@ import { isRescueProtected } from './rescue.js';
 import { deferDelete } from './delete-queue.js';
 import { purgeThumbsForDownload } from './thumbs.js';
 import { purgeSeekbarForDownload } from './seekbar/index.js';
+import { swallow } from './util/swallow.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DOWNLOADS_DIR = path.join(__dirname, '../../data/downloads');
@@ -261,7 +262,9 @@ export class DiskRotator {
                             id: row.id,
                             path: row.file_path || null,
                         });
-                    } catch {}
+                    } catch (e) {
+                        swallow(e, 'disk-rotator');
+                    }
                 }
                 if (!progressed) {
                     // The whole fetched window was skip-only (in-flight or

@@ -1,4 +1,5 @@
 import { getDb } from '../db.js';
+import { swallow } from '../util/swallow.js';
 
 // ---- NSFW review (Phase 1: photos only) -----------------------------------
 //
@@ -731,10 +732,14 @@ export function resetAllAiData() {
         const textEmbeddings = db.prepare('DELETE FROM text_embeddings').run().changes;
         try {
             db.prepare('DELETE FROM vec_image_embeddings').run();
-        } catch {}
+        } catch (e) {
+            swallow(e, 'faces:resetAllAiData');
+        }
         try {
             db.prepare('DELETE FROM vec_text_embeddings').run();
-        } catch {}
+        } catch (e) {
+            swallow(e, 'faces');
+        }
         const tags = db.prepare('DELETE FROM image_tags').run().changes;
         const wd14Tags = db.prepare('DELETE FROM image_tags_wd14').run().changes;
         const faces = db.prepare('DELETE FROM faces').run().changes;
@@ -775,7 +780,9 @@ export function clearStaleEmbeddings(currentModelId) {
             db.prepare(
                 `DELETE FROM vec_image_embeddings WHERE download_id NOT IN (SELECT download_id FROM image_embeddings)`,
             ).run();
-        } catch {}
+        } catch (e) {
+            swallow(e, 'faces:clearStaleEmbeddings');
+        }
         const requeued = db
             .prepare(`
                 UPDATE downloads
@@ -2113,7 +2120,9 @@ async function _fetchEmbedding(query) {
         const { embedText } = await import('../../core/ai/faces-client.js');
         const r = await embedText(query);
         if (r?.embedding?.length) return Float32Array.from(r.embedding);
-    } catch {}
+    } catch (e) {
+        swallow(e, 'faces:_fetchEmbedding');
+    }
     return null;
 }
 

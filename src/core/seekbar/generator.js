@@ -36,6 +36,7 @@ import {
 } from '../thumbs.js';
 import { getSidecarUrl, submitOne as sidecarSubmitOne } from './client.js';
 import { toPosixPath } from '../util/paths.js';
+import { swallow } from '../util/swallow.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..', '..');
@@ -228,7 +229,9 @@ async function _runSpriteFfmpeg({ srcAbs, dstAbs, plan, cfg }) {
         } catch (e) {
             try {
                 if (existsSync(tmp)) await fs.unlink(tmp);
-            } catch {}
+            } catch (e) {
+                swallow(e, 'generator');
+            }
             throw e;
         }
         await fs.rename(tmp, dstAbs);
@@ -271,10 +274,14 @@ async function _runSpriteFfmpeg({ srcAbs, dstAbs, plan, cfg }) {
     } finally {
         try {
             if (existsSync(jpgTmp)) await fs.unlink(jpgTmp);
-        } catch {}
+        } catch (e) {
+            swallow(e, 'generator');
+        }
         try {
             if (existsSync(tmp)) await fs.unlink(tmp);
-        } catch {}
+        } catch (e) {
+            swallow(e, 'generator');
+        }
     }
 }
 
@@ -343,7 +350,9 @@ export async function generateForDownload(row, cfg = null, opts = {}) {
                         sourceMtime: sourceStat.mtime,
                         generatedAt: prior.generated_at ?? Date.now(),
                     });
-                } catch {}
+                } catch (e) {
+                    swallow(e, 'generator:sourceStat');
+                }
                 return null;
             }
         } catch {
@@ -454,7 +463,9 @@ export async function generateForDownload(row, cfg = null, opts = {}) {
     if (!spriteSize) {
         try {
             await fs.unlink(dstAbs);
-        } catch {}
+        } catch (e) {
+            swallow(e, 'generator');
+        }
         throw new Error('does not contain any stream (0-byte sprite)');
     }
 

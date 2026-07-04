@@ -5,6 +5,7 @@ import express from 'express';
 import { getDownloadById } from '../../core/db/downloads.js';
 import { getCloudStream } from '../../core/backup/manager.js';
 import { toPosixPath } from '../../core/util/paths.js';
+import { swallow } from '../../core/util/swallow.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_DATA_DIR = path.join(__dirname, '../../../data');
@@ -109,7 +110,9 @@ export async function streamFileResponse(id, res, dataDir = DEFAULT_DATA_DIR) {
     } finally {
         try {
             await provider.close();
-        } catch {}
+        } catch (e) {
+            swallow(e, 'files');
+        }
     }
 }
 

@@ -56,6 +56,7 @@ import {
     recoverStaleLocks,
 } from '../db/scan-state.js';
 import { hasFfmpeg, resolveFfmpegBin } from '../thumbs.js';
+import { swallow } from '../util/swallow.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..', '..');
@@ -201,7 +202,9 @@ export function cancelScan(feature) {
     if (!s?.abort) return false;
     try {
         s.abort.abort();
-    } catch {}
+    } catch (e) {
+        swallow(e, 'scan-runner:cancelScan');
+    }
     return true;
 }
 
@@ -339,7 +342,9 @@ async function _cleanupTmpFrames(paths) {
         }
         try {
             dirs.add(path.dirname(p));
-        } catch {}
+        } catch (e) {
+            swallow(e, 'scan-runner');
+        }
     }
     for (const d of dirs) {
         try {
@@ -356,7 +361,9 @@ async function _runScan(feature, cfg, worker, onProgress, onDone, onLog) {
     const log = (level, msg) => {
         try {
             if (typeof onLog === 'function') onLog({ source: `ai-scan-${feature}`, level, msg });
-        } catch {}
+        } catch (e) {
+            swallow(e, 'scan-runner:log');
+        }
     };
     // Adapter for helpers that emit structured log envelopes
     // ({source, level, msg}) instead of (level, msg).
@@ -389,7 +396,9 @@ async function _runScan(feature, cfg, worker, onProgress, onDone, onLog) {
         lastBroadcast = now;
         try {
             if (typeof onProgress === 'function') onProgress(getScanState(feature));
-        } catch {}
+        } catch (e) {
+            swallow(e, 'scan-runner:bcast');
+        }
     };
     const bump = ({ scanned, total } = {}) => {
         if (Number.isFinite(scanned)) state.scanned = scanned;
@@ -410,7 +419,9 @@ async function _runScan(feature, cfg, worker, onProgress, onDone, onLog) {
             bcast(true);
             try {
                 if (typeof onDone === 'function') onDone(getScanState(feature));
-            } catch {}
+            } catch (e) {
+                swallow(e, 'scan-runner');
+            }
         }
     })().catch(() => {
         /* never throw out of the IIFE */

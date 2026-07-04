@@ -26,6 +26,7 @@ import { Transform } from 'stream';
 import { BackupProvider, optionalDepError, openReadStream } from './base.js';
 import { encryptStream } from '../encryption.js';
 import { toPosixPath } from '../../util/paths.js';
+import { swallow } from '../../util/swallow.js';
 
 const SINGLE_SHOT_LIMIT = 150 * 1024 * 1024;
 const DEFAULT_CHUNK_BYTES =
@@ -208,7 +209,9 @@ export class DropboxProvider extends BackupProvider {
         let localSize = 0;
         try {
             localSize = (await fs.promises.stat(localPath)).size;
-        } catch {}
+        } catch (e) {
+            swallow(e, 'dropbox:upload');
+        }
         const wireSize = opts?.encryptKey ? localSize + 33 : localSize;
 
         if (wireSize <= SINGLE_SHOT_LIMIT) {
@@ -345,7 +348,9 @@ export class DropboxProvider extends BackupProvider {
                 () => {
                     try {
                         body.destroy(new Error('aborted'));
-                    } catch {}
+                    } catch (e) {
+                        swallow(e, 'dropbox');
+                    }
                 },
                 { once: true },
             );
@@ -515,7 +520,9 @@ function _makeProgressTransform({ onProgress, throttleBps, signal }) {
                 if (typeof onProgress === 'function') {
                     try {
                         onProgress({ bytesUploaded: bytes });
-                    } catch {}
+                    } catch (e) {
+                        swallow(e, 'dropbox');
+                    }
                 }
                 if (throttleBps && throttleBps > 0) {
                     const elapsedMs = Date.now() - start;

@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { runAutoUpdate, autoUpdateStatus } from '../../core/updater.js';
 import { recordUpdateAttempt, recordUpdateFailure, listUpdateHistory } from '../../core/db.js';
+import { swallow } from '../../core/util/swallow.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -145,7 +146,9 @@ export function createVersionRouter({ broadcast, autoUpdateTracker }) {
                         errorCode: e?.code || 'UNKNOWN',
                         errorMsg: e?.message || String(e),
                     });
-                } catch {}
+                } catch (e) {
+                    swallow(e, 'version');
+                }
                 throw e;
             }
             try {
@@ -154,10 +157,14 @@ export function createVersionRouter({ broadcast, autoUpdateTracker }) {
                     backupPath: result.backup?.path || null,
                     backupBytes: result.backup?.sizeBytes ?? null,
                 });
-            } catch {}
+            } catch (e) {
+                swallow(e, 'version');
+            }
             try {
                 broadcast({ type: 'update_started', backup: result.backup });
-            } catch {}
+            } catch (e) {
+                swallow(e, 'version');
+            }
             return { backup: result.backup };
         });
         if (!r.started) {

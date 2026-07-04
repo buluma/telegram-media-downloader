@@ -17,6 +17,7 @@ import SftpClient from 'ssh2-sftp-client';
 import { BackupProvider, openReadStream } from './base.js';
 import { encryptStream } from '../encryption.js';
 import { toPosixPath } from '../../util/paths.js';
+import { swallow } from '../../util/swallow.js';
 
 export class SftpProvider extends BackupProvider {
     static get name() {
@@ -145,7 +146,9 @@ export class SftpProvider extends BackupProvider {
                 () => {
                     try {
                         body.destroy(new Error('aborted'));
-                    } catch {}
+                    } catch (e) {
+                        swallow(e, 'sftp');
+                    }
                 },
                 { once: true },
             );
@@ -230,7 +233,9 @@ export class SftpProvider extends BackupProvider {
     async close() {
         try {
             await this.client?.end();
-        } catch {}
+        } catch (e) {
+            swallow(e, 'sftp:close');
+        }
         this.client = null;
     }
 }
@@ -246,7 +251,9 @@ function _makeProgressTransform({ onProgress, throttleBps, signal }) {
                 if (typeof onProgress === 'function') {
                     try {
                         onProgress({ bytesUploaded: bytes });
-                    } catch {}
+                    } catch (e) {
+                        swallow(e, 'sftp');
+                    }
                 }
                 if (throttleBps && throttleBps > 0) {
                     const elapsedMs = Date.now() - start;

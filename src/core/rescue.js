@@ -19,6 +19,7 @@ import { logger } from './logger.js';
 import { deferDelete } from './delete-queue.js';
 import { purgeThumbsForDownload } from './thumbs.js';
 import { purgeSeekbarForDownload } from './seekbar/index.js';
+import { swallow } from './util/swallow.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DOWNLOADS_DIR = path.join(__dirname, '../../data/downloads');
@@ -149,7 +150,9 @@ export class RescueSweeper {
                             path: row.file_path || null,
                             source: 'rescue',
                         });
-                    } catch {}
+                    } catch (e) {
+                        swallow(e, 'rescue');
+                    }
                 }
             }
 
@@ -161,7 +164,9 @@ export class RescueSweeper {
             // per-row. Per-row events still fire (above) for granular UI.
             try {
                 this._broadcast({ type: 'rescue_sweep_done', count: swept });
-            } catch {}
+            } catch (e) {
+                swallow(e, 'rescue');
+            }
             return { swept, scanned: rows.length };
         } finally {
             this._sweeping = false;

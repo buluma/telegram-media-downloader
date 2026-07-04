@@ -32,6 +32,7 @@ import {
 } from './db.js';
 import { sha256OfFile } from './checksum.js';
 import { toPosixPath } from './util/paths.js';
+import { swallow } from './util/swallow.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
@@ -99,7 +100,9 @@ async function _loadClassifier(cfg, onProgress, onLog) {
     const _log = (level, msg) => {
         try {
             if (typeof onLog === 'function') onLog({ source: 'nsfw', level, msg });
-        } catch {}
+        } catch (e) {
+            swallow(e, 'nsfw:_log');
+        }
     };
     const modelId = cfg.model || NSFW_DEFAULTS.model;
     const dtypeWanted = VALID_DTYPES.has(String(cfg.dtype || '').toLowerCase())
@@ -146,7 +149,9 @@ async function _loadClassifier(cfg, onProgress, onLog) {
         // operators can pre-seed by copying the directory.
         try {
             env.cacheDir = cacheDirAbs;
-        } catch {}
+        } catch (e) {
+            swallow(e, 'nsfw');
+        }
         // Force WASM execution everywhere. Native onnxruntime-node is a
         // glibc-only prebuilt — on Alpine it 500s at load. WASM works
         // 1:1 across every platform with a small perf trade-off that we
@@ -157,7 +162,9 @@ async function _loadClassifier(cfg, onProgress, onLog) {
                 // wired up, and multi-thread WASM only helps when they do.
                 env.backends.onnx.wasm.numThreads = 1;
             }
-        } catch {}
+        } catch (e) {
+            swallow(e, 'nsfw');
+        }
         // HuggingFace token (env var or `config.advanced.ai.hfToken` set
         // via the dashboard) — same treatment as ai/models.js so the
         // NSFW classifier also benefits from gated-repo access + rate-
@@ -183,13 +190,19 @@ async function _loadClassifier(cfg, onProgress, onLog) {
             if (token) {
                 try {
                     env.token = token;
-                } catch {}
+                } catch (e) {
+                    swallow(e, 'nsfw');
+                }
                 try {
                     if (!env.customHeaders) env.customHeaders = {};
                     env.customHeaders.Authorization = `Bearer ${token}`;
-                } catch {}
+                } catch (e) {
+                    swallow(e, 'nsfw');
+                }
             }
-        } catch {}
+        } catch (e) {
+            swallow(e, 'nsfw');
+        }
 
         // Try the requested dtype first. If the model doesn't ship that
         // variant on the HF CDN (the unquantized model.onnx is the most
@@ -323,7 +336,9 @@ export async function startScan(cfg, onProgress, onDone, onModel, onLog) {
     const _log = (level, msg) => {
         try {
             if (typeof onLog === 'function') onLog({ source: 'nsfw', level, msg });
-        } catch {}
+        } catch (e) {
+            swallow(e, 'nsfw:_log');
+        }
     };
     if (_scanRunning) {
         _log(
@@ -384,7 +399,9 @@ export async function startScan(cfg, onProgress, onDone, onModel, onLog) {
                 (p) => {
                     try {
                         if (typeof onModel === 'function') onModel(p);
-                    } catch {}
+                    } catch (e) {
+                        swallow(e, 'nsfw');
+                    }
                 },
                 onLog,
             );
@@ -397,7 +414,9 @@ export async function startScan(cfg, onProgress, onDone, onModel, onLog) {
             _scanAbort = null;
             try {
                 if (typeof onDone === 'function') onDone({ ..._scanState });
-            } catch {}
+            } catch (e) {
+                swallow(e, 'nsfw');
+            }
             return;
         }
 
@@ -419,7 +438,9 @@ export async function startScan(cfg, onProgress, onDone, onModel, onLog) {
             lastBroadcast = now;
             try {
                 if (typeof onProgress === 'function') onProgress({ ..._scanState });
-            } catch {}
+            } catch (e) {
+                swallow(e, 'nsfw:maybeBroadcast');
+            }
         };
 
         try {
@@ -490,11 +511,15 @@ export async function startScan(cfg, onProgress, onDone, onModel, onLog) {
                 const fresh = getNsfwStats(fileTypes, threshold);
                 _scanState.candidates = fresh.candidates;
                 _scanState.keep = fresh.keep;
-            } catch {}
+            } catch (e) {
+                swallow(e, 'nsfw');
+            }
             maybeBroadcast(true);
             try {
                 if (typeof onDone === 'function') onDone({ ..._scanState });
-            } catch {}
+            } catch (e) {
+                swallow(e, 'nsfw');
+            }
         }
     })().catch(() => {
         /* never throw out of the async IIFE */
@@ -507,7 +532,9 @@ export function cancelScan() {
     if (!_scanAbort) return false;
     try {
         _scanAbort.abort();
-    } catch {}
+    } catch (e) {
+        swallow(e, 'nsfw:cancelScan');
+    }
     return true;
 }
 
@@ -632,7 +659,9 @@ async function _drainBg() {
                             db.prepare(
                                 'UPDATE downloads SET file_hash = ? WHERE id = ? AND file_hash IS NULL',
                             ).run(hash, Number(id));
-                        } catch {}
+                        } catch (e) {
+                            swallow(e, 'nsfw');
+                        }
                     } catch {
                         hash = null;
                     }
@@ -645,10 +674,14 @@ async function _drainBg() {
                         }
                         try {
                             db.prepare('DELETE FROM downloads WHERE id = ?').run(Number(id));
-                        } catch {}
+                        } catch (e) {
+                            swallow(e, 'nsfw');
+                        }
                         try {
                             _onBlocklistDelete?.(Number(id));
-                        } catch {}
+                        } catch (e) {
+                            swallow(e, 'nsfw');
+                        }
                         continue;
                     }
                 }
@@ -724,7 +757,9 @@ export async function preloadClassifier(cfg, onProgress, onLog) {
     const _log = (level, msg) => {
         try {
             if (typeof onLog === 'function') onLog({ source: 'nsfw', level, msg });
-        } catch {}
+        } catch (e) {
+            swallow(e, 'nsfw:_log');
+        }
     };
     const modelId = cfg.model || NSFW_DEFAULTS.model;
     const dtype = VALID_DTYPES.has(String(cfg.dtype || '').toLowerCase())
@@ -761,7 +796,9 @@ export async function preloadClassifier(cfg, onProgress, onLog) {
                     try {
                         _loadState.progress = p;
                         if (typeof onProgress === 'function') onProgress(p);
-                    } catch {}
+                    } catch (e) {
+                        swallow(e, 'nsfw');
+                    }
                 },
                 onLog,
             );
@@ -829,7 +866,9 @@ export async function clearClassifierCache(cfg) {
     await walk(cacheDirAbs);
     try {
         await fs.mkdir(cacheDirAbs, { recursive: true });
-    } catch {}
+    } catch (e) {
+        swallow(e, 'nsfw');
+    }
     return { bytes, files };
 }
 

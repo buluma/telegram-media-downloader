@@ -14,6 +14,7 @@
 import crypto from 'crypto';
 import { kvGet, kvSet } from './db.js';
 import { logger } from './logger.js';
+import { swallow } from './util/swallow.js';
 
 const TICK_MS = 15 * 60 * 1000; // check every 15 min
 const KV_KEY = 'auto_backfill_state'; // { groupId: lastRunAtMs }
@@ -36,7 +37,9 @@ function _loadState() {
 function _saveState(s) {
     try {
         kvSet(KV_KEY, s);
-    } catch {}
+    } catch (e) {
+        swallow(e, 'auto-backfill:_saveState');
+    }
 }
 
 export class AutoBackfillScheduler {

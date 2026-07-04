@@ -27,6 +27,7 @@ import { pregenerateAi } from './ai/index.js';
 import { pregenerateSeekbar } from './seekbar/index.js';
 import { fileTypeFromExtension, sniffMediaFile } from './media-sniff.js';
 import { QueueManager } from './download-queue.js';
+import { swallow } from './util/swallow.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, '../../data');
@@ -173,7 +174,9 @@ export async function migrateFolders(downloadPath) {
             try {
                 const leftovers = await fs.readdir(oldPath);
                 if (leftovers.length === 0) await fs.rmdir(oldPath);
-            } catch (e) {}
+            } catch (e) {
+                swallow(e, 'downloader');
+            }
         }
     } catch (e) {
         // Non-critical, silently skip
@@ -841,7 +844,9 @@ export class DownloadManager extends EventEmitter {
             } catch (error) {
                 try {
                     if (existsSync(partPath)) await fs.unlink(partPath);
-                } catch (cleanupErr) {}
+                } catch (cleanupErr) {
+                    swallow(cleanupErr, 'downloader');
+                }
                 throw error;
             } finally {
                 // Hand control of the paths back to the rotator regardless
@@ -907,7 +912,9 @@ export class DownloadManager extends EventEmitter {
                             job.message = messages[0];
                             return this.download(job, attempt + 1);
                         }
-                    } catch (e) {}
+                    } catch (e) {
+                        swallow(e, 'downloader');
+                    }
                 }
             }
 
@@ -1333,7 +1340,9 @@ export class DownloadManager extends EventEmitter {
                 this.saveDiskUsageCache();
                 return total;
             }
-        } catch (e) {}
+        } catch (e) {
+            swallow(e, 'downloader:getDiskUsage');
+        }
 
         const total = await this.scanDiskDeep();
         this._diskUsageCache = { size: total, timestamp: Date.now() };
@@ -1378,7 +1387,9 @@ export class DownloadManager extends EventEmitter {
                         await new Promise((r) => setImmediate(r));
                     }
                 }
-            } catch (e) {}
+            } catch (e) {
+                swallow(e, 'downloader');
+            }
         };
         await calculateSize(basePath);
         return total;
@@ -1399,7 +1410,9 @@ export class DownloadManager extends EventEmitter {
                 lastScan: Date.now(),
                 source: 'downloads_db',
             });
-        } catch (e) {}
+        } catch (e) {
+            swallow(e, 'downloader:saveDiskUsageCache');
+        }
     }
 
     incrementDiskUsage(bytes) {

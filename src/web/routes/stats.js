@@ -8,6 +8,7 @@ import { loadConfig } from '../../config/manager.js';
 import { runtime } from '../../core/runtime.js';
 import { listPeers } from '../../core/cluster/peers.js';
 import { formatBytes } from '../lib/format.js';
+import { swallow } from '../../core/util/swallow.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, '../../../data');
@@ -83,7 +84,9 @@ async function _computeStatsPayload(role) {
             if (existsSync(dir)) {
                 accountCount = fsSync.readdirSync(dir).filter((f) => f.endsWith('.enc')).length;
             }
-        } catch {}
+        } catch (e) {
+            swallow(e, 'stats');
+        }
     }
     let peerStats = [];
     if (role !== 'guest') {
@@ -97,7 +100,9 @@ async function _computeStatsPayload(role) {
                         online: p.status === 'online',
                     });
                 }
-            } catch {}
+            } catch (e) {
+                swallow(e, 'stats');
+            }
             peerStats = (fed.peerStats || []).map((row) => ({
                 peerId: row.peerId,
                 peerName: peerNameMap.get(String(row.peerId))?.name || row.peerId,
@@ -106,7 +111,9 @@ async function _computeStatsPayload(role) {
                 totalSize: row.totalSize,
                 totalSizeFormatted: formatBytes(row.totalSize),
             }));
-        } catch {}
+        } catch (e) {
+            swallow(e, 'stats');
+        }
     }
     return {
         totalFiles: dbStats.totalFiles,
@@ -291,28 +298,40 @@ export function createStatsRouter({ broadcast, getAccountManager, getIsConnected
                 aiEmbeddings = 0;
             try {
                 aiFaces = db.prepare('SELECT COUNT(*) AS n FROM faces').get()?.n || 0;
-            } catch {}
+            } catch (e) {
+                swallow(e, 'stats');
+            }
             try {
                 aiPeople = db.prepare('SELECT COUNT(*) AS n FROM people').get()?.n || 0;
-            } catch {}
+            } catch (e) {
+                swallow(e, 'stats');
+            }
             try {
                 aiTags =
                     db
                         .prepare("SELECT COUNT(*) AS n FROM image_tags WHERE tag != '_scanned_'")
                         .get()?.n || 0;
-            } catch {}
+            } catch (e) {
+                swallow(e, 'stats');
+            }
             try {
                 aiOcrFiles = db.prepare('SELECT COUNT(*) AS n FROM image_text').get()?.n || 0;
-            } catch {}
+            } catch (e) {
+                swallow(e, 'stats');
+            }
             try {
                 aiWd14Files =
                     db.prepare('SELECT COUNT(DISTINCT download_id) AS n FROM image_tags_wd14').get()
                         ?.n || 0;
-            } catch {}
+            } catch (e) {
+                swallow(e, 'stats');
+            }
             try {
                 aiEmbeddings =
                     db.prepare('SELECT COUNT(*) AS n FROM image_embeddings').get()?.n || 0;
-            } catch {}
+            } catch (e) {
+                swallow(e, 'stats');
+            }
 
             res.json({
                 success: true,

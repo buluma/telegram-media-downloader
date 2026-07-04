@@ -24,6 +24,7 @@ import { promises as fs } from 'fs';
 import { Buffer } from 'buffer';
 
 import { resolveFacesValue } from './faces-config.js';
+import { swallow } from '../util/swallow.js';
 
 // Defaults used when the operator hasn't tuned `advanced.ai.faces.*` and
 // hasn't set any of the matching `TGDL_FACES_*` env vars. `applyFacesCfg`
@@ -914,7 +915,9 @@ export async function embedImage(absPath) {
             try {
                 const body = await res.clone().json();
                 code = body?.code || null;
-            } catch {}
+            } catch (e) {
+                swallow(e, 'faces-client');
+            }
         }
         if (!endpoint.pathMode || code === 'path_not_allowed') {
             const maxBytes = 20 * 1024 * 1024; // 20 MB safety limit

@@ -29,6 +29,7 @@ import { backupDb } from '../../core/db/backup.js';
 import { toPosixPath } from '../../core/util/paths.js';
 import * as backupQueue from '../../core/backup/queue.js';
 import { listDestinations, _wake as wakeBackupWorker } from '../../core/backup/manager.js';
+import { swallow } from '../../core/util/swallow.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -51,7 +52,9 @@ function _runProc(bin, args, timeoutMs = 120_000) {
             () => {
                 try {
                     p.kill('SIGKILL');
-                } catch {}
+                } catch (e) {
+                    swallow(e, 'downloads:_runProc');
+                }
             },
             Math.max(5_000, timeoutMs),
         );
@@ -683,7 +686,9 @@ export function createDownloadsRouter({
             for (const id of allIds) {
                 try {
                     await purgeThumbsForDownload(id);
-                } catch {}
+                } catch (e) {
+                    swallow(e, 'downloads');
+                }
             }
             broadcast({ type: 'bulk_delete', unlinked, dbDeleted, count: allIds.length });
             return { unlinked, dbDeleted, requested: total };
@@ -823,7 +828,9 @@ export function createDownloadsRouter({
         if (!tx.ok) {
             try {
                 await fs.unlink(tmpAbs);
-            } catch {}
+            } catch (e) {
+                swallow(e, 'downloads');
+            }
             return res.status(500).json({
                 error: 'Transcode failed',
                 detail: (tx.stderr || tx.stdout || `ffmpeg exit ${tx.code}`).slice(0, 1200),
@@ -833,7 +840,9 @@ export function createDownloadsRouter({
         if (!probe.ok) {
             try {
                 await fs.unlink(tmpAbs);
-            } catch {}
+            } catch (e) {
+                swallow(e, 'downloads');
+            }
             return res.status(500).json({ error: 'Transcode output failed verification', probe });
         }
         await fs.rename(tmpAbs, outAbs);
@@ -849,7 +858,9 @@ export function createDownloadsRouter({
             .run(outName, nextRel, Number(st.size) || 0, id);
         try {
             await purgeThumbsForDownload(id);
-        } catch {}
+        } catch (e) {
+            swallow(e, 'downloads');
+        }
         broadcast({ type: 'download_transcoded', id, file_name: outName, file_path: nextRel });
         res.json({
             success: true,
@@ -1054,7 +1065,9 @@ export function createDownloadsRouter({
             for (const id of matchingIds) {
                 try {
                     await purgeThumbsForDownload(id);
-                } catch {}
+                } catch (e) {
+                    swallow(e, 'downloads');
+                }
             }
 
             broadcast({ type: 'file_deleted', path: filePath });
@@ -1323,7 +1336,9 @@ export function createDownloadsRouter({
                 const dirPath = path.join(DOWNLOADS_DIR, dir.name);
                 try {
                     totalFiles += readdirSync(dirPath, { recursive: true }).length;
-                } catch {}
+                } catch (e) {
+                    swallow(e, 'downloads');
+                }
                 await fs.rm(dirPath, { recursive: true, force: true });
                 processed += 1;
                 onProgress({ processed, total: totalGroups, stage: 'deleting_files' });

@@ -20,6 +20,7 @@ import { logger } from './logger.js';
 import { sanitizeName } from './downloader.js';
 import { fileTypeFromExtension, sniffMediaFile } from './media-sniff.js';
 import { toPosixPath } from './util/paths.js';
+import { swallow } from './util/swallow.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DOWNLOADS_DIR = path.join(__dirname, '../../data/downloads');
@@ -48,7 +49,9 @@ export async function sweep(onProgress) {
         if (typeof onProgress !== 'function') return;
         try {
             onProgress({ ...result, ...(extra || {}) });
-        } catch {}
+        } catch (e) {
+            swallow(e, 'integrity:_emit');
+        }
     };
     try {
         // Use keyset-paginated `.all()` instead of `.iterate()`. A live
@@ -163,7 +166,9 @@ export async function sweep(onProgress) {
                     pruned: result.pruned,
                     scanned: result.scanned,
                 });
-            } catch {}
+            } catch (e) {
+                swallow(e, 'integrity');
+            }
         }
         _emit({ processed: total, total, stage: 'done' });
     } finally {
@@ -414,12 +419,16 @@ export async function reindexFromDisk(configGroups, onProgress) {
             try {
                 if (typeof onProgress === 'function')
                     onProgress({ ...result, currentGroup: groupName });
-            } catch {}
+            } catch (e) {
+                swallow(e, 'integrity');
+            }
         }
         result.finishedAt = Date.now();
         try {
             _broadcast({ type: 'reindex_done', ...result });
-        } catch {}
+        } catch (e) {
+            swallow(e, 'integrity');
+        }
         return result;
     } finally {
         _reindexRunning = false;

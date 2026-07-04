@@ -42,6 +42,7 @@ import {
     _verifyChecksum,
     computeBinaryTarget as _computeBinaryTarget,
 } from './faces-download.js';
+import { swallow } from '../util/swallow.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..', '..');
@@ -165,7 +166,9 @@ export function stopSidecar() {
     // Clear client URL so a dead remote/manual sidecar isn't treated as live.
     try {
         setSidecarUrl('');
-    } catch {}
+    } catch (e) {
+        swallow(e, 'faces-spawn');
+    }
     _starting = null;
     _state = 'idle';
     _error = null;
@@ -348,7 +351,9 @@ async function _doStart() {
         _log('warn', `binary at ${target.binPath} failed verification — re-downloading`);
         try {
             await fs.unlink(target.binPath);
-        } catch {}
+        } catch (e) {
+            swallow(e, 'faces-spawn');
+        }
         if (_resolvedCfg.autoDownload !== false) {
             try {
                 await downloadAndExtract(target, {
@@ -403,7 +408,9 @@ async function _doStart() {
                 await fs.mkdir(downloadsDir, { recursive: true });
                 await fs.mkdir(modelsDir, { recursive: true });
                 await fs.mkdir(cacheDir, { recursive: true });
-            } catch {}
+            } catch (e) {
+                swallow(e, 'faces-spawn');
+            }
             const fallback = await _tryPythonFallback({
                 host: '127.0.0.1',
                 port,
@@ -748,7 +755,9 @@ async function _ensureProjectVenv(basePyBin) {
     if (existsSync(venvPy) && _checkPythonVersion(venvPy)) return venvPy;
     try {
         await fs.mkdir(path.dirname(FACES_VENV_DIR), { recursive: true });
-    } catch {}
+    } catch (e) {
+        swallow(e, 'faces-spawn:_ensureProjectVenv');
+    }
     _log('info', `creating faces-service virtualenv at ${FACES_VENV_DIR}`);
     const res = spawnSync(basePyBin, ['-m', 'venv', FACES_VENV_DIR], {
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -1092,12 +1101,16 @@ function _killChild() {
     if (!c || c.killed) return;
     try {
         c.kill('SIGTERM');
-    } catch {}
+    } catch (e) {
+        swallow(e, 'faces-spawn:_killChild');
+    }
     const t = setTimeout(() => {
         if (!c.killed) {
             try {
                 c.kill('SIGKILL');
-            } catch {}
+            } catch (e) {
+                swallow(e, 'faces-spawn');
+            }
         }
     }, KILL_GRACE_MS);
     if (t.unref) t.unref();
@@ -1218,12 +1231,16 @@ function _log(level, msg) {
             level,
             msg: String(msg),
         });
-    } catch {}
+    } catch (e) {
+        swallow(e, 'faces-spawn:_log');
+    }
     const line = `[ai-faces-spawn] [${level}] ${msg}`;
     try {
         if (level === 'error' || level === 'warn') process.stderr.write(line + '\n');
         else process.stdout.write(line + '\n');
-    } catch {}
+    } catch (e) {
+        swallow(e, 'faces-spawn');
+    }
 }
 
 // _normaliseUrl is imported from faces-download.js as _normaliseUrl.

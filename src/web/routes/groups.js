@@ -20,6 +20,7 @@ import {
 } from '../lib/history-state.js';
 import { BACKFILL_MAX_LIMIT } from '../../core/constants.js';
 import crypto from 'crypto';
+import { swallow } from '../../core/util/swallow.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -103,7 +104,9 @@ export function createGroupsRouter({
                  GROUP BY group_id`)
                     .all();
                 for (const r of rows) dbNames.set(String(r.group_id), r.best_name || r.any_name);
-            } catch {}
+            } catch (e) {
+                swallow(e, 'groups:GET /groups');
+            }
 
             // Live dialogs from every connected account — same source the
             // Browse-chats picker uses, so the sidebar shows the same name.
@@ -417,7 +420,9 @@ export function createGroupsRouter({
                     ...dbResult,
                     filesDeleted,
                 });
-            } catch {}
+            } catch (e) {
+                swallow(e, 'groups');
+            }
             return {
                 groupId: String(groupId),
                 groupName,
@@ -801,7 +806,9 @@ export function createGroupsRouter({
                     if (existsSync(numericPath)) {
                         try {
                             await fs.copyFile(numericPath, synthPath);
-                        } catch {}
+                        } catch (e) {
+                            swallow(e, 'groups');
+                        }
                         res.setHeader(
                             'Cache-Control',
                             'private, max-age=86400, stale-while-revalidate=604800',
@@ -873,7 +880,9 @@ export function createGroupsRouter({
                     .prepare('SELECT DISTINCT group_id, group_name FROM downloads LIMIT 10000')
                     .all();
                 for (const rr of rows) ids.add(String(rr.group_id));
-            } catch {}
+            } catch (e) {
+                swallow(e, 'groups:POST /groups/refresh-info');
+            }
 
             let updated = 0;
             let mutatedConfig = false;
@@ -918,7 +927,9 @@ export function createGroupsRouter({
                                 `UPDATE downloads SET group_name = ? WHERE group_id = ? AND (group_name IS NULL OR group_name = '' OR group_name = 'Unknown' OR group_name = ?)`,
                             );
                             stmt.run(realName, id, id);
-                        } catch {}
+                        } catch (e) {
+                            swallow(e, 'groups');
+                        }
                         updates.push({ id, name: realName });
                         updated++;
                     }
@@ -931,7 +942,9 @@ export function createGroupsRouter({
             if (updates.length) {
                 try {
                     broadcast({ type: 'groups_refreshed', updates });
-                } catch {}
+                } catch (e) {
+                    swallow(e, 'groups');
+                }
             }
             return { updated, scanned: total, updates };
         });

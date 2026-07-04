@@ -29,6 +29,7 @@ import { Transform } from 'stream';
 import { BackupProvider, optionalDepError, openReadStream } from './base.js';
 import { encryptStream } from '../encryption.js';
 import { toPosixPath } from '../../util/paths.js';
+import { swallow } from '../../util/swallow.js';
 
 const APP_PROPERTY_KEY = 'tgdl-backup';
 const APP_PROPERTY_VALUE = '1';
@@ -285,7 +286,9 @@ export class GoogleDriveProvider extends BackupProvider {
                 () => {
                     try {
                         body.destroy(new Error('aborted'));
-                    } catch {}
+                    } catch (e) {
+                        swallow(e, 'gdrive');
+                    }
                 },
                 { once: true },
             );
@@ -445,7 +448,9 @@ function _makeProgressTransform({ onProgress, throttleBps, signal }) {
                 if (typeof onProgress === 'function') {
                     try {
                         onProgress({ bytesUploaded: bytes });
-                    } catch {}
+                    } catch (e) {
+                        swallow(e, 'gdrive');
+                    }
                 }
                 if (throttleBps && throttleBps > 0) {
                     const elapsedMs = Date.now() - start;

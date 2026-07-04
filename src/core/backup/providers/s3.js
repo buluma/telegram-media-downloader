@@ -28,6 +28,7 @@ import { Upload } from '@aws-sdk/lib-storage';
 import { BackupProvider, openReadStream } from './base.js';
 import { encryptStream } from '../encryption.js';
 import { toPosixPath } from '../../util/paths.js';
+import { swallow } from '../../util/swallow.js';
 
 export class S3Provider extends BackupProvider {
     static get name() {
@@ -277,7 +278,9 @@ export class S3Provider extends BackupProvider {
     async close() {
         try {
             this.client?.destroy?.();
-        } catch {}
+        } catch (e) {
+            swallow(e, 's3:close');
+        }
         this.client = null;
     }
 }
@@ -313,7 +316,9 @@ function _makeProgressTransform({ onProgress, throttleBps, signal }) {
                 if (typeof onProgress === 'function') {
                     try {
                         onProgress({ bytesUploaded: bytes });
-                    } catch {}
+                    } catch (e) {
+                        swallow(e, 's3');
+                    }
                 }
                 if (throttleBps && throttleBps > 0) {
                     const elapsedMs = Date.now() - start;

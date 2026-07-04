@@ -51,6 +51,7 @@ import { existsSync, promises as fs } from 'fs';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 import { getDb } from './db.js';
+import { swallow } from './util/swallow.js';
 
 const _localRequire = createRequire(import.meta.url);
 
@@ -260,7 +261,9 @@ async function _verifySnapshot(snapshotPath) {
     } finally {
         try {
             probe?.close();
-        } catch {}
+        } catch (e) {
+            swallow(e, 'updater');
+        }
     }
 }
 

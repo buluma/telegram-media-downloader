@@ -3,6 +3,7 @@ import net from 'net';
 import { parseTelegramUrl, parseUrlList, UrlParseError } from '../../core/url-resolver.js';
 import { loadConfig } from '../../config/manager.js';
 import { runtime } from '../../core/runtime.js';
+import { swallow } from '../../core/util/swallow.js';
 
 // Refuse to probe addresses that are obviously private or local — without
 // this, an authenticated user could use the dashboard as a port scanner for
@@ -106,7 +107,9 @@ export function createLinkDownloadRouter({ getAccountManager }) {
             done = true;
             try {
                 sock.destroy();
-            } catch {}
+            } catch (e) {
+                swallow(e, 'link-download:finish');
+            }
             if (ok) return res.json({ ok: true, ms: Date.now() - start });
             return res.json({ ok: false, error });
         };

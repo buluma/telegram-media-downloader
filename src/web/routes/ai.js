@@ -44,6 +44,7 @@ import { safeResolveDownload } from '../lib/resolve-download.js';
 import { checkJobConflict } from '../../core/job-tracker.js';
 import { getScanStateCounts, listScanFailures } from '../../core/db/scan-state.js';
 import { toPosixPath } from '../../core/util/paths.js';
+import { swallow } from '../../core/util/swallow.js';
 
 export function createAiRouter({ broadcast, log, jobTrackers }) {
     const router = express.Router();
@@ -319,13 +320,17 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             url = getSidecarUrl() || null;
             routing = getSidecarRoutingStatus?.() || null;
             if (routing?.activeRole) mode = routing.activeRole;
-        } catch {}
+        } catch (e) {
+            swallow(e, 'ai:_getAiSidecarSnapshot');
+        }
         try {
             const facesSpawn = await import('../../core/ai/faces-spawn.js');
             const st = facesSpawn.getSidecarStatus?.() || {};
             url = url || st.url || null;
             mode = st.mode || st.state || mode;
-        } catch {}
+        } catch (e) {
+            swallow(e, 'ai');
+        }
         const info = url ? await _fetchSidecarInfo(url) : null;
         const health = url ? await _fetchSidecarHealth(url) : null;
         const isTgdlMl = info?.provider === 'tgdl-ml';
@@ -1011,7 +1016,9 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
     setImmediate(_smartAlbumsRearmSchedule);
     try {
         watchConfig(() => _smartAlbumsRearmSchedule());
-    } catch {}
+    } catch (e) {
+        swallow(e, 'ai');
+    }
 
     router.get('/ai/smart-albums/runtime', async (_req, res) => {
         const cfg = _aiCfg();
@@ -1144,7 +1151,9 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                     scoreMin = allAvg.reduce((min, v) => (v < min ? v : min), allAvg[0]);
                     scoreMax = allAvg.reduce((max, v) => (v > max ? v : max), allAvg[0]);
                 }
-            } catch {}
+            } catch (e) {
+                swallow(e, 'ai');
+            }
 
             const tagVocabSection =
                 availableTags.length > 0
@@ -1373,7 +1382,9 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                             signal.addEventListener('abort', () => {
                                 try {
                                     aiCancelScan(feature);
-                                } catch {}
+                                } catch (e) {
+                                    swallow(e, 'ai');
+                                }
                             });
                         }
 
@@ -1387,7 +1398,9 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                                     // on the wire. Keep tracker as the single source.
                                     try {
                                         onProgress(p);
-                                    } catch {}
+                                    } catch (e) {
+                                        swallow(e, 'ai');
+                                    }
                                     if (durableJobId && jobsMod?.updateJobProgress) {
                                         try {
                                             const processed = Number.isFinite(p?.scanned)
@@ -1396,7 +1409,9 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                                                   ? p.processed
                                                   : undefined;
                                             jobsMod.updateJobProgress(durableJobId, { processed });
-                                        } catch {}
+                                        } catch (e) {
+                                            swallow(e, 'ai');
+                                        }
                                     }
                                 },
                                 (p) => {
@@ -1407,7 +1422,9 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                                         if (durableJobId && jobsMod?.finishJob) {
                                             try {
                                                 jobsMod.finishJob(durableJobId, 'failed', p.error);
-                                            } catch {}
+                                            } catch (e) {
+                                                swallow(e, 'ai');
+                                            }
                                         }
                                         reject(new Error(p.error));
                                         return;
@@ -1415,7 +1432,9 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                                     if (durableJobId && jobsMod?.finishJob) {
                                         try {
                                             jobsMod.finishJob(durableJobId, 'completed');
-                                        } catch {}
+                                        } catch (e) {
+                                            swallow(e, 'ai');
+                                        }
                                     }
                                     resolve(p || {});
                                 },
@@ -1429,7 +1448,9 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                                         'failed',
                                         e?.message || String(e),
                                     );
-                                } catch {}
+                                } catch (e) {
+                                    swallow(e, 'ai');
+                                }
                             }
                             reject(e);
                         }
@@ -1661,7 +1682,9 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                         const { loadConfig } = await import('../../config/manager.js');
                         const live = loadConfig();
                         config = maskLlmConfig(live?.advanced?.ai?.llm || {});
-                    } catch {}
+                    } catch (e) {
+                        swallow(e, 'ai:GET /ai/llm/status');
+                    }
                     return {
                         success: true,
                         providers,
@@ -2149,10 +2172,14 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                     if (r.ok) {
                         try {
                             spawnMod.stopSidecar();
-                        } catch {}
+                        } catch (e) {
+                            swallow(e, 'ai');
+                        }
                         try {
                             spawnMod.startSidecar().catch(() => {});
-                        } catch {}
+                        } catch (e) {
+                            swallow(e, 'ai');
+                        }
                     }
                 })
                 .catch(() => {});
@@ -2192,7 +2219,9 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             const cfg = _aiCfg();
             try {
                 if (aiStartFacesScan) aiStartFacesScan(cfg).catch(() => {});
-            } catch {}
+            } catch (e) {
+                swallow(e, 'ai:POST /ai/faces/recluster');
+            }
             res.json({ success: true });
         } catch (e) {
             res.status(500).json({ error: e?.message || String(e) });
@@ -2225,7 +2254,9 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             // machine + WS events.
             try {
                 if (aiStartFacesScan) aiStartFacesScan(cfg).catch(() => {});
-            } catch {}
+            } catch (e) {
+                swallow(e, 'ai:POST /ai/faces/reindex');
+            }
             res.json({ success: true });
         } catch (e) {
             res.status(500).json({ error: e?.message || String(e) });
@@ -2622,7 +2653,9 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             });
             try {
                 broadcast({ type: 'ai_reindex', ...r });
-            } catch {}
+            } catch (e) {
+                swallow(e, 'ai');
+            }
             res.json({ success: true, cancelled, ...r });
         } catch (e) {
             log({ source: 'ai', level: 'error', msg: `re-index failed: ${e?.message || e}` });
@@ -2691,7 +2724,9 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             for (const row of batch) {
                 try {
                     aiPregenerateAi(row.id, { priority: 'backfill' });
-                } catch {}
+                } catch (e) {
+                    swallow(e, 'ai');
+                }
             }
             _aiAutoScanLastTickAt = Date.now();
             _aiAutoScanLastEnqueued = batch.length;
@@ -2745,7 +2780,9 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
     setImmediate(_aiAutoScanRearm);
     try {
         watchConfig(() => _aiAutoScanRearm());
-    } catch {}
+    } catch (e) {
+        swallow(e, 'ai');
+    }
 
     // Start / Pause / Stop control — single endpoint, action enum so the
     // state machine stays explicit. Resume is just `action='start'` from

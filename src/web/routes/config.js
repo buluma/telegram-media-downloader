@@ -10,6 +10,7 @@ import * as integrity from '../../core/integrity.js';
 import { refreshSidecar as refreshSeekbarSidecar } from '../../core/seekbar/spawn.js';
 import { BACKPRESSURE_CAP_DEFAULT } from '../../core/constants.js';
 import { NSFW_DEFAULTS } from '../../core/nsfw.js';
+import { swallow } from '../../core/util/swallow.js';
 
 export function createConfigRouter({
     broadcast,
@@ -548,14 +549,18 @@ export function createConfigRouter({
             try {
                 applyShareLimits(newConfig.advanced?.share || {});
                 invalidateShareConfigCache();
-            } catch {}
+            } catch (e) {
+                swallow(e, 'config');
+            }
 
             // Reset the lazy AccountManager singleton if Telegram credentials
             // changed — a stale instance would still be wired to the old apiId.
             if (req.body.telegram && _accountManager) {
                 try {
                     await _accountManager.disconnectAll();
-                } catch {}
+                } catch (e) {
+                    swallow(e, 'config');
+                }
                 _accountManager = null;
             }
 
@@ -651,7 +656,9 @@ export function createConfigRouter({
                 // for the operator to click Refresh.
                 try {
                     broadcast({ type: 'seekbar_config_changed' });
-                } catch {}
+                } catch (e) {
+                    swallow(e, 'config');
+                }
             }
 
             // Invalidate the dialogs response cache so the next /api/dialogs hit
