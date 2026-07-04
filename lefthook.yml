@@ -10,3 +10,8 @@ pre-commit:
         - name: biome-check
           glob: '*.{js,jsx,ts,tsx,mjs,cjs,json,jsonc,css,html}'
           run: bun x biome check --write {staged_files} && git add {staged_files}
+        # Fails when the SPA references an i18n key missing from en.json or
+        # th.json — keeps locale files from silently drifting behind the code.
+        - name: i18n-drift
+          glob: 'src/web/public/**/*.{js,html,json}'
+          run: node scripts/check_i18n_drift.js

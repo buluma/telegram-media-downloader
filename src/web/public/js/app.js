@@ -3522,7 +3522,14 @@ function switchGroupsTab(tab) {
         el.classList.toggle('text-tg-textSecondary', !active);
     }
 
-    if (state.allDialogs) renderDialogsList(state.allDialogs);
+    // Re-apply any active search query instead of rendering the full list —
+    // otherwise switching tabs silently drops the filter while the search box
+    // still shows the typed text.
+    if (state.allDialogs) {
+        const q = document.getElementById('groups-search')?.value?.trim();
+        if (q) filterDialogs(q);
+        else renderDialogsList(state.allDialogs);
+    }
 }
 
 // ============ Group Settings Modal ============
