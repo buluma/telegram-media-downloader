@@ -1913,5 +1913,16 @@
     "settings.alerts.testing": "กำลังส่ง…",
     "settings.alerts.test_ok": "ส่งสำเร็จ ✓",
     "settings.alerts.test_fail": "ล้มเหลว — ตรวจสอบ URL/หัวข้อ/โทเคน",
-    "settings.alerts.test_err": "ล้มเหลว: {msg}"
+    "settings.alerts.test_err": "ล้มเหลว: {msg}",
+    "groups.bulk.select": "เลือก",
+    "groups.bulk.done": "เสร็จ",
+    "groups.bulk.count": "เลือก {n} รายการ",
+    "groups.bulk.monitor_on": "เปิดติดตาม",
+    "groups.bulk.monitor_off": "ปิดติดตาม",
+    "groups.bulk.retention_on": "เปิดเก็บถาวร",
+    "groups.bulk.retention_off": "ปิดเก็บถาวร",
+    "groups.bulk.retention_auto": "เก็บถาวรอัตโนมัติ",
+    "groups.bulk.select_visible": "เลือกที่แสดง",
+    "groups.bulk.none_selected": "ยังไม่ได้เลือกกลุ่ม",
+    "groups.bulk.applied": "อัปเดต {n} กลุ่ม ข้าม {skipped}"
 }

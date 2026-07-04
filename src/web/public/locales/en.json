@@ -1913,5 +1913,16 @@
     "settings.alerts.testing": "Sending…",
     "settings.alerts.test_ok": "Delivered ✓",
     "settings.alerts.test_fail": "Failed — check URL/topic/token",
-    "settings.alerts.test_err": "Failed: {msg}"
+    "settings.alerts.test_err": "Failed: {msg}",
+    "groups.bulk.select": "Select",
+    "groups.bulk.done": "Done",
+    "groups.bulk.count": "{n} selected",
+    "groups.bulk.monitor_on": "Monitor on",
+    "groups.bulk.monitor_off": "Monitor off",
+    "groups.bulk.retention_on": "Retention on",
+    "groups.bulk.retention_off": "Retention off",
+    "groups.bulk.retention_auto": "Retention auto",
+    "groups.bulk.select_visible": "Select visible",
+    "groups.bulk.none_selected": "No groups selected",
+    "groups.bulk.applied": "Updated {n} group(s), {skipped} skipped"
 }

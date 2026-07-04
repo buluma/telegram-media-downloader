@@ -14,9 +14,9 @@
                             Unmonitored
                         </button>
                     </div>
-                    <!-- Search Box -->
-                    <div id="groups-search-box" class="mb-4">
-                        <div class="relative">
+                    <!-- Search Box + bulk-select toggle -->
+                    <div id="groups-search-box" class="mb-4 flex items-center gap-2">
+                        <div class="relative flex-1">
                             <i
                                 class="ri-search-line absolute left-3 top-1/2 transform -translate-y-1/2 text-tg-textSecondary"></i>
                             <input type="text" name="prevent_autofill_2" autocomplete="username"
@@ -30,6 +30,24 @@
                                 data-i18n-placeholder="groups.search_placeholder"
                                 placeholder="Search groups/channels..." oninput="filterDialogs(this.value)">
                         </div>
+                        <button id="groups-bulk-toggle" type="button"
+                            class="px-3 py-2 text-sm rounded-lg border border-tg-border text-tg-textSecondary hover:text-tg-text hover:bg-tg-hover transition-colors shrink-0"
+                            data-i18n="groups.bulk.select" aria-pressed="false">
+                            Select
+                        </button>
+                    </div>
+                    <!-- Bulk action bar — hidden until select mode is on -->
+                    <div id="groups-bulk-bar" class="hidden mb-4 p-3 bg-tg-panel border border-tg-border rounded-lg flex flex-wrap items-center gap-2">
+                        <span id="groups-bulk-count" class="text-sm text-tg-text font-medium mr-1">0</span>
+                        <button data-bulk-op="monitor-on" type="button" class="tg-btn text-xs" data-i18n="groups.bulk.monitor_on">Monitor on</button>
+                        <button data-bulk-op="monitor-off" type="button" class="tg-btn text-xs" data-i18n="groups.bulk.monitor_off">Monitor off</button>
+                        <span class="w-px h-5 bg-tg-border mx-1" aria-hidden="true"></span>
+                        <button data-bulk-op="retention-on" type="button" class="tg-btn text-xs" data-i18n="groups.bulk.retention_on">Retention on</button>
+                        <button data-bulk-op="retention-off" type="button" class="tg-btn text-xs" data-i18n="groups.bulk.retention_off">Retention off</button>
+                        <button data-bulk-op="retention-auto" type="button" class="tg-btn text-xs" data-i18n="groups.bulk.retention_auto">Retention auto</button>
+                        <span class="flex-1"></span>
+                        <button id="groups-bulk-all" type="button" class="tg-btn text-xs" data-i18n="groups.bulk.select_visible">Select visible</button>
+                        <button id="groups-bulk-clear" type="button" class="tg-btn text-xs" data-i18n="common.clear_selection">Clear selection</button>
                     </div>
                     <div id="groups-config-list" class="space-y-3"></div>
                 </div>

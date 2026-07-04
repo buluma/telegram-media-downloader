@@ -3255,6 +3255,8 @@ async function renderGroupsConfig() {
     const list = document.getElementById('groups-config-list');
     if (!list) return;
 
+    _setupGroupsBulkControls();
+
     list.innerHTML = `<div class="text-center py-8 text-tg-textSecondary">${escapeHtml(i18nT('groups.loading_dialogs', 'Loading dialogs...'))}</div>`;
 
     try {
@@ -3373,15 +3375,145 @@ function renderDialogsList(dialogs) {
     list.innerHTML = rowHtml;
 
     // Click anywhere on the row → open the group settings sheet for that
-    // dialog. Re-resolve through the canonical store at click time.
+    // dialog — unless bulk-select mode is on, where a click toggles the
+    // row's selection instead. Re-resolve names through the canonical store
+    // at click time.
     list.querySelectorAll('.chat-row[data-id]').forEach((el) => {
-        const fire = () => openGroupSettings(el.dataset.id, getGroupName(el.dataset.id));
+        const fire = () => {
+            if (_groupsBulk.on) {
+                _bulkToggleRow(el);
+                return;
+            }
+            openGroupSettings(el.dataset.id, getGroupName(el.dataset.id));
+        };
         el.addEventListener('click', fire);
         el.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
                 fire();
             }
+        });
+    });
+    _bulkRestoreSelectionStyling(list);
+}
+
+// ---- Bulk group operations (Chats page select mode) ----------------------
+const _groupsBulk = { on: false, sel: new Set() };
+
+function _bulkToggleRow(el) {
+    const id = el.dataset.id;
+    if (_groupsBulk.sel.has(id)) _groupsBulk.sel.delete(id);
+    else _groupsBulk.sel.add(id);
+    _bulkStyleRow(el, _groupsBulk.sel.has(id));
+    _bulkSyncCount();
+}
+
+function _bulkStyleRow(el, selected) {
+    el.classList.toggle('ring-2', selected);
+    el.classList.toggle('ring-tg-blue', selected);
+    el.classList.toggle('rounded-xl', selected);
+    el.setAttribute('aria-selected', selected ? 'true' : 'false');
+}
+
+// renderDialogsList rebuilds innerHTML on every tab switch / filter — walk
+// the fresh rows and re-apply the selected ring to any row still selected.
+function _bulkRestoreSelectionStyling(list) {
+    if (!_groupsBulk.on || _groupsBulk.sel.size === 0) return;
+    list.querySelectorAll('.chat-row[data-id]').forEach((el) => {
+        if (_groupsBulk.sel.has(el.dataset.id)) _bulkStyleRow(el, true);
+    });
+}
+
+function _bulkSyncCount() {
+    const n = _groupsBulk.sel.size;
+    const countEl = document.getElementById('groups-bulk-count');
+    if (countEl) countEl.textContent = i18nTf('groups.bulk.count', { n }, `${n} selected`);
+}
+
+function _bulkSetMode(on) {
+    _groupsBulk.on = on;
+    if (!on) _groupsBulk.sel.clear();
+    const bar = document.getElementById('groups-bulk-bar');
+    const toggle = document.getElementById('groups-bulk-toggle');
+    if (bar) bar.classList.toggle('hidden', !on);
+    if (toggle) {
+        toggle.setAttribute('aria-pressed', on ? 'true' : 'false');
+        toggle.textContent = on
+            ? i18nT('groups.bulk.done', 'Done')
+            : i18nT('groups.bulk.select', 'Select');
+        toggle.classList.toggle('text-tg-blue', on);
+        toggle.classList.toggle('border-tg-blue', on);
+    }
+    _bulkSyncCount();
+    // Clear any lingering ring styling when leaving select mode.
+    if (!on) {
+        document
+            .querySelectorAll('#groups-config-list .chat-row[aria-selected="true"]')
+            .forEach((el) => _bulkStyleRow(el, false));
+    }
+}
+
+async function _bulkApply(setPatch) {
+    const ids = Array.from(_groupsBulk.sel);
+    if (ids.length === 0) {
+        showToast(i18nT('groups.bulk.none_selected', 'No groups selected'), 'info');
+        return;
+    }
+    try {
+        const r = await api.post('/api/groups/bulk', { ids, set: setPatch });
+        const skipped = Array.isArray(r?.skipped) ? r.skipped.length : 0;
+        showToast(
+            i18nTf(
+                'groups.bulk.applied',
+                { n: r?.updated ?? 0, skipped },
+                `Updated ${r?.updated ?? 0} group(s)` + (skipped ? `, ${skipped} skipped` : ''),
+            ),
+            'success',
+        );
+        _bulkSetMode(false);
+        await renderGroupsConfig();
+    } catch (e) {
+        showToast(
+            i18nTf('toast.save_failed', { msg: e.message }, `Save failed: ${e.message}`),
+            'error',
+        );
+    }
+}
+
+// One-time wiring for the bulk controls — idempotent via dataset guard so
+// repeated page navigations don't stack handlers.
+function _setupGroupsBulkControls() {
+    const toggle = document.getElementById('groups-bulk-toggle');
+    if (!toggle || toggle.dataset.bound) return;
+    toggle.dataset.bound = '1';
+    toggle.addEventListener('click', () => _bulkSetMode(!_groupsBulk.on));
+
+    document.getElementById('groups-bulk-clear')?.addEventListener('click', () => {
+        _groupsBulk.sel.clear();
+        document
+            .querySelectorAll('#groups-config-list .chat-row[aria-selected="true"]')
+            .forEach((el) => _bulkStyleRow(el, false));
+        _bulkSyncCount();
+    });
+    document.getElementById('groups-bulk-all')?.addEventListener('click', () => {
+        document.querySelectorAll('#groups-config-list .chat-row[data-id]').forEach((el) => {
+            _groupsBulk.sel.add(el.dataset.id);
+            _bulkStyleRow(el, true);
+        });
+        _bulkSyncCount();
+    });
+
+    const OPS = {
+        'monitor-on': { enabled: true },
+        'monitor-off': { enabled: false },
+        'retention-on': { rescueMode: 'on' },
+        'retention-off': { rescueMode: 'off' },
+        'retention-auto': { rescueMode: 'auto' },
+    };
+    document.querySelectorAll('#groups-bulk-bar [data-bulk-op]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const patch = OPS[btn.dataset.bulkOp];
+            if (patch) _bulkApply(patch);
         });
     });
 }

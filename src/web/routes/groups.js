@@ -464,6 +464,73 @@ export function createGroupsRouter({
     // admin action we have. Returns 200 immediately; final counts via
     // `purge_all_done`. Single-flight via the shared tracker.
 
+    // Bulk config update — apply the same settings patch to many groups in
+    // one atomic config write. Grew out of the rescue-mode cleanup where ~50
+    // groups needed the same flag flipped and the only options were 50 sheet
+    // round-trips or a shell script. Deliberately supports only the fields
+    // that make sense to set en masse; per-group things (name, accounts,
+    // forward destination) stay on PUT /groups/:id.
+    const BULK_ALLOWED_FIELDS = new Set(['enabled', 'rescueMode', 'filters', 'trackComments']);
+    const BULK_MAX_IDS = 500;
+    router.post('/groups/bulk', async (req, res) => {
+        try {
+            const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String) : [];
+            const set = req.body?.set;
+            if (ids.length === 0 || !set || typeof set !== 'object') {
+                return res.status(400).json({ error: 'ids[] and set{} are required' });
+            }
+            if (ids.length > BULK_MAX_IDS) {
+                return res.status(400).json({ error: `Too many ids (max ${BULK_MAX_IDS})` });
+            }
+            const fields = Object.keys(set);
+            if (fields.length === 0) {
+                return res.status(400).json({ error: 'set{} must contain at least one field' });
+            }
+            const disallowed = fields.filter((f) => !BULK_ALLOWED_FIELDS.has(f));
+            if (disallowed.length > 0) {
+                return res
+                    .status(400)
+                    .json({ error: `Fields not allowed in bulk update: ${disallowed.join(', ')}` });
+            }
+
+            const config = loadConfig();
+            const byId = new Map((config.groups || []).map((g) => [String(g.id), g]));
+            const skipped = [];
+            let updated = 0;
+            for (const id of ids) {
+                const group = byId.get(id);
+                if (!group) {
+                    skipped.push(id);
+                    continue;
+                }
+                if (set.enabled !== undefined) group.enabled = !!set.enabled;
+                if (set.trackComments !== undefined) group.trackComments = !!set.trackComments;
+                if (set.filters && typeof set.filters === 'object') {
+                    group.filters = { ...group.filters, ...set.filters };
+                }
+                if (set.rescueMode !== undefined) {
+                    // Same contract as PUT /groups/:id — 'auto' is stored (it
+                    // is the explicit "follow global" state the sheet shows),
+                    // anything unrecognized clears to default.
+                    const v = set.rescueMode;
+                    if (v === 'on' || v === 'off' || v === 'auto') group.rescueMode = v;
+                    else delete group.rescueMode;
+                }
+                updated += 1;
+            }
+
+            if (updated > 0) {
+                await writeConfigAtomic(config);
+                invalidateDialogsCache();
+                broadcast({ type: 'config_updated', config });
+            }
+            res.json({ success: true, updated, skipped });
+        } catch (error) {
+            console.error('POST /api/groups/bulk:', error);
+            res.status(500).json({ error: 'Internal error' });
+        }
+    });
+
     router.put('/groups/:id', async (req, res) => {
         try {
             const config = loadConfig();
