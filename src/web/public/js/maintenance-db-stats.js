@@ -174,6 +174,58 @@ function vbarChart(
     return svg;
 }
 
+// Stacked vertical bars — one segment per series (group), same axis/label
+// conventions as vbarChart above. `days` = [{label, subLabel, values[]}],
+// `series` = [{name, color}]; values align with series order.
+function stackedBarChart(days, series, { height = 180, targetWidth = null } = {}) {
+    const max =
+        days.reduce(
+            (m, d) =>
+                Math.max(
+                    m,
+                    d.values.reduce((a, b) => a + b, 0),
+                ),
+            0,
+        ) || 1;
+    const hasSubLabels = days.some((d) => d.subLabel);
+    const pad = { top: 16, bottom: hasSubLabels ? 30 : 20, left: 4, right: 4 };
+    const count = days.length;
+    const gap = 4;
+    const bw = targetWidth
+        ? Math.max(16, Math.min(100, (targetWidth - pad.left - pad.right) / count - gap))
+        : 30;
+    const totalW = count * (bw + gap) + pad.left + pad.right;
+    const h = height;
+    const scale = (v) => (v / max) * (h - pad.top - pad.bottom);
+
+    let svg = `<svg width="${totalW}" height="${h}" viewBox="0 0 ${totalW} ${h}" xmlns="http://www.w3.org/2000/svg">`;
+    for (let i = 0; i < days.length; i++) {
+        const d = days[i];
+        const x = pad.left + i * (bw + gap);
+        const labelY = h - pad.bottom + (hasSubLabels ? 11 : 14);
+        svg += `<text x="${x + bw / 2}" y="${labelY}" text-anchor="middle" fill="var(--tg-theme-text-secondary,#7f8c8d)" font-size="9">${escapeHtml((d.label || '').slice(0, 6))}</text>`;
+        if (d.subLabel) {
+            svg += `<text x="${x + bw / 2}" y="${labelY + 11}" text-anchor="middle" fill="var(--tg-theme-text-secondary,#7f8c8d)" font-size="8">${escapeHtml((d.subLabel || '').slice(0, 5))}</text>`;
+        }
+        const dayTotal = d.values.reduce((a, b) => a + b, 0);
+        if (dayTotal === 0) continue;
+        let y = h - pad.bottom;
+        for (let sIdx = 0; sIdx < series.length; sIdx++) {
+            const v = d.values[sIdx] || 0;
+            if (v === 0) continue;
+            const segH = Math.max(0.5, scale(v));
+            y -= segH;
+            svg += `<rect x="${x}" y="${y}" width="${bw}" height="${segH}" fill="${series[sIdx].color}" opacity="0.9"><title>${escapeHtml(series[sIdx].name)}: ${fmt(v)}</title></rect>`;
+        }
+        const topY = h - pad.bottom - scale(dayTotal);
+        if (scale(dayTotal) > 14) {
+            svg += `<text x="${x + bw / 2}" y="${topY - 2}" text-anchor="middle" fill="var(--tg-theme-text-color,#fff)" font-size="9" font-weight="600">${fmt(dayTotal)}</text>`;
+        }
+    }
+    svg += '</svg>';
+    return svg;
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function renderTable(headers, rows) {
@@ -239,7 +291,7 @@ async function load() {
     try {
         const res = await api.get('/api/db/stats');
         if (!res?.success) throw new Error('API error');
-        const { tableCounts, groups, totals, dailyTrend, dbFileSizeBytes, ai } = res;
+        const { tableCounts, groups, totals, dailyTrend, trendByGroup, dbFileSizeBytes, ai } = res;
         const loadedAt = new Date().toLocaleTimeString();
         let html = '';
 
@@ -383,17 +435,15 @@ async function load() {
             );
         }
 
-        // TODO: improve trend chart — add per-group breakdown (stacked bars or
-        // group filter), hover tooltip with exact count + group list, selectable
-        // date range beyond 14 days, and a bytes-downloaded overlay series.
+        // TODO: improve trend chart — selectable date range beyond 14 days and
+        // a bytes-downloaded overlay series. (Per-group stacked bars + hover
+        // tooltips shipped; see stackedBarChart above.)
 
         // ── 14-day download trend (day-of-week + MM-DD sub-labels) ──
+        // Stacked per-group when the API provides the breakdown; flat
+        // single-series bars otherwise (old servers, empty DB).
         if (dailyTrend?.length) {
             const total14 = dailyTrend.reduce((s, d) => s + d.n, 0);
-            const bars = dailyTrend.map((d) => {
-                const dow = DAY_ABBREVS[new Date(`${d.day}T00:00:00`).getDay()];
-                return { label: dow, subLabel: d.day.slice(5), value: d.n };
-            });
             // Stretch bars to fill the card's actual width instead of the
             // fixed 14 * barWidth size, which left most of a full-width
             // card blank. `db-stats-root` is already mounted at this point
@@ -402,10 +452,44 @@ async function load() {
             // minus the card's own `p-3` padding (12px each side).
             const rootWidth = $('db-stats-root')?.clientWidth;
             const targetWidth = rootWidth ? rootWidth - 24 : null;
-            html += renderCard(
-                `14-day download trend  ·  ${fmt(total14)} total`,
-                `<div class="overflow-x-auto">${vbarChart(bars, { height: 180, barWidth: 30, targetWidth })}</div>`,
-            );
+            if (trendByGroup?.groups?.length && trendByGroup?.days?.length) {
+                const SERIES_COLORS = [
+                    '#2ea6ff',
+                    '#34d399',
+                    '#fbbf24',
+                    '#a78bfa',
+                    '#f472b6',
+                    '#6b7280',
+                ];
+                const series = trendByGroup.groups.map((g, i) => ({
+                    name: g.name,
+                    color: SERIES_COLORS[i % SERIES_COLORS.length],
+                }));
+                const days = trendByGroup.days.map((d) => {
+                    const dow = DAY_ABBREVS[new Date(`${d.day}T00:00:00`).getDay()];
+                    return { label: dow, subLabel: d.day.slice(5), values: d.values };
+                });
+                const legend = series
+                    .map(
+                        (sr) =>
+                            `<span class="inline-flex items-center gap-1 mr-3 text-[10px] text-tg-textSecondary"><span class="inline-block w-2.5 h-2.5 rounded-sm" style="background:${sr.color}"></span>${escapeHtml(sr.name)}</span>`,
+                    )
+                    .join('');
+                html += renderCard(
+                    `14-day download trend  ·  ${fmt(total14)} total`,
+                    `<div class="mb-2">${legend}</div>
+                     <div class="overflow-x-auto">${stackedBarChart(days, series, { height: 180, targetWidth })}</div>`,
+                );
+            } else {
+                const bars = dailyTrend.map((d) => {
+                    const dow = DAY_ABBREVS[new Date(`${d.day}T00:00:00`).getDay()];
+                    return { label: dow, subLabel: d.day.slice(5), value: d.n };
+                });
+                html += renderCard(
+                    `14-day download trend  ·  ${fmt(total14)} total`,
+                    `<div class="overflow-x-auto">${vbarChart(bars, { height: 180, barWidth: 30, targetWidth })}</div>`,
+                );
+            }
         }
 
         // ── AI coverage ──

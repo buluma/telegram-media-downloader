@@ -264,6 +264,75 @@ export function createStatsRouter({ broadcast, getAccountManager, getIsConnected
                 });
             }
 
+            // Per-group breakdown of the same 14-day window — top 5 groups by
+            // volume get their own stacked-bar series, everything else folds
+            // into "Other" so the legend stays readable at any group count.
+            let trendByGroup = null;
+            try {
+                const perGroupRows = db
+                    .prepare(
+                        `
+                SELECT date(created_at) AS day,
+                       group_id,
+                       MAX(CASE
+                             WHEN group_name IS NOT NULL
+                              AND group_name != ''
+                              AND group_name != 'Unknown'
+                              AND group_name != 'unknown'
+                           THEN group_name END) AS name,
+                       COUNT(*) AS n
+                  FROM downloads
+                 WHERE created_at >= date('now', '-13 days')
+                 GROUP BY day, group_id
+            `,
+                    )
+                    .all();
+                const groupTotals = new Map(); // group_id -> {name, total}
+                for (const r of perGroupRows) {
+                    const t = groupTotals.get(r.group_id) || { name: r.name, total: 0 };
+                    t.total += r.n;
+                    if (!t.name && r.name) t.name = r.name;
+                    groupTotals.set(r.group_id, t);
+                }
+                const TOP_N = 5;
+                const top = [...groupTotals.entries()]
+                    .sort((a, b) => b[1].total - a[1].total)
+                    .slice(0, TOP_N);
+                const topIds = new Set(top.map(([id]) => id));
+                const hasOther = groupTotals.size > topIds.size;
+                const trendGroups = top.map(([id, t]) => ({
+                    id: String(id),
+                    name: t.name || String(id),
+                }));
+                if (hasOther) trendGroups.push({ id: '__other__', name: 'Other' });
+
+                const seriesIdx = new Map(trendGroups.map((g, i) => [g.id, i]));
+                const dayValues = new Map(); // day -> number[]
+                for (const r of perGroupRows) {
+                    const gi = topIds.has(r.group_id)
+                        ? seriesIdx.get(String(r.group_id))
+                        : seriesIdx.get('__other__');
+                    if (gi === undefined) continue;
+                    let vals = dayValues.get(r.day);
+                    if (!vals) {
+                        vals = new Array(trendGroups.length).fill(0);
+                        dayValues.set(r.day, vals);
+                    }
+                    vals[gi] += r.n;
+                }
+                if (trendGroups.length > 0) {
+                    trendByGroup = {
+                        groups: trendGroups,
+                        days: dailyTrend.map((d) => ({
+                            day: d.day,
+                            values: dayValues.get(d.day) || new Array(trendGroups.length).fill(0),
+                        })),
+                    };
+                }
+            } catch (e) {
+                swallow(e, 'stats:trendByGroup');
+            }
+
             // DB file size on disk (main file + WAL if present)
             let dbFileSizeBytes = 0;
             try {
@@ -337,6 +406,7 @@ export function createStatsRouter({ broadcast, getAccountManager, getIsConnected
                 groups,
                 totals,
                 dailyTrend,
+                trendByGroup,
                 dbFileSizeBytes,
                 ai: {
                     indexed,
