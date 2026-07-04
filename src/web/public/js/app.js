@@ -3392,6 +3392,12 @@ function filterDialogs(query) {
     );
     renderDialogsList(filtered);
 }
+// Inline HTML handler compatibility: groups.html uses
+// `oninput="filterDialogs(this.value)"`. Same module-scope gotcha as
+// filterSidebarGroups below — expose on window so it's resolvable.
+if (typeof window !== 'undefined') {
+    window.filterDialogs = filterDialogs;
+}
 
 // Sidebar groups filter — DOM-only, no re-render. Hides non-matching
 // .chat-row tiles in #groups-list and lets renderGroupsList()'s
