@@ -134,8 +134,17 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
     }
 
     const _AI_ROUTE_CACHE = new Map();
+    const _AI_ROUTE_CACHE_MAX = 200;
     const _AI_ROUTE_INFLIGHT = new Map();
     const _AI_ROUTE_SLOW_WARN_MS = 5000;
+    // Config edits change what several cached routes report (LLM provider
+    // status, configured CLIP model, faces knobs) — drop everything so the
+    // page reflects a save immediately instead of after the TTL.
+    try {
+        watchConfig(() => _AI_ROUTE_CACHE.clear());
+    } catch (e) {
+        swallow(e, 'ai:_AI_ROUTE_CACHE');
+    }
     async function _cachedAiRoute(key, ttlMs, producer) {
         const now = Date.now();
         const cached = _AI_ROUTE_CACHE.get(key);
@@ -146,6 +155,12 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         const p = Promise.resolve()
             .then(producer)
             .then((data) => {
+                // Bounded: keys embed caller-supplied params, so evict the
+                // oldest entry instead of growing without limit.
+                if (_AI_ROUTE_CACHE.size >= _AI_ROUTE_CACHE_MAX && !_AI_ROUTE_CACHE.has(key)) {
+                    const oldest = _AI_ROUTE_CACHE.keys().next().value;
+                    if (oldest !== undefined) _AI_ROUTE_CACHE.delete(oldest);
+                }
                 _AI_ROUTE_CACHE.set(key, { ts: Date.now(), data });
                 const elapsed = Date.now() - start;
                 if (elapsed > _AI_ROUTE_SLOW_WARN_MS) {
@@ -1503,12 +1518,14 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             return res.status(400).json({ error: 'feature must be faces|ocr|wd14' });
         }
         const ok = aiCancelScan(feature);
-        // Finish any running job for this feature
+        // Finish every running job for this feature — a crash can leave
+        // more than one 'running' row behind, and closing only the newest
+        // would park the rest until the stale-lock sweep.
         try {
             const { listJobs, finishJob } = await import('../../core/ai/jobs.js');
-            const running = listJobs({ feature, status: 'running', limit: 1 });
-            if (running.jobs?.length) {
-                finishJob(running.jobs[0].id, 'cancelled');
+            const running = listJobs({ feature, status: 'running', limit: 50 });
+            for (const job of running.jobs || []) {
+                finishJob(job.id, 'cancelled');
             }
         } catch (e) {
             log({ source: 'ai', level: 'warn', msg: `finish job on cancel: ${e?.message || e}` });
@@ -1628,26 +1645,34 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             if (!scanner) return res.status(400).json({ error: 'scanner required' });
 
             const { listScanFailures: lsf } = await import('../../core/db/scan-state.js');
-            const failures = lsf(scanner, { limit: 500 });
-            const ids = failures.map((r) => r.download_id);
-            if (!ids.length) return res.json({ success: true, reset: 0 });
+            // Drain in pages — listScanFailures caps at 500 per call, and a
+            // long sidecar outage can leave far more failed rows than that.
+            // resetScanState deletes the rows we just listed, so each pass
+            // sees a fresh page until none remain.
+            let reset = 0;
+            for (;;) {
+                const failures = lsf(scanner, { limit: 500 });
+                const ids = failures.map((r) => r.download_id);
+                if (!ids.length) break;
 
-            resetScanState(ids, scanner);
+                resetScanState(ids, scanner);
+                reset += ids.length;
 
-            // For WD14, also clear sentinel rows so getUnscannedWd14Batch re-queues them.
-            if (scanner === 'wd14' && ids.length) {
-                const db = getDb();
-                const CHUNK = 500;
-                for (let i = 0; i < ids.length; i += CHUNK) {
-                    const slice = ids.slice(i, i + CHUNK);
-                    const ph = slice.map(() => '?').join(',');
-                    db.prepare(
-                        `DELETE FROM image_tags_wd14 WHERE tag='_wd14_scanned_' AND download_id IN (${ph})`,
-                    ).run(...slice);
+                // For WD14, also clear sentinel rows so getUnscannedWd14Batch re-queues them.
+                if (scanner === 'wd14') {
+                    const db = getDb();
+                    const CHUNK = 500;
+                    for (let i = 0; i < ids.length; i += CHUNK) {
+                        const slice = ids.slice(i, i + CHUNK);
+                        const ph = slice.map(() => '?').join(',');
+                        db.prepare(
+                            `DELETE FROM image_tags_wd14 WHERE tag='_wd14_scanned_' AND download_id IN (${ph})`,
+                        ).run(...slice);
+                    }
                 }
             }
 
-            res.json({ success: true, reset: ids.length, scanner });
+            res.json({ success: true, reset, scanner });
         } catch (e) {
             res.status(500).json({ error: e?.message || String(e) });
         }
@@ -2508,6 +2533,39 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         }
     });
 
+    // Crop the face described by `row` ({x,y,w,h,file_path}) with padding
+    // and stream it as a square JPEG. Shared by the person-avatar and
+    // face-crop endpoints. `cacheControl` differs: a face row is immutable,
+    // but a person's *best* face changes after re-scan/merge/reassign.
+    async function _sendFaceCrop(row, size, res, cacheControl) {
+        const resolved = await safeResolveDownload(row.file_path);
+        if (!resolved.ok) {
+            return res
+                .status(resolved.reason === 'missing' ? 404 : 403)
+                .json({ error: resolved.reason });
+        }
+
+        const pad = 0.4;
+        const meta = await sharp(resolved.real, { failOn: 'none' }).metadata();
+        const imgW = meta.width || 9999;
+        const imgH = meta.height || 9999;
+        const left = Math.max(0, Math.round(row.x - row.w * pad));
+        const top = Math.max(0, Math.round(row.y - row.h * pad));
+        const right = Math.min(imgW, Math.round(row.x + row.w + row.w * pad));
+        const bottom = Math.min(imgH, Math.round(row.y + row.h + row.h * pad));
+        const width = Math.max(1, right - left);
+        const height = Math.max(1, bottom - top);
+
+        const buf = await sharp(resolved.real, { failOn: 'none' })
+            .extract({ left, top, width, height })
+            .resize(size, size, { fit: 'cover', position: 'centre' })
+            .jpeg({ quality: 82, progressive: true })
+            .toBuffer();
+        res.set('content-type', 'image/jpeg');
+        res.set('cache-control', cacheControl);
+        res.send(buf);
+    }
+
     // Best-face crop for a person tile/avatar.
     router.get('/ai/person/:id/face', async (req, res) => {
         try {
@@ -2527,33 +2585,9 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                 )
                 .get(personId);
             if (!row) return res.status(404).json({ error: 'no face found' });
-
-            const resolved = await safeResolveDownload(row.file_path);
-            if (!resolved.ok) {
-                return res
-                    .status(resolved.reason === 'missing' ? 404 : 403)
-                    .json({ error: resolved.reason });
-            }
-
-            const pad = 0.4;
-            const meta = await sharp(resolved.real, { failOn: 'none' }).metadata();
-            const imgW = meta.width || 9999;
-            const imgH = meta.height || 9999;
-            const left = Math.max(0, Math.round(row.x - row.w * pad));
-            const top = Math.max(0, Math.round(row.y - row.h * pad));
-            const right = Math.min(imgW, Math.round(row.x + row.w + row.w * pad));
-            const bottom = Math.min(imgH, Math.round(row.y + row.h + row.h * pad));
-            const width = Math.max(1, right - left);
-            const height = Math.max(1, bottom - top);
-
-            const buf = await sharp(resolved.real, { failOn: 'none' })
-                .extract({ left, top, width, height })
-                .resize(size, size, { fit: 'cover', position: 'centre' })
-                .jpeg({ quality: 82, progressive: true })
-                .toBuffer();
-            res.set('content-type', 'image/jpeg');
-            res.set('cache-control', 'public, max-age=604800, immutable');
-            res.send(buf);
+            // Not immutable: the best face changes after re-scan / merge /
+            // reassign, so let the browser revalidate hourly.
+            await _sendFaceCrop(row, size, res, 'public, max-age=3600');
         } catch (e) {
             res.status(500).json({ error: e.message });
         }
@@ -2576,33 +2610,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                 )
                 .get(faceId);
             if (!row) return res.status(404).json({ error: 'face not found' });
-
-            const resolved = await safeResolveDownload(row.file_path);
-            if (!resolved.ok) {
-                return res
-                    .status(resolved.reason === 'missing' ? 404 : 403)
-                    .json({ error: resolved.reason });
-            }
-
-            const pad = 0.4;
-            const meta = await sharp(resolved.real, { failOn: 'none' }).metadata();
-            const imgW = meta.width || 9999;
-            const imgH = meta.height || 9999;
-            const left = Math.max(0, Math.round(row.x - row.w * pad));
-            const top = Math.max(0, Math.round(row.y - row.h * pad));
-            const right = Math.min(imgW, Math.round(row.x + row.w + row.w * pad));
-            const bottom = Math.min(imgH, Math.round(row.y + row.h + row.h * pad));
-            const width = Math.max(1, right - left);
-            const height = Math.max(1, bottom - top);
-
-            const buf = await sharp(resolved.real, { failOn: 'none' })
-                .extract({ left, top, width, height })
-                .resize(size, size, { fit: 'cover', position: 'centre' })
-                .jpeg({ quality: 82, progressive: true })
-                .toBuffer();
-            res.set('content-type', 'image/jpeg');
-            res.set('cache-control', 'public, max-age=604800, immutable');
-            res.send(buf);
+            await _sendFaceCrop(row, size, res, 'public, max-age=604800, immutable');
         } catch (e) {
             res.status(500).json({ error: e.message });
         }
@@ -2749,8 +2757,18 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         try {
             // Cancel any in-flight scan before nuking the artefacts.
             let cancelled = 0;
-            for (const f of ['embed', 'faces', 'ocr', 'wd14']) {
+            for (const f of ['faces', 'ocr', 'wd14']) {
                 if (aiCancelScan(f)) cancelled += 1;
+            }
+            // The embeddings re-index runs under its tracker, not the
+            // scan-runner — abort it the same way before the wipe.
+            if (jobTrackers.aiIndex.isRunning()) {
+                try {
+                    jobTrackers.aiIndex.cancel();
+                    cancelled += 1;
+                } catch (e) {
+                    swallow(e, 'ai');
+                }
             }
             // Settle one tick so the scan loops see the abort signal.
             if (cancelled) await new Promise((r) => setTimeout(r, 100));

@@ -154,6 +154,44 @@ describe('POST /api/ai/faces/reindex', () => {
         expect(getScanStateCounts('faces').failed).toBe(1);
     });
 
+    it('cancel closes every running durable job for the feature', async () => {
+        const { createJob, listJobs, getJob } = await import('../../src/core/ai/jobs.js');
+        // Simulate crash leftovers: several 'running' rows for one feature.
+        const j1 = createJob({ type: 'scan', feature: 'ocr', total: 10 });
+        const j2 = createJob({ type: 'scan', feature: 'ocr', total: 10 });
+
+        const r = await post('/api/ai/scan/cancel', { feature: 'ocr' });
+        expect(r.status).toBe(200);
+
+        expect(getJob(j1).status).toBe('cancelled');
+        expect(getJob(j2).status).toBe('cancelled');
+        expect(listJobs({ feature: 'ocr', status: 'running', limit: 10 }).jobs).toHaveLength(0);
+    });
+
+    it('retry-failed drains more than one 500-row page', async () => {
+        const { markScanFailed, getScanStateCounts } = await import(
+            '../../src/core/db/scan-state.js'
+        );
+        const insert = db.prepare(
+            `INSERT INTO downloads (group_id, message_id, file_type, file_path, file_name, status)
+             VALUES ('grp1', ?, 'photo', ?, ?, 'completed')`,
+        );
+        for (let i = 0; i < 620; i++) {
+            const id = insert.run(
+                400000 + i,
+                `/data/downloads/images/f${i}.jpg`,
+                `f${i}.jpg`,
+            ).lastInsertRowid;
+            markScanFailed(Number(id), 'ocr', 'sidecar 500');
+        }
+        expect(getScanStateCounts('ocr').failed).toBe(620);
+
+        const r = await post('/api/ai/scan/retry-failed', { scanner: 'ocr' });
+        expect(r.status).toBe(200);
+        expect(r.body.reset).toBe(620); // legacy handler silently stopped at 500
+        expect(getScanStateCounts('ocr').failed).toBe(0);
+    });
+
     it('wipes faces scan-state and starts a tracked scan', async () => {
         const { getScanStateCounts } = await import('../../src/core/db/scan-state.js');
 
