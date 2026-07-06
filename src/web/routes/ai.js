@@ -1242,6 +1242,9 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                 systemPrompt,
                 temperature: 0.1,
                 maxTokens: 1024,
+                // Constrained JSON decoding; the fence-strip below stays as
+                // a fallback for providers that ignore response_format.
+                json: true,
             });
 
             if (result.unavailable) {

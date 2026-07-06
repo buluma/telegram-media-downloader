@@ -66,7 +66,7 @@ export class OllamaProvider extends LLMProvider {
     }
 
     async generate(opts) {
-        const { prompt, systemPrompt, model, temperature, maxTokens, signal } = opts;
+        const { prompt, systemPrompt, model, temperature, maxTokens, signal, json } = opts;
         const url = `${this._baseUrl}/v1/chat/completions`;
         const messages = [];
         if (systemPrompt) {
@@ -90,6 +90,9 @@ export class OllamaProvider extends LLMProvider {
             max_tokens: maxTokens ?? this._maxTokens,
             stream: false,
         };
+        // Constrained decoding — the model can only emit valid JSON, so
+        // callers that parse the reply skip the markdown-fence cleanup.
+        if (json) body.response_format = { type: 'json_object' };
 
         const res = await fetch(url, {
             method: 'POST',
@@ -112,7 +115,7 @@ export class OllamaProvider extends LLMProvider {
     }
 
     async chat(opts) {
-        const { messages, model, temperature, maxTokens, signal } = opts;
+        const { messages, model, temperature, maxTokens, signal, json } = opts;
         const url = `${this._baseUrl}/v1/chat/completions`;
 
         const body = {
@@ -122,6 +125,7 @@ export class OllamaProvider extends LLMProvider {
             max_tokens: maxTokens ?? this._maxTokens,
             stream: false,
         };
+        if (json) body.response_format = { type: 'json_object' };
 
         const res = await fetch(url, {
             method: 'POST',

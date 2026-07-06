@@ -58,7 +58,7 @@ export class OpenAIProvider extends LLMProvider {
     }
 
     async generate(opts) {
-        const { prompt, systemPrompt, model, temperature, maxTokens, signal } = opts;
+        const { prompt, systemPrompt, model, temperature, maxTokens, signal, json } = opts;
         const messages = [];
         if (systemPrompt) {
             messages.push({ role: 'system', content: systemPrompt });
@@ -79,16 +79,18 @@ export class OpenAIProvider extends LLMProvider {
             temperature,
             maxTokens,
             signal,
+            json,
         });
     }
 
     async chat(opts) {
-        const { messages, model, temperature, maxTokens, signal } = opts;
+        const { messages, model, temperature, maxTokens, signal, json } = opts;
         return this._chat(messages, {
             model: model || this._model,
             temperature,
             maxTokens,
             signal,
+            json,
         });
     }
 
@@ -121,7 +123,7 @@ export class OpenAIProvider extends LLMProvider {
         return data.data.map((d) => d.embedding);
     }
 
-    async _chat(messages, { model, temperature, maxTokens, signal }) {
+    async _chat(messages, { model, temperature, maxTokens, signal, json }) {
         const url = `${this._baseUrl}/v1/chat/completions`;
 
         const body = {
@@ -130,6 +132,9 @@ export class OpenAIProvider extends LLMProvider {
             temperature: temperature ?? this._temperature,
             max_tokens: maxTokens ?? this._maxTokens,
         };
+        // Constrained decoding — the model can only emit valid JSON, so
+        // callers that parse the reply skip the markdown-fence cleanup.
+        if (json) body.response_format = { type: 'json_object' };
 
         const res = await fetch(url, {
             method: 'POST',
