@@ -1033,6 +1033,7 @@
     "maintenance.ai.split_invalid": "No valid face ids supplied.",
     "maintenance.ai.split_done": "Split complete",
     "maintenance.ai.no_photos": "No photos in this cluster.",
+    "maintenance.ai.cluster_gone": "Clusters were rebuilt since this list loaded — pick a person from the refreshed grid.",
     "maintenance.ai.scan_started": "Scan started",
     "maintenance.ai.scan_cancelled": "Scan cancelled",
     "maintenance.ai.scan_done": "Scan complete",

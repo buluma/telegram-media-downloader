@@ -1296,6 +1296,102 @@ export function insertPerson({ label = null, centroidBlob, faceCount = 0 }) {
     return r.lastInsertRowid;
 }
 
+/**
+ * Persist one clustering pass with STABLE person identity.
+ *
+ * A cluster whose centroid lies within `matchEps` (euclidean) of an
+ * existing person's centroid reuses that person row — same id, label
+ * kept, centroid/face_count refreshed — so tiles the UI is already
+ * showing keep working across re-cluster passes. Unmatched clusters
+ * insert new rows; people no longer backed by any cluster are deleted.
+ * Each existing person can be claimed by at most one cluster (largest
+ * cluster wins), and everything runs in one transaction.
+ *
+ * @param {Array<{centroid: Float32Array, faceCount: number, memberFaceIds: number[]}>} clusters
+ * @param {{matchEps?: number}} [opts]
+ * @returns {{reused: number, inserted: number, deleted: number, relabelled: number}}
+ */
+export function persistFaceClusters(clusters, { matchEps = 0.5 } = {}) {
+    const db = getDb();
+    const now = Date.now();
+
+    // Snapshot existing people (in-memory) before any writes.
+    const existing = [];
+    for (const r of db.prepare('SELECT id, label, embedding_centroid FROM people').iterate()) {
+        if (!r.embedding_centroid) continue;
+        const dim = r.embedding_centroid.byteLength / 4;
+        const c = new Float32Array(dim);
+        c.set(new Float32Array(r.embedding_centroid.buffer, r.embedding_centroid.byteOffset, dim));
+        existing.push({ id: r.id, label: r.label, centroid: c });
+    }
+
+    // Greedy match — biggest clusters claim first so a split cluster's
+    // larger half keeps the id (and the label the operator typed).
+    const consumed = new Set();
+    const plan = [...clusters]
+        .sort((a, b) => (b.faceCount || 0) - (a.faceCount || 0))
+        .map((c) => {
+            let best = null;
+            let bestDist = Infinity;
+            for (const p of existing) {
+                if (consumed.has(p.id)) continue;
+                if (p.centroid.length !== c.centroid.length) continue;
+                let sum = 0;
+                for (let i = 0; i < c.centroid.length; i++) {
+                    const d = c.centroid[i] - p.centroid[i];
+                    sum += d * d;
+                }
+                const dist = Math.sqrt(sum);
+                if (dist < bestDist && dist <= matchEps) {
+                    bestDist = dist;
+                    best = p;
+                }
+            }
+            if (best) consumed.add(best.id);
+            return { cluster: c, match: best };
+        });
+
+    let reused = 0;
+    let inserted = 0;
+    let relabelled = 0;
+    let deleted = 0;
+    const centroidBlob = (c) => Buffer.from(new Uint8Array(Float32Array.from(c).buffer));
+
+    const tx = db.transaction(() => {
+        db.prepare('UPDATE faces SET person_id = NULL').run();
+        const update = db.prepare(
+            'UPDATE people SET embedding_centroid = ?, face_count = ?, updated_at = ? WHERE id = ?',
+        );
+        const assign = db.prepare('UPDATE faces SET person_id = ? WHERE id = ?');
+        for (const { cluster, match } of plan) {
+            let personId;
+            if (match) {
+                update.run(centroidBlob(cluster.centroid), cluster.faceCount || 0, now, match.id);
+                personId = match.id;
+                reused += 1;
+                if (match.label) relabelled += 1;
+            } else {
+                personId = insertPerson({
+                    label: null,
+                    centroidBlob: centroidBlob(cluster.centroid),
+                    faceCount: cluster.faceCount || 0,
+                });
+                inserted += 1;
+            }
+            for (const faceId of cluster.memberFaceIds || []) {
+                assign.run(personId, Number(faceId));
+            }
+        }
+        // Every row claimed this pass (reused or inserted) was stamped
+        // with updated_at >= now above — anything older is unclaimed.
+        // Timestamp guard instead of an id list keeps this clear of the
+        // SQLite bound-parameter limit on huge libraries.
+        deleted = db.prepare('DELETE FROM people WHERE updated_at < ?').run(now).changes;
+    });
+    tx();
+    return { reused, inserted, deleted, relabelled };
+}
+
 export function listPeople({ limit = 500, offset = 0 } = {}) {
     const lim = Math.max(1, Math.min(1000, Number(limit) || 500));
     const off = Math.max(0, Number(offset) || 0);

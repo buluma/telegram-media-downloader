@@ -28,16 +28,15 @@ import {
     getDb,
     getUnindexedAiBatch,
     insertFace,
-    insertPerson,
     iterateAllFaces,
     setAiIndexedAt,
-    setFacePerson,
     setImageTags,
 } from '../db.js';
 import {
     countUnscannedWd14,
     getUnscannedOcrBatch,
     getUnscannedWd14Batch,
+    persistFaceClusters,
     setWd14Tags,
 } from '../db/faces.js';
 import { computeFaceQualityScore, detectFaces, FACE_DEFAULTS } from './faces.js';
@@ -856,73 +855,23 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                 [facesCfg.labelMatchEps, cfg.facesLabelMatchEps, matchEpsEnv],
                 Math.max(0.2, Math.min(0.6, epsilonResolved * 0.9)),
             );
-            const labelSnapshot = (() => {
-                const out = [];
-                const stmt = db.prepare(
-                    'SELECT label, embedding_centroid FROM people WHERE label IS NOT NULL',
-                );
-                for (const r of stmt.iterate()) {
-                    if (!r.embedding_centroid) continue;
-                    const dim = r.embedding_centroid.byteLength / 4;
-                    const c = new Float32Array(dim);
-                    const view = new Float32Array(
-                        r.embedding_centroid.buffer,
-                        r.embedding_centroid.byteOffset,
-                        dim,
-                    );
-                    c.set(view);
-                    out.push({ label: r.label, centroid: c });
-                }
-                return out;
-            })();
-            const findCarryOverLabel = (centroid) => {
-                let best = null;
-                let bestDist = Infinity;
-                for (const s of labelSnapshot) {
-                    if (s.centroid.length !== centroid.length) continue;
-                    let sum = 0;
-                    for (let i = 0; i < centroid.length; i++) {
-                        const d = centroid[i] - s.centroid[i];
-                        sum += d * d;
-                    }
-                    const dist = Math.sqrt(sum);
-                    if (dist < bestDist && dist <= matchEps) {
-                        bestDist = dist;
-                        best = s.label;
-                    }
-                }
-                return best;
-            };
-
-            // Pre-compute carry-over labels before the transaction so the
-            // read-only snapshot pass doesn't run inside the write lock.
-            const clusterPlan = clusters.map((c) => ({
-                ...c,
-                carryOver: findCarryOverLabel(c.centroid),
-            }));
-
-            // Atomic: clear + re-assign in one transaction so a mid-loop
-            // crash cannot leave orphaned people rows with no face assignments.
-            let preservedCount = 0;
-            const clusterTx = db.transaction(() => {
-                db.prepare('UPDATE faces SET person_id = NULL').run();
-                db.prepare('DELETE FROM people').run();
-                for (const c of clusterPlan) {
-                    const personId = insertPerson({
-                        label: c.carryOver,
-                        centroidBlob: _f32ToBlob(c.centroid),
-                        faceCount: c.faceCount,
-                    });
-                    if (c.carryOver) preservedCount += 1;
-                    for (const memberIdx of c.memberIdxs) {
-                        setFacePerson(faces[memberIdx].id, personId);
-                    }
-                }
-            });
-            clusterTx();
+            // Persist with stable person identity: clusters whose centroid
+            // matches an existing person (within matchEps) reuse that row —
+            // id + label survive, so People tiles the UI already rendered
+            // stay clickable across re-cluster passes (auto-cluster fires
+            // after every drip batch, so churny ids meant "No photos in
+            // this cluster" whenever the grid was minutes old).
+            const stats = persistFaceClusters(
+                clusters.map((c) => ({
+                    centroid: c.centroid,
+                    faceCount: c.faceCount,
+                    memberFaceIds: c.memberIdxs.map((i) => faces[i].id),
+                })),
+                { matchEps },
+            );
             log(
                 'info',
-                `faces scan: clustered ${faces.length} faces into ${clusters.length} groups (${preservedCount}/${labelSnapshot.length} labels preserved across re-cluster, eps=${matchEps.toFixed(3)})`,
+                `faces scan: clustered ${faces.length} faces into ${clusters.length} groups (reused=${stats.reused} new=${stats.inserted} removed=${stats.deleted} labels-kept=${stats.relabelled}, eps=${matchEps.toFixed(3)})`,
             );
         },
         onProgress,

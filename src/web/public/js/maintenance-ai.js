@@ -4763,6 +4763,22 @@ async function _loadPersonPhotosPage() {
         _peoplePhotosTotal = Number(r.total) || files.length;
         _peoplePhotosTotalPages = Math.max(1, Math.ceil(_peoplePhotosTotal / _peoplePhotosLimit));
         if (!files.length) {
+            // Clusters can be rebuilt between rendering the grid and the
+            // click (auto-cluster after drip batches). An empty first page
+            // usually means this person id no longer exists — refresh the
+            // grid so the tiles reflect the current clusters.
+            if (_peoplePhotosPage === 1) {
+                const selected = Number(aiStore.get('selectedPerson'));
+                await _loadPeople();
+                _renderPeopleGrid();
+                if (!_peopleCache.some((p) => Number(p.id) === selected)) {
+                    aiStore.set('selectedPerson', null);
+                    aiStore.set('selectedPersonName', '');
+                    grid.innerHTML = `<div class="col-span-full text-center text-xs text-tg-textSecondary py-8">${escapeHtml(i18nT('maintenance.ai.cluster_gone', 'Clusters were rebuilt since this list loaded — pick a person from the refreshed grid.'))}</div>`;
+                    _syncPeoplePhotosPager();
+                    return;
+                }
+            }
             grid.innerHTML = `<div class="col-span-full text-center text-xs text-tg-textSecondary py-8">${escapeHtml(i18nT('maintenance.ai.no_photos', 'No photos in this cluster.'))}</div>`;
             _syncPeoplePhotosPager();
             return;

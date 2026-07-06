@@ -1033,6 +1033,7 @@
     "maintenance.ai.split_invalid": "ไม่มี face id ที่ถูกต้อง",
     "maintenance.ai.split_done": "Split เสร็จ",
     "maintenance.ai.no_photos": "ไม่มีรูปใน cluster นี้",
+    "maintenance.ai.cluster_gone": "คลัสเตอร์ถูกสร้างใหม่หลังจากโหลดรายการนี้ — เลือกบุคคลจากตารางที่รีเฟรชแล้ว",
     "maintenance.ai.scan_started": "Scan เริ่มแล้ว",
     "maintenance.ai.scan_cancelled": "Scan ถูกยกเลิก",
     "maintenance.ai.scan_done": "Scan เสร็จ",
