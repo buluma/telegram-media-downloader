@@ -2977,54 +2977,181 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         // Face diagnostics always target the Python InsightFace sidecar.
         // tgdl-ml may still be configured for other ML surfaces, but it must
         // not hijack AI People / face clustering health.
-        const mlActive = false;
 
-        if (mlActive) {
-            // tgdl-ml is the active inference backend — show its health instead
-            // of the legacy Python sidecar probes (Host Python / binary checks
-            // are irrelevant when tgdl-ml handles all inference).
-
-            // 1. tgdl-ml reachability.
-            try {
-                const mlUrl = getTgdlMlUrl();
-                const ctrl = new AbortController();
-                const t = setTimeout(() => ctrl.abort(), 3000);
-                let ok = false;
-                let info = null;
-                try {
-                    const r = await globalThis.fetch(`${mlUrl}/health`, { signal: ctrl.signal });
-                    if (r.ok) {
-                        ok = true;
-                        info = await r.json().catch(() => null);
-                    }
-                } finally {
-                    clearTimeout(t);
-                }
+        // 1. Sidecar reachability — drives the headline OK/spawning/failed
+        //    state. We surface the spawn module's lifecycle directly so the
+        //    operator sees "downloading…" / "starting up…" instead of a bare
+        //    fail row while the binary is being fetched in the background.
+        try {
+            const { getSidecarStatus } = await import('../../core/ai/faces-spawn.js');
+            const st = getSidecarStatus();
+            if (st.state === 'healthy') {
                 checks.push({
                     id: 'sidecar',
-                    label: 'tgdl-ml sidecar',
-                    status: ok ? 'ok' : 'fail',
-                    detail: ok ? `healthy at ${mlUrl}` : `unreachable at ${mlUrl}`,
+                    label: 'Python face sidecar',
+                    status: 'ok',
+                    detail: `running at ${st.url}`,
                 });
+            } else if (st.state === 'downloading') {
+                checks.push({
+                    id: 'sidecar',
+                    label: 'Python face sidecar',
+                    status: 'info',
+                    detail: 'downloading binary…',
+                });
+            } else if (st.state === 'spawning') {
+                checks.push({
+                    id: 'sidecar',
+                    label: 'Python face sidecar',
+                    status: 'info',
+                    detail: 'starting up…',
+                });
+            } else if (st.state === 'failed') {
+                checks.push({
+                    id: 'sidecar',
+                    label: 'Python face sidecar',
+                    status: 'fail',
+                    detail: st.error || 'failed to start',
+                });
+            } else {
+                checks.push({
+                    id: 'sidecar',
+                    label: 'Python face sidecar',
+                    status: 'info',
+                    detail: 'disabled',
+                });
+            }
+        } catch (e) {
+            checks.push({
+                id: 'sidecar',
+                label: 'Python face sidecar',
+                status: 'warn',
+                detail: e?.message || 'probe failed',
+            });
+        }
 
-                // 2. Inference provider (from /info).
+        // 2. Host Python — informational. The auto-spawn flow prefers the
+        //    PyInstaller binary; Python on the host is only consulted as a
+        //    fallback when the prebuilt binary fails to launch. Never fails
+        //    the card on absence — most installs run the prebuilt and never
+        //    need a host interpreter.
+        try {
+            const { execFile } = await import('node:child_process');
+            const bin = process.platform === 'win32' ? 'python' : 'python3';
+            const out = await new Promise((resolve, reject) => {
+                execFile(bin, ['--version'], { timeout: 2000 }, (err, stdout, stderr) => {
+                    if (err) reject(err);
+                    else resolve(String(stdout || stderr).trim());
+                });
+            });
+            const m = out.match(/Python (\d+)\.(\d+)(?:\.(\d+))?/);
+            const major = m ? Number(m[1]) : 0;
+            const minor = m ? Number(m[2]) : 0;
+            if (major >= 3 && minor >= 10) {
+                checks.push({
+                    id: 'python',
+                    label: 'Host Python',
+                    status: 'ok',
+                    detail: `${out} (fallback path available)`,
+                });
+            } else if (major >= 3) {
+                checks.push({
+                    id: 'python',
+                    label: 'Host Python',
+                    status: 'warn',
+                    detail: `${out} — sidecar prefers 3.10+`,
+                });
+            } else {
+                checks.push({
+                    id: 'python',
+                    label: 'Host Python',
+                    status: 'info',
+                    detail: `${out} (using prebuilt binary)`,
+                });
+            }
+        } catch {
+            checks.push({
+                id: 'python',
+                label: 'Host Python',
+                status: 'info',
+                detail: 'no Python on PATH (using prebuilt binary)',
+            });
+        }
+
+        // 3. Prebuilt sidecar binary on disk. Mirrors the path resolution
+        //    used by faces-spawn.js so the doctor card reports the same
+        //    location the spawn flow actually writes to (including
+        //    TGDL_DATA_DIR overrides used in tests).
+        try {
+            const { promises: fs } = await import('node:fs');
+            const dataDir = process.env.TGDL_DATA_DIR
+                ? path.resolve(process.env.TGDL_DATA_DIR)
+                : DATA_DIR;
+            const plat =
+                process.platform === 'win32'
+                    ? 'win'
+                    : process.platform === 'darwin'
+                      ? 'mac'
+                      : 'linux';
+            const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
+            const ext = process.platform === 'win32' ? '.exe' : '';
+            const binPath = path.join(
+                dataDir,
+                'faces-service',
+                'bin',
+                `tgdl-faces-${plat}-${arch}${ext}`,
+            );
+            const st = await fs.stat(binPath);
+            const sizeMb = (st.size / (1024 * 1024)).toFixed(1);
+            checks.push({
+                id: 'binary',
+                label: 'Prebuilt sidecar binary',
+                status: 'ok',
+                detail: `cached: ${sizeMb} MB`,
+            });
+        } catch {
+            // First-run setup hint — until the GitHub Release lands the
+            // download will 404, so the operator needs to know about the two
+            // recovery paths (docker compose or `pip install -e faces-service/`).
+            checks.push({
+                id: 'binary',
+                label: 'Prebuilt sidecar binary',
+                status: 'info',
+                detail:
+                    'not yet downloaded — `docker compose --profile faces up` or ' +
+                    '`pip install -e faces-service/` from the repo root, then restart',
+            });
+        }
+
+        // 4 + 5. Provider + model — both pulled from the sidecar. `/health`
+        //    carries the model + ready flag; the resolved onnxruntime
+        //    providers list lives on `/info` (set after the model loads).
+        //    Merging both keeps the doctor card aligned with the sidecar's
+        //    wire format without forcing a Python-side change.
+        try {
+            const facesClient = await import('../../core/ai/faces-client.js');
+            const url = facesClient.getSidecarUrl();
+            const h = await facesClient.health();
+            if (h.ok) {
                 let providers = [];
-                try {
-                    const ctrl2 = new AbortController();
-                    const t2 = setTimeout(() => ctrl2.abort(), 2000);
+                if (url) {
                     try {
-                        const r2 = await globalThis.fetch(`${mlUrl}/info`, {
-                            signal: ctrl2.signal,
-                        });
-                        if (r2.ok) {
-                            const inf = await r2.json();
-                            if (Array.isArray(inf?.providers)) providers = inf.providers;
+                        const ctrl = new AbortController();
+                        const t = setTimeout(() => ctrl.abort(), 2000);
+                        try {
+                            const r = await globalThis.fetch(`${url}/info`, {
+                                signal: ctrl.signal,
+                            });
+                            if (r.ok) {
+                                const info = await r.json();
+                                if (Array.isArray(info?.providers)) providers = info.providers;
+                            }
+                        } finally {
+                            clearTimeout(t);
                         }
-                    } finally {
-                        clearTimeout(t2);
+                    } catch {
+                        /* /info is best-effort — fall through to CPU default */
                     }
-                } catch {
-                    /* best-effort */
                 }
                 const top = providers[0] || 'CPUExecutionProvider';
                 const providerLabel =
@@ -3038,269 +3165,43 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                     id: 'provider',
                     label: 'Inference provider',
                     status: 'ok',
-                    detail: ok ? providerLabel : 'unable to probe (sidecar offline)',
+                    detail: providerLabel,
                 });
-
-                // 3. Model loaded — from /health.
-                const ready = info?.ok && (info?.face_ready ?? info?.faces_ready ?? true);
-                const model = info?.face_model || info?.faces_model || 'buffalo_l';
-                const dim = info?.face_dim || info?.dim || 512;
                 checks.push({
                     id: 'model',
                     label: 'Model loaded',
-                    status: ok ? 'ok' : 'warn',
-                    detail: ok ? `${model} (${dim}-dim)` : 'unable to probe (sidecar offline)',
+                    status: h.ready ? 'ok' : 'warn',
+                    detail: h.ready
+                        ? `${h.model || 'buffalo_l'} (${h.dim || 512}-dim)`
+                        : 'not loaded yet (first scan will load)',
                 });
-            } catch (e) {
-                checks.push(
-                    {
-                        id: 'sidecar',
-                        label: 'tgdl-ml sidecar',
-                        status: 'warn',
-                        detail: e?.message || 'probe failed',
-                    },
-                    {
-                        id: 'provider',
-                        label: 'Inference provider',
-                        status: 'warn',
-                        detail: e?.message || 'probe failed',
-                    },
-                    {
-                        id: 'model',
-                        label: 'Model loaded',
-                        status: 'warn',
-                        detail: e?.message || 'probe failed',
-                    },
-                );
-            }
-        } else {
-            // Legacy Python faces sidecar path.
-
-            // 1. Sidecar reachability — drives the headline OK/spawning/failed
-            //    state. We surface the spawn module's lifecycle directly so the
-            //    operator sees "downloading…" / "starting up…" instead of a bare
-            //    fail row while the binary is being fetched in the background.
-            try {
-                const { getSidecarStatus } = await import('../../core/ai/faces-spawn.js');
-                const st = getSidecarStatus();
-                if (st.state === 'healthy') {
-                    checks.push({
-                        id: 'sidecar',
-                        label: 'Python face sidecar',
-                        status: 'ok',
-                        detail: `running at ${st.url}`,
-                    });
-                } else if (st.state === 'downloading') {
-                    checks.push({
-                        id: 'sidecar',
-                        label: 'Python face sidecar',
-                        status: 'info',
-                        detail: 'downloading binary…',
-                    });
-                } else if (st.state === 'spawning') {
-                    checks.push({
-                        id: 'sidecar',
-                        label: 'Python face sidecar',
-                        status: 'info',
-                        detail: 'starting up…',
-                    });
-                } else if (st.state === 'failed') {
-                    checks.push({
-                        id: 'sidecar',
-                        label: 'Python face sidecar',
-                        status: 'fail',
-                        detail: st.error || 'failed to start',
-                    });
-                } else {
-                    checks.push({
-                        id: 'sidecar',
-                        label: 'Python face sidecar',
-                        status: 'info',
-                        detail: 'disabled',
-                    });
-                }
-            } catch (e) {
-                checks.push({
-                    id: 'sidecar',
-                    label: 'Python face sidecar',
-                    status: 'warn',
-                    detail: e?.message || 'probe failed',
-                });
-            }
-
-            // 2. Host Python — informational. The auto-spawn flow prefers the
-            //    PyInstaller binary; Python on the host is only consulted as a
-            //    fallback when the prebuilt binary fails to launch. Never fails
-            //    the card on absence — most installs run the prebuilt and never
-            //    need a host interpreter.
-            try {
-                const { execFile } = await import('node:child_process');
-                const bin = process.platform === 'win32' ? 'python' : 'python3';
-                const out = await new Promise((resolve, reject) => {
-                    execFile(bin, ['--version'], { timeout: 2000 }, (err, stdout, stderr) => {
-                        if (err) reject(err);
-                        else resolve(String(stdout || stderr).trim());
-                    });
-                });
-                const m = out.match(/Python (\d+)\.(\d+)(?:\.(\d+))?/);
-                const major = m ? Number(m[1]) : 0;
-                const minor = m ? Number(m[2]) : 0;
-                if (major >= 3 && minor >= 10) {
-                    checks.push({
-                        id: 'python',
-                        label: 'Host Python',
-                        status: 'ok',
-                        detail: `${out} (fallback path available)`,
-                    });
-                } else if (major >= 3) {
-                    checks.push({
-                        id: 'python',
-                        label: 'Host Python',
-                        status: 'warn',
-                        detail: `${out} — sidecar prefers 3.10+`,
-                    });
-                } else {
-                    checks.push({
-                        id: 'python',
-                        label: 'Host Python',
-                        status: 'info',
-                        detail: `${out} (using prebuilt binary)`,
-                    });
-                }
-            } catch {
-                checks.push({
-                    id: 'python',
-                    label: 'Host Python',
-                    status: 'info',
-                    detail: 'no Python on PATH (using prebuilt binary)',
-                });
-            }
-
-            // 3. Prebuilt sidecar binary on disk. Mirrors the path resolution
-            //    used by faces-spawn.js so the doctor card reports the same
-            //    location the spawn flow actually writes to (including
-            //    TGDL_DATA_DIR overrides used in tests).
-            try {
-                const { promises: fs } = await import('node:fs');
-                const dataDir = process.env.TGDL_DATA_DIR
-                    ? path.resolve(process.env.TGDL_DATA_DIR)
-                    : DATA_DIR;
-                const plat =
-                    process.platform === 'win32'
-                        ? 'win'
-                        : process.platform === 'darwin'
-                          ? 'mac'
-                          : 'linux';
-                const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
-                const ext = process.platform === 'win32' ? '.exe' : '';
-                const binPath = path.join(
-                    dataDir,
-                    'faces-service',
-                    'bin',
-                    `tgdl-faces-${plat}-${arch}${ext}`,
-                );
-                const st = await fs.stat(binPath);
-                const sizeMb = (st.size / (1024 * 1024)).toFixed(1);
-                checks.push({
-                    id: 'binary',
-                    label: 'Prebuilt sidecar binary',
-                    status: 'ok',
-                    detail: `cached: ${sizeMb} MB`,
-                });
-            } catch {
-                // First-run setup hint — until the GitHub Release lands the
-                // download will 404, so the operator needs to know about the two
-                // recovery paths (docker compose or `pip install -e faces-service/`).
-                checks.push({
-                    id: 'binary',
-                    label: 'Prebuilt sidecar binary',
-                    status: 'info',
-                    detail:
-                        'not yet downloaded — `docker compose --profile faces up` or ' +
-                        '`pip install -e faces-service/` from the repo root, then restart',
-                });
-            }
-
-            // 4 + 5. Provider + model — both pulled from the sidecar. `/health`
-            //    carries the model + ready flag; the resolved onnxruntime
-            //    providers list lives on `/info` (set after the model loads).
-            //    Merging both keeps the doctor card aligned with the sidecar's
-            //    wire format without forcing a Python-side change.
-            try {
-                const facesClient = await import('../../core/ai/faces-client.js');
-                const url = facesClient.getSidecarUrl();
-                const h = await facesClient.health();
-                if (h.ok) {
-                    let providers = [];
-                    if (url) {
-                        try {
-                            const ctrl = new AbortController();
-                            const t = setTimeout(() => ctrl.abort(), 2000);
-                            try {
-                                const r = await globalThis.fetch(`${url}/info`, {
-                                    signal: ctrl.signal,
-                                });
-                                if (r.ok) {
-                                    const info = await r.json();
-                                    if (Array.isArray(info?.providers)) providers = info.providers;
-                                }
-                            } finally {
-                                clearTimeout(t);
-                            }
-                        } catch {
-                            /* /info is best-effort — fall through to CPU default */
-                        }
-                    }
-                    const top = providers[0] || 'CPUExecutionProvider';
-                    const providerLabel =
-                        {
-                            CUDAExecutionProvider: 'GPU acceleration: CUDA',
-                            CoreMLExecutionProvider: 'GPU acceleration: Apple Silicon (CoreML)',
-                            DmlExecutionProvider: 'GPU acceleration: DirectML',
-                            CPUExecutionProvider: 'CPU-only (no GPU detected)',
-                        }[top] || top;
-                    checks.push({
-                        id: 'provider',
-                        label: 'Inference provider',
-                        status: 'ok',
-                        detail: providerLabel,
-                    });
-                    checks.push({
-                        id: 'model',
-                        label: 'Model loaded',
-                        status: h.ready ? 'ok' : 'warn',
-                        detail: h.ready
-                            ? `${h.model || 'buffalo_l'} (${h.dim || 512}-dim)`
-                            : 'not loaded yet (first scan will load)',
-                    });
-                } else {
-                    checks.push({
-                        id: 'provider',
-                        label: 'Inference provider',
-                        status: 'warn',
-                        detail: 'unable to probe (sidecar offline)',
-                    });
-                    checks.push({
-                        id: 'model',
-                        label: 'Model loaded',
-                        status: 'warn',
-                        detail: 'unable to probe (sidecar offline)',
-                    });
-                }
-            } catch (e) {
+            } else {
                 checks.push({
                     id: 'provider',
                     label: 'Inference provider',
                     status: 'warn',
-                    detail: e?.message || 'probe failed',
+                    detail: 'unable to probe (sidecar offline)',
                 });
                 checks.push({
                     id: 'model',
                     label: 'Model loaded',
                     status: 'warn',
-                    detail: e?.message || 'probe failed',
+                    detail: 'unable to probe (sidecar offline)',
                 });
             }
+        } catch (e) {
+            checks.push({
+                id: 'provider',
+                label: 'Inference provider',
+                status: 'warn',
+                detail: e?.message || 'probe failed',
+            });
+            checks.push({
+                id: 'model',
+                label: 'Model loaded',
+                status: 'warn',
+                detail: e?.message || 'probe failed',
+            });
         }
 
         // 6. Photos indexed — kept from the prior probe set. Drives the
