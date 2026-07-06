@@ -2324,6 +2324,9 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             const tx = db.transaction(() => {
                 db.prepare(`DELETE FROM faces`).run();
                 db.prepare(`DELETE FROM people`).run();
+                // Drop faces scan-state with the detections it describes —
+                // stale 'failed' rows would ghost in the issues panel.
+                db.prepare(`DELETE FROM media_scan_state WHERE scanner = 'faces'`).run();
                 db.prepare(
                     `UPDATE downloads SET ai_indexed_at = NULL WHERE file_type IN (${placeholders})`,
                 ).run(...types);
@@ -2730,7 +2733,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             log({
                 source: 'ai',
                 level: 'info',
-                msg: `re-index — wiped embeddings=${r.embeddings} tags=${r.tags} wd14Tags=${r.wd14Tags} faces=${r.faces} people=${r.people} text=${r.text}; re-queued=${r.requeued}; cancelled-scans=${cancelled}`,
+                msg: `re-index — wiped embeddings=${r.embeddings} tags=${r.tags} wd14Tags=${r.wd14Tags} faces=${r.faces} people=${r.people} text=${r.text} scanState=${r.scanState}; re-queued=${r.requeued}; cancelled-scans=${cancelled}`,
             });
             try {
                 broadcast({ type: 'ai_reindex', ...r });
