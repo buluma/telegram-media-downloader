@@ -348,6 +348,22 @@ describe('Ollama provider', () => {
             expect(body.max_tokens).toBe(100);
         });
 
+        it('generate({ json: true }) requests a JSON object response', async () => {
+            const fetchSpy = mockFetch(200, openaiChatResponse('{"ok":true}'));
+            const p = new OllamaProvider(makeCfg());
+            await p.generate({ prompt: 'Hi', json: true });
+            const body = JSON.parse(fetchSpy.mock.calls[0][1]?.body);
+            expect(body.response_format).toEqual({ type: 'json_object' });
+        });
+
+        it('generate() omits response_format without json flag', async () => {
+            const fetchSpy = mockFetch(200, openaiChatResponse('ok'));
+            const p = new OllamaProvider(makeCfg());
+            await p.generate({ prompt: 'Hi' });
+            const body = JSON.parse(fetchSpy.mock.calls[0][1]?.body);
+            expect(body.response_format).toBeUndefined();
+        });
+
         it('chat() returns text via /v1/chat/completions', async () => {
             const fetchSpy = mockFetch(200, openaiChatResponse('Chat reply'));
             const p = new OllamaProvider(makeCfg());
@@ -605,6 +621,14 @@ describe('OpenAI provider', () => {
             await p.generate({ prompt: 'Hi', systemPrompt: 'Be concise.' });
             const body = JSON.parse(fetchSpy.mock.calls[0][1]?.body);
             expect(body.messages.find((m) => m.role === 'system').content).toBe('Be concise.');
+        });
+
+        it('generate({ json: true }) requests a JSON object response', async () => {
+            const fetchSpy = mockFetch(200, openaiChatResponse('{"ok":true}'));
+            const p = new OpenAIProvider(makeCfg({ provider: 'openai' }));
+            await p.generate({ prompt: 'Hi', json: true });
+            const body = JSON.parse(fetchSpy.mock.calls[0][1]?.body);
+            expect(body.response_format).toEqual({ type: 'json_object' });
         });
 
         it('chat() posts messages and returns text', async () => {

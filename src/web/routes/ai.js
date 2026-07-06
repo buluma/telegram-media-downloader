@@ -134,8 +134,17 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
     }
 
     const _AI_ROUTE_CACHE = new Map();
+    const _AI_ROUTE_CACHE_MAX = 200;
     const _AI_ROUTE_INFLIGHT = new Map();
     const _AI_ROUTE_SLOW_WARN_MS = 5000;
+    // Config edits change what several cached routes report (LLM provider
+    // status, configured CLIP model, faces knobs) — drop everything so the
+    // page reflects a save immediately instead of after the TTL.
+    try {
+        watchConfig(() => _AI_ROUTE_CACHE.clear());
+    } catch (e) {
+        swallow(e, 'ai:_AI_ROUTE_CACHE');
+    }
     async function _cachedAiRoute(key, ttlMs, producer) {
         const now = Date.now();
         const cached = _AI_ROUTE_CACHE.get(key);
@@ -146,6 +155,12 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         const p = Promise.resolve()
             .then(producer)
             .then((data) => {
+                // Bounded: keys embed caller-supplied params, so evict the
+                // oldest entry instead of growing without limit.
+                if (_AI_ROUTE_CACHE.size >= _AI_ROUTE_CACHE_MAX && !_AI_ROUTE_CACHE.has(key)) {
+                    const oldest = _AI_ROUTE_CACHE.keys().next().value;
+                    if (oldest !== undefined) _AI_ROUTE_CACHE.delete(oldest);
+                }
                 _AI_ROUTE_CACHE.set(key, { ts: Date.now(), data });
                 const elapsed = Date.now() - start;
                 if (elapsed > _AI_ROUTE_SLOW_WARN_MS) {
@@ -547,7 +562,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         try {
             let totalFailed = 0;
             const failedSamples = [];
-            for (const sc of ['wd14', 'ocr', 'faces']) {
+            for (const sc of ['wd14', 'ocr', 'faces', 'embed']) {
                 const counts = getScanStateCounts(sc);
                 if (counts.failed > 0) {
                     totalFailed += counts.failed;
@@ -778,6 +793,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                     aiTags: jobTrackers.aiTags.getStatus(),
                     aiOcr: jobTrackers.aiOcr.getStatus(),
                     aiWd14: jobTrackers.aiWd14.getStatus(),
+                    aiIndex: jobTrackers.aiIndex.getStatus(),
                 },
             });
         } catch (e) {
@@ -1226,6 +1242,9 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                 systemPrompt,
                 temperature: 0.1,
                 maxTokens: 1024,
+                // Constrained JSON decoding; the fence-strip below stays as
+                // a fallback for providers that ignore response_format.
+                json: true,
             });
 
             if (result.unavailable) {
@@ -1287,6 +1306,163 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
     //   inner runFn returns a Promise that resolves on the scan-runner's
     //   onDone callback so tracker.success/failure semantics line up with
     //   the actual work.
+    // Start `feature` under its JobTracker with a durable maintenance_jobs
+    // row. Shared by /ai/scan/start and the faces recluster/reindex
+    // endpoints so every scan path follows the same tracker + durable-job
+    // + conflict rules. Claim is synchronous: returns { started: true } or
+    // { started: false, status, body } for the caller to send.
+    function _startTrackedScan(feature, scanCfg, { requestJson = null } = {}) {
+        if (aiIsScanRunning(feature)) {
+            return {
+                started: false,
+                status: 409,
+                body: { error: 'Scan already running', code: 'ALREADY_RUNNING' },
+            };
+        }
+        const scanConflict = checkJobConflict(jobTrackers, 'scanner');
+        if (scanConflict.conflict) {
+            return {
+                started: false,
+                status: 409,
+                body: {
+                    success: false,
+                    code: 'RESOURCE_BUSY',
+                    conflictingJob: scanConflict.conflictingJob,
+                    error: `Cannot start scan — destructive job '${scanConflict.conflictingJob}' is running`,
+                },
+            };
+        }
+        const tracker = _aiTrackerFor(feature);
+        const starter = _aiStarterFor(feature);
+        const claim = tracker.tryStart(({ onProgress, signal }) => {
+            return new Promise((resolve, reject) => {
+                (async () => {
+                    let durableJobId = null;
+                    let jobsMod = null;
+
+                    // Create a durable job record as part of the actual run.
+                    // This guarantees every started scan gets a lifecycle row
+                    // we can close on success/failure.
+                    try {
+                        jobsMod = await import('../../core/ai/jobs.js');
+                        const c = (() => {
+                            try {
+                                return getAiCounts({
+                                    fileTypes: _facesScanFileTypes(scanCfg),
+                                });
+                            } catch {
+                                return { totalEligible: 0 };
+                            }
+                        })();
+                        durableJobId = jobsMod.createJob({
+                            type: 'scan',
+                            feature,
+                            total: c.totalEligible || 0,
+                            requestedBy: 'admin',
+                            requestJson,
+                        });
+                        log({
+                            source: 'ai',
+                            level: 'info',
+                            msg: `job ${durableJobId} created for ${feature} scan`,
+                        });
+                    } catch (e) {
+                        log({
+                            source: 'ai',
+                            level: 'warn',
+                            msg: `failed to create durable job for ${feature}: ${e?.message || e}`,
+                        });
+                    }
+
+                    // Forward the runner's signal abort -> our internal
+                    // cancelScan, so /api/ai/scan/cancel and the tracker's
+                    // own abort path both terminate the same scan.
+                    if (signal && typeof signal.addEventListener === 'function') {
+                        signal.addEventListener('abort', () => {
+                            try {
+                                aiCancelScan(feature);
+                            } catch (e) {
+                                swallow(e, 'ai');
+                            }
+                        });
+                    }
+
+                    try {
+                        starter(
+                            scanCfg,
+                            (p) => {
+                                // tracker.onProgress already _safeBroadcasts
+                                // `${prefix}_progress` with the merged status — a
+                                // second broadcast here would double every event
+                                // on the wire. Keep tracker as the single source.
+                                try {
+                                    onProgress(p);
+                                } catch (e) {
+                                    swallow(e, 'ai');
+                                }
+                                if (durableJobId && jobsMod?.updateJobProgress) {
+                                    try {
+                                        const processed = Number.isFinite(p?.scanned)
+                                            ? p.scanned
+                                            : Number.isFinite(p?.processed)
+                                              ? p.processed
+                                              : undefined;
+                                        jobsMod.updateJobProgress(durableJobId, { processed });
+                                    } catch (e) {
+                                        swallow(e, 'ai');
+                                    }
+                                }
+                            },
+                            (p) => {
+                                // tracker auto-broadcasts `${prefix}_done` on
+                                // resolve/reject — surface scan errors back into
+                                // the tracker promise so it logs + finishes once.
+                                if (p?.error) {
+                                    if (durableJobId && jobsMod?.finishJob) {
+                                        try {
+                                            jobsMod.finishJob(durableJobId, 'failed', p.error);
+                                        } catch (e) {
+                                            swallow(e, 'ai');
+                                        }
+                                    }
+                                    reject(new Error(p.error));
+                                    return;
+                                }
+                                if (durableJobId && jobsMod?.finishJob) {
+                                    try {
+                                        jobsMod.finishJob(durableJobId, 'completed');
+                                    } catch (e) {
+                                        swallow(e, 'ai');
+                                    }
+                                }
+                                resolve(p || {});
+                            },
+                            (entry) => log(entry),
+                        );
+                    } catch (e) {
+                        if (durableJobId && jobsMod?.finishJob) {
+                            try {
+                                jobsMod.finishJob(durableJobId, 'failed', e?.message || String(e));
+                            } catch (e2) {
+                                swallow(e2, 'ai');
+                            }
+                        }
+                        reject(e);
+                    }
+                })().catch(reject);
+            });
+        });
+        if (!claim.started) {
+            return {
+                started: false,
+                status: 409,
+                body: { error: 'Tracker busy', code: claim.code },
+            };
+        }
+        log({ source: 'ai', level: 'info', msg: `${feature} scan starting` });
+        return { started: true };
+    }
+
     router.post('/ai/scan/start', async (req, res) => {
         try {
             const cfg = _aiCfg();
@@ -1300,20 +1476,6 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             const groupId = req.body?.groupId || null;
             if (!AI_SCAN_FEATURES.has(feature)) {
                 return res.status(400).json({ error: 'feature must be faces|ocr|wd14' });
-            }
-            if (aiIsScanRunning(feature)) {
-                return res
-                    .status(409)
-                    .json({ error: 'Scan already running', code: 'ALREADY_RUNNING' });
-            }
-            const scanConflict = checkJobConflict(jobTrackers, 'scanner');
-            if (scanConflict.conflict) {
-                return res.status(409).json({
-                    success: false,
-                    code: 'RESOURCE_BUSY',
-                    conflictingJob: scanConflict.conflictingJob,
-                    error: `Cannot start scan — destructive job '${scanConflict.conflictingJob}' is running`,
-                });
             }
             if (['ocr', 'wd14'].includes(feature)) {
                 const sidecar = await _getAiSidecarSnapshot();
@@ -1338,134 +1500,12 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             if (feature === 'ocr' && typeof req.body?.language === 'string') {
                 scanCfg.ocrLanguage = req.body.language.trim() || 'eng';
             }
-            const tracker = _aiTrackerFor(feature);
-            const starter = _aiStarterFor(feature);
-            const claim = tracker.tryStart(({ onProgress, signal }) => {
-                return new Promise((resolve, reject) => {
-                    (async () => {
-                        let durableJobId = null;
-                        let jobsMod = null;
-
-                        // Create a durable job record as part of the actual run.
-                        // This guarantees every started scan gets a lifecycle row
-                        // we can close on success/failure.
-                        try {
-                            jobsMod = await import('../../core/ai/jobs.js');
-                            const c = (() => {
-                                try {
-                                    return getAiCounts({
-                                        fileTypes: _facesScanFileTypes(scanCfg),
-                                    });
-                                } catch {
-                                    return { totalEligible: 0 };
-                                }
-                            })();
-                            durableJobId = jobsMod.createJob({
-                                type: 'scan',
-                                feature,
-                                total: c.totalEligible || 0,
-                                requestedBy: 'admin',
-                                requestJson: JSON.stringify({ groupId }),
-                            });
-                            log({
-                                source: 'ai',
-                                level: 'info',
-                                msg: `job ${durableJobId} created for ${feature} scan (groupId=${groupId || 'all'})`,
-                            });
-                        } catch (e) {
-                            log({
-                                source: 'ai',
-                                level: 'warn',
-                                msg: `failed to create durable job for ${feature}: ${e?.message || e}`,
-                            });
-                        }
-
-                        // Forward the runner's signal abort -> our internal
-                        // cancelScan, so /api/ai/scan/cancel and the tracker's
-                        // own abort path both terminate the same scan.
-                        if (signal && typeof signal.addEventListener === 'function') {
-                            signal.addEventListener('abort', () => {
-                                try {
-                                    aiCancelScan(feature);
-                                } catch (e) {
-                                    swallow(e, 'ai');
-                                }
-                            });
-                        }
-
-                        try {
-                            starter(
-                                scanCfg,
-                                (p) => {
-                                    // tracker.onProgress already _safeBroadcasts
-                                    // `${prefix}_progress` with the merged status — a
-                                    // second broadcast here would double every event
-                                    // on the wire. Keep tracker as the single source.
-                                    try {
-                                        onProgress(p);
-                                    } catch (e) {
-                                        swallow(e, 'ai');
-                                    }
-                                    if (durableJobId && jobsMod?.updateJobProgress) {
-                                        try {
-                                            const processed = Number.isFinite(p?.scanned)
-                                                ? p.scanned
-                                                : Number.isFinite(p?.processed)
-                                                  ? p.processed
-                                                  : undefined;
-                                            jobsMod.updateJobProgress(durableJobId, { processed });
-                                        } catch (e) {
-                                            swallow(e, 'ai');
-                                        }
-                                    }
-                                },
-                                (p) => {
-                                    // tracker auto-broadcasts `${prefix}_done` on
-                                    // resolve/reject — surface scan errors back into
-                                    // the tracker promise so it logs + finishes once.
-                                    if (p?.error) {
-                                        if (durableJobId && jobsMod?.finishJob) {
-                                            try {
-                                                jobsMod.finishJob(durableJobId, 'failed', p.error);
-                                            } catch (e) {
-                                                swallow(e, 'ai');
-                                            }
-                                        }
-                                        reject(new Error(p.error));
-                                        return;
-                                    }
-                                    if (durableJobId && jobsMod?.finishJob) {
-                                        try {
-                                            jobsMod.finishJob(durableJobId, 'completed');
-                                        } catch (e) {
-                                            swallow(e, 'ai');
-                                        }
-                                    }
-                                    resolve(p || {});
-                                },
-                                (entry) => log(entry),
-                            );
-                        } catch (e) {
-                            if (durableJobId && jobsMod?.finishJob) {
-                                try {
-                                    jobsMod.finishJob(
-                                        durableJobId,
-                                        'failed',
-                                        e?.message || String(e),
-                                    );
-                                } catch (e) {
-                                    swallow(e, 'ai');
-                                }
-                            }
-                            reject(e);
-                        }
-                    })().catch(reject);
-                });
+            const startRes = _startTrackedScan(feature, scanCfg, {
+                requestJson: JSON.stringify({ groupId }),
             });
-            if (!claim.started) {
-                return res.status(409).json({ error: 'Tracker busy', code: claim.code });
+            if (!startRes.started) {
+                return res.status(startRes.status).json(startRes.body);
             }
-            log({ source: 'ai', level: 'info', msg: `${feature} scan starting` });
             res.json({ success: true, started: true });
         } catch (e) {
             log({ source: 'ai', level: 'error', msg: `scan/start failed: ${e?.message || e}` });
@@ -1481,12 +1521,14 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             return res.status(400).json({ error: 'feature must be faces|ocr|wd14' });
         }
         const ok = aiCancelScan(feature);
-        // Finish any running job for this feature
+        // Finish every running job for this feature — a crash can leave
+        // more than one 'running' row behind, and closing only the newest
+        // would park the rest until the stale-lock sweep.
         try {
             const { listJobs, finishJob } = await import('../../core/ai/jobs.js');
-            const running = listJobs({ feature, status: 'running', limit: 1 });
-            if (running.jobs?.length) {
-                finishJob(running.jobs[0].id, 'cancelled');
+            const running = listJobs({ feature, status: 'running', limit: 50 });
+            for (const job of running.jobs || []) {
+                finishJob(job.id, 'cancelled');
             }
         } catch (e) {
             log({ source: 'ai', level: 'warn', msg: `finish job on cancel: ${e?.message || e}` });
@@ -1585,7 +1627,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         try {
             const scanner = req.query.scanner ? String(req.query.scanner).trim() : null;
             const limit = Math.max(1, Math.min(500, Number(req.query.limit) || 100));
-            const scanners = scanner ? [scanner] : ['wd14', 'ocr', 'faces'];
+            const scanners = scanner ? [scanner] : ['wd14', 'ocr', 'faces', 'embed'];
             const byScanner = {};
             for (const sc of scanners) {
                 byScanner[sc] = {
@@ -1606,26 +1648,34 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             if (!scanner) return res.status(400).json({ error: 'scanner required' });
 
             const { listScanFailures: lsf } = await import('../../core/db/scan-state.js');
-            const failures = lsf(scanner, { limit: 500 });
-            const ids = failures.map((r) => r.download_id);
-            if (!ids.length) return res.json({ success: true, reset: 0 });
+            // Drain in pages — listScanFailures caps at 500 per call, and a
+            // long sidecar outage can leave far more failed rows than that.
+            // resetScanState deletes the rows we just listed, so each pass
+            // sees a fresh page until none remain.
+            let reset = 0;
+            for (;;) {
+                const failures = lsf(scanner, { limit: 500 });
+                const ids = failures.map((r) => r.download_id);
+                if (!ids.length) break;
 
-            resetScanState(ids, scanner);
+                resetScanState(ids, scanner);
+                reset += ids.length;
 
-            // For WD14, also clear sentinel rows so getUnscannedWd14Batch re-queues them.
-            if (scanner === 'wd14' && ids.length) {
-                const db = getDb();
-                const CHUNK = 500;
-                for (let i = 0; i < ids.length; i += CHUNK) {
-                    const slice = ids.slice(i, i + CHUNK);
-                    const ph = slice.map(() => '?').join(',');
-                    db.prepare(
-                        `DELETE FROM image_tags_wd14 WHERE tag='_wd14_scanned_' AND download_id IN (${ph})`,
-                    ).run(...slice);
+                // For WD14, also clear sentinel rows so getUnscannedWd14Batch re-queues them.
+                if (scanner === 'wd14') {
+                    const db = getDb();
+                    const CHUNK = 500;
+                    for (let i = 0; i < ids.length; i += CHUNK) {
+                        const slice = ids.slice(i, i + CHUNK);
+                        const ph = slice.map(() => '?').join(',');
+                        db.prepare(
+                            `DELETE FROM image_tags_wd14 WHERE tag='_wd14_scanned_' AND download_id IN (${ph})`,
+                        ).run(...slice);
+                    }
                 }
             }
 
-            res.json({ success: true, reset: ids.length, scanner });
+            res.json({ success: true, reset, scanner });
         } catch (e) {
             res.status(500).json({ error: e?.message || String(e) });
         }
@@ -2023,23 +2073,51 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         }
     });
 
+    // Eligible = live photo rows with no embedding row and no durable
+    // 'embed' failure. Failed rows are excluded so a permanently-broken
+    // file can't wedge the re-index loop — the operator re-queues them
+    // via /ai/scan/retry-failed (scanner='embed').
+    const _EMBED_ELIGIBLE_WHERE = `
+        d.deleted_at IS NULL
+        AND d.file_type IN ('photo', 'image')
+        AND d.id NOT IN (SELECT download_id FROM image_embeddings)
+        AND d.id NOT IN (
+            SELECT download_id FROM media_scan_state
+             WHERE scanner = 'embed' AND status = 'failed'
+        )`;
+
+    function _countMissingEmbeddings(db) {
+        return db
+            .prepare(`SELECT COUNT(*) AS n FROM downloads d WHERE ${_EMBED_ELIGIBLE_WHERE}`)
+            .get().n;
+    }
+
+    function _missingEmbeddingsBatch(db, limit) {
+        return db
+            .prepare(
+                `SELECT d.id, d.file_path
+                   FROM downloads d
+                  WHERE ${_EMBED_ELIGIBLE_WHERE}
+                  ORDER BY d.id
+                  LIMIT ?`,
+            )
+            .all(limit);
+    }
+
     // Re-index embeddings — compute CLIP image embeddings for every
-    // download that is missing one (or whose model is stale). Iterates
-    // in batches so the sidecar isn't flooded and the operator can watch
-    // progress on the AI maintenance page.
+    // download that is missing one (or whose model is stale). Runs as a
+    // jobTrackers.aiIndex background job: the endpoint returns immediately
+    // and the job loops batches until no eligible rows remain, emitting
+    // `ai_index_progress` / `ai_index_done` over WS. 409 while running.
     router.post('/ai/embeddings/reindex', async (req, res) => {
         try {
-            const { loadConfig } = await import('../../config/manager.js');
             const { embedImage, hasEmbeddingProvider } = await import(
                 '../../core/ai/faces-client.js'
             );
             const { clearStaleEmbeddings, listEmbeddingModels, setImageEmbedding } = await import(
                 '../../core/db/faces.js'
             );
-            const { getDb } = await import('../../core/db.js');
-
-            const live = loadConfig();
-            const clipModel = _resolveClipModelId(live?.advanced?.ai || {});
+            const { markScanFailed, resetScanState } = await import('../../core/db/scan-state.js');
 
             if (!hasEmbeddingProvider()) {
                 return res.status(503).json({
@@ -2048,93 +2126,140 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                 });
             }
 
-            // Clear stale embeddings if the model changed.
-            // Always pick the most common model for comparison — when
-            // multiple models exist (e.g. after an interrupted migration)
-            // we still detect the change and purge non-matching rows.
-            const before = listEmbeddingModels();
-            const activeModel = before.length
-                ? before.reduce((a, b) => (a.count > b.count ? a : b)).model
-                : null;
-
-            if (activeModel && activeModel !== clipModel) {
-                const purged = clearStaleEmbeddings(clipModel);
-                console.log(
-                    '[ai-embeddings] model changed from',
-                    activeModel,
-                    'to',
-                    clipModel,
-                    '- purged',
-                    purged.dropped,
-                    'stale rows, requeued',
-                    purged.requeued,
-                );
-            }
-
-            // Find downloads that have no embedding yet
+            const live = loadConfig();
+            const clipModel = _resolveClipModelId(live?.advanced?.ai || {});
+            const batchSize = Math.max(1, Math.min(500, Number(req.body?.limit) || 100));
             const db = getDb();
-            const missing = db
-                .prepare(
-                    `SELECT d.id, d.file_path, d.file_type
-                       FROM downloads d
-                      WHERE d.id NOT IN (
-                          SELECT download_id FROM image_embeddings
-                      )
-                        AND d.file_type IN ('photo', 'image')
-                      ORDER BY d.id
-                      LIMIT ?`,
-                )
-                .all(req.body?.limit || 250);
 
-            if (!missing.length) {
-                return res.json({
-                    success: true,
-                    processed: 0,
-                    remaining: 0,
-                    done: true,
+            const claim = jobTrackers.aiIndex.tryStart(async ({ onProgress, signal }) => {
+                // Clear stale embeddings if the model changed.
+                // Always pick the most common model for comparison — when
+                // multiple models exist (e.g. after an interrupted migration)
+                // we still detect the change and purge non-matching rows.
+                const before = listEmbeddingModels();
+                const activeModel = before.length
+                    ? before.reduce((a, b) => (a.count > b.count ? a : b)).model
+                    : null;
+                if (activeModel && activeModel !== clipModel) {
+                    const purged = clearStaleEmbeddings(clipModel);
+                    log({
+                        source: 'ai-embeddings',
+                        level: 'info',
+                        msg: `model changed ${activeModel} → ${clipModel}: purged ${purged.dropped} stale rows, requeued ${purged.requeued}`,
+                    });
+                }
+
+                const jobsMod = await import('../../core/ai/jobs.js');
+                const total = _countMissingEmbeddings(db);
+                let durableJobId = null;
+                try {
+                    durableJobId = jobsMod.createJob({
+                        type: 'scan',
+                        feature: 'embed',
+                        total,
+                        requestedBy: 'admin',
+                        requestJson: JSON.stringify({ limit: batchSize }),
+                    });
+                } catch (e) {
+                    swallow(e, 'ai-embeddings:createJob');
+                }
+
+                let processed = 0;
+                let errors = 0;
+                let remaining = total;
+                try {
+                    while (!signal?.aborted) {
+                        const batch = _missingEmbeddingsBatch(db, batchSize);
+                        if (!batch.length) break;
+                        for (const row of batch) {
+                            if (signal?.aborted) break;
+                            const abs = await _resolveAiPath(row.file_path);
+                            if (!abs) {
+                                errors++;
+                                markScanFailed(
+                                    row.id,
+                                    'embed',
+                                    'file missing on disk',
+                                    'FILE_MISSING',
+                                );
+                                continue;
+                            }
+                            try {
+                                const r = await embedImage(abs);
+                                if (r?.embedding?.length) {
+                                    const blob = Buffer.from(
+                                        new Uint8Array(Float32Array.from(r.embedding).buffer),
+                                    );
+                                    setImageEmbedding(row.id, blob, r.model || clipModel);
+                                    // Clear a stale failed row from an earlier run.
+                                    resetScanState([row.id], 'embed');
+                                    processed++;
+                                } else {
+                                    errors++;
+                                    markScanFailed(
+                                        row.id,
+                                        'embed',
+                                        'provider returned empty embedding',
+                                    );
+                                }
+                            } catch (e) {
+                                errors++;
+                                markScanFailed(
+                                    row.id,
+                                    'embed',
+                                    e?.message || String(e),
+                                    e?.code || null,
+                                );
+                            }
+                        }
+                        remaining = _countMissingEmbeddings(db);
+                        try {
+                            onProgress({ processed, errors, total, remaining });
+                        } catch (e) {
+                            swallow(e, 'ai-embeddings');
+                        }
+                        if (durableJobId) {
+                            try {
+                                jobsMod.updateJobProgress(durableJobId, {
+                                    processed,
+                                    failed: errors,
+                                });
+                            } catch (e) {
+                                swallow(e, 'ai-embeddings');
+                            }
+                        }
+                        if (!remaining) break;
+                    }
+                    if (durableJobId) {
+                        try {
+                            jobsMod.finishJob(
+                                durableJobId,
+                                signal?.aborted ? 'cancelled' : 'completed',
+                            );
+                        } catch (e) {
+                            swallow(e, 'ai-embeddings');
+                        }
+                    }
+                    return { processed, errors, remaining, model: clipModel };
+                } catch (e) {
+                    if (durableJobId) {
+                        try {
+                            jobsMod.finishJob(durableJobId, 'failed', e?.message || String(e));
+                        } catch (e2) {
+                            swallow(e2, 'ai-embeddings');
+                        }
+                    }
+                    throw e;
+                }
+            });
+            if (!claim.started) {
+                return res.status(409).json({
+                    error: 'Embeddings re-index already running',
+                    code: claim.code || 'ALREADY_RUNNING',
                 });
             }
-
-            let processed = 0;
-            let errors = 0;
-            const errors_ = [];
-
-            for (const row of missing) {
-                const abs = await _resolveAiPath(row.file_path);
-                if (!abs) {
-                    errors++;
-                    continue;
-                }
-                try {
-                    const r = await embedImage(abs);
-                    if (r?.embedding?.length) {
-                        const blob = Buffer.from(
-                            new Uint8Array(Float32Array.from(r.embedding).buffer),
-                        );
-                        setImageEmbedding(row.id, blob, r.model || clipModel);
-                        processed++;
-                    } else {
-                        errors++;
-                    }
-                } catch {
-                    errors++;
-                    if (errors_.length < 5) errors_.push(row.id);
-                }
-            }
-
-            const after = listEmbeddingModels();
-            const totalAfter = after.reduce((s, m) => s + m.count, 0);
-
-            res.json({
-                success: true,
-                model: clipModel,
-                processed,
-                errors,
-                sampleErrors: errors_.length ? errors_ : undefined,
-                total: totalAfter,
-                remaining: Math.max(0, missing.length - processed - errors),
-                done: !(errors > 0),
-            });
+            log({ source: 'ai-embeddings', level: 'info', msg: 're-index job starting' });
+            res.json({ success: true, started: true, model: clipModel });
         } catch (e) {
             res.status(500).json({ error: e?.message || String(e) });
         }
@@ -2215,19 +2340,14 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
     // left off — same as clicking "Scan now".
     router.post('/ai/faces/recluster', async (_req, res) => {
         try {
-            if (aiIsScanRunning && aiIsScanRunning('faces')) {
-                return res.status(409).json({
-                    error: 'scan_running',
-                    message: 'A face scan is already in progress.',
-                });
-            }
             const cfg = _aiCfg();
-            try {
-                if (aiStartFacesScan) aiStartFacesScan(cfg).catch(() => {});
-            } catch (e) {
-                swallow(e, 'ai:POST /ai/faces/recluster');
+            const startRes = _startTrackedScan('faces', cfg, {
+                requestJson: JSON.stringify({ source: 'recluster' }),
+            });
+            if (!startRes.started) {
+                return res.status(startRes.status).json(startRes.body);
             }
-            res.json({ success: true });
+            res.json({ success: true, started: true });
         } catch (e) {
             res.status(500).json({ error: e?.message || String(e) });
         }
@@ -2235,10 +2355,21 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
 
     router.post('/ai/faces/reindex', async (_req, res) => {
         try {
-            if (aiIsScanRunning && aiIsScanRunning('faces')) {
+            if (aiIsScanRunning('faces')) {
                 return res.status(409).json({
                     error: 'scan_running',
                     message: 'A face scan is already in progress. Cancel it before reindexing.',
+                });
+            }
+            // Refuse to wipe while a destructive job (dedup, purge…) runs —
+            // same guard every scan start goes through.
+            const scanConflict = checkJobConflict(jobTrackers, 'scanner');
+            if (scanConflict.conflict) {
+                return res.status(409).json({
+                    success: false,
+                    code: 'RESOURCE_BUSY',
+                    conflictingJob: scanConflict.conflictingJob,
+                    error: `Cannot reindex — destructive job '${scanConflict.conflictingJob}' is running`,
                 });
             }
             const cfg = _aiCfg();
@@ -2248,6 +2379,9 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             const tx = db.transaction(() => {
                 db.prepare(`DELETE FROM faces`).run();
                 db.prepare(`DELETE FROM people`).run();
+                // Drop faces scan-state with the detections it describes —
+                // stale 'failed' rows would ghost in the issues panel.
+                db.prepare(`DELETE FROM media_scan_state WHERE scanner = 'faces'`).run();
                 db.prepare(
                     `UPDATE downloads SET ai_indexed_at = NULL WHERE file_type IN (${placeholders})`,
                 ).run(...types);
@@ -2255,14 +2389,12 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             tx();
             broadcast({ type: 'ai_faces_reindexed', ts: Date.now() });
             // Kick off the scan immediately so the operator sees progress
-            // right away. Fire-and-forget — the scan owns its own state
-            // machine + WS events.
-            try {
-                if (aiStartFacesScan) aiStartFacesScan(cfg).catch(() => {});
-            } catch (e) {
-                swallow(e, 'ai:POST /ai/faces/reindex');
-            }
-            res.json({ success: true });
+            // right away — tracked like every other scan so it shows in
+            // job history and page remounts can recover progress.
+            const startRes = _startTrackedScan('faces', cfg, {
+                requestJson: JSON.stringify({ source: 'reindex' }),
+            });
+            res.json({ success: true, scanStarted: startRes.started });
         } catch (e) {
             res.status(500).json({ error: e?.message || String(e) });
         }
@@ -2404,6 +2536,39 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         }
     });
 
+    // Crop the face described by `row` ({x,y,w,h,file_path}) with padding
+    // and stream it as a square JPEG. Shared by the person-avatar and
+    // face-crop endpoints. `cacheControl` differs: a face row is immutable,
+    // but a person's *best* face changes after re-scan/merge/reassign.
+    async function _sendFaceCrop(row, size, res, cacheControl) {
+        const resolved = await safeResolveDownload(row.file_path);
+        if (!resolved.ok) {
+            return res
+                .status(resolved.reason === 'missing' ? 404 : 403)
+                .json({ error: resolved.reason });
+        }
+
+        const pad = 0.4;
+        const meta = await sharp(resolved.real, { failOn: 'none' }).metadata();
+        const imgW = meta.width || 9999;
+        const imgH = meta.height || 9999;
+        const left = Math.max(0, Math.round(row.x - row.w * pad));
+        const top = Math.max(0, Math.round(row.y - row.h * pad));
+        const right = Math.min(imgW, Math.round(row.x + row.w + row.w * pad));
+        const bottom = Math.min(imgH, Math.round(row.y + row.h + row.h * pad));
+        const width = Math.max(1, right - left);
+        const height = Math.max(1, bottom - top);
+
+        const buf = await sharp(resolved.real, { failOn: 'none' })
+            .extract({ left, top, width, height })
+            .resize(size, size, { fit: 'cover', position: 'centre' })
+            .jpeg({ quality: 82, progressive: true })
+            .toBuffer();
+        res.set('content-type', 'image/jpeg');
+        res.set('cache-control', cacheControl);
+        res.send(buf);
+    }
+
     // Best-face crop for a person tile/avatar.
     router.get('/ai/person/:id/face', async (req, res) => {
         try {
@@ -2423,33 +2588,9 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                 )
                 .get(personId);
             if (!row) return res.status(404).json({ error: 'no face found' });
-
-            const resolved = await safeResolveDownload(row.file_path);
-            if (!resolved.ok) {
-                return res
-                    .status(resolved.reason === 'missing' ? 404 : 403)
-                    .json({ error: resolved.reason });
-            }
-
-            const pad = 0.4;
-            const meta = await sharp(resolved.real, { failOn: 'none' }).metadata();
-            const imgW = meta.width || 9999;
-            const imgH = meta.height || 9999;
-            const left = Math.max(0, Math.round(row.x - row.w * pad));
-            const top = Math.max(0, Math.round(row.y - row.h * pad));
-            const right = Math.min(imgW, Math.round(row.x + row.w + row.w * pad));
-            const bottom = Math.min(imgH, Math.round(row.y + row.h + row.h * pad));
-            const width = Math.max(1, right - left);
-            const height = Math.max(1, bottom - top);
-
-            const buf = await sharp(resolved.real, { failOn: 'none' })
-                .extract({ left, top, width, height })
-                .resize(size, size, { fit: 'cover', position: 'centre' })
-                .jpeg({ quality: 82, progressive: true })
-                .toBuffer();
-            res.set('content-type', 'image/jpeg');
-            res.set('cache-control', 'public, max-age=604800, immutable');
-            res.send(buf);
+            // Not immutable: the best face changes after re-scan / merge /
+            // reassign, so let the browser revalidate hourly.
+            await _sendFaceCrop(row, size, res, 'public, max-age=3600');
         } catch (e) {
             res.status(500).json({ error: e.message });
         }
@@ -2472,33 +2613,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                 )
                 .get(faceId);
             if (!row) return res.status(404).json({ error: 'face not found' });
-
-            const resolved = await safeResolveDownload(row.file_path);
-            if (!resolved.ok) {
-                return res
-                    .status(resolved.reason === 'missing' ? 404 : 403)
-                    .json({ error: resolved.reason });
-            }
-
-            const pad = 0.4;
-            const meta = await sharp(resolved.real, { failOn: 'none' }).metadata();
-            const imgW = meta.width || 9999;
-            const imgH = meta.height || 9999;
-            const left = Math.max(0, Math.round(row.x - row.w * pad));
-            const top = Math.max(0, Math.round(row.y - row.h * pad));
-            const right = Math.min(imgW, Math.round(row.x + row.w + row.w * pad));
-            const bottom = Math.min(imgH, Math.round(row.y + row.h + row.h * pad));
-            const width = Math.max(1, right - left);
-            const height = Math.max(1, bottom - top);
-
-            const buf = await sharp(resolved.real, { failOn: 'none' })
-                .extract({ left, top, width, height })
-                .resize(size, size, { fit: 'cover', position: 'centre' })
-                .jpeg({ quality: 82, progressive: true })
-                .toBuffer();
-            res.set('content-type', 'image/jpeg');
-            res.set('cache-control', 'public, max-age=604800, immutable');
-            res.send(buf);
+            await _sendFaceCrop(row, size, res, 'public, max-age=604800, immutable');
         } catch (e) {
             res.status(500).json({ error: e.message });
         }
@@ -2645,8 +2760,18 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         try {
             // Cancel any in-flight scan before nuking the artefacts.
             let cancelled = 0;
-            for (const f of ['embed', 'faces', 'ocr', 'wd14']) {
+            for (const f of ['faces', 'ocr', 'wd14']) {
                 if (aiCancelScan(f)) cancelled += 1;
+            }
+            // The embeddings re-index runs under its tracker, not the
+            // scan-runner — abort it the same way before the wipe.
+            if (jobTrackers.aiIndex.isRunning()) {
+                try {
+                    jobTrackers.aiIndex.cancel();
+                    cancelled += 1;
+                } catch (e) {
+                    swallow(e, 'ai');
+                }
             }
             // Settle one tick so the scan loops see the abort signal.
             if (cancelled) await new Promise((r) => setTimeout(r, 100));
@@ -2654,7 +2779,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             log({
                 source: 'ai',
                 level: 'info',
-                msg: `re-index — wiped embeddings=${r.embeddings} tags=${r.tags} wd14Tags=${r.wd14Tags} faces=${r.faces} people=${r.people} text=${r.text}; re-queued=${r.requeued}; cancelled-scans=${cancelled}`,
+                msg: `re-index — wiped embeddings=${r.embeddings} tags=${r.tags} wd14Tags=${r.wd14Tags} faces=${r.faces} people=${r.people} text=${r.text} scanState=${r.scanState}; re-queued=${r.requeued}; cancelled-scans=${cancelled}`,
             });
             try {
                 broadcast({ type: 'ai_reindex', ...r });
@@ -2873,54 +2998,181 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         // Face diagnostics always target the Python InsightFace sidecar.
         // tgdl-ml may still be configured for other ML surfaces, but it must
         // not hijack AI People / face clustering health.
-        const mlActive = false;
 
-        if (mlActive) {
-            // tgdl-ml is the active inference backend — show its health instead
-            // of the legacy Python sidecar probes (Host Python / binary checks
-            // are irrelevant when tgdl-ml handles all inference).
-
-            // 1. tgdl-ml reachability.
-            try {
-                const mlUrl = getTgdlMlUrl();
-                const ctrl = new AbortController();
-                const t = setTimeout(() => ctrl.abort(), 3000);
-                let ok = false;
-                let info = null;
-                try {
-                    const r = await globalThis.fetch(`${mlUrl}/health`, { signal: ctrl.signal });
-                    if (r.ok) {
-                        ok = true;
-                        info = await r.json().catch(() => null);
-                    }
-                } finally {
-                    clearTimeout(t);
-                }
+        // 1. Sidecar reachability — drives the headline OK/spawning/failed
+        //    state. We surface the spawn module's lifecycle directly so the
+        //    operator sees "downloading…" / "starting up…" instead of a bare
+        //    fail row while the binary is being fetched in the background.
+        try {
+            const { getSidecarStatus } = await import('../../core/ai/faces-spawn.js');
+            const st = getSidecarStatus();
+            if (st.state === 'healthy') {
                 checks.push({
                     id: 'sidecar',
-                    label: 'tgdl-ml sidecar',
-                    status: ok ? 'ok' : 'fail',
-                    detail: ok ? `healthy at ${mlUrl}` : `unreachable at ${mlUrl}`,
+                    label: 'Python face sidecar',
+                    status: 'ok',
+                    detail: `running at ${st.url}`,
                 });
+            } else if (st.state === 'downloading') {
+                checks.push({
+                    id: 'sidecar',
+                    label: 'Python face sidecar',
+                    status: 'info',
+                    detail: 'downloading binary…',
+                });
+            } else if (st.state === 'spawning') {
+                checks.push({
+                    id: 'sidecar',
+                    label: 'Python face sidecar',
+                    status: 'info',
+                    detail: 'starting up…',
+                });
+            } else if (st.state === 'failed') {
+                checks.push({
+                    id: 'sidecar',
+                    label: 'Python face sidecar',
+                    status: 'fail',
+                    detail: st.error || 'failed to start',
+                });
+            } else {
+                checks.push({
+                    id: 'sidecar',
+                    label: 'Python face sidecar',
+                    status: 'info',
+                    detail: 'disabled',
+                });
+            }
+        } catch (e) {
+            checks.push({
+                id: 'sidecar',
+                label: 'Python face sidecar',
+                status: 'warn',
+                detail: e?.message || 'probe failed',
+            });
+        }
 
-                // 2. Inference provider (from /info).
+        // 2. Host Python — informational. The auto-spawn flow prefers the
+        //    PyInstaller binary; Python on the host is only consulted as a
+        //    fallback when the prebuilt binary fails to launch. Never fails
+        //    the card on absence — most installs run the prebuilt and never
+        //    need a host interpreter.
+        try {
+            const { execFile } = await import('node:child_process');
+            const bin = process.platform === 'win32' ? 'python' : 'python3';
+            const out = await new Promise((resolve, reject) => {
+                execFile(bin, ['--version'], { timeout: 2000 }, (err, stdout, stderr) => {
+                    if (err) reject(err);
+                    else resolve(String(stdout || stderr).trim());
+                });
+            });
+            const m = out.match(/Python (\d+)\.(\d+)(?:\.(\d+))?/);
+            const major = m ? Number(m[1]) : 0;
+            const minor = m ? Number(m[2]) : 0;
+            if (major >= 3 && minor >= 10) {
+                checks.push({
+                    id: 'python',
+                    label: 'Host Python',
+                    status: 'ok',
+                    detail: `${out} (fallback path available)`,
+                });
+            } else if (major >= 3) {
+                checks.push({
+                    id: 'python',
+                    label: 'Host Python',
+                    status: 'warn',
+                    detail: `${out} — sidecar prefers 3.10+`,
+                });
+            } else {
+                checks.push({
+                    id: 'python',
+                    label: 'Host Python',
+                    status: 'info',
+                    detail: `${out} (using prebuilt binary)`,
+                });
+            }
+        } catch {
+            checks.push({
+                id: 'python',
+                label: 'Host Python',
+                status: 'info',
+                detail: 'no Python on PATH (using prebuilt binary)',
+            });
+        }
+
+        // 3. Prebuilt sidecar binary on disk. Mirrors the path resolution
+        //    used by faces-spawn.js so the doctor card reports the same
+        //    location the spawn flow actually writes to (including
+        //    TGDL_DATA_DIR overrides used in tests).
+        try {
+            const { promises: fs } = await import('node:fs');
+            const dataDir = process.env.TGDL_DATA_DIR
+                ? path.resolve(process.env.TGDL_DATA_DIR)
+                : DATA_DIR;
+            const plat =
+                process.platform === 'win32'
+                    ? 'win'
+                    : process.platform === 'darwin'
+                      ? 'mac'
+                      : 'linux';
+            const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
+            const ext = process.platform === 'win32' ? '.exe' : '';
+            const binPath = path.join(
+                dataDir,
+                'faces-service',
+                'bin',
+                `tgdl-faces-${plat}-${arch}${ext}`,
+            );
+            const st = await fs.stat(binPath);
+            const sizeMb = (st.size / (1024 * 1024)).toFixed(1);
+            checks.push({
+                id: 'binary',
+                label: 'Prebuilt sidecar binary',
+                status: 'ok',
+                detail: `cached: ${sizeMb} MB`,
+            });
+        } catch {
+            // First-run setup hint — until the GitHub Release lands the
+            // download will 404, so the operator needs to know about the two
+            // recovery paths (docker compose or `pip install -e faces-service/`).
+            checks.push({
+                id: 'binary',
+                label: 'Prebuilt sidecar binary',
+                status: 'info',
+                detail:
+                    'not yet downloaded — `docker compose --profile faces up` or ' +
+                    '`pip install -e faces-service/` from the repo root, then restart',
+            });
+        }
+
+        // 4 + 5. Provider + model — both pulled from the sidecar. `/health`
+        //    carries the model + ready flag; the resolved onnxruntime
+        //    providers list lives on `/info` (set after the model loads).
+        //    Merging both keeps the doctor card aligned with the sidecar's
+        //    wire format without forcing a Python-side change.
+        try {
+            const facesClient = await import('../../core/ai/faces-client.js');
+            const url = facesClient.getSidecarUrl();
+            const h = await facesClient.health();
+            if (h.ok) {
                 let providers = [];
-                try {
-                    const ctrl2 = new AbortController();
-                    const t2 = setTimeout(() => ctrl2.abort(), 2000);
+                if (url) {
                     try {
-                        const r2 = await globalThis.fetch(`${mlUrl}/info`, {
-                            signal: ctrl2.signal,
-                        });
-                        if (r2.ok) {
-                            const inf = await r2.json();
-                            if (Array.isArray(inf?.providers)) providers = inf.providers;
+                        const ctrl = new AbortController();
+                        const t = setTimeout(() => ctrl.abort(), 2000);
+                        try {
+                            const r = await globalThis.fetch(`${url}/info`, {
+                                signal: ctrl.signal,
+                            });
+                            if (r.ok) {
+                                const info = await r.json();
+                                if (Array.isArray(info?.providers)) providers = info.providers;
+                            }
+                        } finally {
+                            clearTimeout(t);
                         }
-                    } finally {
-                        clearTimeout(t2);
+                    } catch {
+                        /* /info is best-effort — fall through to CPU default */
                     }
-                } catch {
-                    /* best-effort */
                 }
                 const top = providers[0] || 'CPUExecutionProvider';
                 const providerLabel =
@@ -2934,269 +3186,43 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                     id: 'provider',
                     label: 'Inference provider',
                     status: 'ok',
-                    detail: ok ? providerLabel : 'unable to probe (sidecar offline)',
+                    detail: providerLabel,
                 });
-
-                // 3. Model loaded — from /health.
-                const ready = info?.ok && (info?.face_ready ?? info?.faces_ready ?? true);
-                const model = info?.face_model || info?.faces_model || 'buffalo_l';
-                const dim = info?.face_dim || info?.dim || 512;
                 checks.push({
                     id: 'model',
                     label: 'Model loaded',
-                    status: ok ? 'ok' : 'warn',
-                    detail: ok ? `${model} (${dim}-dim)` : 'unable to probe (sidecar offline)',
+                    status: h.ready ? 'ok' : 'warn',
+                    detail: h.ready
+                        ? `${h.model || 'buffalo_l'} (${h.dim || 512}-dim)`
+                        : 'not loaded yet (first scan will load)',
                 });
-            } catch (e) {
-                checks.push(
-                    {
-                        id: 'sidecar',
-                        label: 'tgdl-ml sidecar',
-                        status: 'warn',
-                        detail: e?.message || 'probe failed',
-                    },
-                    {
-                        id: 'provider',
-                        label: 'Inference provider',
-                        status: 'warn',
-                        detail: e?.message || 'probe failed',
-                    },
-                    {
-                        id: 'model',
-                        label: 'Model loaded',
-                        status: 'warn',
-                        detail: e?.message || 'probe failed',
-                    },
-                );
-            }
-        } else {
-            // Legacy Python faces sidecar path.
-
-            // 1. Sidecar reachability — drives the headline OK/spawning/failed
-            //    state. We surface the spawn module's lifecycle directly so the
-            //    operator sees "downloading…" / "starting up…" instead of a bare
-            //    fail row while the binary is being fetched in the background.
-            try {
-                const { getSidecarStatus } = await import('../../core/ai/faces-spawn.js');
-                const st = getSidecarStatus();
-                if (st.state === 'healthy') {
-                    checks.push({
-                        id: 'sidecar',
-                        label: 'Python face sidecar',
-                        status: 'ok',
-                        detail: `running at ${st.url}`,
-                    });
-                } else if (st.state === 'downloading') {
-                    checks.push({
-                        id: 'sidecar',
-                        label: 'Python face sidecar',
-                        status: 'info',
-                        detail: 'downloading binary…',
-                    });
-                } else if (st.state === 'spawning') {
-                    checks.push({
-                        id: 'sidecar',
-                        label: 'Python face sidecar',
-                        status: 'info',
-                        detail: 'starting up…',
-                    });
-                } else if (st.state === 'failed') {
-                    checks.push({
-                        id: 'sidecar',
-                        label: 'Python face sidecar',
-                        status: 'fail',
-                        detail: st.error || 'failed to start',
-                    });
-                } else {
-                    checks.push({
-                        id: 'sidecar',
-                        label: 'Python face sidecar',
-                        status: 'info',
-                        detail: 'disabled',
-                    });
-                }
-            } catch (e) {
-                checks.push({
-                    id: 'sidecar',
-                    label: 'Python face sidecar',
-                    status: 'warn',
-                    detail: e?.message || 'probe failed',
-                });
-            }
-
-            // 2. Host Python — informational. The auto-spawn flow prefers the
-            //    PyInstaller binary; Python on the host is only consulted as a
-            //    fallback when the prebuilt binary fails to launch. Never fails
-            //    the card on absence — most installs run the prebuilt and never
-            //    need a host interpreter.
-            try {
-                const { execFile } = await import('node:child_process');
-                const bin = process.platform === 'win32' ? 'python' : 'python3';
-                const out = await new Promise((resolve, reject) => {
-                    execFile(bin, ['--version'], { timeout: 2000 }, (err, stdout, stderr) => {
-                        if (err) reject(err);
-                        else resolve(String(stdout || stderr).trim());
-                    });
-                });
-                const m = out.match(/Python (\d+)\.(\d+)(?:\.(\d+))?/);
-                const major = m ? Number(m[1]) : 0;
-                const minor = m ? Number(m[2]) : 0;
-                if (major >= 3 && minor >= 10) {
-                    checks.push({
-                        id: 'python',
-                        label: 'Host Python',
-                        status: 'ok',
-                        detail: `${out} (fallback path available)`,
-                    });
-                } else if (major >= 3) {
-                    checks.push({
-                        id: 'python',
-                        label: 'Host Python',
-                        status: 'warn',
-                        detail: `${out} — sidecar prefers 3.10+`,
-                    });
-                } else {
-                    checks.push({
-                        id: 'python',
-                        label: 'Host Python',
-                        status: 'info',
-                        detail: `${out} (using prebuilt binary)`,
-                    });
-                }
-            } catch {
-                checks.push({
-                    id: 'python',
-                    label: 'Host Python',
-                    status: 'info',
-                    detail: 'no Python on PATH (using prebuilt binary)',
-                });
-            }
-
-            // 3. Prebuilt sidecar binary on disk. Mirrors the path resolution
-            //    used by faces-spawn.js so the doctor card reports the same
-            //    location the spawn flow actually writes to (including
-            //    TGDL_DATA_DIR overrides used in tests).
-            try {
-                const { promises: fs } = await import('node:fs');
-                const dataDir = process.env.TGDL_DATA_DIR
-                    ? path.resolve(process.env.TGDL_DATA_DIR)
-                    : DATA_DIR;
-                const plat =
-                    process.platform === 'win32'
-                        ? 'win'
-                        : process.platform === 'darwin'
-                          ? 'mac'
-                          : 'linux';
-                const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
-                const ext = process.platform === 'win32' ? '.exe' : '';
-                const binPath = path.join(
-                    dataDir,
-                    'faces-service',
-                    'bin',
-                    `tgdl-faces-${plat}-${arch}${ext}`,
-                );
-                const st = await fs.stat(binPath);
-                const sizeMb = (st.size / (1024 * 1024)).toFixed(1);
-                checks.push({
-                    id: 'binary',
-                    label: 'Prebuilt sidecar binary',
-                    status: 'ok',
-                    detail: `cached: ${sizeMb} MB`,
-                });
-            } catch {
-                // First-run setup hint — until the GitHub Release lands the
-                // download will 404, so the operator needs to know about the two
-                // recovery paths (docker compose or `pip install -e faces-service/`).
-                checks.push({
-                    id: 'binary',
-                    label: 'Prebuilt sidecar binary',
-                    status: 'info',
-                    detail:
-                        'not yet downloaded — `docker compose --profile faces up` or ' +
-                        '`pip install -e faces-service/` from the repo root, then restart',
-                });
-            }
-
-            // 4 + 5. Provider + model — both pulled from the sidecar. `/health`
-            //    carries the model + ready flag; the resolved onnxruntime
-            //    providers list lives on `/info` (set after the model loads).
-            //    Merging both keeps the doctor card aligned with the sidecar's
-            //    wire format without forcing a Python-side change.
-            try {
-                const facesClient = await import('../../core/ai/faces-client.js');
-                const url = facesClient.getSidecarUrl();
-                const h = await facesClient.health();
-                if (h.ok) {
-                    let providers = [];
-                    if (url) {
-                        try {
-                            const ctrl = new AbortController();
-                            const t = setTimeout(() => ctrl.abort(), 2000);
-                            try {
-                                const r = await globalThis.fetch(`${url}/info`, {
-                                    signal: ctrl.signal,
-                                });
-                                if (r.ok) {
-                                    const info = await r.json();
-                                    if (Array.isArray(info?.providers)) providers = info.providers;
-                                }
-                            } finally {
-                                clearTimeout(t);
-                            }
-                        } catch {
-                            /* /info is best-effort — fall through to CPU default */
-                        }
-                    }
-                    const top = providers[0] || 'CPUExecutionProvider';
-                    const providerLabel =
-                        {
-                            CUDAExecutionProvider: 'GPU acceleration: CUDA',
-                            CoreMLExecutionProvider: 'GPU acceleration: Apple Silicon (CoreML)',
-                            DmlExecutionProvider: 'GPU acceleration: DirectML',
-                            CPUExecutionProvider: 'CPU-only (no GPU detected)',
-                        }[top] || top;
-                    checks.push({
-                        id: 'provider',
-                        label: 'Inference provider',
-                        status: 'ok',
-                        detail: providerLabel,
-                    });
-                    checks.push({
-                        id: 'model',
-                        label: 'Model loaded',
-                        status: h.ready ? 'ok' : 'warn',
-                        detail: h.ready
-                            ? `${h.model || 'buffalo_l'} (${h.dim || 512}-dim)`
-                            : 'not loaded yet (first scan will load)',
-                    });
-                } else {
-                    checks.push({
-                        id: 'provider',
-                        label: 'Inference provider',
-                        status: 'warn',
-                        detail: 'unable to probe (sidecar offline)',
-                    });
-                    checks.push({
-                        id: 'model',
-                        label: 'Model loaded',
-                        status: 'warn',
-                        detail: 'unable to probe (sidecar offline)',
-                    });
-                }
-            } catch (e) {
+            } else {
                 checks.push({
                     id: 'provider',
                     label: 'Inference provider',
                     status: 'warn',
-                    detail: e?.message || 'probe failed',
+                    detail: 'unable to probe (sidecar offline)',
                 });
                 checks.push({
                     id: 'model',
                     label: 'Model loaded',
                     status: 'warn',
-                    detail: e?.message || 'probe failed',
+                    detail: 'unable to probe (sidecar offline)',
                 });
             }
+        } catch (e) {
+            checks.push({
+                id: 'provider',
+                label: 'Inference provider',
+                status: 'warn',
+                detail: e?.message || 'probe failed',
+            });
+            checks.push({
+                id: 'model',
+                label: 'Model loaded',
+                status: 'warn',
+                detail: e?.message || 'probe failed',
+            });
         }
 
         // 6. Photos indexed — kept from the prior probe set. Drives the

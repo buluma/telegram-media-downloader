@@ -745,6 +745,11 @@ export function resetAllAiData() {
         const faces = db.prepare('DELETE FROM faces').run().changes;
         const people = db.prepare('DELETE FROM people').run().changes;
         const text = db.prepare('DELETE FROM image_text').run().changes;
+        // Scan-state rows must go with the artefacts they describe:
+        // stale 'failed' rows would keep the issues panel reporting
+        // failures for rows that were just re-queued, and the embed
+        // re-index would keep skipping them as permanently failed.
+        const scanState = db.prepare('DELETE FROM media_scan_state').run().changes;
         const requeued = db
             .prepare('UPDATE downloads SET ai_indexed_at = NULL WHERE ai_indexed_at IS NOT NULL')
             .run().changes;
@@ -756,6 +761,7 @@ export function resetAllAiData() {
             faces,
             people,
             text,
+            scanState,
             requeued,
         };
     });

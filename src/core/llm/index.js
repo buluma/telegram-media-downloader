@@ -109,6 +109,7 @@ export async function getActiveProvider() {
  * @param {string}  [opts.model]
  * @param {number}  [opts.temperature]
  * @param {number}  [opts.maxTokens]
+ * @param {boolean} [opts.json]  Constrain output to a JSON object (response_format).
  * @param {AbortSignal} [opts.signal]
  * @returns {Promise<{ text: string, finishReason?: string } | { unavailable: true, reason: string }>}
  */
