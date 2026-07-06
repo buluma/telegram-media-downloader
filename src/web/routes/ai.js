@@ -547,7 +547,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         try {
             let totalFailed = 0;
             const failedSamples = [];
-            for (const sc of ['wd14', 'ocr', 'faces']) {
+            for (const sc of ['wd14', 'ocr', 'faces', 'embed']) {
                 const counts = getScanStateCounts(sc);
                 if (counts.failed > 0) {
                     totalFailed += counts.failed;
@@ -778,6 +778,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                     aiTags: jobTrackers.aiTags.getStatus(),
                     aiOcr: jobTrackers.aiOcr.getStatus(),
                     aiWd14: jobTrackers.aiWd14.getStatus(),
+                    aiIndex: jobTrackers.aiIndex.getStatus(),
                 },
             });
         } catch (e) {
@@ -1585,7 +1586,7 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         try {
             const scanner = req.query.scanner ? String(req.query.scanner).trim() : null;
             const limit = Math.max(1, Math.min(500, Number(req.query.limit) || 100));
-            const scanners = scanner ? [scanner] : ['wd14', 'ocr', 'faces'];
+            const scanners = scanner ? [scanner] : ['wd14', 'ocr', 'faces', 'embed'];
             const byScanner = {};
             for (const sc of scanners) {
                 byScanner[sc] = {
@@ -2023,23 +2024,51 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         }
     });
 
+    // Eligible = live photo rows with no embedding row and no durable
+    // 'embed' failure. Failed rows are excluded so a permanently-broken
+    // file can't wedge the re-index loop — the operator re-queues them
+    // via /ai/scan/retry-failed (scanner='embed').
+    const _EMBED_ELIGIBLE_WHERE = `
+        d.deleted_at IS NULL
+        AND d.file_type IN ('photo', 'image')
+        AND d.id NOT IN (SELECT download_id FROM image_embeddings)
+        AND d.id NOT IN (
+            SELECT download_id FROM media_scan_state
+             WHERE scanner = 'embed' AND status = 'failed'
+        )`;
+
+    function _countMissingEmbeddings(db) {
+        return db
+            .prepare(`SELECT COUNT(*) AS n FROM downloads d WHERE ${_EMBED_ELIGIBLE_WHERE}`)
+            .get().n;
+    }
+
+    function _missingEmbeddingsBatch(db, limit) {
+        return db
+            .prepare(
+                `SELECT d.id, d.file_path
+                   FROM downloads d
+                  WHERE ${_EMBED_ELIGIBLE_WHERE}
+                  ORDER BY d.id
+                  LIMIT ?`,
+            )
+            .all(limit);
+    }
+
     // Re-index embeddings — compute CLIP image embeddings for every
-    // download that is missing one (or whose model is stale). Iterates
-    // in batches so the sidecar isn't flooded and the operator can watch
-    // progress on the AI maintenance page.
+    // download that is missing one (or whose model is stale). Runs as a
+    // jobTrackers.aiIndex background job: the endpoint returns immediately
+    // and the job loops batches until no eligible rows remain, emitting
+    // `ai_index_progress` / `ai_index_done` over WS. 409 while running.
     router.post('/ai/embeddings/reindex', async (req, res) => {
         try {
-            const { loadConfig } = await import('../../config/manager.js');
             const { embedImage, hasEmbeddingProvider } = await import(
                 '../../core/ai/faces-client.js'
             );
             const { clearStaleEmbeddings, listEmbeddingModels, setImageEmbedding } = await import(
                 '../../core/db/faces.js'
             );
-            const { getDb } = await import('../../core/db.js');
-
-            const live = loadConfig();
-            const clipModel = _resolveClipModelId(live?.advanced?.ai || {});
+            const { markScanFailed, resetScanState } = await import('../../core/db/scan-state.js');
 
             if (!hasEmbeddingProvider()) {
                 return res.status(503).json({
@@ -2048,93 +2077,140 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                 });
             }
 
-            // Clear stale embeddings if the model changed.
-            // Always pick the most common model for comparison — when
-            // multiple models exist (e.g. after an interrupted migration)
-            // we still detect the change and purge non-matching rows.
-            const before = listEmbeddingModels();
-            const activeModel = before.length
-                ? before.reduce((a, b) => (a.count > b.count ? a : b)).model
-                : null;
-
-            if (activeModel && activeModel !== clipModel) {
-                const purged = clearStaleEmbeddings(clipModel);
-                console.log(
-                    '[ai-embeddings] model changed from',
-                    activeModel,
-                    'to',
-                    clipModel,
-                    '- purged',
-                    purged.dropped,
-                    'stale rows, requeued',
-                    purged.requeued,
-                );
-            }
-
-            // Find downloads that have no embedding yet
+            const live = loadConfig();
+            const clipModel = _resolveClipModelId(live?.advanced?.ai || {});
+            const batchSize = Math.max(1, Math.min(500, Number(req.body?.limit) || 100));
             const db = getDb();
-            const missing = db
-                .prepare(
-                    `SELECT d.id, d.file_path, d.file_type
-                       FROM downloads d
-                      WHERE d.id NOT IN (
-                          SELECT download_id FROM image_embeddings
-                      )
-                        AND d.file_type IN ('photo', 'image')
-                      ORDER BY d.id
-                      LIMIT ?`,
-                )
-                .all(req.body?.limit || 250);
 
-            if (!missing.length) {
-                return res.json({
-                    success: true,
-                    processed: 0,
-                    remaining: 0,
-                    done: true,
+            const claim = jobTrackers.aiIndex.tryStart(async ({ onProgress, signal }) => {
+                // Clear stale embeddings if the model changed.
+                // Always pick the most common model for comparison — when
+                // multiple models exist (e.g. after an interrupted migration)
+                // we still detect the change and purge non-matching rows.
+                const before = listEmbeddingModels();
+                const activeModel = before.length
+                    ? before.reduce((a, b) => (a.count > b.count ? a : b)).model
+                    : null;
+                if (activeModel && activeModel !== clipModel) {
+                    const purged = clearStaleEmbeddings(clipModel);
+                    log({
+                        source: 'ai-embeddings',
+                        level: 'info',
+                        msg: `model changed ${activeModel} → ${clipModel}: purged ${purged.dropped} stale rows, requeued ${purged.requeued}`,
+                    });
+                }
+
+                const jobsMod = await import('../../core/ai/jobs.js');
+                const total = _countMissingEmbeddings(db);
+                let durableJobId = null;
+                try {
+                    durableJobId = jobsMod.createJob({
+                        type: 'scan',
+                        feature: 'embed',
+                        total,
+                        requestedBy: 'admin',
+                        requestJson: JSON.stringify({ limit: batchSize }),
+                    });
+                } catch (e) {
+                    swallow(e, 'ai-embeddings:createJob');
+                }
+
+                let processed = 0;
+                let errors = 0;
+                let remaining = total;
+                try {
+                    while (!signal?.aborted) {
+                        const batch = _missingEmbeddingsBatch(db, batchSize);
+                        if (!batch.length) break;
+                        for (const row of batch) {
+                            if (signal?.aborted) break;
+                            const abs = await _resolveAiPath(row.file_path);
+                            if (!abs) {
+                                errors++;
+                                markScanFailed(
+                                    row.id,
+                                    'embed',
+                                    'file missing on disk',
+                                    'FILE_MISSING',
+                                );
+                                continue;
+                            }
+                            try {
+                                const r = await embedImage(abs);
+                                if (r?.embedding?.length) {
+                                    const blob = Buffer.from(
+                                        new Uint8Array(Float32Array.from(r.embedding).buffer),
+                                    );
+                                    setImageEmbedding(row.id, blob, r.model || clipModel);
+                                    // Clear a stale failed row from an earlier run.
+                                    resetScanState([row.id], 'embed');
+                                    processed++;
+                                } else {
+                                    errors++;
+                                    markScanFailed(
+                                        row.id,
+                                        'embed',
+                                        'provider returned empty embedding',
+                                    );
+                                }
+                            } catch (e) {
+                                errors++;
+                                markScanFailed(
+                                    row.id,
+                                    'embed',
+                                    e?.message || String(e),
+                                    e?.code || null,
+                                );
+                            }
+                        }
+                        remaining = _countMissingEmbeddings(db);
+                        try {
+                            onProgress({ processed, errors, total, remaining });
+                        } catch (e) {
+                            swallow(e, 'ai-embeddings');
+                        }
+                        if (durableJobId) {
+                            try {
+                                jobsMod.updateJobProgress(durableJobId, {
+                                    processed,
+                                    failed: errors,
+                                });
+                            } catch (e) {
+                                swallow(e, 'ai-embeddings');
+                            }
+                        }
+                        if (!remaining) break;
+                    }
+                    if (durableJobId) {
+                        try {
+                            jobsMod.finishJob(
+                                durableJobId,
+                                signal?.aborted ? 'cancelled' : 'completed',
+                            );
+                        } catch (e) {
+                            swallow(e, 'ai-embeddings');
+                        }
+                    }
+                    return { processed, errors, remaining, model: clipModel };
+                } catch (e) {
+                    if (durableJobId) {
+                        try {
+                            jobsMod.finishJob(durableJobId, 'failed', e?.message || String(e));
+                        } catch (e2) {
+                            swallow(e2, 'ai-embeddings');
+                        }
+                    }
+                    throw e;
+                }
+            });
+            if (!claim.started) {
+                return res.status(409).json({
+                    error: 'Embeddings re-index already running',
+                    code: claim.code || 'ALREADY_RUNNING',
                 });
             }
-
-            let processed = 0;
-            let errors = 0;
-            const errors_ = [];
-
-            for (const row of missing) {
-                const abs = await _resolveAiPath(row.file_path);
-                if (!abs) {
-                    errors++;
-                    continue;
-                }
-                try {
-                    const r = await embedImage(abs);
-                    if (r?.embedding?.length) {
-                        const blob = Buffer.from(
-                            new Uint8Array(Float32Array.from(r.embedding).buffer),
-                        );
-                        setImageEmbedding(row.id, blob, r.model || clipModel);
-                        processed++;
-                    } else {
-                        errors++;
-                    }
-                } catch {
-                    errors++;
-                    if (errors_.length < 5) errors_.push(row.id);
-                }
-            }
-
-            const after = listEmbeddingModels();
-            const totalAfter = after.reduce((s, m) => s + m.count, 0);
-
-            res.json({
-                success: true,
-                model: clipModel,
-                processed,
-                errors,
-                sampleErrors: errors_.length ? errors_ : undefined,
-                total: totalAfter,
-                remaining: Math.max(0, missing.length - processed - errors),
-                done: !(errors > 0),
-            });
+            log({ source: 'ai-embeddings', level: 'info', msg: 're-index job starting' });
+            res.json({ success: true, started: true, model: clipModel });
         } catch (e) {
             res.status(500).json({ error: e?.message || String(e) });
         }

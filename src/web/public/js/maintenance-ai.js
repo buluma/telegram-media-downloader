@@ -1902,8 +1902,10 @@ async function _renderEmbeddingsStatus() {
 }
 
 /**
- * Re-index missing image embeddings. Calls the API in a batch loop
- * so the operator can watch progress on the AI maintenance page.
+ * Re-index missing image embeddings. Starts the background job on the
+ * server (jobTrackers.aiIndex); progress + completion arrive over the
+ * `ai_index_progress` / `ai_index_done` WS events below, so the run
+ * survives page navigation and the request never blocks on the work.
  */
 async function _reindexEmbeddings() {
     const btn = $('#ai-embeddings-reindex-btn');
@@ -1914,48 +1916,59 @@ async function _reindexEmbeddings() {
     btn.disabled = true;
     statusEl?.classList.remove('hidden');
     logEl?.classList.remove('hidden');
-    if (statusEl) statusEl.textContent = 'Re-indexing\u2026';
+    if (statusEl) statusEl.textContent = 'Starting\u2026';
     if (logEl) logEl.textContent = '';
 
-    let total = 0;
-    let errors = 0;
-    let remaining = 1;
-
     try {
-        while (remaining > 0) {
-            const r = await api.post('/api/ai/embeddings/reindex', { limit: 100 });
-            if (!r.success) throw new Error(r.error || 'reindex failed');
-
-            total += r.processed || 0;
-            errors += r.errors || 0;
-            remaining = r.remaining || 0;
-
-            const msg =
-                `Processed ${total}, errors ${errors}, remaining ${remaining}` +
-                (r.done ? ' \u2014 Done!' : '');
-            if (statusEl) statusEl.textContent = msg;
-            if (logEl) {
-                logEl.textContent += `Batch: +${r.processed} processed, ${r.errors} errors, ${r.remaining} remaining\n`;
-                logEl.scrollTop = logEl.scrollHeight;
-            }
-
-            if (r.done) break;
-            if (remaining <= 0) break;
-
-            // Small yield so the UI stays responsive
-            await new Promise((r) => setTimeout(r, 100));
-        }
-
-        // Refresh stats once done
-        await _renderEmbeddingsStatus();
-        showToast('Embedding re-index complete', 'success');
+        const r = await api.post('/api/ai/embeddings/reindex', { limit: 100 });
+        if (!r.success) throw new Error(r.error || 'reindex failed');
+        if (statusEl) statusEl.textContent = 'Re-indexing\u2026';
     } catch (e) {
-        if (statusEl) statusEl.textContent = `Error: ${e?.message || 'unknown'}`;
-        if (logEl) logEl.textContent += `\nError: ${e?.message || e}\n`;
-        showToast(`Re-index failed: ${e?.message || 'unknown'}`, 'error');
-    } finally {
+        if (e?.status === 409 || e?.data?.code === 'ALREADY_RUNNING') {
+            // Job already in flight \u2014 WS events drive the panes and
+            // re-enable the button when it finishes.
+            if (statusEl) statusEl.textContent = 'Re-indexing\u2026 (already running)';
+            return;
+        }
+        if (statusEl) statusEl.textContent = `Error: ${e?.data?.error || e?.message || 'unknown'}`;
+        showToast(`Re-index failed: ${e?.data?.error || e?.message || 'unknown'}`, 'error');
         btn.disabled = false;
     }
+}
+
+function _onEmbedIndexProgress(m) {
+    const btn = $('#ai-embeddings-reindex-btn');
+    const statusEl = $('#ai-embeddings-reindex-status');
+    const logEl = $('#ai-embeddings-reindex-log');
+    // Reveal the panes so a page remount mid-run still shows progress.
+    if (btn) btn.disabled = true;
+    statusEl?.classList.remove('hidden');
+    logEl?.classList.remove('hidden');
+    if (!Number.isFinite(m?.processed)) return; // tracker's empty starting tick
+    if (statusEl) {
+        statusEl.textContent = `Processed ${m.processed}, errors ${m.errors || 0}, remaining ${m.remaining ?? '?'} of ${m.total ?? '?'}`;
+    }
+    if (logEl) {
+        logEl.textContent += `Batch: ${m.processed} processed, ${m.errors || 0} errors, ${m.remaining ?? '?'} remaining\n`;
+        logEl.scrollTop = logEl.scrollHeight;
+    }
+}
+
+async function _onEmbedIndexDone(m) {
+    const btn = $('#ai-embeddings-reindex-btn');
+    const statusEl = $('#ai-embeddings-reindex-status');
+    if (btn) btn.disabled = false;
+    if (m?.error) {
+        if (statusEl) statusEl.textContent = `Error: ${m.error}`;
+        showToast(`Re-index failed: ${m.error}`, 'error');
+        return;
+    }
+    const r = m?.result || {};
+    if (statusEl) {
+        statusEl.textContent = `Done \u2014 ${r.processed ?? 0} embedded, ${r.errors ?? 0} errors`;
+    }
+    await _renderEmbeddingsStatus();
+    showToast('Embedding re-index complete', 'success');
 }
 
 // ---- Shared search service for two independent grids -------------------
@@ -2654,6 +2667,8 @@ function _bindOnce() {
     ws.on('ai_tags_done', (m) => _onScanDone('tags', m));
     ws.on('ai_ocr_progress', (m) => _onScanProgress('ocr', m));
     ws.on('ai_ocr_done', (m) => _onScanDone('ocr', m));
+    ws.on('ai_index_progress', _onEmbedIndexProgress);
+    ws.on('ai_index_done', _onEmbedIndexDone);
     ws.on('ai_faces_status', () => refreshStatus());
 
     // Auto-installer feedback. Streams stdout from `python -m
