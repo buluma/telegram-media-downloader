@@ -253,6 +253,11 @@
                                         <input id="setting-adv-max-deletes" type="number" min="1" max="100000" class="tg-input w-full text-sm" placeholder="5000">
                                         <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.advanced.max_deletes_help">Hard ceiling against runaway loops.</p>
                                     </div>
+                                    <div>
+                                        <label for="setting-adv-low-water" class="text-tg-text text-xs block mb-1" data-i18n="settings.advanced.low_water">Low-water mark (%)</label>
+                                        <input id="setting-adv-low-water" type="number" min="50" max="100" class="tg-input w-full text-sm" placeholder="90">
+                                        <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.advanced.low_water_help">Triggered sweeps drain to this % of the cap; 100 stops at the cap.</p>
+                                    </div>
                                 </div>
                             </div>
 

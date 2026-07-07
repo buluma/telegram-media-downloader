@@ -265,6 +265,8 @@
     "settings.advanced.sweep_batch_help": "จำนวนแถวที่ดึงมาพิจารณาต่อรอบ",
     "settings.advanced.max_deletes": "ลบสูงสุดต่อ sweep",
     "settings.advanced.max_deletes_help": "เพดานป้องกันการวนซ้ำไม่สิ้นสุด",
+    "settings.advanced.low_water": "ระดับเป้าหมายการลบ (%)",
+    "settings.advanced.low_water_help": "เมื่อเกินเพดาน จะลบจนเหลือเท่ากับ % นี้ของเพดาน; 100 = หยุดที่เพดานพอดี",
     "settings.advanced.integrity": "Integrity sweep",
     "settings.advanced.integrity_min": "ช่วงเวลา (นาที)",
     "settings.advanced.integrity_min_help": "ความถี่ในการตรวจทุกแถวใน DB และตัดรายการที่ไม่ใช้งานออก",

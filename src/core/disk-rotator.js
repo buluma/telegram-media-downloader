@@ -40,6 +40,10 @@ const DEFAULT_SWEEP_MIN = 10;
 const SWEEP_BATCH = 50; // candidate rows fetched per pass
 const MAX_DELETES_PER_SWEEP = 5000; // hard ceiling to avoid runaway loops
 const MAX_FETCH_WINDOW = 10000; // cap on how deep a sweep searches past a skippable prefix (matches getOldestDownloads' own limit ceiling)
+// Triggered sweeps drain to this fraction of the cap, not merely under it.
+// Stopping at the cap leaves zero headroom: a saturated disk then fails
+// every download between sweeps with quota errors until the next tick.
+const DEFAULT_LOW_WATER_PERCENT = 90;
 
 /**
  * Parse a human-readable size string into bytes.
@@ -193,6 +197,12 @@ export class DiskRotator {
                 1,
                 parseInt(adv.maxDeletesPerSweep, 10) || MAX_DELETES_PER_SWEEP,
             );
+            // The cap triggers a sweep; the low-water mark is how far it
+            // drains (hysteresis). 50-100 accepted; 100 = legacy stop-at-cap.
+            const lowWaterRaw = parseInt(adv.lowWaterPercent, 10);
+            const lowWaterPercent =
+                lowWaterRaw >= 50 && lowWaterRaw <= 100 ? lowWaterRaw : DEFAULT_LOW_WATER_PERCENT;
+            const targetBytes = Math.floor((capBytes * lowWaterPercent) / 100);
 
             let total = before;
             let deleted = 0;
@@ -232,7 +242,7 @@ export class DiskRotator {
             // at MAX_FETCH_WINDOW so a sweep can't scan the entire table.
             const consideredIds = new Set();
             let fetchLimit = batch;
-            outer: while (total > capBytes && safety > 0) {
+            outer: while (total > targetBytes && safety > 0) {
                 const candidates = getOldestDownloads(fetchLimit, { skipUnconfirmed }).filter(
                     (row) => !consideredIds.has(row.id),
                 );
@@ -240,7 +250,7 @@ export class DiskRotator {
                 const groups = cfg?.groups || [];
                 let progressed = false;
                 for (const row of candidates) {
-                    if (total <= capBytes || safety <= 0) break outer;
+                    if (total <= targetBytes || safety <= 0) break outer;
                     consideredIds.add(row.id);
                     if (isInFlight(row)) continue; // skip — downloader is mid-write
                     const group = groups.find((g) => g.id === row.group_id);
@@ -277,9 +287,9 @@ export class DiskRotator {
 
             const after = getTotalSizeBytes();
             console.log(
-                `[disk-rotator] sweep ${JSON.stringify({ before, deleted, after, capBytes })}`,
+                `[disk-rotator] sweep ${JSON.stringify({ before, deleted, after, capBytes, targetBytes })}`,
             );
-            return { before, deleted, after, capBytes };
+            return { before, deleted, after, capBytes, targetBytes };
         } finally {
             this._sweeping = false;
         }

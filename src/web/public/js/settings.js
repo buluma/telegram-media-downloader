@@ -930,6 +930,7 @@ const ADVANCED_DEFAULTS = {
     diskRotator: {
         sweepBatch: 50,
         maxDeletesPerSweep: 5000,
+        lowWaterPercent: 90,
     },
     integrity: {
         intervalMin: 60,
@@ -1021,6 +1022,7 @@ export function loadAdvanced(config) {
     const r = { ...ADVANCED_DEFAULTS.diskRotator, ...(adv.diskRotator || {}) };
     set('setting-adv-sweep-batch', r.sweepBatch);
     set('setting-adv-max-deletes', r.maxDeletesPerSweep);
+    set('setting-adv-low-water', r.lowWaterPercent);
 
     const it = { ...ADVANCED_DEFAULTS.integrity, ...(adv.integrity || {}) };
     set('setting-adv-integrity-min', it.intervalMin);
@@ -1202,6 +1204,10 @@ function gatherAdvanced() {
             maxDeletesPerSweep: num(
                 'setting-adv-max-deletes',
                 ADVANCED_DEFAULTS.diskRotator.maxDeletesPerSweep,
+            ),
+            lowWaterPercent: num(
+                'setting-adv-low-water',
+                ADVANCED_DEFAULTS.diskRotator.lowWaterPercent,
             ),
         },
         integrity: {

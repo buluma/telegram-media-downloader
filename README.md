@@ -278,7 +278,7 @@ Runtime config lives in the `kv['config']` row of `data/db.sqlite` — self-heal
                       "threshold": 0.6, "concurrency": 1, "fileTypes": ["photo"] },
         "downloader": { "minConcurrency": 3, "maxConcurrency": 20, "scalerIntervalSec": 5 },
         "integrity":  { "intervalMin": 60, "batchSize": 64 },
-        "diskRotator":{ "sweepBatch": 50, "maxDeletesPerSweep": 5000 },
+        "diskRotator":{ "sweepBatch": 50, "maxDeletesPerSweep": 5000, "lowWaterPercent": 90 },
         "web":      { "sessionTtlDays": 7 }
     }
 }

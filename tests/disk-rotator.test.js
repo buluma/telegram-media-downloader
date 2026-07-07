@@ -143,3 +143,89 @@ describe('DiskRotator.sweep — skip-only window handling', () => {
         expect(result.after).toBe(result.before - 5 * 10_000_000);
     });
 });
+
+// ── sweep(): low-water mark ───────────────────────────────────────────────
+//
+// Found live 2026-07-07: with the sweep stopping the moment total <= cap,
+// a saturated disk oscillates a few MB around the cap forever — every
+// download between 10-minute sweeps fails with "Disk Quota Exceeded"
+// (1,400+ such errors in 12h on Heimdal). Draining to a low-water mark
+// below the cap gives downloads real headroom between sweeps.
+
+describe('DiskRotator.sweep — low-water mark', () => {
+    async function buildRotator({ rows, capBytes, lowWaterPercent }) {
+        vi.resetModules();
+        const remaining = new Map(rows.map((r) => [r.id, r]));
+        vi.doMock('../src/core/db.js', () => ({
+            getTotalSizeBytes: () => [...remaining.values()].reduce((s, r) => s + r.file_size, 0),
+            getOldestDownloads: (limit) =>
+                [...remaining.values()].sort((a, b) => a.id - b.id).slice(0, limit),
+            deleteDownloadsBy: () => {},
+            setDownloadEvicted: (id) => remaining.delete(id),
+        }));
+        vi.doMock('../src/core/backup/queue.js', () => ({ hasMirrorDestinations: () => false }));
+        vi.doMock('../src/core/delete-queue.js', () => ({ deferDelete: async () => {} }));
+        vi.doMock('../src/core/thumbs.js', () => ({ purgeThumbsForDownload: async () => {} }));
+        vi.doMock('../src/core/seekbar/index.js', () => ({
+            purgeSeekbarForDownload: async () => {},
+        }));
+
+        const { DiskRotator } = await import('../src/core/disk-rotator.js');
+        return new DiskRotator({
+            loadConfig: () => ({
+                diskManagement: { enabled: true, maxTotalSize: capBytes },
+                advanced: lowWaterPercent != null ? { diskRotator: { lowWaterPercent } } : {},
+                groups: [{ id: 'free', rescueMode: 'off' }],
+            }),
+            broadcast: () => {},
+            getActiveFilePaths: () => null,
+        });
+    }
+
+    const makeRows = (n, size = 100) =>
+        Array.from({ length: n }, (_, i) => ({
+            id: i + 1,
+            group_id: 'free',
+            file_path: `f${i + 1}.mp4`,
+            file_size: size,
+        }));
+
+    it('drains to 90% of the cap by default, not just under it', async () => {
+        // 1200 bytes over a 1000-byte cap: stopping at <= cap deletes 2 rows;
+        // the low-water default must keep going to <= 900 (3 rows).
+        const rotator = await buildRotator({ rows: makeRows(12), capBytes: 1000 });
+        const result = await rotator.sweep();
+        expect(result.deleted).toBe(3);
+        expect(result.after).toBeLessThanOrEqual(900);
+    });
+
+    it('honors a configured lowWaterPercent', async () => {
+        const rotator = await buildRotator({
+            rows: makeRows(12),
+            capBytes: 1000,
+            lowWaterPercent: 50,
+        });
+        const result = await rotator.sweep();
+        expect(result.deleted).toBe(7); // 1200 → 500
+        expect(result.after).toBeLessThanOrEqual(500);
+    });
+
+    it('falls back to the default for out-of-range values', async () => {
+        const rotator = await buildRotator({
+            rows: makeRows(12),
+            capBytes: 1000,
+            lowWaterPercent: 150,
+        });
+        const result = await rotator.sweep();
+        expect(result.deleted).toBe(3); // same as default 90%
+    });
+
+    it('does not trigger below the cap even when above the low-water mark', async () => {
+        // 950 <= cap 1000: the cap is still the trigger; the low-water mark
+        // only controls how far a triggered sweep drains (hysteresis).
+        const rotator = await buildRotator({ rows: makeRows(19, 50), capBytes: 1000 });
+        const result = await rotator.sweep();
+        expect(result.deleted).toBe(0);
+        expect(result.after).toBe(result.before);
+    });
+});
