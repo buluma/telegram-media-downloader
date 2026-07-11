@@ -4,6 +4,11 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+## [2.25.2] — 2026-07-11
+
+### Added
+- **Delete Unpinned Videos** — Settings → Security button, above Danger Zone. Unconditionally deletes every unpinned video's file + database row (no rescue-group or backup-confirmation guard, unlike the disk-rotator sweeper).
+
 ## [2.25.1] — 2026-07-03
 
 Dedup scan reliability pass — five separate root causes of the "stuck Scanning…" bug fixed, plus a couple of small viewer/gallery additions and a watchdog-stall fix.
