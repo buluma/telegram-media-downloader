@@ -13,6 +13,7 @@ import {
     setDownloadPinned,
     bulkSetDownloadPinned,
     deleteDownloadsBy,
+    getUnpinnedVideoIds,
     stampViewed,
 } from '../../core/db/downloads.js';
 import { safeResolveDownload } from '../lib/resolve-download.js';
@@ -1387,6 +1388,95 @@ export function createDownloadsRouter({
 
     router.get('/purge/all/status', async (req, res) => {
         res.json(jobTrackers.purgeAll.getStatus());
+    });
+
+    // 6d. Delete Unpinned Videos
+    //
+    // Settings → Security → "Delete unpinned videos" button. Unconditional:
+    // every video row with pinned=0 is removed — no rescue-protection or
+    // backup-confirmation guard (unlike the disk-rotator sweeper). Fire-and-
+    // forget, same pattern as bulk-delete / purge-all. Status endpoint:
+    // `GET /api/downloads/unpinned-videos/status`.
+    router.delete('/downloads/unpinned-videos', async (req, res) => {
+        const conflict = checkJobConflict(jobTrackers, 'destructive');
+        if (conflict.conflict) {
+            return res.status(409).json({
+                success: false,
+                code: 'RESOURCE_BUSY',
+                conflictingJob: conflict.conflictingJob,
+                error: `Cannot delete — scanner '${conflict.conflictingJob}' is running`,
+            });
+        }
+        const tracker = jobTrackers.deleteUnpinnedVideos;
+        const r = tracker.tryStart(async ({ onProgress }) => {
+            const idList = getUnpinnedVideoIds();
+            const total = idList.length;
+            let processed = 0;
+            let unlinked = 0;
+            onProgress({ processed: 0, total, stage: 'deleting_files' });
+
+            if (idList.length) {
+                const db = getDb();
+                const rows = db
+                    .prepare(
+                        `SELECT id, group_id, group_name, file_name, file_type, file_path FROM downloads WHERE id IN (${idList.map(() => '?').join(',')})`,
+                    )
+                    .all(...idList);
+                const config = loadConfig();
+                const folderById = new Map();
+                for (const g of config.groups || [])
+                    folderById.set(String(g.id), sanitizeName(g.name));
+                for (const row of rows) {
+                    // Prefer the stored file_path — see bulk-delete's comment
+                    // above for why the reconstructed fallback is legacy-only.
+                    const stored = toPosixPath(row.file_path);
+                    let candidate = stored;
+                    if (!candidate || !candidate.includes('/')) {
+                        const folder =
+                            folderById.get(String(row.group_id)) ||
+                            sanitizeName(row.group_name || 'unknown');
+                        candidate = `${folder}/videos/${row.file_name}`;
+                    }
+                    const sr = await safeResolveDownload(candidate);
+                    if (sr.ok) {
+                        await deferDelete(sr.real);
+                        unlinked++;
+                    }
+                    processed += 1;
+                    if (processed % 50 === 0 || processed === total) {
+                        onProgress({ processed, total, stage: 'deleting_files' });
+                    }
+                }
+            }
+
+            const dbDeleted = deleteDownloadsBy({ ids: idList });
+            onProgress({ processed: total, total, stage: 'purging_thumbs' });
+            for (const id of idList) {
+                try {
+                    await purgeThumbsForDownload(id);
+                } catch (e) {
+                    swallow(e, 'downloads');
+                }
+            }
+            broadcast({
+                type: 'unpinned_videos_delete',
+                unlinked,
+                dbDeleted,
+                count: idList.length,
+            });
+            return { unlinked, dbDeleted, requested: total };
+        });
+        if (!r.started) {
+            return res.status(409).json({
+                error: 'A delete-unpinned-videos job is already running',
+                code: 'ALREADY_RUNNING',
+            });
+        }
+        res.json({ success: true, started: true });
+    });
+
+    router.get('/downloads/unpinned-videos/status', async (req, res) => {
+        res.json(jobTrackers.deleteUnpinnedVideos.getStatus());
     });
 
     return router;

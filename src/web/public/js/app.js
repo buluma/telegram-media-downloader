@@ -537,6 +537,7 @@ async function init() {
     registerAction('filterSidebarGroups', filterSidebarGroups);
     registerAction('purgeGroup', purgeGroup);
     registerAction('purgeAll', purgeAll);
+    registerAction('deleteUnpinnedVideos', deleteUnpinnedVideos);
     window.showToast = showToast; // Keep on window as utility for now
 
     // View-mode picker in the header — dropdown with Grid / Compact / List
@@ -5505,6 +5506,74 @@ async function purgeAll() {
         const r = await api.delete('/api/purge/all');
         if (!r?.started && !r?.success) throw new Error('Failed to start');
         // Final toast + state reset come from `purge_all_done` WS event.
+    } catch (e) {
+        if (e?.data?.code === 'ALREADY_RUNNING') {
+            showToast(
+                i18nT(
+                    'jobs.already_running',
+                    'Already running on another tab — waiting for it to finish.',
+                ),
+                'info',
+            );
+            return;
+        }
+        showToast(
+            i18nTf('purge.group.failed', { msg: e.message }, 'Failed to delete: ' + e.message),
+            'error',
+        );
+    }
+}
+
+let _unpinnedVideosWsWired = false;
+function _wireUnpinnedVideosWs() {
+    if (_unpinnedVideosWsWired) return;
+    _unpinnedVideosWsWired = true;
+
+    ws.on('unpinned_videos_delete_done', (m) => {
+        if (m?.error) {
+            showToast(
+                i18nTf('purge.group.failed', { msg: m.error }, 'Failed to delete: ' + m.error),
+                'error',
+            );
+            return;
+        }
+        showToast(
+            i18nTf(
+                'unpinned_videos.success',
+                { files: m?.unlinked ?? 0, records: m?.dbDeleted ?? 0 },
+                `Deleted ${m?.unlinked ?? 0} unpinned videos -- ${m?.dbDeleted ?? 0} records`,
+            ),
+            'success',
+        );
+        loadStats();
+        if (state.currentPage === 'viewer') showAllMedia();
+    });
+}
+
+/**
+ * Delete every unpinned video -- files + database records. Unconditional:
+ * no rescue-group or backup-confirmation guard, unlike disk-rotator.
+ */
+async function deleteUnpinnedVideos() {
+    _wireUnpinnedVideosWs();
+    if (
+        !(await confirmSheet({
+            title: i18nT('unpinned_videos.title', 'Delete unpinned videos?'),
+            message: i18nT(
+                'unpinned_videos.confirm',
+                'Delete every unpinned video?\n\nFiles and database records will be permanently removed. Pinned videos are untouched. No backup or rescue-group check.',
+            ),
+            confirmLabel: i18nT('settings.unpinned_videos.button', 'Delete Unpinned Videos'),
+            danger: true,
+        }))
+    )
+        return;
+
+    try {
+        showToast(i18nT('unpinned_videos.deleting', 'Deleting unpinned videos...'), 'info');
+        const r = await api.delete('/api/downloads/unpinned-videos');
+        if (!r?.started && !r?.success) throw new Error('Failed to start');
+        // Final toast + state refresh come from `unpinned_videos_delete_done` WS event.
     } catch (e) {
         if (e?.data?.code === 'ALREADY_RUNNING') {
             showToast(

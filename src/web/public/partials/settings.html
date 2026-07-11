@@ -927,6 +927,19 @@
                         <span id="settings-autosave-text"></span>
                     </div>
 
+                    <!-- Delete Unpinned Videos -->
+                    <div class="mt-6 bg-amber-500/5 border border-amber-500/20 rounded-xl p-4" data-admin-only>
+                        <h3 class="text-amber-400 font-medium mb-2 flex items-center gap-2">
+                            <i class="ri-movie-line"></i> <span data-i18n="settings.unpinned_videos.title">Delete Unpinned Videos</span>
+                        </h3>
+                        <p class="text-xs text-tg-textSecondary mb-4" data-i18n="settings.unpinned_videos.help">Permanently deletes every
+                            unpinned video — files and database records. Pinned videos are untouched. No backup or rescue-group check.</p>
+                        <button data-action="deleteUnpinnedVideos"
+                            class="w-full py-2.5 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/30 hover:bg-amber-500/20 font-medium text-sm transition-colors flex items-center justify-center gap-2">
+                            <i class="ri-movie-line"></i> <span data-i18n="settings.unpinned_videos.button">Delete Unpinned Videos</span>
+                        </button>
+                    </div>
+
                     <!-- Danger Zone -->
                     <div class="mt-6 bg-red-500/5 border border-red-500/20 rounded-xl p-4" data-admin-only>
                         <h3 class="text-red-400 font-medium mb-2 flex items-center gap-2">

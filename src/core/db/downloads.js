@@ -1073,3 +1073,23 @@ export function getOldestDownloads(count = 50, opts = {}) {
         )
         .all(limit);
 }
+
+/**
+ * Returns the ids of every unpinned, non-soft-deleted video — the "delete
+ * unpinned videos" settings action. Unconditional: unlike getOldestDownloads
+ * this ignores cache_evicted_at and backup confirmation, so an already
+ * cloud-evicted row is included (its DB row still gets removed).
+ *
+ * @returns {number[]}
+ */
+export function getUnpinnedVideoIds() {
+    return getDb()
+        .prepare(
+            `SELECT id FROM downloads
+              WHERE COALESCE(pinned, 0) = 0
+                AND file_type = 'video'
+                AND deleted_at IS NULL`,
+        )
+        .all()
+        .map((r) => r.id);
+}

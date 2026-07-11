@@ -1585,6 +1585,12 @@ const _jobTrackers = {
         eventPrefix: 'groups_refresh_photos',
     }),
     purgeAll: createJobTracker({ kind: 'purgeAll', broadcast, log, eventPrefix: 'purge_all' }),
+    deleteUnpinnedVideos: createJobTracker({
+        kind: 'deleteUnpinnedVideos',
+        broadcast,
+        log,
+        eventPrefix: 'unpinned_videos_delete',
+    }),
     recoveryBulk: createJobTracker({
         kind: 'recoveryBulk',
         broadcast,

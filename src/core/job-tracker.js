@@ -289,7 +289,7 @@ export function createJobTracker({ kind, broadcast, log, eventPrefix, cancelGrac
 }
 
 const _SCANNER_JOBS = ['aiPeople', 'aiOcr', 'aiWd14', 'aiTags', 'aiIndex'];
-const _DESTRUCTIVE_JOBS = ['nsfwBulk', 'dedupDelete', 'purgeAll'];
+const _DESTRUCTIVE_JOBS = ['nsfwBulk', 'dedupDelete', 'purgeAll', 'deleteUnpinnedVideos'];
 
 /**
  * Check whether starting a job of `type` would conflict with a currently
