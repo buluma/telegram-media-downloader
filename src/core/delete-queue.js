@@ -19,8 +19,15 @@ import { logger } from './logger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-export const DELETED_DIR = path.resolve(__dirname, '../../data/downloads/.deleted');
-const DOWNLOADS_DIR = path.resolve(__dirname, '../../data/downloads');
+// `TGDL_DATA_DIR` overrides the on-disk data root — mirrors core/db.js so
+// tests (and Docker/multi-instance deploys) can point this at an isolated
+// dir instead of always resolving to the in-repo `data/`.
+const DATA_ROOT = process.env.TGDL_DATA_DIR
+    ? path.resolve(process.env.TGDL_DATA_DIR)
+    : path.resolve(__dirname, '../../data');
+
+export const DELETED_DIR = path.join(DATA_ROOT, 'downloads/.deleted');
+const DOWNLOADS_DIR = path.join(DATA_ROOT, 'downloads');
 
 // .part files younger than this are assumed to belong to an active download.
 const STALE_PART_MS = 60 * 60 * 1000; // 1 hour
