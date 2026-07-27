@@ -5,7 +5,7 @@
 // WS progress/done driving every button sharing an event prefix,
 // ALREADY_RUNNING handling, and rehydrateAll on WS reconnect.
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 const api = { get: vi.fn(), post: vi.fn() };
 const showToast = vi.fn();

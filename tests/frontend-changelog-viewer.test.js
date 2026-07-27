@@ -7,7 +7,7 @@
 //
 // sheet.js is mocked; global fetch is mocked per test.
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 const openSheet = vi.fn();
 vi.mock('../src/web/public/js/sheet.js', () => ({ openSheet }));

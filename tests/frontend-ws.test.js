@@ -8,7 +8,7 @@
 // FakeWebSocket stands in for the real one; tests drive it by calling
 // its recorded instance's `_open()`/`_message()`/`_close()`/`_error()`.
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 
 let instances;
 

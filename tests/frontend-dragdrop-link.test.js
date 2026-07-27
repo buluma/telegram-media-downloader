@@ -12,7 +12,7 @@
 // addEventListener and invoked directly instead of dispatched through
 // the (accumulating) real listener chain.
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
 const api = { post: vi.fn() };
 const showToast = vi.fn();

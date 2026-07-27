@@ -7,7 +7,7 @@
 // api.js, ws.js, sheet.js and showToast are mocked; escapeHtml is
 // reimplemented inline to match utils.js.
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 const api = { get: vi.fn(), post: vi.fn() };
 const showToast = vi.fn();

@@ -18,9 +18,13 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-const DATA_DIR = path.join(os.tmpdir(), `tgdl-datadir-${process.pid}`);
+// mkdtempSync, not a pid-derived name: a predictable path in the shared os
+// temp dir is one an unprivileged local process can pre-create or symlink,
+// and these tests write a secret.key into it. Matches the rest of the suite.
+let DATA_DIR;
 
 beforeEach(() => {
+    DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'tgdl-datadir-'));
     fs.mkdirSync(path.join(DATA_DIR, 'downloads'), { recursive: true });
     process.env.TGDL_DATA_DIR = DATA_DIR;
     vi.resetModules();

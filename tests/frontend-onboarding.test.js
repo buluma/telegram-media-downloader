@@ -10,7 +10,7 @@
 // than modeled through its WS/api internals — this module only calls
 // those two exports. i18n stays real for its synchronous fallback path.
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
 const subscribe = vi.fn();
 const refreshNow = vi.fn();

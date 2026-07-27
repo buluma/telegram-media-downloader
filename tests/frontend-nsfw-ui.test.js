@@ -7,7 +7,7 @@
 // api.js and utils.js are mocked. localStorage comes from
 // tests/setup.js's in-memory polyfill.
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 
 const api = { get: vi.fn(), post: vi.fn() };
 const showToast = vi.fn();

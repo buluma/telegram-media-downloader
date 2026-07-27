@@ -220,15 +220,6 @@ afterAll(async () => {
     fs.rmSync(DATA_DIR, { recursive: true, force: true });
 });
 
-async function waitIdle(feature) {
-    for (let i = 0; i < 100; i++) {
-        const { body } = await get(`/api/ai/scan/status?feature=${feature}`);
-        if (!aiIndexApi.isScanRunning(feature)) break;
-        if (body?.state && !body.state.running) break;
-        await new Promise((r) => setTimeout(r, 20));
-    }
-}
-
 async function waitTracker(tracker) {
     for (let i = 0; i < 100; i++) {
         if (!tracker.getStatus().running) return tracker.getStatus();

@@ -241,11 +241,6 @@ describe('KPI stats', () => {
     });
 
     it('colours the coverage bar by threshold', async () => {
-        const cases = [
-            [10, 100, 'bg-tg-green'],
-            [60, 100, 'bg-tg-blue'],
-            [10, 100 - 90, 'bg-yellow-400'], // 10/10=100%? fix below
-        ];
         for (const [count, total] of [
             [100, 100],
             [60, 100],

@@ -13,7 +13,7 @@
 // tests/frontend-statusbar.test.js. jsdom has no URL.createObjectURL, so
 // it is stubbed for the download-button tests.
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 
 const api = { get: vi.fn() };
 const showToast = vi.fn();

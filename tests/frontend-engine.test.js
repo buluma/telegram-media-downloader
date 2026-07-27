@@ -166,7 +166,7 @@ describe('start / stop / restart buttons', () => {
         const { initEngine } = await loadModule();
         initEngine();
         const btn = $('engine-start');
-        const clickPromise = btn.click();
+        btn.click();
         expect($('engine-pill').className).toContain('engine-state-starting');
         await flush();
         expect(api.post).toHaveBeenCalledWith('/api/monitor/start');

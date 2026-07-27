@@ -162,7 +162,7 @@ describe('__ws_open (reconnect)', () => {
     });
 
     it('does nothing when there are no subscribers', async () => {
-        const mod = await loadModule();
+        await loadModule();
         api.get.mockClear();
         await ws.emit('__ws_open', {});
         await flush();

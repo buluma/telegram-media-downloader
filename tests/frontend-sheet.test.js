@@ -14,7 +14,7 @@
 // makes Esc close only the topmost sheet — so each test re-imports through
 // vi.resetModules() to avoid inheriting a previous test's stack.
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 
 function installMatchMedia({ reduced = true, desktop = false } = {}) {
     window.matchMedia = vi.fn((query) => ({

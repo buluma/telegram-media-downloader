@@ -8,7 +8,7 @@
 // api.js, ws.js, statusbar.js (_openUpdateChooser) and showToast are
 // mocked. i18n stays real for its synchronous fallback path.
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 const api = { get: vi.fn() };
 const showToast = vi.fn();

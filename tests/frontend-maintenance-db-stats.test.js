@@ -9,7 +9,7 @@
 // (formatBytes, ago, the chart builders) is exercised indirectly through
 // the rendered #db-stats-root markup. api.js is mocked.
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 
 const api = { get: vi.fn() };
 vi.mock('../src/web/public/js/api.js', () => ({ api }));
