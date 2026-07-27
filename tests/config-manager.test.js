@@ -1,7 +1,7 @@
 // Tests the kv-backed config manager: load/save round-trip, deep-merge,
 // self-heal write-back, and the EventEmitter-based watchConfig.
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -296,5 +296,52 @@ describe('config manager (kv-backed)', () => {
         expect(cfg.groups).toHaveLength(1);
         expect(cfg.groups[0].id).toBe('db_group');
         expect(cfg.groups[0].name).toBe('From DB');
+    });
+});
+
+// The catch path is the other place loadConfig() can hand back DEFAULT_CONFIG.
+// It had the same aliasing bug the fresh-install branch was fixed for: a kv
+// read that throws (locked / corrupt db during first-run setup) returned the
+// shared singleton, and POST /api/auth/setup mutates what it gets back in
+// place — permanently poisoning DEFAULT_CONFIG for the rest of the process.
+describe('loadConfig — kv read failure', () => {
+    async function loadWithBrokenKv() {
+        vi.resetModules();
+        vi.doMock('../src/core/db.js', () => ({
+            kvGet: () => {
+                throw new Error('database is locked');
+            },
+            kvSet: () => {},
+            getAllGroupConfigs: () => [],
+            syncGroupConfigs: () => {},
+        }));
+        return await import('../src/config/manager.js');
+    }
+
+    afterEach(() => {
+        vi.doUnmock('../src/core/db.js');
+        vi.resetModules();
+    });
+
+    it('falls back to defaults instead of throwing', async () => {
+        const broken = await loadWithBrokenKv();
+        const cfg = broken.loadConfig();
+        expect(cfg.download.concurrent).toBe(10);
+        expect(cfg.telegram.apiId).toBe('');
+    });
+
+    it('hands out a fresh clone, so callers cannot poison the defaults', async () => {
+        const broken = await loadWithBrokenKv();
+
+        const first = broken.loadConfig();
+        first.web = { ...(first.web || {}), passwordHash: 'leaked-from-setup' };
+        first.telegram.apiId = '12345';
+        first.groups.push({ id: 'ghost' });
+
+        const second = broken.loadConfig();
+        expect(second).not.toBe(first);
+        expect(second.web?.passwordHash).toBeUndefined();
+        expect(second.telegram.apiId).toBe('');
+        expect(second.groups).toEqual([]);
     });
 });

@@ -997,7 +997,11 @@ export function loadConfig() {
         return config;
     } catch (error) {
         console.error('Config error:', error.message);
-        return DEFAULT_CONFIG;
+        // Clone for the same reason the fresh-install branch above does:
+        // callers mutate what loadConfig() returns, and a kv read that throws
+        // (locked / corrupt db) must not let that mutation land on the shared
+        // DEFAULT_CONFIG.
+        return structuredClone(DEFAULT_CONFIG);
     }
 }
 
