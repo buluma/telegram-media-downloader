@@ -22,6 +22,7 @@ vi.mock('../src/core/runtime.js', () => ({ runtime }));
 let manager;
 let dbApi;
 let db;
+let invalidateConfigCache;
 let app;
 let server;
 let port;
@@ -36,6 +37,7 @@ beforeAll(async () => {
     dbApi = await import('../src/core/db.js');
     db = dbApi.getDb();
     manager = await import('../src/config/manager.js');
+    ({ invalidateConfigCache } = await import('../src/web/lib/config-cache.js'));
 
     const { createMonitorRouter } = await import('../src/web/routes/monitor.js');
 
@@ -67,6 +69,7 @@ beforeEach(() => {
     dbApi.kvDelete('config');
     db.prepare('DELETE FROM groups').run();
     manager._resetConfigBus();
+    invalidateConfigCache();
     vi.clearAllMocks();
     runtime.status.mockReturnValue({ state: 'stopped', accounts: 0 });
     runtime.start.mockResolvedValue(undefined);
@@ -117,6 +120,7 @@ describe('GET /api/monitor/status', () => {
         cfg.telegram.apiId = '';
         cfg.telegram.apiHash = '';
         manager.saveConfig(cfg);
+        invalidateConfigCache();
         runtime.status.mockReturnValue({ state: 'stopped', accounts: 0 });
         getAccountManager = async () => ({ count: 0 });
         const res = await fetch(apiUrl('/api/monitor/status'));
@@ -129,6 +133,7 @@ describe('GET /api/monitor/status', () => {
         cfg.telegram.apiId = '12345';
         cfg.telegram.apiHash = 'hash';
         manager.saveConfig(cfg);
+        invalidateConfigCache();
         runtime.status.mockReturnValue({ state: 'stopped', accounts: 0 });
         getAccountManager = async () => ({ count: 0 });
         const res = await fetch(apiUrl('/api/monitor/status'));
@@ -142,6 +147,7 @@ describe('GET /api/monitor/status', () => {
         cfg.telegram.apiHash = 'hash';
         cfg.groups = [{ id: '-1001', name: 'g', enabled: false }];
         manager.saveConfig(cfg);
+        invalidateConfigCache();
         runtime.status.mockReturnValue({ state: 'stopped', accounts: 1 });
         const res = await fetch(apiUrl('/api/monitor/status'));
         const body = await res.json();
@@ -154,6 +160,7 @@ describe('GET /api/monitor/status', () => {
         cfg.telegram.apiHash = 'hash';
         cfg.groups = [{ id: '-1001', name: 'g', enabled: true }];
         manager.saveConfig(cfg);
+        invalidateConfigCache();
         runtime.status.mockReturnValue({ state: 'running', accounts: 1 });
         const res = await fetch(apiUrl('/api/monitor/status'));
         const body = await res.json();
