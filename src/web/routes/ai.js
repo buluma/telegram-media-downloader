@@ -9,7 +9,12 @@ import { resolveClipModelId, getTgdlMlUrl, isTgdlMlEnabled } from '../../core/ai
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..', '..');
-const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
+// `TGDL_DATA_DIR` overrides the on-disk data root — mirrors core/db.js so
+// tests (and Docker/multi-instance deploys) can point this at an isolated
+// dir instead of always resolving to the in-repo `data/`.
+const DATA_DIR = process.env.TGDL_DATA_DIR
+    ? path.resolve(process.env.TGDL_DATA_DIR)
+    : path.resolve(PROJECT_ROOT, 'data');
 import { getDb } from '../../core/db.js';
 import {
     startFacesScan as aiStartFacesScan,
