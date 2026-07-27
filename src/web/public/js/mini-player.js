@@ -79,11 +79,18 @@ export async function expand() {
     if (!_shown) return;
     const v = _miniVideo();
     const t = v?.currentTime || 0;
+    // Capture the restore index BEFORE dismiss() runs — it clears
+    // _restoreIndex to null as its last step, so reading the module
+    // variable after calling dismiss() always found it already gone.
+    // That made everything below unreachable: expand() hid the mini
+    // player and did nothing else, silently dropping the "re-open the
+    // full viewer" behaviour the feature exists for.
+    const restoreIndex = _restoreIndex;
     dismiss();
-    if (_restoreIndex == null) return;
+    if (restoreIndex == null) return;
     try {
         const { openMediaViewer } = await import('./viewer.js');
-        openMediaViewer(_restoreIndex);
+        openMediaViewer(restoreIndex);
         // Restore the play position once the viewer's <video> finishes
         // loading metadata so the full-size player picks up where mini
         // left off.
