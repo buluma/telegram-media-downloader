@@ -7,7 +7,12 @@ import { DIALOG_CACHE_TTL_MS } from '../../core/constants.js';
 import { nameLooksUnresolved } from '../lib/format.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = path.join(__dirname, '../../../data');
+// `TGDL_DATA_DIR` overrides the on-disk data root — mirrors core/db.js so
+// tests (and Docker/multi-instance deploys) can point this at an isolated
+// dir instead of always resolving to the in-repo `data/`.
+const DATA_DIR = process.env.TGDL_DATA_DIR
+    ? path.resolve(process.env.TGDL_DATA_DIR)
+    : path.join(__dirname, '../../../data');
 
 // Module-level dialogs response cache — shared via export so other routers
 // can invalidate it without importing an entire response object.
@@ -31,6 +36,15 @@ let _dialogsTypeCache = new Map();
 // so the sidebar can skip firing the (guaranteed-404) avatar request for
 // entities that definitively have none, same rationale as dialogsTypeFor.
 let _dialogsHasPhotoCache = new Map();
+
+// Test-only reset for the name/type/hasPhoto caches — mirrors
+// invalidateDialogsCache() above but for getDialogsNameCache()'s
+// separate 5-minute TTL, which has no other reset hook.
+export function _resetDialogsNameCache() {
+    _dialogsNameCache = { at: 0, byId: new Map() };
+    _dialogsTypeCache = new Map();
+    _dialogsHasPhotoCache = new Map();
+}
 
 // Absolute ceiling on a single folder sweep — protects the heap against a
 // pathological account with tens of thousands of joined dialogs. Distinct
