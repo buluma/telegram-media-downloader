@@ -36,7 +36,13 @@ import { swallow } from './util/swallow.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
-const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
+// `TGDL_DATA_DIR` overrides the on-disk data root — mirrors core/db.js. The
+// scan resolves every row's file under this root, so pointing it at the wrong
+// tree makes every classification silently score null while still stamping
+// the row as checked, i.e. the library reads as scanned but is not.
+const DATA_DIR = process.env.TGDL_DATA_DIR
+    ? path.resolve(process.env.TGDL_DATA_DIR)
+    : path.resolve(PROJECT_ROOT, 'data');
 
 // Public defaults. Live values are pulled from `config.advanced.nsfw`
 // at every entry point so a `config_updated` save takes effect on the
@@ -722,6 +728,18 @@ export async function disposeClassifier() {
     }
     _pipelinePromise = null;
     _activeModelId = null;
+    // Keep the reported state in step with reality. clearClassifierCache()
+    // already does this; without it here, classifierReady() kept answering
+    // 'ready' for a pipeline that had just been torn down.
+    _loadState = {
+        state: 'idle',
+        model: null,
+        dtype: null,
+        progress: null,
+        error: null,
+        startedAt: null,
+        finishedAt: null,
+    };
 }
 
 // Last-known load state. Updated by the progress callback inside
