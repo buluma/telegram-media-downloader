@@ -880,15 +880,26 @@ describe('LLM Facade (index.js)', () => {
         expect('available' in active).toBe(true);
     });
 
-    it('generate() returns code LLM_DISABLED when provider is disabled', {
-        timeout: 15_000,
-    }, async () => {
-        // No fetch mock needed — disabled path doesn't probe
+    it('generate() returns code LLM_DISABLED when provider is disabled', async () => {
+        // Pin the provider rather than leaning on "the default config is
+        // disabled": _getLlmCfg() layers the operator's live config over
+        // LLM_DEFAULTS, so on a machine with an Ollama provider configured
+        // this used to issue a real inference call. Env wins over config.
+        process.env.TGDL_LLM_PROVIDER = 'disabled';
+        llm.resetLlmProvider();
+        // Any network call here is a bug — fail loudly instead of hanging.
+        const fetchSpy = vi
+            .spyOn(globalThis, 'fetch')
+            .mockRejectedValue(new Error('unexpected network call'));
+
         const result = await llm.generate({ prompt: 'test' });
-        // Default config has provider: 'disabled'
-        if (result.unavailable) {
-            expect(result.code).toBe('LLM_DISABLED');
-        }
+
+        expect(result.unavailable).toBe(true);
+        expect(result.code).toBe('LLM_DISABLED');
+        expect(fetchSpy).not.toHaveBeenCalled();
+
+        delete process.env.TGDL_LLM_PROVIDER;
+        llm.resetLlmProvider();
     });
 
     it('generate() returns structured code from probe failure', async () => {
@@ -905,21 +916,37 @@ describe('LLM Facade (index.js)', () => {
         llm.resetLlmProvider();
     });
 
-    it('chat() returns structured code when unavailable', { timeout: 15_000 }, async () => {
+    it('chat() returns structured code when unavailable', async () => {
+        process.env.TGDL_LLM_PROVIDER = 'disabled';
         llm.resetLlmProvider();
+        const fetchSpy = vi
+            .spyOn(globalThis, 'fetch')
+            .mockRejectedValue(new Error('unexpected network call'));
+
         const result = await llm.chat({ messages: [{ role: 'user', content: 'hi' }] });
-        if (result.unavailable) {
-            expect(typeof result.code).toBe('string');
-            expect(result.code.startsWith('LLM_')).toBe(true);
-        }
+
+        expect(result.unavailable).toBe(true);
+        expect(result.code).toBe('LLM_DISABLED');
+        expect(fetchSpy).not.toHaveBeenCalled();
+
+        delete process.env.TGDL_LLM_PROVIDER;
+        llm.resetLlmProvider();
     });
 
-    it('embed() returns structured code when unavailable', { timeout: 15_000 }, async () => {
+    it('embed() returns structured code when unavailable', async () => {
+        process.env.TGDL_LLM_PROVIDER = 'disabled';
         llm.resetLlmProvider();
+        const fetchSpy = vi
+            .spyOn(globalThis, 'fetch')
+            .mockRejectedValue(new Error('unexpected network call'));
+
         const result = await llm.embed({ texts: 'test' });
-        if (result.unavailable) {
-            expect(typeof result.code).toBe('string');
-            expect(result.code.startsWith('LLM_')).toBe(true);
-        }
+
+        expect(result.unavailable).toBe(true);
+        expect(result.code).toBe('LLM_DISABLED');
+        expect(fetchSpy).not.toHaveBeenCalled();
+
+        delete process.env.TGDL_LLM_PROVIDER;
+        llm.resetLlmProvider();
     });
 });
