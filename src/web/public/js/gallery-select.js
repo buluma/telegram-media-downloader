@@ -184,10 +184,14 @@ export function setupGallerySelect(hooks = {}) {
                 // by pointermove (above DRAG_THRESHOLD) or pointerup.
                 const tile = ev.target.closest('.media-item[data-path]');
                 if (tile) {
+                    // Clear any stale timer BEFORE arming this one —
+                    // _cancelLongPress() also nulls _longPressTile, so
+                    // running it after the assignment left the timer
+                    // callback with nothing to promote.
+                    _cancelLongPress();
                     _longPressTile = tile;
                     _longPressStartX = ev.clientX;
                     _longPressStartY = ev.clientY;
-                    _cancelLongPress();
                     _longPressTimer = setTimeout(() => {
                         _longPressTimer = 0;
                         if (!_longPressTile) return;
@@ -396,6 +400,11 @@ export function setupGallerySelect(hooks = {}) {
                 e.stopPropagation();
             };
             window.addEventListener('click', swallow, { capture: true, once: true });
+            // The synthetic click lands in the same task as pointerup, so one
+            // task is all the listener ever needs. Drop it afterwards: a drag
+            // released over empty space produces no click, and a listener left
+            // armed would swallow whatever the user clicks next instead.
+            setTimeout(() => window.removeEventListener('click', swallow, { capture: true }), 0);
         }
     };
     window.addEventListener('pointerup', (ev) => {
