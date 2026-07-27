@@ -43,6 +43,7 @@
         "docker:prune:safe": "bash scripts/docker-safe-prune.sh",
         "build:css": "tailwindcss -i ./src/web/public/input.css -o ./src/web/public/index.css --minify",
         "test": "vitest run",
+        "test:coverage": "vitest run --coverage",
         "test:watch": "vitest",
         "prepare": "lefthook install || exit 0"
     },
@@ -102,6 +103,8 @@
     },
     "devDependencies": {
         "@biomejs/biome": "^2.5.1",
+        "@vitest/coverage-v8": "^4.1.10",
+        "jsdom": "^29.1.1",
         "lefthook": "^2.1.9",
         "tailwindcss": "^4.3.2",
         "vitest": "^4.1.6"
