@@ -59,7 +59,13 @@ import { swallow } from '../util/swallow.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..', '..');
-const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
+// `TGDL_DATA_DIR` overrides the on-disk data root — mirrors core/db.js. Every
+// row the three scans touch is resolved under this root, so pointing it at
+// the wrong tree makes each file read as missing: OCR writes empty text, WD14
+// marks the row skipped, and both stamp the row so it is never retried.
+const DATA_DIR = process.env.TGDL_DATA_DIR
+    ? path.resolve(process.env.TGDL_DATA_DIR)
+    : path.resolve(PROJECT_ROOT, 'data');
 
 // Float32Array <-> Buffer helpers. Previously came from vector-store.js
 // (deleted with Search/Tags); inlined because clustering is now the only
