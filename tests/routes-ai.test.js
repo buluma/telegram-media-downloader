@@ -128,6 +128,7 @@ let server;
 let port;
 let broadcasts;
 let jobTrackers;
+let logs;
 
 function apiUrl(p) {
     return `http://127.0.0.1:${port}${p}`;
@@ -191,6 +192,7 @@ beforeAll(async () => {
     const { createAiRouter } = await import('../src/web/routes/ai.js');
     broadcasts = [];
     const broadcast = (m) => broadcasts.push(m);
+    logs = [];
     jobTrackers = {};
     for (const kind of ['aiPeople', 'aiOcr', 'aiWd14', 'aiTags', 'aiIndex']) {
         jobTrackers[kind] = createJobTracker({ kind, broadcast });
@@ -198,7 +200,7 @@ beforeAll(async () => {
 
     app = express();
     app.use(express.json());
-    app.use('/api', createAiRouter({ broadcast, log: () => {}, jobTrackers }));
+    app.use('/api', createAiRouter({ broadcast, log: (m) => logs.push(m), jobTrackers }));
     await new Promise((res) => {
         server = app.listen(0, '127.0.0.1', () => {
             port = server.address().port;
@@ -248,6 +250,7 @@ beforeEach(async () => {
         }
     }
     broadcasts.length = 0;
+    logs.length = 0;
     vi.clearAllMocks();
     aiIndexApi.isScanRunning.mockReturnValue(false);
     aiIndexApi.getScanState.mockImplementation((feature) => ({
@@ -606,6 +609,45 @@ describe('LLM endpoints', () => {
         const { status, body } = await get('/api/ai/llm/status');
         expect(status).toBe(200);
         expect(body.providers).toBeDefined();
+    });
+
+    // Slow cached routes report their latency. It's info, not warn: warns go
+    // to the header notification bell, and a routine 12s doctor/llm-status
+    // probe filling the bell buries anything that actually needs attention.
+    describe('slow-route logging', () => {
+        function withFakeElapsed(ms, fn) {
+            const real = Date.now;
+            let elapsed = 0;
+            vi.spyOn(Date, 'now').mockImplementation(() => real() + elapsed);
+            llmApi.probeProviders.mockImplementationOnce(async () => {
+                elapsed = ms;
+                return { ollama: { ok: true } };
+            });
+            return fn().finally(() => {
+                Date.now = real;
+            });
+        }
+
+        it('says nothing for a producer under the threshold', async () => {
+            await withFakeElapsed(9000, async () => {
+                const { status } = await get('/api/ai/llm/status');
+                expect(status).toBe(200);
+            });
+            expect(logs.filter((l) => l.source === 'ai-route')).toEqual([]);
+        });
+
+        it('logs at info — not warn — once a producer runs long', async () => {
+            await withFakeElapsed(20000, async () => {
+                const { status } = await get('/api/ai/llm/status');
+                expect(status).toBe(200);
+            });
+            const slow = logs.filter((l) => l.source === 'ai-route');
+            expect(slow).toHaveLength(1);
+            expect(slow[0].level).toBe('info');
+            // The real clock still ticks under the offset, so the reported
+            // figure is 20000ms plus however long the request actually took.
+            expect(slow[0].msg).toMatch(/^\/api\/ai\/llm\/status generated in 200\d\dms$/);
+        });
     });
 
     it('runs a test prompt', async () => {
