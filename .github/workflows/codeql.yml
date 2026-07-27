@@ -8,6 +8,13 @@ on:
   schedule:
     - cron: '17 5 * * 1'  # Mondays 05:17 UTC
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Only cancel superseded PR runs. A push to main and the Monday cron share
+  # refs/heads/main, and cancelling those would leave the Security tab holding
+  # results from whichever scan happened to survive.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   actions: read
   contents: read
