@@ -288,6 +288,22 @@ export function initShortcuts() {
         }
         if (viewerOpen) return;
 
+        // Chord completion has to be checked before EVERY standalone
+        // single-key binding whose letter also completes a `g <letter>`
+        // chord (currently just 's': toggle_select vs. go_settings). Both
+        // are real, distinct shortcuts ("s" alone vs. "g" then "s"), and
+        // the two keydown events involved are otherwise indistinguishable
+        // — checking the standalone binding first meant a pending chord
+        // was silently overridden and "g s" (go_settings) could never
+        // fire; it always toggled select mode instead. Same reasoning
+        // applies to 'g' itself completing "g g" (go_chats), which is why
+        // this also sits ahead of the "start a new chord" check below.
+        if (Date.now() - lastG < 800 && /^[a-z]$/i.test(e.key)) {
+            lastG = 0;
+            dispatchG(e.key.toLowerCase());
+            return;
+        }
+
         if (e.key === '/') {
             e.preventDefault();
             document.getElementById('sidebar-groups-search')?.focus();
@@ -303,11 +319,6 @@ export function initShortcuts() {
         }
         if (e.key === 'g' || e.key === 'G') {
             lastG = Date.now();
-            return;
-        }
-        if (Date.now() - lastG < 800 && /^[a-z]$/i.test(e.key)) {
-            lastG = 0;
-            dispatchG(e.key.toLowerCase());
         }
     });
 }
