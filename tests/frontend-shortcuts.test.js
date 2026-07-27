@@ -307,6 +307,43 @@ describe('g <letter> chord navigation', () => {
         expect(() => press(handler, 'v')).not.toThrow();
     });
 
+    // An abandoned chord must not eat the next single-key binding. The guard
+    // used to swallow ANY [a-z] within the 800ms window, so "g" followed by a
+    // change of mind and "l" hit dispatchG('l') — which maps nothing — and
+    // returned, dropping the paste-URL binding on the floor.
+    it('lets a non-chord letter fall through to its own binding', async () => {
+        const { handler } = await boot();
+        window.navigateTo = vi.fn();
+        const btn = document.createElement('button');
+        btn.id = 'paste-url-btn';
+        const clicked = vi.fn();
+        btn.addEventListener('click', clicked);
+        document.body.appendChild(btn);
+
+        press(handler, 'g');
+        press(handler, 'l');
+
+        expect(window.navigateTo).not.toHaveBeenCalled();
+        expect(clicked).toHaveBeenCalledTimes(1);
+    });
+
+    it('an abandoned chord does not linger — the next s toggles select mode', async () => {
+        const { handler } = await boot();
+        window.navigateTo = vi.fn();
+        const btn = document.createElement('button');
+        btn.id = 'select-mode-btn';
+        const clicked = vi.fn();
+        btn.addEventListener('click', clicked);
+        document.body.appendChild(btn);
+
+        press(handler, 'g');
+        press(handler, 'z'); // unmapped letter aborts the chord
+        press(handler, 's'); // must be the standalone binding, not go_settings
+
+        expect(window.navigateTo).not.toHaveBeenCalled();
+        expect(clicked).toHaveBeenCalledTimes(1);
+    });
+
     it('only fires once per chord, consuming the buffered g', async () => {
         const { handler } = await boot();
         window.navigateTo = vi.fn();

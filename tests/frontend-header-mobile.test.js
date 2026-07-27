@@ -210,6 +210,39 @@ describe('notification bell', () => {
         expect(localStorage.getItem('tgdl-notify-unread')).toBe('0');
     });
 
+    // Clear has to beat the debounce window too. _renderNotifyList() prefers
+    // the in-memory _pendingBuf, and the pending flush writes it to disk 100ms
+    // later — so a clear that only touched localStorage left the list rendering
+    // the stale buffer and then had the flush put the cleared entries back.
+    it('clear beats a pending flush: list stays empty and nothing is written back', async () => {
+        vi.useFakeTimers();
+        try {
+            const { initHeaderMobile, pushLogToNotify } = await loadModule();
+            initHeaderMobile();
+            $('notify-bell-btn').click(); // open, so renders live
+
+            pushLogToNotify({ level: 'warn', source: 'monitor', msg: 'pending entry' });
+            expect($('notify-list').querySelectorAll('.notify-row')).toHaveLength(1);
+
+            // Clear inside the 100ms debounce window.
+            $('notify-clear-btn').click();
+            expect($('notify-list').innerHTML).toBe('');
+            expect($('notify-empty').classList.contains('hidden')).toBe(false);
+
+            // Flush fires — must not resurrect the cleared entry or the badge.
+            vi.advanceTimersByTime(200);
+            expect(localStorage.getItem('tgdl-notify-buffer')).toBe('[]');
+            expect(localStorage.getItem('tgdl-notify-unread')).toBe('0');
+
+            // And a re-render still sees nothing.
+            $('notify-bell-btn').click();
+            $('notify-bell-btn').click();
+            expect($('notify-list').querySelectorAll('.notify-row')).toHaveLength(0);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('renders buffered entries newest-first with icon, source and escaped message', async () => {
         localStorage.setItem(
             'tgdl-notify-buffer',

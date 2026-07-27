@@ -123,11 +123,14 @@ describe('gallery-select', () => {
 
     beforeEach(async () => {
         vi.useRealTimers();
-        // A committed drag arms a one-shot click swallower that unbinds
-        // itself on the next macrotask. Vitest only awaits microtasks
-        // between tests, so yield a real task here — otherwise a drag at
-        // the end of one test eats the first click of the next.
+        // A committed drag arms a click swallower that stays live for
+        // TRAILING_CLICK_MS (touch fires its click well after pointerup).
+        // Waiting that out would cost 350ms per test, so consume it instead:
+        // the swallower unbinds itself on the first click it sees, and one
+        // dispatched straight at `window` reaches the capture listener
+        // without touching the grid's own delegated handler.
         await new Promise((r) => setTimeout(r, 0));
+        window.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
         // Leave no in-flight drag / long-press from a previous test.
         pointer('pointerup', window);
         // Module-level `_lastAnchorPath` survives between tests; exitSelectMode
@@ -358,14 +361,26 @@ describe('gallery-select', () => {
             expect([...state.selected]).toEqual(before);
         });
 
-        it('stops swallowing once the trailing click has had its chance', () => {
-            // The browser fires the synthetic click in the same task as
-            // pointerup. When it never arrives — drag released over empty
-            // space — the swallower must not stay armed and eat whatever
-            // the user clicks next.
+        it('swallows a trailing click the browser delayed (touch click-delay)', () => {
+            // On touch the click follows touchend, not pointerup, and can
+            // trail it by up to ~300ms. A swallower disarmed on the next
+            // macrotask loses that race and the release tile gets toggled.
             vi.useFakeTimers();
             drag([10, 10], [150, 90]);
-            vi.advanceTimersByTime(0);
+            const before = [...state.selected];
+            vi.advanceTimersByTime(250);
+            click(tileFor('b.jpg'));
+            vi.useRealTimers();
+            expect([...state.selected]).toEqual(before);
+        });
+
+        it('stops swallowing once the trailing click has had its chance', () => {
+            // When the click never arrives — drag released over empty space
+            // — the swallower must not stay armed past its window and eat
+            // whatever the user clicks next.
+            vi.useFakeTimers();
+            drag([10, 10], [150, 90]);
+            vi.advanceTimersByTime(1000);
             vi.useRealTimers();
 
             state.selectMode = true;

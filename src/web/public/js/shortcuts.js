@@ -197,9 +197,12 @@ function isTyping(e) {
     return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t.isContentEditable;
 }
 
+// The letters that complete a `g <letter>` chord. Shared with the keydown
+// dispatcher so it only swallows a key the chord can actually consume.
+const G_TARGETS = { v: 'viewer', g: 'groups', e: 'engine', s: 'settings' };
+
 function dispatchG(letter) {
-    const map = { v: 'viewer', g: 'groups', e: 'engine', s: 'settings' };
-    const target = map[letter];
+    const target = G_TARGETS[letter];
     if (target && typeof window.navigateTo === 'function') window.navigateTo(target);
 }
 
@@ -298,10 +301,19 @@ export function initShortcuts() {
         // fire; it always toggled select mode instead. Same reasoning
         // applies to 'g' itself completing "g g" (go_chats), which is why
         // this also sits ahead of the "start a new chord" check below.
+        //
+        // Only letters the chord can actually complete are consumed. A
+        // pending chord followed by any other letter (user changed their
+        // mind) just cancels the chord and falls through, so that letter
+        // still gets its own binding — swallowing every [a-z] here meant
+        // "g" then "l" silently dropped paste-URL.
         if (Date.now() - lastG < 800 && /^[a-z]$/i.test(e.key)) {
+            const letter = e.key.toLowerCase();
             lastG = 0;
-            dispatchG(e.key.toLowerCase());
-            return;
+            if (letter in G_TARGETS) {
+                dispatchG(letter);
+                return;
+            }
         }
 
         if (e.key === '/') {

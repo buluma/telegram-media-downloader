@@ -17,6 +17,11 @@
 
 import { state } from './store.js';
 
+// How long after a committed drag a trailing synthetic click still counts as
+// belonging to that drag. Covers the touch click-delay (~300ms) with a little
+// headroom; a real second tap can't land inside it.
+const TRAILING_CLICK_MS = 350;
+
 let _wired = false;
 let _lastAnchorPath = null; // last single-toggle target — pivot for shift+click ranges
 let _hooks = {}; // captured at setup; reused by selectAllVisible
@@ -395,16 +400,24 @@ export function setupGallerySelect(hooks = {}) {
         // Suppress the trailing click after a real drag so it doesn't
         // toggle the tile we released over.
         if (wasReal) {
+            // With a mouse the synthetic click lands in the same task as
+            // pointerup; on touch it follows touchend and can trail pointerup
+            // by up to ~300ms. So the listener has to outlive the current
+            // task — but not indefinitely: a drag released over empty space
+            // produces no click at all, and a listener left armed would
+            // swallow whatever the user clicks next instead. Hence a window,
+            // enforced both by the timer and by a timestamp check (a click
+            // queued before the timer fires must not sneak through late).
+            const armedAt = Date.now();
+            const disarm = () => window.removeEventListener('click', swallow, { capture: true });
             const swallow = (e) => {
+                disarm();
+                if (Date.now() - armedAt > TRAILING_CLICK_MS) return;
                 e.preventDefault();
                 e.stopPropagation();
             };
-            window.addEventListener('click', swallow, { capture: true, once: true });
-            // The synthetic click lands in the same task as pointerup, so one
-            // task is all the listener ever needs. Drop it afterwards: a drag
-            // released over empty space produces no click, and a listener left
-            // armed would swallow whatever the user clicks next instead.
-            setTimeout(() => window.removeEventListener('click', swallow, { capture: true }), 0);
+            window.addEventListener('click', swallow, { capture: true });
+            setTimeout(disarm, TRAILING_CLICK_MS);
         }
     };
     window.addEventListener('pointerup', (ev) => {

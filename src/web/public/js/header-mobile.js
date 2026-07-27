@@ -197,6 +197,12 @@ function setupNotifyBell() {
 
     document.getElementById('notify-clear-btn')?.addEventListener('click', (e) => {
         e.stopPropagation();
+        // Drop the in-flight debounce state as well as the persisted copy.
+        // _renderNotifyList() prefers _pendingBuf, and a pending flush would
+        // write it (and the unread delta) straight back after the clear.
+        // Empty array, not null: null falls through to _readBuffer().
+        _pendingBuf = [];
+        _pendingUnreadDelta = 0;
         _writeBuffer([]);
         _writeUnread(0);
         _setBadge(0);
