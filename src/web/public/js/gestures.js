@@ -129,10 +129,16 @@ export function attachPullToRefresh(container, { onRefresh, threshold = 70 }) {
         if (dy > threshold) {
             indicator.innerHTML = '<i class="ri-loader-4-line ri-spin"></i>&nbsp;Refreshing…';
             indicator.style.height = '40px';
-            Promise.resolve(onRefresh?.()).finally(() => {
-                indicator.innerHTML = '<i class="ri-arrow-down-line"></i>&nbsp;Pull to refresh';
-                indicator.style.height = '0';
-            });
+            Promise.resolve(onRefresh?.())
+                // `finally` alone re-throws, so a rejecting refresh (a failed
+                // fetch — i.e. the case you pull-to-refresh for) escaped as an
+                // unhandled rejection. Reporting the failure is the caller's
+                // job; here we only need the indicator to come back.
+                .catch(() => {})
+                .finally(() => {
+                    indicator.innerHTML = '<i class="ri-arrow-down-line"></i>&nbsp;Pull to refresh';
+                    indicator.style.height = '0';
+                });
         } else {
             indicator.style.height = '0';
         }

@@ -46,7 +46,11 @@ import { swallow } from './util/swallow.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
-const DOWNLOADS_DIR = path.resolve(PROJECT_ROOT, 'data', 'downloads');
+// `TGDL_DATA_DIR` overrides the on-disk data root — mirrors core/db.js so
+// the optimiser rewrites the files the downloader actually wrote.
+export const DOWNLOADS_DIR = process.env.TGDL_DATA_DIR
+    ? path.resolve(process.env.TGDL_DATA_DIR, 'downloads')
+    : path.resolve(PROJECT_ROOT, 'data', 'downloads');
 
 // Container extensions where +faststart is meaningful. WebM / MKV use
 // their own indexing scheme (Cues atom, not moov) and don't benefit;

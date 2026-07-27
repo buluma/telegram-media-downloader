@@ -1,0 +1,22 @@
+# GitGuardian secret-scanning config.
+#
+# Read by the ggshield CLI — local runs, pre-commit hooks, and any CI job that
+# invokes it. It is NOT read by the GitGuardian GitHub App: that check is
+# server-side VCS monitoring, and its findings are dismissed from the
+# GitGuardian dashboard, not from this file. Both are kept in sync by hand.
+#
+# Scope deliberately narrow. `tests/` is NOT excluded wholesale — a real
+# credential pasted into a fixture is a plausible mistake and blinding the
+# scanner across ~170 test files to silence one false positive is a bad trade.
+# Ignore individual matches by hash instead, and write down why.
+version: 2
+
+secret:
+    ignored_matches:
+        # Fixture password for the guest-password rotation tests in
+        # tests/routes-auth.test.js — passed to POST /api/auth/guest-password
+        # to assert the old guest cookie stops working after a rotation.
+        # Never a real credential; the value only ever exists inside the
+        # test's own isolated SQLite db.
+        - name: 'test fixture: guest password rotation (tests/routes-auth.test.js)'
+          match: febab5be06ea5a75a89ce7c491cead7c7d98954ab33fbc8d404ccb51849cf285

@@ -72,6 +72,9 @@ import {
     hasFfmpeg,
 } from '../../core/thumbs.js';
 import { loginVerify, isAuthConfigured, revokeAllSessions } from '../../core/web-auth.js';
+import { sessionCookieOpts } from './auth.js';
+import { SecureSession } from '../../core/security.js';
+import { getOrGenerateSecret } from '../../core/secret.js';
 import {
     getScanState as nsfwGetScanState,
     classifierReady as nsfwClassifierReady,
@@ -88,7 +91,25 @@ import { swallow } from '../../core/util/swallow.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const DATA_DIR = path.join(__dirname, '../../../data');
+// `TGDL_DATA_DIR` overrides the on-disk data root — mirrors core/db.js so
+// tests (and Docker/multi-instance deploys) can point this at an isolated
+// dir instead of always resolving to the in-repo `data/`.
+const DATA_DIR = process.env.TGDL_DATA_DIR
+    ? path.resolve(process.env.TGDL_DATA_DIR)
+    : path.join(__dirname, '../../../data');
+
+// Independent instance mirroring core/accounts.js's own SecureSession —
+// decrypts data/sessions/<id>.enc for the session-export endpoint below.
+//
+// Built lazily: getOrGenerateSecret() creates DATA_DIR and writes secret.key,
+// which must not happen merely because something imported this router.
+let _secureSessionInstance = null;
+function secureSession() {
+    if (!_secureSessionInstance) {
+        _secureSessionInstance = new SecureSession(getOrGenerateSecret());
+    }
+    return _secureSessionInstance;
+}
 
 export function createMaintenanceRouter({
     broadcast,
@@ -97,6 +118,7 @@ export function createMaintenanceRouter({
     getAccountManager,
     resolveEntityAcrossAccounts,
     downloadProfilePhoto,
+    clearEntityCache,
 }) {
     const router = express.Router();
 
@@ -225,7 +247,7 @@ export function createMaintenanceRouter({
         const tracker = jobTrackers.resyncDialogs;
         const r = tracker.tryStart(async ({ onProgress }) => {
             try {
-                entityCache.clear();
+                clearEntityCache?.();
             } catch (e) {
                 swallow(e, 'maintenance');
             }
@@ -2423,7 +2445,7 @@ export function createMaintenanceRouter({
                 return res.status(404).json({ error: 'Session file not found for that account' });
             }
             const encrypted = JSON.parse(raw);
-            const sessionString = _secureSession.decrypt(encrypted);
+            const sessionString = secureSession().decrypt(encrypted);
             res.json({ success: true, accountId, session: sessionString });
         } catch (e) {
             res.status(500).json({ error: e.message });
@@ -2438,7 +2460,7 @@ export function createMaintenanceRouter({
         if (!(await _requirePassword(req, res))) return;
         try {
             revokeAllSessions();
-            res.clearCookie('tg_dl_session', SESSION_COOKIE_OPTS);
+            res.clearCookie('tg_dl_session', sessionCookieOpts(req));
             broadcast({ type: 'sessions_revoked' });
             res.json({ success: true });
         } catch (e) {

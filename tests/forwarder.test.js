@@ -210,15 +210,22 @@ describe('AutoForwarder.resolveDestination — storage channel discovery', () =>
 });
 
 describe('AutoForwarder.process — 60-second delete grace period', () => {
-    it('delays deferDelete by 60s after a successful forward', { timeout: 15_000 }, async () => {
+    it('delays deferDelete by 60s after a successful forward', async () => {
         // Dynamic imports before fake timers — vitest + fake-timers can
         // deadlock when import() is called inside a mocked timer context.
         const deleteQueue = await import('../src/core/delete-queue.js');
         const dbModule = await import('../src/core/db.js');
 
-        vi.useFakeTimers();
+        // Real filesystem work happens BEFORE the clock is faked. process()
+        // also awaits a real fs.access (forwarder.js), whose callback lands
+        // from libuv — see waitForGraceTimer below for why that matters.
         const tmpFile = path.join(os.tmpdir(), `fwd-grace-${Date.now()}.jpg`);
         await fs.writeFile(tmpFile, 'data');
+
+        // Narrow `toFake`: the default also fakes setImmediate, which would
+        // leave this test no way to yield a real macrotask — and a pending
+        // libuv fs callback can only land on one.
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
 
         // Stub deferDelete so the test doesn't touch the real filesystem.
         const deleteSpy = vi.spyOn(deleteQueue, 'deferDelete').mockResolvedValue(undefined);
@@ -256,12 +263,30 @@ describe('AutoForwarder.process — 60-second delete grace period', () => {
             deduped: false,
         });
 
-        // Give the sendFile mock time to resolve but stay before the 60s delay.
-        await vi.advanceTimersByTimeAsync(100);
+        // Wait until the grace timer actually exists before touching the
+        // clock. Advancing on a fixed guess is a race: process() parks on a
+        // real fs.access first, and if that callback has not landed yet the
+        // 60s timer is scheduled *after* the advance, so it never fires and
+        // the await below hangs until the test times out. That is the flake
+        // this loop removes — it only ever showed up under full-suite load,
+        // when a busy thread pool delays the fs callback.
+        const waitForGraceTimer = async () => {
+            for (let i = 0; i < 500; i++) {
+                if (vi.getTimerCount() > 0) return;
+                await new Promise((r) => setImmediate(r));
+            }
+            throw new Error('the 60s grace timer was never scheduled');
+        };
+        await waitForGraceTimer();
+
+        // Scheduled but not yet elapsed: the delete must still be pending.
         expect(deleteSpy).not.toHaveBeenCalled();
 
-        // Advance past the grace period — deferDelete should now fire.
-        await vi.advanceTimersByTimeAsync(60_000);
+        // Straddle the boundary so the assertion pins the grace period at
+        // 60s, not merely "some delay happened".
+        await vi.advanceTimersByTimeAsync(59_999);
+        expect(deleteSpy).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
         await processPromise;
 
         expect(deleteSpy).toHaveBeenCalledWith(tmpFile);

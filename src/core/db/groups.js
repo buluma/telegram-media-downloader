@@ -109,6 +109,11 @@ function _upsertGroupTx(db, group) {
         'forwardAccount',
         'backupPeerId',
         'failoverAt',
+        'rescueRetentionHours',
+        'backfillSchedule',
+        'backfillLimit',
+        '_resolveFailedAt',
+        '_resolveFailedReason',
     ];
     const meta = {};
     for (const k of metaKeys) {

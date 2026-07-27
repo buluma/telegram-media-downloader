@@ -956,8 +956,18 @@ export function loadConfig() {
             // Fresh install — seed the row with defaults so subsequent reads
             // are stable and the operator can edit through the dashboard
             // without ever needing a config file on disk.
-            kvSet(KV_KEY, DEFAULT_CONFIG);
-            return DEFAULT_CONFIG;
+            //
+            // Return a clone, not the DEFAULT_CONFIG reference itself: every
+            // first-run setup flow (POST /api/auth/setup, etc.) mutates the
+            // object it gets back from loadConfig() in place before saving.
+            // Handing out the shared singleton let that mutation corrupt
+            // DEFAULT_CONFIG for the rest of the process — a later fresh
+            // install (e.g. after a failed save left the kv row absent)
+            // would then see stale fields (like a stray `web.passwordHash`)
+            // that were never actually persisted anywhere.
+            const fresh = structuredClone(DEFAULT_CONFIG);
+            kvSet(KV_KEY, fresh);
+            return fresh;
         }
 
         const config = mergeConfig(stored);
@@ -987,7 +997,11 @@ export function loadConfig() {
         return config;
     } catch (error) {
         console.error('Config error:', error.message);
-        return DEFAULT_CONFIG;
+        // Clone for the same reason the fresh-install branch above does:
+        // callers mutate what loadConfig() returns, and a kv read that throws
+        // (locked / corrupt db) must not let that mutation land on the shared
+        // DEFAULT_CONFIG.
+        return structuredClone(DEFAULT_CONFIG);
     }
 }
 

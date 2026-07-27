@@ -118,7 +118,11 @@ function _renderNotifyList() {
     const list = document.getElementById('notify-list');
     const empty = document.getElementById('notify-empty');
     if (!list) return;
-    const buf = _readBuffer();
+    // Disk writes are debounced (_scheduleFlush), so a message pushed while
+    // the bell is open would otherwise render one flush cycle stale — the
+    // live-update call at the end of pushLogToNotify() would be a no-op.
+    // Prefer the in-memory buffer whenever a flush is pending.
+    const buf = _pendingBuf || _readBuffer();
     if (!buf.length) {
         list.innerHTML = '';
         if (empty) empty.classList.remove('hidden');
@@ -193,6 +197,12 @@ function setupNotifyBell() {
 
     document.getElementById('notify-clear-btn')?.addEventListener('click', (e) => {
         e.stopPropagation();
+        // Drop the in-flight debounce state as well as the persisted copy.
+        // _renderNotifyList() prefers _pendingBuf, and a pending flush would
+        // write it (and the unread delta) straight back after the clear.
+        // Empty array, not null: null falls through to _readBuffer().
+        _pendingBuf = [];
+        _pendingUnreadDelta = 0;
         _writeBuffer([]);
         _writeUnread(0);
         _setBadge(0);

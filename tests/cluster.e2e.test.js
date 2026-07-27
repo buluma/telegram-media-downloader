@@ -141,10 +141,13 @@ describe.skipIf(SKIP)('cluster e2e — two real instances', () => {
         expect(B.child.exitCode).toBeNull();
     }, 60_000);
 
+    // Explicit timeout, like the signed probe below: these are the first
+    // requests to hit instance B after boot, and on a cold CI runner it is
+    // not always serving within vitest's 5s default.
     it('rejects unsigned health probe with 401', async () => {
         const r = await fetch(`http://127.0.0.1:${PORT_B}/api/cluster/health`);
         expect(r.status).toBe(401);
-    });
+    }, 30_000);
 
     it('rejects bad signature with 401', async () => {
         const ts = Date.now();
@@ -156,7 +159,7 @@ describe.skipIf(SKIP)('cluster e2e — two real instances', () => {
             },
         });
         expect(r.status).toBe(401);
-    });
+    }, 30_000);
 
     it('signed health probe succeeds', async () => {
         const ts = Date.now();

@@ -4,7 +4,12 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const DOWNLOADS_DIR = path.join(__dirname, '../../../data/downloads');
+// `TGDL_DATA_DIR` overrides the on-disk data root — mirrors core/db.js so
+// tests (and Docker/multi-instance deploys) can point this at an isolated
+// dir instead of always resolving to the in-repo `data/`.
+const DOWNLOADS_DIR = process.env.TGDL_DATA_DIR
+    ? path.join(path.resolve(process.env.TGDL_DATA_DIR), 'downloads')
+    : path.join(__dirname, '../../../data/downloads');
 
 export async function safeResolveDownload(userPath) {
     if (typeof userPath !== 'string' || userPath.length === 0)

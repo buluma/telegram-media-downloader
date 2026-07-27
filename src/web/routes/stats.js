@@ -10,7 +10,12 @@ import { formatBytes } from '../lib/format.js';
 import { swallow } from '../../core/util/swallow.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = path.join(__dirname, '../../../data');
+// `TGDL_DATA_DIR` overrides the on-disk data root — mirrors core/db.js so
+// tests (and Docker/multi-instance deploys) can point this at an isolated
+// dir instead of always resolving to the in-repo `data/`.
+const DATA_DIR = process.env.TGDL_DATA_DIR
+    ? path.resolve(process.env.TGDL_DATA_DIR)
+    : path.join(__dirname, '../../../data');
 const DOWNLOADS_DIR = path.join(DATA_DIR, 'downloads');
 
 const STATS_CACHE_TTL_MS = 2000;

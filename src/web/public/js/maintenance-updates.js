@@ -152,14 +152,21 @@ function _renderRows(rows) {
     return `<table class="w-full text-sm">${head}<tbody>${body}</tbody></table>`;
 }
 
+// Cache the last-seen history array so _refreshStatus() can repaint the
+// stats tile too — see the comment inside _refreshStatus() for why that
+// matters.
+let _lastHistory = [];
+
 async function _refresh() {
     const list = $('updates-history-list');
     if (!list) return;
     try {
         const r = await api.get('/api/update/history?limit=25');
-        list.innerHTML = _renderRows(r?.history || []);
-        _renderStats(r?.history || []);
+        _lastHistory = r?.history || [];
+        list.innerHTML = _renderRows(_lastHistory);
+        _renderStats(_lastHistory);
     } catch (e) {
+        _lastHistory = [];
         list.innerHTML = `<div class="text-center py-8 text-sm text-tg-red">${e?.message || 'Failed to load update history'}</div>`;
         _renderStats([]);
     }
@@ -178,7 +185,10 @@ async function _refreshStatus() {
             /* keep last */
         }
         const card = $('updates-status-card');
-        if (!card) return;
+        if (!card) {
+            _renderStats(_lastHistory);
+            return;
+        }
         const triggerBtn = $('updates-trigger-btn');
         if (s.available) {
             // Try to fetch the latest version so the button reads
@@ -205,6 +215,16 @@ async function _refreshStatus() {
                 triggerBtn.innerHTML = `<i class="ri-information-line"></i><span>${i18nT('update.install_disabled', 'Install (unavailable)')}</span>`;
             }
         }
+        // init() runs this alongside _refresh() via Promise.all. _refresh()
+        // needs one await (history) before it paints the stats tile from
+        // whatever `_state` holds at that moment; this function needs up to
+        // three sequential awaits (status, version, then version/check)
+        // before `_state.current`/`_state.available`/`_state.latest` are
+        // all actually set. _refresh()'s single render call almost always
+        // wins that race, so without this repaint the stats tile stayed
+        // stuck at its stale/initial values forever on a cold load —
+        // nothing else ever re-paints it once _refresh() has already run.
+        _renderStats(_lastHistory);
     } catch {
         /* status endpoint unreachable — keep last known state */
     }

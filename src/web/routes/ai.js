@@ -9,7 +9,12 @@ import { resolveClipModelId, getTgdlMlUrl, isTgdlMlEnabled } from '../../core/ai
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..', '..');
-const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
+// `TGDL_DATA_DIR` overrides the on-disk data root — mirrors core/db.js so
+// tests (and Docker/multi-instance deploys) can point this at an isolated
+// dir instead of always resolving to the in-repo `data/`.
+const DATA_DIR = process.env.TGDL_DATA_DIR
+    ? path.resolve(process.env.TGDL_DATA_DIR)
+    : path.resolve(PROJECT_ROOT, 'data');
 import { getDb } from '../../core/db.js';
 import {
     startFacesScan as aiStartFacesScan,
@@ -136,7 +141,14 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
     const _AI_ROUTE_CACHE = new Map();
     const _AI_ROUTE_CACHE_MAX = 200;
     const _AI_ROUTE_INFLIGHT = new Map();
-    const _AI_ROUTE_SLOW_WARN_MS = 5000;
+    // Slow-route logging. Info, not warn: these lines report latency, not a
+    // failure, and every warn lands in the header notification bell — routine
+    // slowness there buries the entries that actually need attention. The
+    // threshold sits above the observed steady-state cost of the heaviest
+    // producers (doctor's sidecar + python probes, the LLM provider probes,
+    // each of which can legitimately spend seconds) so a line means "slower
+    // than this box's normal", not "an AI route ran".
+    const _AI_ROUTE_SLOW_LOG_MS = 15000;
     // Config edits change what several cached routes report (LLM provider
     // status, configured CLIP model, faces knobs) — drop everything so the
     // page reflects a save immediately instead of after the TTL.
@@ -163,10 +175,10 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
                 }
                 _AI_ROUTE_CACHE.set(key, { ts: Date.now(), data });
                 const elapsed = Date.now() - start;
-                if (elapsed > _AI_ROUTE_SLOW_WARN_MS) {
+                if (elapsed > _AI_ROUTE_SLOW_LOG_MS) {
                     log({
                         source: 'ai-route',
-                        level: 'warn',
+                        level: 'info',
                         msg: `${key} generated in ${elapsed}ms`,
                     });
                 }
@@ -611,10 +623,10 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         };
         _AI_ISSUES_CACHE.set(full ? 'full' : 'quick', { ts: now, data });
         const elapsed = Date.now() - start;
-        if (elapsed > _AI_ROUTE_SLOW_WARN_MS) {
+        if (elapsed > _AI_ROUTE_SLOW_LOG_MS) {
             log({
                 source: 'ai-route',
-                level: 'warn',
+                level: 'info',
                 msg: `/api/ai/issues generated in ${elapsed}ms (mode=${data.mode}, rows=${scannedRows}, issues=${issues.length})`,
             });
         }

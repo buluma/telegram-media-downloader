@@ -51,8 +51,13 @@ import { swallow } from './util/swallow.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
-const DOWNLOADS_DIR = path.resolve(PROJECT_ROOT, 'data', 'downloads');
-const THUMBS_DIR = path.resolve(PROJECT_ROOT, 'data', 'thumbs');
+// `TGDL_DATA_DIR` overrides the on-disk data root — mirrors core/db.js so
+// thumbs are read from and written beside the media they belong to.
+const DATA_DIR = process.env.TGDL_DATA_DIR
+    ? path.resolve(process.env.TGDL_DATA_DIR)
+    : path.resolve(PROJECT_ROOT, 'data');
+const DOWNLOADS_DIR = path.resolve(DATA_DIR, 'downloads');
+const THUMBS_DIR = path.resolve(DATA_DIR, 'thumbs');
 
 // Resolve the ffmpeg binary lazily and in priority order:
 //   1. FFMPEG_PATH env var (operator override).
