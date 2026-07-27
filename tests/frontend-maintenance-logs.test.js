@@ -155,7 +155,12 @@ describe('init', () => {
 });
 
 describe('ring buffer cap', () => {
-    it('evicts the oldest rendered line once MAX_LINES is exceeded', async () => {
+    it('evicts the oldest rendered line once MAX_LINES is exceeded', {
+        timeout: 20_000,
+    }, async () => {
+        // 1005 DOM inserts + a full re-render is legitimately slow under v8
+        // coverage instrumentation in a full-suite run — the default 5s
+        // budget flakes here under load even though nothing is hung.
         // jsdom's default innerWidth (1024) puts MAX_LINES at 1000.
         const { init } = await loadModule();
         await init();
