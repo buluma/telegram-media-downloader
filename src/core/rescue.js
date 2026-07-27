@@ -22,7 +22,11 @@ import { purgeSeekbarForDownload } from './seekbar/index.js';
 import { swallow } from './util/swallow.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DOWNLOADS_DIR = path.join(__dirname, '../../data/downloads');
+// `TGDL_DATA_DIR` overrides the on-disk data root — mirrors core/db.js so
+// the sweeper walks the same tree the downloader wrote to.
+export const DOWNLOADS_DIR = process.env.TGDL_DATA_DIR
+    ? path.join(path.resolve(process.env.TGDL_DATA_DIR), 'downloads')
+    : path.join(__dirname, '../../data/downloads');
 
 const DEFAULT_SWEEP_MIN = 10;
 const MIN_SWEEP_MIN = 1;

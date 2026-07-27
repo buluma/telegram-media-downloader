@@ -4,7 +4,11 @@ import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = path.join(__dirname, '../../data');
+// `TGDL_DATA_DIR` overrides the on-disk data root — mirrors core/db.js so
+// the key lives beside the database it protects.
+const DATA_DIR = process.env.TGDL_DATA_DIR
+    ? path.resolve(process.env.TGDL_DATA_DIR)
+    : path.join(__dirname, '../../data');
 const SECRET_PATH = path.join(DATA_DIR, 'secret.key');
 
 function ensureDataDir() {

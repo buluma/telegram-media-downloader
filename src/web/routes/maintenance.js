@@ -100,7 +100,16 @@ const DATA_DIR = process.env.TGDL_DATA_DIR
 
 // Independent instance mirroring core/accounts.js's own SecureSession —
 // decrypts data/sessions/<id>.enc for the session-export endpoint below.
-const _secureSession = new SecureSession(getOrGenerateSecret());
+//
+// Built lazily: getOrGenerateSecret() creates DATA_DIR and writes secret.key,
+// which must not happen merely because something imported this router.
+let _secureSessionInstance = null;
+function secureSession() {
+    if (!_secureSessionInstance) {
+        _secureSessionInstance = new SecureSession(getOrGenerateSecret());
+    }
+    return _secureSessionInstance;
+}
 
 export function createMaintenanceRouter({
     broadcast,
@@ -2436,7 +2445,7 @@ export function createMaintenanceRouter({
                 return res.status(404).json({ error: 'Session file not found for that account' });
             }
             const encrypted = JSON.parse(raw);
-            const sessionString = _secureSession.decrypt(encrypted);
+            const sessionString = secureSession().decrypt(encrypted);
             res.json({ success: true, accountId, session: sessionString });
         } catch (e) {
             res.status(500).json({ error: e.message });

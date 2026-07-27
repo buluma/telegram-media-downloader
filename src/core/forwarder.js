@@ -13,7 +13,11 @@ import { deferDelete } from './delete-queue.js';
 import { toPosixPath } from './util/paths.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DOWNLOADS_DIR = path.resolve(__dirname, '../../data/downloads');
+// `TGDL_DATA_DIR` overrides the on-disk data root — mirrors core/db.js so
+// the relative path computed here matches the one stored in `downloads`.
+export const DOWNLOADS_DIR = process.env.TGDL_DATA_DIR
+    ? path.join(path.resolve(process.env.TGDL_DATA_DIR), 'downloads')
+    : path.resolve(__dirname, '../../data/downloads');
 
 export class AutoForwarder {
     constructor(client, config, accountManager = null) {

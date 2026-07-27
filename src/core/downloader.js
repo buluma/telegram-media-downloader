@@ -30,7 +30,11 @@ import { QueueManager } from './download-queue.js';
 import { swallow } from './util/swallow.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = path.join(__dirname, '../../data');
+// `TGDL_DATA_DIR` overrides the on-disk data root — mirrors core/db.js so
+// files land in the same tree safeResolveDownload() will serve them from.
+const DATA_DIR = process.env.TGDL_DATA_DIR
+    ? path.resolve(process.env.TGDL_DATA_DIR)
+    : path.join(__dirname, '../../data');
 const DOWNLOADS_DIR = path.join(DATA_DIR, 'downloads');
 const LOGS_DIR = path.join(DATA_DIR, 'logs');
 
