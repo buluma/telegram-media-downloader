@@ -21,7 +21,7 @@ import { isLocalRequest } from '../middleware/auth.js';
 // Evaluated at cookie-set time so forceHttps config changes take
 // effect without a restart. Secure when: production env, forceHttps
 // config enabled, or request arrived over TLS (behind a proxy).
-function sessionCookieOpts(req) {
+export function sessionCookieOpts(req) {
     const cfg = readConfigSafe();
     const isSecure =
         process.env.NODE_ENV === 'production' ||

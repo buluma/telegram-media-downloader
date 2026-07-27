@@ -1340,6 +1340,12 @@ const entityCache = new Map();
 const ENTITY_CACHE_TTL_MS = 30 * 60 * 1000;
 const ENTITY_CACHE_MAX = 5000;
 
+// Passed to createMaintenanceRouter so resync-dialogs can force a fresh
+// entity lookup instead of serving up to ENTITY_CACHE_TTL_MS-stale data.
+function clearEntityCache() {
+    entityCache.clear();
+}
+
 /** Walk every loaded account looking for one that can resolve `idStr`. */
 async function resolveEntityAcrossAccounts(idStr) {
     const cached = entityCache.get(idStr);
@@ -1632,6 +1638,7 @@ app.use(
         getAccountManager,
         resolveEntityAcrossAccounts,
         downloadProfilePhoto,
+        clearEntityCache,
     }),
 );
 app.use('/api', createClusterRouter({ broadcast, log }));
