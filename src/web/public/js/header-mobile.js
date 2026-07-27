@@ -118,7 +118,11 @@ function _renderNotifyList() {
     const list = document.getElementById('notify-list');
     const empty = document.getElementById('notify-empty');
     if (!list) return;
-    const buf = _readBuffer();
+    // Disk writes are debounced (_scheduleFlush), so a message pushed while
+    // the bell is open would otherwise render one flush cycle stale — the
+    // live-update call at the end of pushLogToNotify() would be a no-op.
+    // Prefer the in-memory buffer whenever a flush is pending.
+    const buf = _pendingBuf || _readBuffer();
     if (!buf.length) {
         list.innerHTML = '';
         if (empty) empty.classList.remove('hidden');
