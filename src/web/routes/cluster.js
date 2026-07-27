@@ -48,6 +48,8 @@ import { safeResolveDownload } from '../lib/resolve-download.js';
 import { readConfigSafe } from '../lib/config-cache.js';
 import { buildShareUrlPath } from '../../core/share.js';
 import { aggregateEgress, listFailoverLog } from '../../core/db/cluster.js';
+import { getOrCreateThumb } from '../../core/thumbs.js';
+import { createShareLink } from '../../core/db/downloads.js';
 
 let _clusterWsInitialised = false;
 function _ensureClusterWsInit() {
