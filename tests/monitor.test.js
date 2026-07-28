@@ -875,14 +875,16 @@ describe('poll', () => {
         expect(dl.enqueued).toHaveLength(2);
     }, 15_000);
 
-    // The cursor is written per message against the id captured before the
-    // loop, not against a running maximum, so it lands on whichever message
-    // is processed last. That is the newest one only because getMessages
-    // returns newest-first and poll() reverses it. Pinned deliberately: if
-    // Telegram ever returned ascending order the cursor would walk backwards
-    // and every poll would re-handle messages it had already seen.
-    it('depends on the newest-first fetch order for its cursor', async () => {
+    // The cursor must be the high-water mark regardless of the order the
+    // server hands messages back. It used to be written per message against
+    // the id captured before the loop, so it simply landed on whichever
+    // message happened to be processed last — correct only because
+    // getMessages returns newest-first and poll() reverses that. Any change
+    // to the fetch order would have walked the cursor backwards and made
+    // every poll re-handle messages it had already seen.
+    it('advances the cursor to the highest id whatever order they arrive in', async () => {
         const client = {
+            // Deliberately NOT the usual newest-first order.
             getMessages: async () => [photoMsg(11, '1234567890'), photoMsg(12, '1234567890')],
         };
         const { m } = mk(baseConfig(), { client });
@@ -891,7 +893,25 @@ describe('poll', () => {
 
         await m.poll();
 
-        expect(m.lastIds.get(GROUP.id)).toBe(11);
+        expect(m.lastIds.get(GROUP.id)).toBe(12);
+    }, 15_000);
+
+    // Belt and braces: `maxId` is seeded from `lastId`, so the `maxId >
+    // lastId` guard before the write is redundant and removing it does not
+    // fail this test. Kept because it states the intent, and this test still
+    // pins the behaviour that matters — an older batch cannot rewind the
+    // cursor.
+    it('never moves the cursor backwards', async () => {
+        const client = {
+            getMessages: async () => [photoMsg(3, '1234567890'), photoMsg(4, '1234567890')],
+        };
+        const { m } = mk(baseConfig(), { client });
+        m.running = true;
+        m.lastIds = new Map([[GROUP.id, 99]]);
+
+        await m.poll();
+
+        expect(m.lastIds.get(GROUP.id)).toBe(99);
     }, 15_000);
 
     it('skips disabled groups', async () => {

@@ -154,6 +154,11 @@ export class QueueManager extends EventEmitter {
         return removed;
     }
 
+    /**
+     * Re-enqueue a previously-failed job at the FRONT of the high lane so
+     * a manual retry from the Queue page jumps the line. Caller passes the
+     * raw job (the same shape originally handed to `enqueue`).
+     */
     retryJob(job) {
         if (!job || !job.message) return false;
         const key = job.key || `${job.groupId}_${job.message.id}`;

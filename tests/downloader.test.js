@@ -589,12 +589,11 @@ describe('worker pool', () => {
 
 // ---- retry / snapshot / status ------------------------------------------
 
-// NOTE: the live implementation is QueueManager.retryJob (download-queue.js
-// :163). DownloadManager also defines retryJob on its prototype
-// (downloader.js:423-441), but the constructor assigns an own property
-// `this.retryJob = (job) => this.queueManager.retryJob(job)` which shadows it
-// permanently — that prototype copy is unreachable dead code. Mutating it
-// leaves this whole block green; mutating download-queue.js:163 fails it.
+// The live implementation is QueueManager.retryJob (download-queue.js);
+// DownloadManager only forwards to it via an own property assigned in the
+// constructor. A second, unreachable copy used to sit on the prototype here,
+// shadowed by that assignment — mutating it left this whole block green,
+// which is how it was found. Removed; these tests exercise the real one.
 describe('retryJob', () => {
     it('puts the job at the front of the high lane', () => {
         const dm = mk();

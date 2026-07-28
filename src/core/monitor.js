@@ -835,12 +835,20 @@ export class RealtimeMonitor extends EventEmitter {
                 if (messages && messages.length > 0) {
                     messages.reverse();
 
+                    // Track the high-water mark rather than writing the
+                    // cursor per message against the id captured before the
+                    // loop. The old form simply kept whichever message was
+                    // processed last, which is the newest one only because
+                    // getMessages returns newest-first and we reverse it —
+                    // any change to that order silently walked the cursor
+                    // backwards and made every later poll re-handle
+                    // messages it had already seen.
+                    let maxId = lastId;
                     for (const msg of messages) {
                         await this.handleEvent({ message: msg, client: pollClient });
-                        if (msg.id > lastId) {
-                            this.lastIds.set(group.id, msg.id);
-                        }
+                        if (msg.id > maxId) maxId = msg.id;
                     }
+                    if (maxId > lastId) this.lastIds.set(group.id, maxId);
                 }
             } catch (e) {
                 // Silent fail
@@ -862,12 +870,13 @@ export class RealtimeMonitor extends EventEmitter {
                     });
                     if (messages && messages.length > 0) {
                         messages.reverse();
+                        // High-water mark, same reasoning as the main loop.
+                        let maxId = lastId;
                         for (const msg of messages) {
                             await this.handleEvent({ message: msg, client: pollClient });
-                            if (msg.id > lastId) {
-                                this.lastIds.set(lastIdKey, msg.id);
-                            }
+                            if (msg.id > maxId) maxId = msg.id;
                         }
+                        if (maxId > lastId) this.lastIds.set(lastIdKey, maxId);
                     }
                 } catch (e) {
                     // Silent fail
