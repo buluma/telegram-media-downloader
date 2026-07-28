@@ -23,16 +23,35 @@ function deferred() {
         resolve = res;
         reject = rej;
     });
+    // cancelAuth() rejects all three deferreds to unblock client.start(), but
+    // gramJS only ever awaits the one for the step it is currently on. The
+    // other two therefore reject with nobody listening, and Node's default
+    // (--unhandled-rejections=throw since v15) turns that into a process-level
+    // crash whenever a user abandons the add-account wizard. This no-op
+    // handler marks the rejection as observed; real awaiters still receive it,
+    // because .catch() attaches to a derived promise rather than replacing
+    // this one.
+    promise.catch(() => {});
     return { promise, resolve, reject };
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SESSIONS_DIR = path.join(__dirname, '../../data/sessions');
-const SESSION_PASSWORD = getOrGenerateSecret();
+// `TGDL_DATA_DIR` overrides the on-disk data root — mirrors core/db.js so
+// sessions live beside the database that references them.
+const DATA_DIR = process.env.TGDL_DATA_DIR
+    ? path.resolve(process.env.TGDL_DATA_DIR)
+    : path.join(__dirname, '../../data');
+export const SESSIONS_DIR = path.join(DATA_DIR, 'sessions');
 
-// Ensure sessions directory exists
-if (!fs.existsSync(SESSIONS_DIR)) {
-    fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+// Both the directory and the encryption key are created on first use, not at
+// import time. getOrGenerateSecret() writes secret.key, and mkdirSync creates
+// data/sessions — doing either at module scope meant merely importing this
+// file touched the operator's disk, including from every test that pulls in
+// something that transitively imports it.
+function ensureSessionsDir() {
+    if (!fs.existsSync(SESSIONS_DIR)) {
+        fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+    }
 }
 
 /**
@@ -66,7 +85,8 @@ export class AccountManager {
      */
     constructor(config) {
         this.config = config;
-        this.secure = new SecureSession(SESSION_PASSWORD);
+        ensureSessionsDir();
+        this.secure = new SecureSession(getOrGenerateSecret());
         this.clients = new Map(); // accountId -> TelegramClient
         this.metadata = new Map(); // accountId -> { id, name, phone, userId }
         this._authFlows = new Map(); // sessionId -> PhoneAuthFlow (for web wizard)
@@ -224,7 +244,7 @@ export class AccountManager {
      * Migrate single legacy session (data/session.enc) to multi-account format
      */
     async migrateLegacy() {
-        const legacyPath = path.join(__dirname, '../../data/session.enc');
+        const legacyPath = path.join(DATA_DIR, 'session.enc');
 
         // Only migrate if legacy file exists AND no sessions exist yet
         if (!fs.existsSync(legacyPath)) return;

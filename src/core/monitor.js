@@ -16,6 +16,24 @@ import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
 
+/**
+ * Username half of the tracked-user match.
+ *
+ * Both sides have to actually carry a username. A tracked user entered by id
+ * has `u.username === undefined`, and a message from a sender with no public
+ * username has `sender?.username === undefined` — comparing those directly
+ * made every such pair equal, so an id-only whitelist admitted every sender
+ * and an id-only blacklist rejected every sender.
+ *
+ * Deliberately duplicated in core/history.js, which keeps its own copy of the
+ * filter helpers so the backfill path stays independent of this file.
+ */
+function _usernameMatches(u, message) {
+    const want = u?.username;
+    const got = message.sender?.username;
+    return !!want && !!got && want === got;
+}
+
 export class RealtimeMonitor extends EventEmitter {
     constructor(client, downloader, config, accountManager = null) {
         super();
@@ -1157,12 +1175,12 @@ export class RealtimeMonitor extends EventEmitter {
 
         const senderId = String(message.senderId || '');
         const isTracked = (group.trackUsers.users || []).some(
-            (u) => String(u.id) === senderId || u.username === message.sender?.username,
+            (u) => String(u.id) === senderId || _usernameMatches(u, message),
         );
 
         // Also check global tracked users
         const globalTracked = (this.config.globalTrackedUsers || []).some(
-            (u) => String(u.id) === senderId || u.username === message.sender?.username,
+            (u) => String(u.id) === senderId || _usernameMatches(u, message),
         );
 
         const tracked = isTracked || globalTracked;

@@ -59,7 +59,13 @@ import { swallow } from '../util/swallow.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..', '..');
-const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
+// `TGDL_DATA_DIR` overrides the on-disk data root — mirrors core/db.js. Every
+// row the three scans touch is resolved under this root, so pointing it at
+// the wrong tree makes each file read as missing: OCR writes empty text, WD14
+// marks the row skipped, and both stamp the row so it is never retried.
+const DATA_DIR = process.env.TGDL_DATA_DIR
+    ? path.resolve(process.env.TGDL_DATA_DIR)
+    : path.resolve(PROJECT_ROOT, 'data');
 
 // Float32Array <-> Buffer helpers. Previously came from vector-store.js
 // (deleted with Search/Tags); inlined because clustering is now the only
@@ -529,6 +535,14 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
             while (!signal.aborted) {
                 const batch = getUnindexedAiBatch({ fileTypes, limit: batchSize, groupId });
                 if (!batch.length) break;
+                // Rows are only stamped when detection actually ran; a null
+                // result means "service unavailable" and is deliberately left
+                // for a later scan to retry. But the batch query re-selects
+                // exactly those unstamped rows, so a pass that stamps nothing
+                // would re-fetch the same images forever — a hot loop against
+                // a sidecar that is already down. Count the stamps and stop
+                // the pass when none land.
+                let _stampedThisPass = 0;
                 // Partition batch: videos use per-frame single detect, images
                 // use one HTTP round-trip via /detect/batch.
                 const items = batch.map((row) => ({ row, abs: _resolveAbs(row.file_path) }));
@@ -554,12 +568,14 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                 for (const { row } of nullItems) {
                     _statNull++;
                     setAiIndexedAt(row.id);
+                    _stampedThisPass++;
                     state.scanned += 1;
                     bump();
                 }
                 for (const { row } of skipItems) {
                     _statSkip++;
                     setAiIndexedAt(row.id);
+                    _stampedThisPass++;
                     state.scanned += 1;
                     bump();
                 }
@@ -575,6 +591,7 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                         log('warn', `faces scan: video file vanished id=${row.id} ${abs}`);
                         _statNull++;
                         setAiIndexedAt(row.id);
+                        _stampedThisPass++;
                         state.scanned += 1;
                         bump();
                         continue;
@@ -754,6 +771,7 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                     // so the next scan retries when the service recovers.
                     if (!fileStillExists || detected !== null) {
                         _safeSetIndexed(row.id, log);
+                        _stampedThisPass++;
                     }
                     state.scanned += 1;
                     bump();
@@ -767,6 +785,20 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                     );
                     _nextStatLog = state.scanned + 200;
                 }
+                if (_stampedThisPass === 0) {
+                    // Every row in this batch came back unstamped, which only
+                    // happens when detection could not run at all. Re-querying
+                    // returns the same rows, so end the pass and let the next
+                    // scan retry once the service is back.
+                    log(
+                        'warn',
+                        `faces scan: detection unavailable — ${batch.length} row(s) made no progress this pass, stopping (they stay queued for the next scan)`,
+                    );
+                    break;
+                }
+                // Yield between batches so a long phase A cannot starve the
+                // event loop (progress broadcasts, cancel, health probes).
+                await new Promise((r) => setImmediate(r));
             }
 
             // Phase B — DBSCAN over every face embedding. Always re-runs
@@ -1217,7 +1249,16 @@ export function startWd14Scan(cfg, onProgress, onDone, onLog) {
 
 /**
  * Call the Python sidecar's `POST /tag-wd14` for one image.
- * Returns `[{tag, score}, …]` or an empty array on failure.
+ *
+ * Returns `[{tag, score}, …]` — possibly empty, which is a real result: an
+ * image with nothing above `minScore` is legitimately tagless and must stay
+ * marked done.
+ *
+ * THROWS on failure. It used to swallow everything and return `[]`, which the
+ * caller could not tell apart from an empty result — so a sidecar outage
+ * marked every row done with a `_wd14_scanned_` sentinel, and "retry failed"
+ * (which only looks at rows recorded as failed) could never surface them. One
+ * transient outage silently marked a whole library as tagged.
  */
 async function _tagWd14One(sidecarUrl, absPath, minScore, log, skipPathMode = false) {
     const url = `${sidecarUrl.replace(/\/+$/, '')}/tag-wd14`;
@@ -1242,13 +1283,15 @@ async function _tagWd14One(sidecarUrl, absPath, minScore, log, skipPathMode = fa
         }
         if (!res.ok) {
             log('warn', `tag-wd14 endpoint returned ${res.status} for ${absPath}`);
-            return [];
+            throw Object.assign(new Error(`tag-wd14 endpoint returned ${res.status}`), {
+                code: `HTTP_${res.status}`,
+            });
         }
         const data = await res.json();
         return Array.isArray(data?.tags) ? data.tags : [];
     } catch (e) {
         log('warn', `tag-wd14 request failed for ${absPath}: ${e?.message || e}`);
-        return [];
+        throw e;
     }
 }
 
