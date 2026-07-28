@@ -535,6 +535,14 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
             while (!signal.aborted) {
                 const batch = getUnindexedAiBatch({ fileTypes, limit: batchSize, groupId });
                 if (!batch.length) break;
+                // Rows are only stamped when detection actually ran; a null
+                // result means "service unavailable" and is deliberately left
+                // for a later scan to retry. But the batch query re-selects
+                // exactly those unstamped rows, so a pass that stamps nothing
+                // would re-fetch the same images forever — a hot loop against
+                // a sidecar that is already down. Count the stamps and stop
+                // the pass when none land.
+                let _stampedThisPass = 0;
                 // Partition batch: videos use per-frame single detect, images
                 // use one HTTP round-trip via /detect/batch.
                 const items = batch.map((row) => ({ row, abs: _resolveAbs(row.file_path) }));
@@ -560,12 +568,14 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                 for (const { row } of nullItems) {
                     _statNull++;
                     setAiIndexedAt(row.id);
+                    _stampedThisPass++;
                     state.scanned += 1;
                     bump();
                 }
                 for (const { row } of skipItems) {
                     _statSkip++;
                     setAiIndexedAt(row.id);
+                    _stampedThisPass++;
                     state.scanned += 1;
                     bump();
                 }
@@ -581,6 +591,7 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                         log('warn', `faces scan: video file vanished id=${row.id} ${abs}`);
                         _statNull++;
                         setAiIndexedAt(row.id);
+                        _stampedThisPass++;
                         state.scanned += 1;
                         bump();
                         continue;
@@ -760,6 +771,7 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                     // so the next scan retries when the service recovers.
                     if (!fileStillExists || detected !== null) {
                         _safeSetIndexed(row.id, log);
+                        _stampedThisPass++;
                     }
                     state.scanned += 1;
                     bump();
@@ -773,6 +785,20 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                     );
                     _nextStatLog = state.scanned + 200;
                 }
+                if (_stampedThisPass === 0) {
+                    // Every row in this batch came back unstamped, which only
+                    // happens when detection could not run at all. Re-querying
+                    // returns the same rows, so end the pass and let the next
+                    // scan retry once the service is back.
+                    log(
+                        'warn',
+                        `faces scan: detection unavailable — ${batch.length} row(s) made no progress this pass, stopping (they stay queued for the next scan)`,
+                    );
+                    break;
+                }
+                // Yield between batches so a long phase A cannot starve the
+                // event loop (progress broadcasts, cancel, health probes).
+                await new Promise((r) => setImmediate(r));
             }
 
             // Phase B — DBSCAN over every face embedding. Always re-runs

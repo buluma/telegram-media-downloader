@@ -603,9 +603,106 @@ describe('startWd14Scan', () => {
 
 // ---- faces --------------------------------------------------------------
 //
-// startFacesScan() is deliberately NOT covered here. Its phase B spawns a real
-// worker thread (`new Worker(new URL('./cluster-worker.js', …))` at line 98),
-// and that worker never settles inside a vitest fork — the file hangs past any
-// testTimeout rather than failing. Covering it needs worker_threads mocked
-// alongside the faces sidecar, which is the same harness core/ai/faces-spawn.js
-// requires, so it lands with that file instead of half-done here.
+// Phase A (detection) only. Phase B's clustering falls back to a real worker
+// thread (_runClusterWorker, scan-runner.js:94) when no sidecar answers, and
+// mocking `worker_threads` to contain that takes vitest's own pool down with
+// it. These tests keep phase A the subject and let phase B exit on its
+// no-faces-stored path.
+
+describe('startFacesScan — phase A', () => {
+    it('counts the workload before detecting anything', async () => {
+        const r = await loadRunner();
+        for (let i = 0; i < 3; i++) seedRow(`a${i}.jpg`);
+
+        const logs = [];
+        r.startFacesScan({ faces: {} }, null, null, (l) => logs.push(l));
+        await waitIdle('faces');
+
+        expect(logs.some((l) => /3 photos to scan in phase A/.test(l.msg))).toBe(true);
+    });
+
+    it('warns when video scanning is asked for without ffmpeg', async () => {
+        const r = await loadRunner();
+        seedRow('a.jpg');
+        thumbsApi.hasFfmpeg.mockReturnValue(false);
+
+        const logs = [];
+        r.startFacesScan({ faces: { includeVideos: true } }, null, null, (l) => logs.push(l));
+        await waitIdle('faces');
+
+        expect(logs.some((l) => /includeVideos=true but ffmpeg is unavailable/.test(l.msg))).toBe(
+            true,
+        );
+    });
+
+    it('scopes the scan to one group when asked', async () => {
+        const r = await loadRunner();
+        seedRow('a.jpg');
+        downloadsApi.insertDownload({
+            groupId: '-100999',
+            groupName: 'Other',
+            messageId: 42,
+            fileName: 'other.jpg',
+            fileType: 'photo',
+            filePath: 'Other/photos/other.jpg',
+        });
+
+        const logs = [];
+        r.startFacesScan({ faces: {}, groupId: '-100123' }, null, null, (l) => logs.push(l));
+        await waitIdle('faces');
+
+        expect(logs.some((l) => /1 photos to scan in phase A/.test(l.msg))).toBe(true);
+    });
+
+    it('stamps a row whose file is missing so it leaves the queue', async () => {
+        const r = await loadRunner();
+        const { id } = seedRow('ghost.jpg', { onDisk: false });
+
+        r.startFacesScan({ faces: {} }, null, null, null);
+        await waitIdle('faces');
+
+        const row = dbApi
+            .getDb()
+            .prepare('SELECT ai_indexed_at FROM downloads WHERE id = ?')
+            .get(id);
+        expect(row.ai_indexed_at).not.toBeNull();
+    });
+
+    // Detection returning null means "service unavailable", and the row is
+    // deliberately left unstamped so a LATER scan retries it. But the retry
+    // loop lives inside this same scan: `while (!signal.aborted)` re-runs
+    // getUnindexedAiBatch, which hands back the identical unstamped rows. With
+    // the sidecar down that spins forever — re-requesting the same images,
+    // never progressing, never finishing, and only stoppable by an explicit
+    // cancel. A scan has to end when a full pass stamps nothing.
+    it('gives up the pass when detection stamps nothing, instead of spinning', async () => {
+        const r = await loadRunner();
+        for (let i = 0; i < 3; i++) seedRow(`a${i}.jpg`);
+        // Sidecar unreachable: batch detect yields no usable result per row.
+        facesClientApi.detectFacesBatch.mockResolvedValue([]);
+
+        const logs = [];
+        r.startFacesScan({ faces: {} }, null, null, (l) => logs.push(l));
+        await waitIdle('faces', 4000);
+
+        expect(r.isScanRunning('faces')).toBe(false);
+        // Rows stay unstamped on purpose — the NEXT scan is the retry.
+        const unstamped = dbApi
+            .getDb()
+            .prepare('SELECT COUNT(*) AS n FROM downloads WHERE ai_indexed_at IS NULL')
+            .get().n;
+        expect(unstamped).toBe(3);
+        expect(logs.some((l) => /no progress|unavailable/i.test(l.msg))).toBe(true);
+    });
+
+    it('still terminates when detectFacesBatch throws outright', async () => {
+        const r = await loadRunner();
+        seedRow('a.jpg');
+        facesClientApi.detectFacesBatch.mockRejectedValue(new Error('sidecar down'));
+
+        r.startFacesScan({ faces: {} }, null, null, null);
+        await waitIdle('faces', 4000);
+
+        expect(r.isScanRunning('faces')).toBe(false);
+    });
+});
