@@ -962,7 +962,18 @@ function _ensureLoadMoreObserver() {
 // by the structural-render path.
 function patchRenderedRows() {
     const rowsHost = document.getElementById('queue-rows');
-    if (!rowsHost || _renderedKeys.size === 0) return;
+    if (!rowsHost) return;
+    // Nothing rendered yet. That is usually because the list really is
+    // empty, but it also happens when a row lands on a non-structural path
+    // (a `download_complete` / `download_error` whose matching
+    // `download_start` was wiped by the snapshot load racing the socket).
+    // The divergence check below only ever compares the *rendered* slice,
+    // so with a zero-length window it can't see the new row — ask the
+    // filtered list directly and fall back to a full paint.
+    if (view.rendered === 0) {
+        if (getFilteredSorted().length > 0) renderRows();
+        return;
+    }
     // Detect newly-added jobs that AREN'T in the rendered window — if
     // there are any (e.g. monitor just started a fresh download), force
     // a structural re-render so they appear.
