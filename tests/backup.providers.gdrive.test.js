@@ -7,7 +7,7 @@
 //   - de-duplicates same-named uploads via update() rather than create()
 //   - handles missing files in stat() / delete() without throwing
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, afterAll, beforeEach, vi } from 'vitest';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -124,6 +124,12 @@ beforeEach(async () => {
     state.log = [];
     const mod = await import('../src/core/backup/providers/gdrive.js');
     GoogleDriveProvider = mod.GoogleDriveProvider;
+});
+
+// Reclaim the fixture directory — see the note in the dropbox provider test.
+// Leaving these behind filled the disk and made unrelated suites fail ENOSPC.
+afterAll(() => {
+    fs.rmSync(SOURCE_DIR, { recursive: true, force: true });
 });
 
 describe('backup/providers/gdrive (mocked)', () => {
