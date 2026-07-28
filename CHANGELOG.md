@@ -4,6 +4,34 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+## [2.25.3] — 2026-07-28
+
+Fix batch plus a large test-coverage pass (P3/P4) — no new features.
+
+### Fixed
+- **`TGDL_DATA_DIR` override honoured everywhere** — several core modules and route handlers (accounts, dialogs, monitor, stats, config) resolved the data root independent of the override, breaking isolated/test deployments.
+- **`loadConfig()` no longer returns `DEFAULT_CONFIG` by reference** (including its error path) — callers could mutate the shared default object.
+- **Monitor tracked-user filter** matched two usernames it should have missed.
+- **Faces AI scan** — preflight the sidecar and report a mid-scan outage instead of spinning; a WD14 sidecar failure is now recorded as a failure, not marked tagged.
+- **Download poll cursor** — high-water-mark cursor for monitor/downloader; dropped dead `retryJob` code.
+- **Mini-player** `expand()` never actually reopened the full viewer.
+- **Shortcuts** — `g g` / `g s` chords could never fire.
+- **Gestures** — pull-to-refresh no longer leaks an unhandled rejection.
+- **Gallery-select** — repaired mobile long-press and bounded the click swallower.
+- **Header-mobile** — live notifications now render from the pending buffer.
+- **Maintenance updates** stats tile could get permanently stuck stale.
+- Three trailing-state bugs in the notification bell, chord and lasso handlers.
+
+### Dependencies
+- `@aws-sdk/client-s3` 3.1077.0 → 3.1096.0, `@aws-sdk/lib-storage` 3.1042.0 → 3.1096.0
+- `better-sqlite3` 12.11.1 → 13.0.1
+- `express-rate-limit` 8.5.2 → 8.6.1, `helmet` 8.2.0 → 8.3.0
+- `sharp` 0.34.5 → 0.35.3, `ws` 8.21.0 → 8.21.1
+- `@opentelemetry/*` patch/minor bumps across auto-instrumentations-node, exporter-metrics-otlp-proto, sdk-metrics, sdk-node
+- `node` 26.4.0 → 26.5.0-bookworm-slim
+- `basic-ftp` 6.0.1 → 6.0.2, `dropbox` 10.34.0 → 10.38.0
+- Dev: `@biomejs/biome` → 2.5.6, `jsdom` → 30.0.0, `vitest`/`@vitest/coverage-v8` → 4.1.10, `lefthook` → 2.1.10, `tailwindcss` → 4.3.3
+
 ## [2.25.2] — 2026-07-11
 
 ### Added
