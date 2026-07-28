@@ -38,10 +38,14 @@ export default defineConfig({
                 // phase lands, trade a little precision for a gate people
                 // still trust.
                 autoUpdate: false,
-                lines: 17,
-                statements: 16,
-                functions: 18,
-                branches: 14,
+                // Bumped once per phase, a point or so under the measured
+                // figure. P1+P2 (routes + frontend leaves) took this from
+                // 17/16/18/14; P3 (core hot spots) measured
+                // 44.53 / 43.23 / 45.45 / 36.45.
+                lines: 43,
+                statements: 42,
+                functions: 44,
+                branches: 35,
                 // Earned ground. These are done — hold them there. Note that
                 // a glob threshold aggregates across every file it matches,
                 // it is not applied per file.
@@ -51,6 +55,17 @@ export default defineConfig({
                     branches: 85,
                 },
                 'src/config/**': { lines: 85 },
+                // P3 ground. Each of these went from near-zero; the floors
+                // sit a few points under the measured value so a
+                // timing-sensitive test flaking under load does not red the
+                // build for a reason unrelated to coverage.
+                'src/core/history.js': { lines: 90 },
+                'src/core/nsfw.js': { lines: 80 },
+                'src/core/thumbs.js': { lines: 72 },
+                'src/core/accounts.js': { lines: 70 },
+                'src/core/monitor.js': { lines: 57 },
+                'src/core/downloader.js': { lines: 48 },
+                'src/core/ai/scan-runner.js': { lines: 56 },
             },
         },
     },
