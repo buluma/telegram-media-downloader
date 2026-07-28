@@ -691,7 +691,11 @@ describe('append-only pagination', () => {
         expect(rows()).toHaveLength(500);
         expect(rowKeys()[0]).toBe('k0200');
         expect(rowKeys().at(-1)).toBe('k0699');
-    });
+        // 700 rows through 14 full renders is the heaviest test in the file;
+        // under a loaded full-suite run with coverage it can exceed the 5 s
+        // default. The work is real, so give it room rather than shrinking
+        // the fixture below the 500-row cap it exists to prove.
+    }, 20_000);
 });
 
 // ---- WS handling --------------------------------------------------------

@@ -41,16 +41,16 @@ export default defineConfig({
                 // Bumped as each batch lands, a point or so under the
                 // measured figure. P1+P2 (routes + frontend leaves) took this
                 // from 17/16/18/14; P3 (core hot spots) reached
-                // 44.53/43.23/45.45/36.45; P4 so far (7 of 11 frontend
-                // modules) measures 52.04/50.61/52.24/43.20.
+                // 44.53/43.23/45.45/36.45; P4 so far (8 of 11 frontend
+                // modules) measures 54.98/53.50/54.73/45.66.
                 //
                 // Bumped mid-phase on purpose rather than at the end: leaving
                 // the floor at the P3 numbers meant a ~6-point gap in which a
                 // deleted P4 test file would not have reddened the build.
-                lines: 50,
-                statements: 49,
-                functions: 51,
-                branches: 42,
+                lines: 62,
+                statements: 60,
+                functions: 60,
+                branches: 50,
                 // Earned ground. These are done — hold them there. Note that
                 // a glob threshold aggregates across every file it matches,
                 // it is not applied per file.
@@ -79,6 +79,10 @@ export default defineConfig({
                 'src/web/public/js/maintenance-backup.js': { lines: 60 },
                 'src/web/public/js/maintenance-nsfw.js': { lines: 64 },
                 'src/web/public/js/queue.js': { lines: 93 },
+                'src/web/public/js/viewer.js': { lines: 95 },
+                'src/web/public/js/settings.js': { lines: 62 },
+                'src/web/public/js/maintenance-ai.js': { lines: 32 },
+                'src/web/public/js/app.js': { lines: 45 },
             },
         },
     },

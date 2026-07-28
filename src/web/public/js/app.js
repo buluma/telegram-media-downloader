@@ -10,7 +10,53 @@ import { getThumbUrl, getMediaUrl, getDownloadUrl, isPeerRow } from './media-url
 import * as Settings from './settings.js';
 import * as Viewer from './viewer.js';
 import { initEngine, handleEngineWsMessage } from './engine.js';
-import { ws } from './ws.js';
+import { ws as _wsClient } from './ws.js';
+
+// ---- Teardown registry ----------------------------------------------------
+//
+// app.js binds ~26 WebSocket subscriptions plus a handful of document/window
+// listeners and never took them down: there was no lifecycle event that
+// needed it in the browser, where the module lives as long as the tab does.
+// Tests are the case that does need it — a module instance that keeps
+// answering events after its DOM is gone corrupts whatever runs next.
+//
+// `ws` below is a thin shim over the real client so all existing `ws.on(...)`
+// call sites keep working unchanged while their unsubscribe closures land in
+// `_teardowns`. `_onGlobal` does the same for document/window listeners.
+const _teardowns = [];
+const ws = {
+    // Spread the real client so send/connect/off keep working; only `on` is
+    // wrapped. The import binding is always defined, so no guard here.
+    ..._wsClient,
+    on(type, fn) {
+        const off = _wsClient.on(type, fn);
+        if (typeof off === 'function') _teardowns.push(off);
+        return off;
+    },
+};
+function _onGlobal(target, type, fn, opts) {
+    target.addEventListener(type, fn, opts);
+    _teardowns.push(() => target.removeEventListener(type, fn, opts));
+}
+
+/**
+ * Unhook everything this module registered globally. Idempotent.
+ *
+ * Not called by the SPA — the browser tears the page down instead. It exists
+ * so a test can retire an instance before loading the next one; without it
+ * every `vi.resetModules()` leaves another live app answering the same
+ * document.
+ */
+export function destroy() {
+    while (_teardowns.length) {
+        const off = _teardowns.pop();
+        try {
+            off();
+        } catch {
+            /* a listener whose target is already gone is not an error here */
+        }
+    }
+}
 import { initTheme, getTheme, setTheme } from './theme.js';
 import { initStatusBar } from './statusbar.js';
 import * as Notifications from './notifications.js';
@@ -137,7 +183,7 @@ async function init() {
     // attribute so admin-only items become visible again WITHOUT a
     // page reload.
     try {
-        window.addEventListener('tgdl:reauth-success', async () => {
+        _onGlobal(window, 'tgdl:reauth-success', async () => {
             try {
                 const ac = await api.get('/api/auth_check');
                 state.role = ac?.role || 'admin';
@@ -599,12 +645,12 @@ async function init() {
         });
         // Click outside / Esc closes the menu — kept on `document` so any
         // click that wasn't on the menu itself collapses it.
-        document.addEventListener('click', (e) => {
+        _onGlobal(document, 'click', (e) => {
             if (!viewModeMenu.classList.contains('open')) return;
             if (viewModeMenu.contains(e.target) || viewModeBtn.contains(e.target)) return;
             closeMenu();
         });
-        document.addEventListener('keydown', (e) => {
+        _onGlobal(document, 'keydown', (e) => {
             if (e.key === 'Escape' && viewModeMenu.classList.contains('open')) closeMenu();
         });
     }
