@@ -1223,7 +1223,16 @@ export function startWd14Scan(cfg, onProgress, onDone, onLog) {
 
 /**
  * Call the Python sidecar's `POST /tag-wd14` for one image.
- * Returns `[{tag, score}, …]` or an empty array on failure.
+ *
+ * Returns `[{tag, score}, …]` — possibly empty, which is a real result: an
+ * image with nothing above `minScore` is legitimately tagless and must stay
+ * marked done.
+ *
+ * THROWS on failure. It used to swallow everything and return `[]`, which the
+ * caller could not tell apart from an empty result — so a sidecar outage
+ * marked every row done with a `_wd14_scanned_` sentinel, and "retry failed"
+ * (which only looks at rows recorded as failed) could never surface them. One
+ * transient outage silently marked a whole library as tagged.
  */
 async function _tagWd14One(sidecarUrl, absPath, minScore, log, skipPathMode = false) {
     const url = `${sidecarUrl.replace(/\/+$/, '')}/tag-wd14`;
@@ -1248,13 +1257,15 @@ async function _tagWd14One(sidecarUrl, absPath, minScore, log, skipPathMode = fa
         }
         if (!res.ok) {
             log('warn', `tag-wd14 endpoint returned ${res.status} for ${absPath}`);
-            return [];
+            throw Object.assign(new Error(`tag-wd14 endpoint returned ${res.status}`), {
+                code: `HTTP_${res.status}`,
+            });
         }
         const data = await res.json();
         return Array.isArray(data?.tags) ? data.tags : [];
     } catch (e) {
         log('warn', `tag-wd14 request failed for ${absPath}: ${e?.message || e}`);
-        return [];
+        throw e;
     }
 }
 

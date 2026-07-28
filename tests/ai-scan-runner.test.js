@@ -507,11 +507,13 @@ describe('startWd14Scan', () => {
         expect(st?.status).toBe('skipped');
     });
 
-    // _tagWd14One() catches everything and returns [], so a sidecar outage
-    // never reaches the caller's markScanFailed() branch — the row is marked
-    // DONE with zero tags and "retry failed" can never surface it. Pinned as
-    // the behaviour that actually ships; see the note on SHA-117.
-    it('marks a row done with no tags when the sidecar is unreachable', async () => {
+    // A sidecar failure has to be recorded as failed, not silently written
+    // off as a successful tag with no results. _tagWd14One() used to catch
+    // everything and return [], so the row was marked DONE with a sentinel
+    // and "retry failed" — which only looks at rows recorded as failed —
+    // could never surface it. One transient outage marked a whole library
+    // as tagged, permanently.
+    it('records a sidecar outage as failed so it can be retried', async () => {
         const r = await loadRunner();
         const { id } = seedRow('a.jpg');
         fetchImpl = async () => {
@@ -525,24 +527,51 @@ describe('startWd14Scan', () => {
         const st = dbApi
             .getDb()
             .prepare(
+                "SELECT status, last_error FROM media_scan_state WHERE download_id = ? AND scanner = 'wd14'",
+            )
+            .get(id);
+        expect(st?.status).toBe('failed');
+        expect(st?.last_error).toMatch(/sidecar 500/);
+        expect(logs.some((l) => /wd14 tagging failed/.test(l.msg))).toBe(true);
+        expect(r.getScanState('wd14').failed).toBe(1);
+    });
+
+    it('records a non-ok sidecar response as failed too', async () => {
+        const r = await loadRunner();
+        const { id } = seedRow('a.jpg');
+        fetchImpl = async () => ({ ok: false, status: 503, json: async () => ({}) });
+
+        r.startWd14Scan({}, null, null, null);
+        await waitIdle('wd14');
+
+        const st = dbApi
+            .getDb()
+            .prepare(
+                "SELECT status, last_error FROM media_scan_state WHERE download_id = ? AND scanner = 'wd14'",
+            )
+            .get(id);
+        expect(st?.status).toBe('failed');
+        expect(st?.last_error).toMatch(/503/);
+    });
+
+    // The empty result is still a real, successful outcome — an image with
+    // nothing above minScore must stay done, not be retried forever.
+    it('keeps a genuinely tagless image marked done', async () => {
+        const r = await loadRunner();
+        const { id } = seedRow('a.jpg');
+        fetchImpl = async () => ({ ok: true, status: 200, json: async () => ({ tags: [] }) });
+
+        r.startWd14Scan({}, null, null, null);
+        await waitIdle('wd14');
+
+        const st = dbApi
+            .getDb()
+            .prepare(
                 "SELECT status FROM media_scan_state WHERE download_id = ? AND scanner = 'wd14'",
             )
             .get(id);
         expect(st?.status).toBe('done');
-        expect(logs.some((l) => /tag-wd14 request failed/.test(l.msg))).toBe(true);
         expect(r.getScanState('wd14').failed ?? 0).toBe(0);
-    });
-
-    it('logs a non-ok sidecar response and moves on', async () => {
-        const r = await loadRunner();
-        seedRow('a.jpg');
-        fetchImpl = async () => ({ ok: false, status: 503, json: async () => ({}) });
-
-        const logs = [];
-        r.startWd14Scan({}, null, null, (l) => logs.push(l));
-        await waitIdle('wd14');
-
-        expect(logs.some((l) => /returned 503/.test(l.msg))).toBe(true);
     });
 
     it('aborts on a failed preflight', async () => {
