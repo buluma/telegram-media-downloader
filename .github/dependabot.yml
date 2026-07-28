@@ -1,38 +1,114 @@
 version: 2
+
+# Grouping policy
+#
+# Without `groups`, Dependabot opens one PR per package per ecosystem — five
+# npm PRs in a single week is routine, and each burns the full CI matrix
+# (build + CodeQL + lint/test on Node 22/24 x ubuntu/macos) to move one
+# version digit.
+#
+# Patch and minor bumps are batched into one PR per ecosystem: one CI run, one
+# review, one merge. Majors are deliberately left OUT of the groups so they
+# still arrive as individual PRs — those are the ones worth reading. jsdom
+# 29 -> 30 and better-sqlite3 12 -> 13 both landed as majors, and both wanted a
+# local run against the full suite before merging.
 updates:
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      npm-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      docker-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
   - package-ecosystem: "docker"
     directory: "/faces-service"
     schedule:
       interval: "weekly"
+    groups:
+      docker-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
   - package-ecosystem: "docker"
     directory: "/seekbar-service"
     schedule:
       interval: "weekly"
+    groups:
+      docker-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
   - package-ecosystem: "docker"
     directory: "/tgdl-ml"
     schedule:
       interval: "weekly"
+    groups:
+      docker-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
   - package-ecosystem: "pip"
     directory: "/faces-service"
     schedule:
       interval: "weekly"
+    groups:
+      pip-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
   - package-ecosystem: "pip"
     directory: "/tgdl-ml"
     schedule:
       interval: "weekly"
+    groups:
+      pip-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
   - package-ecosystem: "gomod"
     directory: "/seekbar-service"
     schedule:
       interval: "weekly"
+    groups:
+      gomod-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+  # Actions are pinned by major tag (actions/checkout@v5 and friends), so a
+  # bump here is usually a re-pin rather than a behaviour change. One PR for
+  # the lot, majors included.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
