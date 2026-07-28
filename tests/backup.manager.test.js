@@ -18,6 +18,20 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+/**
+ * A path that cannot be created, on every platform.
+ *
+ * Its parent is a regular file, so mkdir fails ENOTDIR immediately. Do NOT
+ * reach for /proc here: it does not exist on macOS (so the call fails fast
+ * and the test passes for the wrong reason) but does on Linux, where the
+ * call stalls and the test times out instead.
+ */
+function unwritablePath() {
+    const blocker = path.join(DATA_DIR, `not-a-dir-${process.pid}`);
+    if (!fs.existsSync(blocker)) fs.writeFileSync(blocker, 'x');
+    return path.join(blocker, 'nested');
+}
+
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'tgdl-backupmgr-'));
 const DEST_DIR = path.join(DATA_DIR, 'backup-target');
 
@@ -426,7 +440,7 @@ describe('testConnection', () => {
     });
 
     it('fails cleanly when the target cannot be used', async () => {
-        const id = addLocal({ config: { rootPath: '/proc/definitely-not-writable' } });
+        const id = addLocal({ config: { rootPath: unwritablePath() } });
         const r = await mgr.testConnection(id);
         expect(r.ok).toBe(false);
         expect(r.detail).toBeTruthy();

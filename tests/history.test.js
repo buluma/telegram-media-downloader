@@ -17,6 +17,20 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+/**
+ * A path that cannot be created, on every platform.
+ *
+ * Its parent is a regular file, so mkdir fails ENOTDIR immediately. Do NOT
+ * reach for /proc here: it does not exist on macOS (so the call fails fast
+ * and the test passes for the wrong reason) but does on Linux, where the
+ * call stalls and the test times out instead.
+ */
+function unwritablePath() {
+    const blocker = path.join(DATA_DIR, `not-a-dir-${process.pid}`);
+    if (!fs.existsSync(blocker)) fs.writeFileSync(blocker, 'x');
+    return path.join(blocker, 'nested');
+}
+
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'tgdl-history-'));
 
 // gramJS message filters are marker objects — the code only ever passes them
@@ -891,7 +905,7 @@ describe('handleUrls', () => {
         const h = new HistoryDownloader(
             null,
             new FakeDownloader(),
-            makeConfig({ download: { path: '/proc/nonexistent-forbidden' } }),
+            makeConfig({ download: { path: unwritablePath() } }),
         );
         await expect(
             h.handleUrls({ message: 'https://a.example', date: 1700000000 }, GROUP),

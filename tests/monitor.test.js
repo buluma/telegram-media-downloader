@@ -18,6 +18,20 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+/**
+ * A path that cannot be created, on every platform.
+ *
+ * Its parent is a regular file, so mkdir fails ENOTDIR immediately. Do NOT
+ * reach for /proc here: it does not exist on macOS (so the call fails fast
+ * and the test passes for the wrong reason) but does on Linux, where the
+ * call stalls and the test times out instead.
+ */
+function unwritablePath() {
+    const blocker = path.join(DATA_DIR, `not-a-dir-${process.pid}`);
+    if (!fs.existsSync(blocker)) fs.writeFileSync(blocker, 'x');
+    return path.join(blocker, 'nested');
+}
+
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'tgdl-monitor-'));
 
 vi.mock('telegram', () => ({
@@ -819,7 +833,7 @@ describe('handleUrls / flushUrls', () => {
     });
 
     it('keeps the buffer for a retry when the write fails', async () => {
-        const { m } = mk(baseConfig({ download: { path: '/proc/forbidden-path' } }));
+        const { m } = mk(baseConfig({ download: { path: unwritablePath() } }));
         const g = m.config.groups[0];
         await m.handleUrls({ message: 'https://a.example' }, g);
         await m.flushUrls();
