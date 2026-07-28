@@ -416,24 +416,6 @@ export class DownloadManager extends EventEmitter {
     }
 
     /**
-     * Re-enqueue a previously-failed job at the FRONT of the high lane so
-     * a manual retry from the Queue page jumps the line. Caller passes the
-     * raw job (the same shape originally handed to `enqueue`).
-     */
-    retryJob(job) {
-        if (!job || !job.message) return false;
-        const key = job.key || `${job.groupId}_${job.message.id}`;
-        job.key = key;
-        if (!job.addedAt) job.addedAt = Date.now();
-        this._paused.delete(key);
-        this._high.unshift(job);
-        this._jobs.set(key, job);
-        this.emit('queue', this.pendingCount);
-        this.emit('queue_changed', { key, op: 'retry' });
-        return true;
-    }
-
-    /**
      * Single-shot snapshot of the entire downloader state, used by the
      * Queue-page boot path (`GET /api/queue/snapshot`). Returns plain
      * JSON-serialisable data; the heavy `message` object stays inside

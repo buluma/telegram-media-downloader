@@ -38,14 +38,19 @@ export default defineConfig({
                 // phase lands, trade a little precision for a gate people
                 // still trust.
                 autoUpdate: false,
-                // Bumped once per phase, a point or so under the measured
-                // figure. P1+P2 (routes + frontend leaves) took this from
-                // 17/16/18/14; P3 (core hot spots) measured
-                // 44.53 / 43.23 / 45.45 / 36.45.
-                lines: 43,
-                statements: 42,
-                functions: 44,
-                branches: 35,
+                // Bumped as each batch lands, a point or so under the
+                // measured figure. P1+P2 (routes + frontend leaves) took this
+                // from 17/16/18/14; P3 (core hot spots) reached
+                // 44.53/43.23/45.45/36.45; P4 so far (5 of 11 frontend
+                // modules) measures 48.82/47.46/49.63/39.96.
+                //
+                // Bumped mid-phase on purpose rather than at the end: leaving
+                // the floor at the P3 numbers meant a ~6-point gap in which a
+                // deleted P4 test file would not have reddened the build.
+                lines: 47,
+                statements: 46,
+                functions: 48,
+                branches: 39,
                 // Earned ground. These are done — hold them there. Note that
                 // a glob threshold aggregates across every file it matches,
                 // it is not applied per file.
@@ -66,6 +71,12 @@ export default defineConfig({
                 'src/core/monitor.js': { lines: 57 },
                 'src/core/downloader.js': { lines: 48 },
                 'src/core/ai/scan-runner.js': { lines: 56 },
+                // P4 ground — frontend page modules, all previously at 0%.
+                'src/web/public/js/maintenance-cluster.js': { lines: 85 },
+                'src/web/public/js/backfill.js': { lines: 74 },
+                'src/web/public/js/maintenance-duplicates.js': { lines: 71 },
+                'src/web/public/js/maintenance-thumbs.js': { lines: 70 },
+                'src/web/public/js/maintenance-backup.js': { lines: 60 },
             },
         },
     },
