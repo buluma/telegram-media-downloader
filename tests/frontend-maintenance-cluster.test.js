@@ -446,13 +446,18 @@ describe('peer list', () => {
         expect($('cluster-peers-list').textContent).toContain('Browser fetches direct');
     });
 
-    it('escapes peer-supplied text', async () => {
+    // Assert no element was created rather than grepping innerHTML: these
+    // values also land in attributes, and attribute-value serialisation does
+    // not escape < or >, so a correctly-escaped page can still contain the
+    // raw substring.
+    it('never turns peer-supplied text into markup', async () => {
         await boot({
             peers: [PEER({ name: '<img src=x onerror=alert(1)>', url: 'https://<script>' })],
         });
-        const html = $('cluster-peers-list').innerHTML;
-        expect(html).not.toContain('<img src=x');
-        expect(html).toContain('&lt;img');
+        const list = $('cluster-peers-list');
+        expect(list.querySelector('img')).toBeNull();
+        expect(list.querySelector('script')).toBeNull();
+        expect(list.textContent).toContain('<img src=x onerror=alert(1)>');
     });
 
     it('says never for a peer that has not been seen', async () => {
@@ -784,11 +789,13 @@ describe('audit log', () => {
         expect($('cluster-audit-list').textContent).toContain('bad signature');
     });
 
-    it('escapes audit detail text', async () => {
+    it('never turns audit detail into markup', async () => {
         await boot({
             audit: [{ ts: Date.now(), kind: 'x', detail: '<script>alert(1)</script>', ok: 1 }],
         });
-        expect($('cluster-audit-list').innerHTML).not.toContain('<script>');
+        const list = $('cluster-audit-list');
+        expect(list.querySelector('script')).toBeNull();
+        expect(list.textContent).toContain('<script>alert(1)</script>');
     });
 
     it('treats a failed audit fetch as empty', async () => {
