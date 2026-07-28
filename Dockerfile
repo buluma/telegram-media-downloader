@@ -16,7 +16,12 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends python3 make g++ \
     && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev --no-audit --no-fund
+# better-sqlite3's prebuilt arm64 binary can require a newer glibc than this
+# bookworm-slim base ships (seen: prebuild wanting GLIBC_2.38 against 2.36 here).
+# Force it to compile from source with the toolchain installed above instead
+# of trusting whatever prebuild npm resolves.
+RUN npm ci --omit=dev --no-audit --no-fund \
+    && npm_config_build_from_source=true npm rebuild better-sqlite3
 
 FROM node:26.5.0-bookworm-slim AS runtime-base
 
