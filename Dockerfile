@@ -18,9 +18,11 @@ RUN apt-get update \
 COPY package.json package-lock.json ./
 # better-sqlite3's prebuilt arm64 binary can require a newer glibc than this
 # bookworm-slim base ships (seen: prebuild wanting GLIBC_2.38 against 2.36 here).
-# Force it to compile from source with the toolchain installed above instead
-# of trusting whatever prebuild npm resolves.
+# Its loader prefers prebuilds/linux-arm64.node over a locally-built binary, so
+# node-gyp silently no-ops unless that stale prebuild is removed first — delete
+# it so the toolchain above actually compiles one against this base's glibc.
 RUN npm ci --omit=dev --no-audit --no-fund \
+    && rm -f node_modules/better-sqlite3/prebuilds/linux-arm64.node \
     && npm_config_build_from_source=true npm rebuild better-sqlite3
 
 FROM node:26.5.0-bookworm-slim AS runtime-base
