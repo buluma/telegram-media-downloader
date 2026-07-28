@@ -509,6 +509,22 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
             bump();
             log('info', `faces scan: ${phaseATotal} photos to scan in phase A`);
 
+            // Preflight, same as OCR and WD14. Without it a sidecar that
+            // cannot serve produced a scan that finished instantly, stamped
+            // nothing and reported success — the detection path returns nulls
+            // rather than throwing, so nothing downstream noticed. Only worth
+            // checking when there is actually work: a no-op scan on a box with
+            // no sidecar should stay a no-op, not an error.
+            if (phaseATotal > 0) {
+                const facesPreflight = await checkSidecarCapability('faces', getSidecarUrl());
+                if (!facesPreflight.ok) {
+                    throw Object.assign(
+                        new Error(`faces preflight failed: ${facesPreflight.reason}`),
+                        { code: facesPreflight.code, fatal: true },
+                    );
+                }
+            }
+
             // `batchSize` precedence (same model as fileTypes above).
             const envBatch = resolveFacesValue('batchSize', facesCfgIn);
             const batchSizeRaw = _pickNumber([facesCfgIn.batchSize, cfg.batchSize, envBatch], 16);
@@ -790,10 +806,15 @@ export function startFacesScan(cfg, onProgress, onDone, onLog) {
                     // happens when detection could not run at all. Re-querying
                     // returns the same rows, so end the pass and let the next
                     // scan retry once the service is back.
-                    log(
-                        'warn',
-                        `faces scan: detection unavailable — ${batch.length} row(s) made no progress this pass, stopping (they stay queued for the next scan)`,
-                    );
+                    const msg = `faces scan: detection unavailable — ${batch.length} row(s) made no progress this pass, stopping (they stay queued for the next scan)`;
+                    log('warn', msg);
+                    // Surface it on the scan state too. The preflight above
+                    // only covers the start; a sidecar that drops out partway
+                    // would otherwise leave the run reporting success with
+                    // nothing scanned. Phase B still runs — clustering the
+                    // faces already stored is useful work and should not be
+                    // thrown away because detection stopped.
+                    state.error = msg;
                     break;
                 }
                 // Yield between batches so a long phase A cannot starve the

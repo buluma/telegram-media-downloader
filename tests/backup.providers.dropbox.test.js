@@ -2,7 +2,7 @@
 // Verifies the small-vs-chunked routing, idempotent delete, and the
 // path normalisation around the configured remoteRoot.
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, afterAll, beforeEach, vi } from 'vitest';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -118,6 +118,14 @@ beforeEach(async () => {
     calls.length = 0;
     const mod = await import('../src/core/backup/providers/dropbox.js');
     DropboxProvider = mod.DropboxProvider;
+});
+
+// Reclaim the fixture directory. Without this the >150 MB file below is left
+// behind on every run — a few dozen full-suite runs filled a 228 GB disk (18 GB
+// of tgdl-* dirs across this file and the gdrive one) and the suite started
+// failing with ENOSPC in unrelated places.
+afterAll(() => {
+    fs.rmSync(SOURCE_DIR, { recursive: true, force: true });
 });
 
 describe('backup/providers/dropbox (mocked)', () => {

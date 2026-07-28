@@ -100,6 +100,12 @@ vi.mock('../../src/core/ai/tgdl-ml-client.js', () => ({
     mlEmbedText: vi.fn(),
 }));
 
+// Phase A preflights the sidecar before it starts (scan-runner.js). This file
+// is about stamping behaviour, not availability, so let the preflight pass.
+vi.mock('../../src/core/ai/preflight.js', () => ({
+    checkSidecarCapability: vi.fn(async () => ({ ok: true })),
+}));
+
 vi.mock('../../src/core/thumbs.js', () => ({
     hasFfmpeg: vi.fn(() => false),
     resolveFfmpegBin: vi.fn(() => null),
