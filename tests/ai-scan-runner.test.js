@@ -695,6 +695,69 @@ describe('startFacesScan — phase A', () => {
         expect(logs.some((l) => /no progress|unavailable/i.test(l.msg))).toBe(true);
     });
 
+    // Faces was the only scanner with no preflight. OCR and WD14 both call
+    // checkSidecarCapability() and fail loudly when the sidecar cannot serve;
+    // faces just tried, got nulls, and reported success. On a deployment
+    // where the sidecar lives on another machine (Heimdal reaches a Mac over
+    // Tailscale) that turns "the laptop is asleep" into a scan that finishes
+    // instantly, touches nothing, and says it worked.
+    it('preflights the sidecar and fails loudly when it cannot serve', async () => {
+        const r = await loadRunner();
+        seedRow('a.jpg');
+        preflightApi.checkSidecarCapability.mockResolvedValue({
+            ok: false,
+            reason: 'Sidecar /info did not respond at http://100.100.245.3:8011',
+            code: 'SIDECAR_UNREACHABLE',
+        });
+
+        r.startFacesScan({ faces: {} }, null, null, null);
+        await waitIdle('faces');
+
+        expect(preflightApi.checkSidecarCapability).toHaveBeenCalledWith(
+            'faces',
+            expect.anything(),
+        );
+        expect(r.getScanState('faces').error).toMatch(/did not respond/);
+    });
+
+    it('does not preflight when there is nothing to scan', async () => {
+        const r = await loadRunner();
+        r.startFacesScan({ faces: {} }, null, null, null);
+        await waitIdle('faces');
+
+        expect(preflightApi.checkSidecarCapability).not.toHaveBeenCalled();
+        expect(r.getScanState('faces').error).toBeNull();
+    });
+
+    it('proceeds normally when the preflight passes', async () => {
+        const r = await loadRunner();
+        seedRow('a.jpg');
+        preflightApi.checkSidecarCapability.mockResolvedValue({ ok: true });
+
+        const logs = [];
+        r.startFacesScan({ faces: {} }, null, null, (l) => logs.push(l));
+        await waitIdle('faces');
+
+        expect(logs.some((l) => /1 photos to scan in phase A/.test(l.msg))).toBe(true);
+    });
+
+    // Preflight only covers the start. If the sidecar drops out mid-scan the
+    // no-progress break stops the pass, but the run used to still report
+    // success — the operator sees "done", zero scanned, and no reason.
+    it('records an error when detection dies mid-scan', async () => {
+        const r = await loadRunner();
+        for (let i = 0; i < 3; i++) seedRow(`a${i}.jpg`);
+        preflightApi.checkSidecarCapability.mockResolvedValue({ ok: true });
+        facesClientApi.detectFacesBatch.mockResolvedValue([]);
+
+        const done = [];
+        r.startFacesScan({ faces: {} }, null, (d) => done.push(d), null);
+        await waitIdle('faces', 4000);
+
+        expect(r.getScanState('faces').error).toMatch(/detection unavailable/i);
+        expect(done[0].error).toMatch(/detection unavailable/i);
+    });
+
     it('still terminates when detectFacesBatch throws outright', async () => {
         const r = await loadRunner();
         seedRow('a.jpg');
