@@ -28,7 +28,7 @@ const DOWNLOADS_DIR = path.join(DATA_DIR, 'downloads');
 // records calls and produces a real (tiny) file so the caller's existsSync +
 // rename dance exercises actual disk behaviour.
 const sharpCalls = [];
-let sharpToFileImpl = async (dst) => {
+let sharpToFileImpl = async (dst, _call) => {
     fs.writeFileSync(dst, 'WEBPFAKE');
 };
 vi.mock('sharp', () => {
@@ -63,7 +63,7 @@ vi.mock('sharp', () => {
 const spawnCalls = [];
 const spawnSyncCalls = [];
 let spawnImpl = null;
-let spawnSyncImpl = () => ({ status: 0, stdout: '', stderr: '' });
+let spawnSyncImpl = (_bin, _args, _opts) => ({ status: 0, stdout: '', stderr: '' });
 
 vi.mock('child_process', () => {
     const { EventEmitter } = require('events');
@@ -141,7 +141,7 @@ beforeEach(() => {
     spawnSyncCalls.length = 0;
     spawnImpl = null;
     spawnSyncImpl = () => ({ status: 0, stdout: '', stderr: '' });
-    sharpToFileImpl = async (dst) => {
+    sharpToFileImpl = async (dst, _call) => {
         fs.writeFileSync(dst, 'WEBPFAKE');
     };
     delete process.env.FFMPEG_HWACCEL;

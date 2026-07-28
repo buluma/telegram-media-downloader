@@ -28,7 +28,10 @@ import path from 'path';
  */
 function unwritablePath() {
     const blocker = path.join(DATA_DIR, `not-a-dir-${process.pid}`);
-    if (!fs.existsSync(blocker)) fs.writeFileSync(blocker, 'x');
+    // Unconditional write, no existsSync guard: check-then-write is a
+    // filesystem race (CodeQL js/file-system-race) and writeFileSync is
+    // already idempotent here.
+    fs.writeFileSync(blocker, 'x');
     return path.join(blocker, 'nested');
 }
 
