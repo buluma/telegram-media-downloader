@@ -459,6 +459,47 @@ describe('POST /api/downloads/:id/playback-verify', () => {
     });
 });
 
+describe('POST /api/downloads/:id/clip', () => {
+    it('404s for a nonexistent download', async () => {
+        const { status } = await post('/api/downloads/999999/clip', { startSec: 0, endSec: 1 });
+        expect(status).toBe(404);
+    });
+
+    it('400s on an invalid range', async () => {
+        const r = downloadsApi.insertDownload({
+            groupId: '-101010',
+            groupName: 'Grp',
+            messageId: 1,
+            fileName: 'a.mp4',
+            filePath: 'Grp/videos/a.mp4',
+            fileType: 'video',
+        });
+        const { status, body } = await post(`/api/downloads/${r.lastInsertRowid}/clip`, {
+            startSec: 5,
+            endSec: 1,
+        });
+        expect(status).toBe(400);
+        expect(body.error).toMatch(/range/i);
+    });
+
+    it('400s for a non-video row', async () => {
+        const r = downloadsApi.insertDownload({
+            groupId: '-101011',
+            groupName: 'Grp',
+            messageId: 1,
+            fileName: 'a.pdf',
+            filePath: 'Grp/docs/a.pdf',
+            fileType: 'document',
+        });
+        const { status, body } = await post(`/api/downloads/${r.lastInsertRowid}/clip`, {
+            startSec: 0,
+            endSec: 1,
+        });
+        expect(status).toBe(400);
+        expect(body.error).toMatch(/video/i);
+    });
+});
+
 describe('POST /api/downloads/bulk-pin', () => {
     it('400s without ids, without a boolean pinned, or over the batch cap', async () => {
         expect((await post('/api/downloads/bulk-pin', { pinned: true })).status).toBe(400);

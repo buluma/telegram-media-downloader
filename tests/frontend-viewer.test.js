@@ -184,6 +184,18 @@ const DOM = `
                             <div id="video-sprite-pending"></div>
                             <div id="video-sprite-time"></div>
                         </div>
+                        <div id="video-trim-overlay" class="hidden">
+                            <div id="video-trim-mask-left"></div>
+                            <div id="video-trim-mask-right"></div>
+                            <div id="video-trim-range"></div>
+                            <div id="video-trim-handle-in"></div>
+                            <div id="video-trim-handle-out"></div>
+                        </div>
+                    </div>
+                    <div id="video-trim-bar" class="hidden">
+                        <span id="video-trim-duration"></span>
+                        <button id="video-trim-cancel"></button>
+                        <button id="video-trim-save"></button>
                     </div>
                     <button id="video-play-btn"></button>
                     <button id="video-skip-back"></button>
@@ -192,6 +204,7 @@ const DOM = `
                     <input id="video-volume" type="range" min="0" max="1" step="0.01" />
                     <span id="video-current-time"></span>
                     <span id="video-duration"></span>
+                    <button id="video-trim-btn"></button>
                     <button id="video-settings-btn"></button>
                     <button id="video-pip-btn"></button>
                     <button id="video-fullscreen-btn"></button>
@@ -1741,6 +1754,29 @@ describe('VideoPlayer', () => {
         expect($('modal-filename').textContent).toBe('clip.mp4');
     });
 
+    // Regression: dragging the trim out-handle to the clip's right edge
+    // sets currentTime to exactly `duration`, which real browsers fire
+    // 'ended' for even on a paused, mid-edit video. Without a trim-mode
+    // guard, auto-advance silently jumped to the next file and discarded
+    // the unsaved trim.
+    it('does not auto-advance or clear the saved position while trimming', async () => {
+        vi.useFakeTimers();
+        localStorage.setItem('viewer-auto-advance', '1');
+        localStorage.setItem('video-progress-media/clip.mp4', '50');
+        const mod = await load();
+        state.files = [VIDEO(), FILE({ id: 2, name: 'b.jpg' })];
+        mod.openMediaViewer(0);
+        const video = $('modal-video');
+        video.duration = 100;
+        $('video-trim-btn').click();
+        video.currentTime = 100;
+        video.onended();
+        await vi.advanceTimersByTimeAsync(100);
+        expect($('modal-filename').textContent).toBe('clip.mp4');
+        expect(localStorage.getItem('video-progress-media/clip.mp4')).toBe('50');
+        expect($('video-trim-overlay').classList.contains('hidden')).toBe(false);
+    });
+
     it('shows the spinner while buffering and hides it once playable', async () => {
         const { video } = await openVideo();
         video.oncanplay();
@@ -2070,6 +2106,176 @@ describe('VideoPlayer', () => {
             await openVideo();
             $('video-progress-container').onpointermove({ clientX: 100 });
             expect($('video-hover-time').classList.contains('hidden')).toBe(true);
+        });
+    });
+
+    describe('trim/clip', () => {
+        function stubBarRect(width = 200, left = 0) {
+            $('video-progress-container').getBoundingClientRect = () => ({
+                left,
+                width,
+                top: 0,
+                height: 4,
+                right: left + width,
+                bottom: 4,
+            });
+        }
+
+        it('does nothing for a clip of unknown duration', async () => {
+            await openVideo();
+            $('video-trim-btn').click();
+            expect($('video-trim-overlay').classList.contains('hidden')).toBe(true);
+        });
+
+        it('enters trim mode with the full clip selected and pauses playback', async () => {
+            const { video } = await openVideo();
+            video.duration = 100;
+            video.play();
+            $('video-trim-btn').click();
+            expect(video.paused).toBe(true);
+            expect($('video-trim-overlay').classList.contains('hidden')).toBe(false);
+            expect($('video-trim-bar').classList.contains('hidden')).toBe(false);
+            expect($('video-trim-handle-in').style.left).toBe('0%');
+            expect($('video-trim-handle-out').style.left).toBe('100%');
+            expect($('video-trim-duration').textContent).toBe('01:40');
+        });
+
+        it('toggles back out of trim mode on a second press', async () => {
+            const { video } = await openVideo();
+            video.duration = 100;
+            $('video-trim-btn').click();
+            $('video-trim-btn').click();
+            expect($('video-trim-overlay').classList.contains('hidden')).toBe(true);
+            expect($('video-trim-bar').classList.contains('hidden')).toBe(true);
+        });
+
+        it('cancel button exits trim mode', async () => {
+            const { video } = await openVideo();
+            video.duration = 100;
+            $('video-trim-btn').click();
+            $('video-trim-cancel').click();
+            expect($('video-trim-overlay').classList.contains('hidden')).toBe(true);
+        });
+
+        it('dragging the in-handle moves the start and clamps to the min gap before out', async () => {
+            const { video } = await openVideo();
+            video.duration = 100;
+            stubBarRect();
+            $('video-trim-btn').click();
+            const inHandle = $('video-trim-handle-in');
+            inHandle.onpointerdown({ pointerId: 1, preventDefault() {}, stopPropagation() {} });
+            inHandle.onpointermove({ clientX: 60, stopPropagation() {} }); // 30% → 30s
+            expect($('video-trim-handle-in').style.left).toBe('30%');
+            expect(video.currentTime).toBe(30);
+            // Drag past the out handle (still at 100s) — clamps to out - 0.2s gap.
+            inHandle.onpointermove({ clientX: 200, stopPropagation() {} });
+            expect(video.currentTime).toBeCloseTo(99.8, 5);
+            inHandle.onpointerup({ pointerId: 1, stopPropagation() {} });
+        });
+
+        it('dragging the out-handle moves the end and clamps to the min gap after in', async () => {
+            const { video } = await openVideo();
+            video.duration = 100;
+            stubBarRect();
+            $('video-trim-btn').click();
+            const outHandle = $('video-trim-handle-out');
+            outHandle.onpointerdown({ pointerId: 1, preventDefault() {}, stopPropagation() {} });
+            outHandle.onpointermove({ clientX: 140, stopPropagation() {} }); // 70% → 70s
+            expect($('video-trim-handle-out').style.left).toBe('70%');
+            expect(video.currentTime).toBe(70);
+            // Drag past the in handle (still at 0s) — clamps to in + 0.2s gap.
+            outHandle.onpointermove({ clientX: 0, stopPropagation() {} });
+            expect(video.currentTime).toBeCloseTo(0.2, 5);
+        });
+
+        it('a move event for a handle not being dragged is ignored', async () => {
+            const { video } = await openVideo();
+            video.duration = 100;
+            stubBarRect();
+            $('video-trim-btn').click();
+            $('video-trim-handle-in').onpointermove({ clientX: 60, stopPropagation() {} });
+            expect(video.currentTime).toBe(0);
+        });
+
+        it('resets out of trim mode when a new clip loads', async () => {
+            const mod = await load();
+            await openWith([VIDEO()], 0, mod);
+            const video = $('modal-video');
+            video.duration = 100;
+            $('video-trim-btn').click();
+            expect($('video-trim-overlay').classList.contains('hidden')).toBe(false);
+            await openWith([VIDEO({ id: 8, name: 'other.mp4' })], 0, mod);
+            expect($('video-trim-overlay').classList.contains('hidden')).toBe(true);
+        });
+
+        it('saves a clip and shows the duration on success', async () => {
+            stubFetch({
+                '/clip': jsonRes({ success: true, id: 99, durationSec: 40 }),
+            });
+            const { video } = await openVideo({ id: 7 });
+            video.duration = 100;
+            stubBarRect();
+            $('video-trim-btn').click();
+            $('video-trim-handle-in').onpointerdown({
+                pointerId: 1,
+                preventDefault() {},
+                stopPropagation() {},
+            });
+            $('video-trim-handle-in').onpointermove({ clientX: 120, stopPropagation() {} }); // 60s
+            $('video-trim-save').click();
+            await flush();
+            expect(globalThis.fetch).toHaveBeenCalledWith(
+                '/api/downloads/7/clip',
+                expect.objectContaining({
+                    method: 'POST',
+                    body: JSON.stringify({ startSec: 60, endSec: 100 }),
+                }),
+            );
+            expect(showToast).toHaveBeenCalledWith(expect.stringContaining('40'));
+            expect($('video-trim-overlay').classList.contains('hidden')).toBe(true);
+        });
+
+        it('shows an error toast and stays in trim mode when the server rejects the clip', async () => {
+            stubFetch({ '/clip': jsonRes({ error: 'Requested end exceeds duration' }, 400) });
+            const { video } = await openVideo({ id: 7 });
+            video.duration = 100;
+            $('video-trim-btn').click();
+            $('video-trim-save').click();
+            await flush();
+            expect(showToast).toHaveBeenCalledWith(
+                expect.stringContaining('exceeds duration'),
+                'error',
+            );
+            expect($('video-trim-overlay').classList.contains('hidden')).toBe(false);
+        });
+
+        it('shows an error toast on a network failure', async () => {
+            globalThis.fetch = vi.fn(() => Promise.reject(new Error('offline')));
+            const { video } = await openVideo({ id: 7 });
+            video.duration = 100;
+            $('video-trim-btn').click();
+            $('video-trim-save').click();
+            await flush();
+            expect(showToast).toHaveBeenCalledWith(expect.stringContaining('offline'), 'error');
+        });
+
+        it('refuses to save a collapsed range without calling the API', async () => {
+            // A clip shorter than the min gap defaults its full-clip
+            // selection (0 → duration) below the save-time threshold —
+            // the drag handler itself can never produce a collapsed range
+            // (it enforces the same gap on every move), so this is the
+            // one reachable path to that guard.
+            const { video } = await openVideo({ id: 7 });
+            video.duration = 0.1;
+            $('video-trim-btn').click();
+            globalThis.fetch = vi.fn();
+            $('video-trim-save').click();
+            await flush();
+            expect(globalThis.fetch).not.toHaveBeenCalled();
+            expect(showToast).toHaveBeenCalledWith(
+                expect.stringContaining('Start must be before end'),
+                'error',
+            );
         });
     });
 

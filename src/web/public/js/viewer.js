@@ -828,6 +828,21 @@ class VideoPlayer {
         this.seekBackLabel = document.getElementById('video-seek-back-label');
         this.seekFwdLabel = document.getElementById('video-seek-fwd-label');
 
+        // Trim/clip controls — see SHA-149. Overlay lives on top of the
+        // same progress-bar track as the normal scrubber; the two handles
+        // are separately draggable elements, not a second copy of the bar.
+        this.trimBtn = document.getElementById('video-trim-btn');
+        this.trimOverlay = document.getElementById('video-trim-overlay');
+        this.trimMaskLeft = document.getElementById('video-trim-mask-left');
+        this.trimMaskRight = document.getElementById('video-trim-mask-right');
+        this.trimRange = document.getElementById('video-trim-range');
+        this.trimHandleIn = document.getElementById('video-trim-handle-in');
+        this.trimHandleOut = document.getElementById('video-trim-handle-out');
+        this.trimBar = document.getElementById('video-trim-bar');
+        this.trimDurationLabel = document.getElementById('video-trim-duration');
+        this.trimSaveBtn = document.getElementById('video-trim-save');
+        this.trimCancelBtn = document.getElementById('video-trim-cancel');
+
         // Hide PiP button if browser lacks support.
         if (this.pipBtn && !document.pictureInPictureEnabled) {
             this.pipBtn.style.display = 'none';
@@ -852,6 +867,13 @@ class VideoPlayer {
         this._lastDoubleTapAt = 0;
         this._lastTapAt = 0;
         this._lastTapX = 0;
+
+        this._currentFileId = null;
+        this._trimMode = false;
+        this._trimStart = 0;
+        this._trimEnd = 0;
+        this._trimDragHandle = null;
+        this._trimSaving = false;
 
         this._wireOnce();
     }
@@ -919,6 +941,12 @@ class VideoPlayer {
 
         // Seek bar — pointer events for unified mouse / touch / pen.
         this._wireSeekBar();
+
+        // Trim/clip.
+        if (this.trimBtn) this.trimBtn.onclick = () => this.toggleTrimMode();
+        if (this.trimCancelBtn) this.trimCancelBtn.onclick = () => this._exitTrimMode();
+        if (this.trimSaveBtn) this.trimSaveBtn.onclick = () => this._saveClip();
+        this._wireTrimHandles();
 
         // Volume slider.
         this.volume.oninput = () => {
@@ -1000,6 +1028,15 @@ class VideoPlayer {
             this._showControls(true);
         };
         this.video.onended = () => {
+            // Dragging the trim out-handle to the clip's right edge sets
+            // currentTime to exactly `duration` (see _wireTrimHandles),
+            // which real browsers treat as the clip finishing — firing
+            // this same 'ended' event on a video that's actually just
+            // sitting paused mid-edit. Without this guard, autoplay +
+            // auto-advance (bundled together by the 'a' shortcut) would
+            // silently jump to the next file and discard the unsaved
+            // trim with no warning.
+            if (this._trimMode) return;
             this._refreshPlayIcons();
             this._showControls(true);
             if (this._storageKey) localStorage.removeItem(this._storageKey);
@@ -1086,6 +1123,10 @@ class VideoPlayer {
         this._lastSavedAt = 0;
         this._sprite = null;
         this._spriteTileH = 0;
+        this._currentFileId = file?.id ? String(file.id) : null;
+        // A trim in progress on the previous clip has no meaning for the
+        // next one — bail out of trim mode before anything else resets.
+        this._exitTrimMode();
         this._fetchSpriteMeta(file);
         // Reset the auto-retry counter — a fresh clip gets a fresh
         // chance to recover from the spurious mobile-Safari error 4
@@ -1199,6 +1240,8 @@ class VideoPlayer {
 
     /** Stop any in-flight network activity and reset playback. */
     unload() {
+        this._exitTrimMode();
+        this._currentFileId = null;
         try {
             this.video.pause();
         } catch {}
@@ -1401,6 +1444,177 @@ class VideoPlayer {
         };
         bar.onpointerup = endDrag;
         bar.onpointercancel = endDrag;
+    }
+
+    // ---- Trim/clip ---------------------------------------------------
+
+    /** Minimum in/out gap, seconds — keeps a drag from collapsing the range. */
+    static TRIM_MIN_GAP = 0.2;
+
+    toggleTrimMode() {
+        if (this._trimMode) this._exitTrimMode();
+        else this._enterTrimMode();
+    }
+
+    _enterTrimMode() {
+        if (!Number.isFinite(this.video.duration) || this.video.duration <= 0) return;
+        this._trimMode = true;
+        // Full-clip default — the user narrows it by dragging handles in,
+        // which is always a valid starting range regardless of where
+        // playback currently sits.
+        this._trimStart = 0;
+        this._trimEnd = this.video.duration;
+        this.video.pause();
+        if (this.trimOverlay) this.trimOverlay.classList.remove('hidden');
+        if (this.trimBar) {
+            this.trimBar.classList.remove('hidden');
+            this.trimBar.classList.add('flex');
+        }
+        if (this.trimBtn) this.trimBtn.classList.add('text-tg-blue');
+        this._renderTrimHandles();
+    }
+
+    _exitTrimMode() {
+        this._trimMode = false;
+        this._trimDragHandle = null;
+        if (this.trimOverlay) this.trimOverlay.classList.add('hidden');
+        if (this.trimBar) {
+            this.trimBar.classList.add('hidden');
+            this.trimBar.classList.remove('flex');
+        }
+        if (this.trimBtn) this.trimBtn.classList.remove('text-tg-blue');
+    }
+
+    _renderTrimHandles() {
+        const dur = this.video.duration;
+        if (!Number.isFinite(dur) || dur <= 0) return;
+        const inPct = (this._trimStart / dur) * 100;
+        const outPct = (this._trimEnd / dur) * 100;
+        if (this.trimHandleIn) this.trimHandleIn.style.left = `${inPct}%`;
+        if (this.trimHandleOut) this.trimHandleOut.style.left = `${outPct}%`;
+        if (this.trimMaskLeft) this.trimMaskLeft.style.width = `${inPct}%`;
+        if (this.trimMaskRight) this.trimMaskRight.style.width = `${100 - outPct}%`;
+        if (this.trimRange) {
+            this.trimRange.style.left = `${inPct}%`;
+            this.trimRange.style.width = `${Math.max(0, outPct - inPct)}%`;
+        }
+        if (this.trimDurationLabel) {
+            this.trimDurationLabel.textContent = formatTime(
+                Math.max(0, this._trimEnd - this._trimStart),
+            );
+        }
+    }
+
+    _wireTrimHandles() {
+        const bar = this.progressBar;
+        if (!bar || !this.trimHandleIn || !this.trimHandleOut) return;
+        const posToSec = (clientX) => {
+            const rect = bar.getBoundingClientRect();
+            const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+            return ratio * (this.video.duration || 0);
+        };
+        const startDrag = (which) => (e) => {
+            if (!this._trimMode) return;
+            this._trimDragHandle = which;
+            const el = which === 'in' ? this.trimHandleIn : this.trimHandleOut;
+            try {
+                el.setPointerCapture?.(e.pointerId);
+            } catch {}
+            // Stop the bar's own onpointerdown (normal seek/scrub) from
+            // also firing — the handle and the track it sits on share the
+            // same element tree.
+            e.preventDefault();
+            e.stopPropagation();
+        };
+        const onMove = (which) => (e) => {
+            if (this._trimDragHandle !== which) return;
+            const sec = posToSec(e.clientX);
+            const gap = VideoPlayer.TRIM_MIN_GAP;
+            if (which === 'in') {
+                this._trimStart = Math.max(0, Math.min(sec, this._trimEnd - gap));
+            } else {
+                this._trimEnd = Math.min(
+                    this.video.duration || 0,
+                    Math.max(sec, this._trimStart + gap),
+                );
+            }
+            this.video.currentTime = which === 'in' ? this._trimStart : this._trimEnd;
+            this._renderTrimHandles();
+            e.stopPropagation();
+        };
+        const endDrag = (which) => (e) => {
+            if (this._trimDragHandle !== which) return;
+            this._trimDragHandle = null;
+            const el = which === 'in' ? this.trimHandleIn : this.trimHandleOut;
+            try {
+                el.releasePointerCapture?.(e.pointerId);
+            } catch {}
+            e.stopPropagation();
+        };
+        this.trimHandleIn.onpointerdown = startDrag('in');
+        this.trimHandleIn.onpointermove = onMove('in');
+        this.trimHandleIn.onpointerup = endDrag('in');
+        this.trimHandleIn.onpointercancel = endDrag('in');
+        this.trimHandleOut.onpointerdown = startDrag('out');
+        this.trimHandleOut.onpointermove = onMove('out');
+        this.trimHandleOut.onpointerup = endDrag('out');
+        this.trimHandleOut.onpointercancel = endDrag('out');
+    }
+
+    async _saveClip() {
+        if (this._trimSaving) return;
+        if (!this._currentFileId) {
+            showToast('No file selected', 'error');
+            return;
+        }
+        if (this._trimEnd - this._trimStart < VideoPlayer.TRIM_MIN_GAP) {
+            showToast(
+                i18nT('viewer.video.trim_range_invalid', 'Start must be before end.'),
+                'error',
+            );
+            return;
+        }
+        this._trimSaving = true;
+        if (this.trimSaveBtn) this.trimSaveBtn.disabled = true;
+        showToast(i18nT('viewer.video.trim_saving', 'Saving clip…'));
+        try {
+            const r = await fetch(`/api/downloads/${this._currentFileId}/clip`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                body: JSON.stringify({ startSec: this._trimStart, endSec: this._trimEnd }),
+            });
+            const d = await r.json().catch(() => ({}));
+            if (r.ok && d.success) {
+                const durStr = Math.round(d.durationSec ?? this._trimEnd - this._trimStart);
+                showToast(
+                    i18nTf(
+                        'viewer.video.trim_saved',
+                        { duration: durStr },
+                        `Clip saved (${durStr}s).`,
+                    ),
+                );
+                this._exitTrimMode();
+            } else {
+                const msg = d.error || `HTTP ${r.status}`;
+                showToast(
+                    i18nTf('viewer.video.trim_failed', { msg }, `Couldn't save clip: ${msg}`),
+                    'error',
+                );
+            }
+        } catch (e) {
+            showToast(
+                i18nTf(
+                    'viewer.video.trim_failed',
+                    { msg: e.message },
+                    `Couldn't save clip: ${e.message}`,
+                ),
+                'error',
+            );
+        } finally {
+            this._trimSaving = false;
+            if (this.trimSaveBtn) this.trimSaveBtn.disabled = false;
+        }
     }
 
     _renderHoverPreview(clientX) {

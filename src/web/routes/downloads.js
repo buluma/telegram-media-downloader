@@ -20,6 +20,7 @@ import { safeResolveDownload } from '../lib/resolve-download.js';
 import { bestGroupName, formatBytes } from '../lib/format.js';
 import { sanitizeName } from '../../core/downloader.js';
 import { purgeThumbsForDownload, resolveFfmpegBin, resolveFfprobeBin } from '../../core/thumbs.js';
+import { createClip } from '../../core/clip.js';
 import { listPeers } from '../../core/cluster/peers.js';
 import { writeConfigAtomic } from '../lib/config-writer.js';
 import { deleteAllDownloads } from '../../core/db/groups.js';
@@ -884,6 +885,36 @@ export function createDownloadsRouter({
             file_path: nextRel,
             file_size: Number(st.size) || 0,
         });
+    });
+
+    // Trim [startSec, endSec) out of a video and save it as a new download
+    // in the same group — the source file is untouched. Body:
+    // `{ startSec, endSec }`. See core/clip.js for the stream-copy / kv
+    // message_id details.
+    router.post('/downloads/:id/clip', async (req, res) => {
+        const id = parseInt(req.params.id, 10);
+        if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'Invalid id' });
+        const { startSec, endSec } = req.body || {};
+        const r = await createClip(id, startSec, endSec);
+        if (r.status !== 'ok') {
+            const notFound = /not found/i.test(r.error || '');
+            return res.status(notFound ? 404 : 400).json({ error: r.error });
+        }
+        // No client listens for this yet — matches `download_pinned` and
+        // `download_transcoded`, neither of which has a listener either.
+        // This app doesn't live-splice any gallery grid on its own WS
+        // events (not even `download_complete` for a brand new file);
+        // fixing that is a live-gallery-update feature in its own right,
+        // out of scope here. Broadcasting anyway for future consumers,
+        // same as those two.
+        broadcast({
+            type: 'download_clipped',
+            sourceId: id,
+            id: r.id,
+            fileName: r.fileName,
+            filePath: r.filePath,
+        });
+        res.json({ success: true, ...r });
     });
 
     // Bulk pin/unpin. Body: `{ ids: [1,2,3], pinned: true|false }`.
