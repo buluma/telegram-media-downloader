@@ -2500,8 +2500,8 @@ input[type="range"].tg-range::-moz-range-track,
 }
 @media (min-width: 640px) {
     #sidebar {
-        width: 16rem;
-        max-width: 16rem;
+        width: 18rem;
+        max-width: 18rem;
     }
 }
 
