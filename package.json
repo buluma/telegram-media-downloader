@@ -99,7 +99,14 @@
         "googleapis": "^173.0.0"
     },
     "overrides": {
-        "qs": "6.15.2"
+        "qs": "6.15.2",
+        "ip-address": ">=10.3.1",
+        "adm-zip": ">=0.6.0",
+        "protobufjs": ">=7.6.5",
+        "body-parser": ">=2.3.0",
+        "@huggingface/transformers": {
+            "sharp": ">=0.35.0"
+        }
     },
     "devDependencies": {
         "@biomejs/biome": "^2.5.6",
