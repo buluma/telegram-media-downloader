@@ -997,6 +997,21 @@ describe('review mode', () => {
         expect($('modal-filename').textContent).toBe('b.jpg');
     });
 
+    it('a review action bound to a built-in letter (t/x/p/n) wins over the hardcoded shortcut', async () => {
+        // Regression guard: review-mode key matching must run before the
+        // hardcoded t/x/p/n/d/a bindings, or a custom action on one of
+        // those letters would silently never fire.
+        const actions = [{ key: 't', label: 'Tag', handler: vi.fn() }];
+        const { mod } = await openReview(actions);
+        mod.setupViewerEvents();
+        const pin = vi.fn();
+        $('modal-pin').addEventListener('click', pin);
+        key({ key: 't' });
+        await flush();
+        expect(actions[0].handler).toHaveBeenCalled();
+        expect(pin).not.toHaveBeenCalled();
+    });
+
     it('drops the review wiring on close', async () => {
         const { mod, actions } = await openReview();
         mod.setupViewerEvents();
@@ -2247,8 +2262,36 @@ describe('VideoPlayer', () => {
                     body: JSON.stringify({ startSec: 60, endSec: 100 }),
                 }),
             );
-            expect(showToast).toHaveBeenCalledWith(expect.stringContaining('40'));
+            expect(showToast).toHaveBeenCalledWith(
+                expect.stringContaining('40'),
+                'success',
+                3000,
+                expect.objectContaining({ label: 'View clip', onClick: expect.any(Function) }),
+            );
             expect($('video-trim-overlay').classList.contains('hidden')).toBe(true);
+        });
+
+        it('the toast\'s "View clip" action opens the new clip in the viewer', async () => {
+            stubFetch({
+                '/clip': jsonRes({
+                    success: true,
+                    id: 99,
+                    fileName: 'clip.mp4.clip-60s-100s-abc.mp4',
+                    filePath: 'G/videos/clip.mp4.clip-60s-100s-abc.mp4',
+                    fileSize: 12345,
+                    durationSec: 40,
+                }),
+            });
+            const { video } = await openVideo({ id: 7 });
+            video.duration = 100;
+            stubBarRect();
+            $('video-trim-btn').click();
+            $('video-trim-save').click();
+            await flush();
+            const [, , , action] = showToast.mock.calls.at(-1);
+            action.onClick();
+            await flush();
+            expect($('modal-filename').textContent).toBe('clip.mp4.clip-60s-100s-abc.mp4');
         });
 
         it('shows an error toast and stays in trim mode when the server rejects the clip', async () => {

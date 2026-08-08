@@ -401,6 +401,26 @@ describe('showToast', () => {
         vi.advanceTimersByTime(1);
         expect(stack().children).toHaveLength(0);
     });
+
+    it('with an action, renders message + button and runs onClick + dismisses on click', () => {
+        const onClick = vi.fn();
+        showToast('Clip saved', 'success', 3000, { label: 'View clip', onClick });
+        const toast = stack().children[0];
+        const [text, btn] = toast.children;
+        expect(text.textContent).toBe('Clip saved');
+        expect(btn.textContent).toBe('View clip');
+        expect(stack().children).toHaveLength(1);
+        btn.onclick();
+        expect(onClick).toHaveBeenCalled();
+        expect(stack().children).toHaveLength(0); // removed immediately, not waiting for the timer
+    });
+
+    it('without a valid action, falls back to plain textContent (no button)', () => {
+        showToast('plain', 'info', 3000, { label: 'no handler' }); // missing onClick
+        const toast = stack().children[0];
+        expect(toast.textContent).toBe('plain');
+        expect(toast.children).toHaveLength(0);
+    });
 });
 
 describe('lruSet', () => {

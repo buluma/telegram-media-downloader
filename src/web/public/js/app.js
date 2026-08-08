@@ -2595,6 +2595,16 @@ function renderMediaGrid(opts = {}) {
                         file.crosspostCount > 1
                             ? `<span class="tile-crosspost-badge" title="Seen in ${file.crosspostCount} groups"><i class="ri-repeat-line"></i>${file.crosspostCount}</span>`
                             : '';
+                    // Clip badge — marks a video saved via the trim tool.
+                    // Clips take a negative message_id (src/core/clip.js's
+                    // dedicated kv counter, always < 0 since real Telegram
+                    // message_ids are always positive) — same marker the
+                    // Clips filter chip queries on server-side, no separate
+                    // "clipped" flag needed.
+                    const clipBadge =
+                        file.messageId != null && file.messageId < 0
+                            ? `<span class="tile-clip-badge" title="${escapeHtml(i18nT('viewer.clip_badge', 'Clip'))}"><i class="ri-scissors-cut-line"></i></span>`
+                            : '';
                     // Pin chip — appears on hover, golden when pinned. data-tile-pin
                     // is what the gallery delegation handler keys off below.
                     const pinnedCls = file.pinned ? 'is-pinned' : '';
@@ -2614,6 +2624,7 @@ function renderMediaGrid(opts = {}) {
                     ${gridDocLabel}
                     ${nsfwBadge}
                     ${crosspostBadge}
+                    ${clipBadge}
                     ${peerBadgeOverlay}
                 </div>
                 ${pinChip}

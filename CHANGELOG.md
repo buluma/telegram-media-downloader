@@ -5,6 +5,16 @@ All notable changes to this project are documented here. The format is based on 
 ## [Unreleased]
 
 ### Added
+- **"View clip" toast action** — saving a trim now offers a one-click jump straight to the new clip instead of leaving the operator to hunt for it in the gallery.
+- **Clip badge on gallery tiles** — a scissors chip (top-right corner) marks any tile whose file is a saved clip, visible in the default "All" view without needing the Clips filter.
+
+### Fixed
+- **Review-mode shortcut collision** — a custom review action bound to `t`/`x`/`p`/`n`/`d`/`a` would silently never fire; those hardcoded viewer bindings ate the keystroke first. Review actions now match before any hardcoded binding.
+- **`setupViewerEvents()` could double-register its keydown listener** if ever called twice, double-firing every viewer shortcut. Latent bug (production only calls it once at boot), surfaced by a test — now guarded.
+
+## [2.25.7] — 2026-08-09
+
+### Added
 - **`TGDL_API_TOKEN`** — optional bearer token for scripted API access (`Authorization: Bearer <token>`), bypassing the session-cookie login for cron jobs / scripts. Unset by default; grants admin role when present and matching. Mirrors the `TGDL_METRICS_TOKEN` pattern.
 - **"Clips" filter chip** — the All-Media / per-group gallery tabs gained a Clips toggle (next to Pinned/Watched) that narrows the view to videos saved via the trim tool (SHA-149). Backed by `?clipped=1` on `/api/downloads/all` and `/api/downloads/:groupId`; clips are identified by their synthetic negative `message_id`, the same marker `clip.js` already used to avoid colliding with real Telegram messages — no schema change.
 - **`x` keyboard shortcut** — toggles video trim/clip mode in the viewer (same action as clicking the scissors button), video-only.

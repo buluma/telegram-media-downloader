@@ -1225,6 +1225,30 @@ html.theme-light .tile-peer-badge {
     display: none;
 }
 
+/* Clip badge — marks a video saved via the trim tool (src/core/clip.js).
+   Top-right corner: nsfw-badge and pin-chip both sit top-left, crosspost
+   sits bottom-left, so this is the only always-visible corner free. */
+.tile-clip-badge {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: rgba(0, 0, 0, 0.7);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.4;
+    pointer-events: none;
+    white-space: nowrap;
+}
+.media-grid.view-list .tile-clip-badge {
+    display: none;
+}
+
 /* Gallery-scope chip popover — opens below the chip at the right edge of
    the media-tabs row, anchors to the parent `flex` so positioning is
    relative to the row. Click-outside dismiss is wired in app.js. */

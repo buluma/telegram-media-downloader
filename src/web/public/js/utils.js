@@ -209,7 +209,16 @@ function ensureToastStack() {
     return stack;
 }
 
-export function showToast(message, type = 'info', durationMs = 3000) {
+/**
+ * @param {string} message
+ * @param {'info'|'success'|'warning'|'error'} [type]
+ * @param {number} [durationMs]
+ * @param {{ label: string, onClick: () => void }} [action] Optional inline
+ *   action button (e.g. "View clip") appended after the message. Clicking
+ *   it both runs `onClick` and dismisses the toast immediately, same as
+ *   the plain auto-dismiss timeout would eventually do.
+ */
+export function showToast(message, type = 'info', durationMs = 3000, action = null) {
     const stack = ensureToastStack();
     const colorByType = {
         error: 'bg-tg-red text-white',
@@ -219,8 +228,24 @@ export function showToast(message, type = 'info', durationMs = 3000) {
     };
     const toast = document.createElement('div');
     toast.className = `pointer-events-auto px-4 py-2 rounded-lg shadow-lg transition-opacity duration-300 ${colorByType[type] || colorByType.info}`;
-    toast.textContent = message;
     toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
+    if (action?.label && typeof action.onClick === 'function') {
+        toast.className += ' flex items-center gap-3';
+        const text = document.createElement('span');
+        text.textContent = message;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = action.label;
+        btn.className = 'underline font-medium shrink-0 hover:opacity-80';
+        btn.onclick = () => {
+            action.onClick();
+            toast.remove();
+        };
+        toast.appendChild(text);
+        toast.appendChild(btn);
+    } else {
+        toast.textContent = message;
+    }
     stack.appendChild(toast);
     // Cap visible toasts so a flood doesn't push the screen content offscreen.
     while (stack.children.length > 6) stack.firstChild.remove();

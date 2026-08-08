@@ -496,6 +496,8 @@
     "viewer.video.trim_saved": "บันทึกคลิปแล้ว ({duration} วินาที)",
     "viewer.video.trim_failed": "บันทึกคลิปไม่สำเร็จ: {msg}",
     "viewer.video.trim_range_invalid": "จุดเริ่มต้นต้องมาก่อนจุดสิ้นสุด",
+    "viewer.video.view_clip": "ดูคลิป",
+    "viewer.clip_badge": "คลิป",
     "viewer.kind.image": "รูปภาพ",
     "viewer.kind.video": "วิดีโอ",
     "viewer.kind.audio": "เสียง",
