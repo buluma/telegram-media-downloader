@@ -101,6 +101,12 @@ const SHORTCUTS = [
         k: 'shortcuts.delete_file',
         def: '(in viewer) delete current file without confirmation',
     },
+    {
+        id: 'toggle_trim',
+        keys: 'x',
+        k: 'shortcuts.toggle_trim',
+        def: '(in viewer) toggle video trim/clip mode',
+    },
 ];
 
 /**

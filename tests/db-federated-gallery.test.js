@@ -336,6 +336,54 @@ describe('getAllDownloadsFederated', () => {
         expect(r.total).toBe(1);
         expect(r.files[0].peer_id).toBe('self');
     });
+
+    // Clips (src/core/clip.js) reuse the source's group_id but take a
+    // negative message_id from a dedicated kv counter, since real Telegram
+    // message_ids are always positive — that's the only thing distinguishing
+    // a clip row from a normal download. clippedOnly filters on it.
+    it('clippedOnly returns only rows with a negative message_id', () => {
+        seedLocal({
+            id: 1,
+            groupId: '-100',
+            groupName: 'A',
+            fileName: 'source.mp4',
+            fileType: 'video',
+            fileSize: 100,
+            createdAt: '2026-04-01 12:00:00',
+        });
+        db.prepare(
+            `INSERT INTO downloads (id, group_id, group_name, message_id, file_name, file_size, file_type, file_path, status, created_at, pinned)
+             VALUES (2, '-100', 'A', -1, 'source.clip-0s-5s-abc123.mp4', 50, 'video', 'A/videos/source.clip-0s-5s-abc123.mp4', 'completed', '2026-04-02 12:00:00', 0)`,
+        ).run();
+
+        const r = api.getAllDownloadsFederated(50, 0, 'all', { clippedOnly: true });
+        expect(r.total).toBe(1);
+        expect(r.files.map((f) => f.file_name)).toEqual(['source.clip-0s-5s-abc123.mp4']);
+    });
+
+    it('clippedOnly excludes peer rows entirely (peer files are never clips)', () => {
+        db.prepare(
+            `INSERT INTO downloads (id, group_id, group_name, message_id, file_name, file_size, file_type, file_path, status, created_at, pinned)
+             VALUES (1, '-100', 'A', -1, 'own-clip.mp4', 50, 'video', 'A/videos/own-clip.mp4', 'completed', '2026-04-01 12:00:00', 0)`,
+        ).run();
+        seedPeer({
+            peerId: 'peer-B',
+            remoteId: 99,
+            groupId: '-100',
+            groupName: 'A',
+            fileName: 'peer.mp4',
+            fileType: 'video',
+            fileSize: 200,
+            createdAtMs: Date.parse('2026-04-02T12:00:00Z'),
+        });
+
+        const r = api.getAllDownloadsFederated(50, 0, 'all', {
+            include: 'peers',
+            clippedOnly: true,
+        });
+        expect(r.total).toBe(1);
+        expect(r.files.map((f) => f.file_name)).toEqual(['own-clip.mp4']);
+    });
 });
 
 describe('getDownloadsForGroupFederated', () => {
@@ -398,6 +446,19 @@ describe('getDownloadsForGroupFederated', () => {
         expect(r.total).toBe(1);
         expect(r.files[0].file_name).toBe('peer-A.jpg');
         expect(r.files[0].peer_id).toBe('peer-X');
+    });
+
+    it('clippedOnly narrows to negative-message_id rows within the group, excluding peers', () => {
+        db.prepare(
+            `INSERT INTO downloads (id, group_id, group_name, message_id, file_name, file_size, file_type, file_path, status, created_at, pinned)
+             VALUES (3, '-100', 'A', -1, 'A-clip.mp4', 50, 'video', 'A/videos/A-clip.mp4', 'completed', '2026-04-05 12:00:00', 0)`,
+        ).run();
+        const r = api.getDownloadsForGroupFederated('-100', 50, 0, 'all', {
+            include: 'peers',
+            clippedOnly: true,
+        });
+        expect(r.total).toBe(1);
+        expect(r.files.map((f) => f.file_name)).toEqual(['A-clip.mp4']);
     });
 });
 
