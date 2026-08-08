@@ -4,6 +4,9 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+### Added
+- **`TGDL_API_TOKEN`** — optional bearer token for scripted API access (`Authorization: Bearer <token>`), bypassing the session-cookie login for cron jobs / scripts. Unset by default; grants admin role when present and matching. Mirrors the `TGDL_METRICS_TOKEN` pattern.
+
 ## [2.25.3] — 2026-07-28
 
 Fix batch plus a large test-coverage pass (P3/P4) — no new features.

@@ -1,5 +1,18 @@
+import crypto from 'crypto';
 import { readConfigSafe } from '../lib/config-cache.js';
 import { isAuthConfigured, validateSession } from '../../core/web-auth.js';
+
+// Constant-time compare for the bearer token below — same rationale as
+// core/web-auth.js's legacyCompare (avoid leaking length/prefix via timing).
+function timingSafeStringEqual(a, b) {
+    const ab = Buffer.from(String(a));
+    const bb = Buffer.from(String(b));
+    if (ab.length !== bb.length) {
+        crypto.timingSafeEqual(ab, ab);
+        return false;
+    }
+    return crypto.timingSafeEqual(ab, bb);
+}
 
 // Paths reachable without an authenticated session.
 // PWA bits must be reachable pre-login — the browser fetches them before
@@ -75,6 +88,20 @@ export async function checkAuth(req, res, next) {
     }
 
     if (isPublicPath(req.path)) return next();
+
+    // Scripted/API access: set TGDL_API_TOKEN to allow `Authorization:
+    // Bearer <token>` in place of a session cookie — no browser login
+    // required. Mirrors the TGDL_METRICS_TOKEN pattern. Unset (default) ⇒
+    // this branch is skipped entirely and only the cookie session works.
+    const apiToken = process.env.TGDL_API_TOKEN;
+    if (apiToken) {
+        const authHeader = req.headers['authorization'] || '';
+        const match = /^Bearer\s+(.+)$/i.exec(authHeader);
+        if (match && timingSafeStringEqual(match[1], apiToken)) {
+            req.role = 'admin';
+            return next();
+        }
+    }
 
     const token = req.cookies['tg_dl_session'];
     const session = validateSession(token);
