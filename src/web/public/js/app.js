@@ -2244,6 +2244,7 @@ async function loadAllFiles() {
                   ? '&pinned=0'
                   : '';
         const watchedQs = state.watchedFilter ? '&watched=1' : '';
+        const clippedQs = state.clippedFilter ? '&clipped=1' : '';
         const pinFirstQs =
             localStorage.getItem('tgdl-pinned-first') === '1' ? '&pinnedFirst=1' : '';
         const sortQs =
@@ -2256,7 +2257,7 @@ async function loadAllFiles() {
         ].join('');
         const scopeQs = _galleryScopeQs();
         const res = await api.get(
-            `/api/downloads/all?page=${state.page}&limit=${FILES_PER_PAGE}&type=${encodeURIComponent(type)}${pinQs}${watchedQs}${pinFirstQs}${sortQs}${dateQs}${scopeQs}`,
+            `/api/downloads/all?page=${state.page}&limit=${FILES_PER_PAGE}&type=${encodeURIComponent(type)}${pinQs}${watchedQs}${clippedQs}${pinFirstQs}${sortQs}${dateQs}${scopeQs}`,
         );
         const newFiles = res?.files || [];
 
@@ -2317,6 +2318,7 @@ async function loadGroupFiles(groupId) {
                   ? '&pinned=0'
                   : '';
         const watchedQs = state.watchedFilter ? '&watched=1' : '';
+        const clippedQs = state.clippedFilter ? '&clipped=1' : '';
         const pinFirstQs =
             localStorage.getItem('tgdl-pinned-first') === '1' ? '&pinnedFirst=1' : '';
         const sortQs =
@@ -2329,7 +2331,7 @@ async function loadGroupFiles(groupId) {
         ].join('');
         const scopeQs = _galleryScopeQs();
         const res = await api.get(
-            `/api/downloads/${encodeURIComponent(groupId)}?page=${state.page}&limit=${FILES_PER_PAGE}&type=${encodeURIComponent(type)}${pinQs}${watchedQs}${pinFirstQs}${sortQs}${dateQs}${scopeQs}`,
+            `/api/downloads/${encodeURIComponent(groupId)}?page=${state.page}&limit=${FILES_PER_PAGE}&type=${encodeURIComponent(type)}${pinQs}${watchedQs}${clippedQs}${pinFirstQs}${sortQs}${dateQs}${scopeQs}`,
         );
         const newFiles = res.files || [];
 
@@ -4764,10 +4766,12 @@ function resetGalleryFilter() {
     state.dateFrom = null;
     state.dateTo = null;
     state.watchedFilter = false;
+    state.clippedFilter = false;
     state.pinnedFilter = null;
     document.querySelectorAll('#media-tabs .tab-item').forEach((t) => {
         t.classList.toggle('active', (t.dataset.type || 'all') === 'all');
         if (t.dataset.watchedToggle !== undefined) t.setAttribute('aria-pressed', 'false');
+        if (t.dataset.clippedToggle !== undefined) t.setAttribute('aria-pressed', 'false');
         if (t.dataset.pinnedToggle !== undefined) _updatePinnedPill(t, null);
     });
     const labelEl = document.getElementById('date-chip-label');
@@ -4816,9 +4820,25 @@ function setupMediaTabs() {
                 }
                 return;
             }
+            if (tab.dataset.clippedToggle !== undefined) {
+                const next = tab.getAttribute('aria-pressed') !== 'true';
+                tab.setAttribute('aria-pressed', next ? 'true' : 'false');
+                state.clippedFilter = next;
+                state.page = 1;
+                state.hasMore = true;
+                state.files = [];
+                if (state.currentPage === 'viewer') {
+                    if (state.currentGroupId) loadGroupFiles(state.currentGroupId);
+                    else loadAllFiles();
+                } else {
+                    renderMediaGrid();
+                }
+                return;
+            }
             document.querySelectorAll('#media-tabs .tab-item').forEach((t) => {
                 if (t.dataset.pinnedToggle !== undefined) return; // leave the chip alone
                 if (t.dataset.watchedToggle !== undefined) return;
+                if (t.dataset.clippedToggle !== undefined) return;
                 t.classList.remove('active');
             });
             tab.classList.add('active');

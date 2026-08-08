@@ -6,6 +6,27 @@ All notable changes to this project are documented here. The format is based on 
 
 ### Added
 - **`TGDL_API_TOKEN`** — optional bearer token for scripted API access (`Authorization: Bearer <token>`), bypassing the session-cookie login for cron jobs / scripts. Unset by default; grants admin role when present and matching. Mirrors the `TGDL_METRICS_TOKEN` pattern.
+- **"Clips" filter chip** — the All-Media / per-group gallery tabs gained a Clips toggle (next to Pinned/Watched) that narrows the view to videos saved via the trim tool (SHA-149). Backed by `?clipped=1` on `/api/downloads/all` and `/api/downloads/:groupId`; clips are identified by their synthetic negative `message_id`, the same marker `clip.js` already used to avoid colliding with real Telegram messages — no schema change.
+- **`x` keyboard shortcut** — toggles video trim/clip mode in the viewer (same action as clicking the scissors button), video-only.
+
+## [2.25.6] — 2026-08-06
+
+### Fixed
+- **Clip trim UI** — the trim controls' CSS classes were never compiled into `index.css`, so the scissors button / dual-handle seekbar / trim action bar from 2.25.5 rendered unstyled.
+
+## [2.25.5] — 2026-08-06
+
+### Added
+- **Trim a video and save it as a new download (SHA-149)** — scissors button in the video viewer's controls row opens trim mode: two draggable handles on the seekbar mark in/out points (0.2s minimum gap), a trim action bar shows the duration and Save/Cancel. Save stream-copies (`ffmpeg -c copy`, no re-encode) the range into a new `downloads` row in the same group — fast, but the cut lands on the nearest keyframe rather than being frame-exact. New route `POST /api/downloads/:id/clip { startSec, endSec }`.
+
+## [2.25.4] — 2026-08-06
+
+### Fixed
+- **arm64 Docker builds** — a stale prebuilt `better-sqlite3` binary could survive into the image; now deleted before the arm64 build forces a from-source compile.
+- **5 transitive CVEs patched** — `ip-address`, `adm-zip`, `protobufjs`, `body-parser`, and the `@huggingface/transformers`-nested copy of `sharp` (libvips CVEs); `npm audit` clean post-bump.
+
+### Changed
+- Sidebar widened to 18rem.
 
 ## [2.25.3] — 2026-07-28
 

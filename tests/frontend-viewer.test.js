@@ -1212,6 +1212,22 @@ describe('keyboard shortcuts', () => {
         expect(pin).toHaveBeenCalled();
     });
 
+    it('toggles trim mode with x while a video is open', async () => {
+        await open([FILE({ name: 'clip.mp4', type: 'videos' }), FILE({ id: 2, name: 'b.jpg' })], 0);
+        const video = $('modal-video');
+        video.duration = 100;
+        key({ key: 'x' });
+        expect($('video-trim-overlay').classList.contains('hidden')).toBe(false);
+        key({ key: 'x' });
+        expect($('video-trim-overlay').classList.contains('hidden')).toBe(true);
+    });
+
+    it('ignores x for non-video media', async () => {
+        await open();
+        key({ key: 'x' });
+        expect($('video-trim-overlay').classList.contains('hidden')).toBe(true);
+    });
+
     it('delegates delete to the app hook', async () => {
         await open();
         window.tgdlDeleteCurrentFile = vi.fn();

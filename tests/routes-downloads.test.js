@@ -223,6 +223,22 @@ describe('GET /api/downloads/all', () => {
         expect(body.files[0].type).toBe('videos');
     });
 
+    it('filters to clips only via ?clipped=1', async () => {
+        downloadsApi.insertDownload({
+            groupId: '-100333',
+            groupName: 'Grp',
+            messageId: -1, // clips take negative, never-Telegram message_ids — see src/core/clip.js
+            fileName: 'b.clip-0s-5s-abc123.mp4',
+            fileType: 'video',
+            fileSize: 5,
+            filePath: 'Grp/videos/b.clip-0s-5s-abc123.mp4',
+        });
+        const { status, body } = await get('/api/downloads/all?clipped=1');
+        expect(status).toBe(200);
+        expect(body.files).toHaveLength(1);
+        expect(body.files[0].name).toBe('b.clip-0s-5s-abc123.mp4');
+    });
+
     it('forces federation scope to local for a guest role', async () => {
         const guestApp = express();
         guestApp.use(express.json());

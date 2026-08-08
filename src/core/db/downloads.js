@@ -387,6 +387,12 @@ export function getAllDownloads(limit = 50, offset = 0, type = 'all', opts = {})
     if (opts.watchedOnly) {
         clauses.push('last_viewed_at IS NOT NULL');
     }
+    if (opts.clippedOnly) {
+        // Clips (src/core/clip.js) take a negative message_id from a
+        // dedicated kv counter — real Telegram message_ids are always
+        // positive, so this is the only thing marking a clip row.
+        clauses.push('message_id < 0');
+    }
     if (opts.dateFrom) {
         clauses.push('date(created_at) >= ?');
         params.push(opts.dateFrom);
@@ -444,6 +450,7 @@ export function getDownloads(groupId, limit = 50, offset = 0, type = 'all', opts
     if (opts.pinnedOnly) whereParts.push('COALESCE(pinned, 0) = 1');
     if (opts.unpinnedOnly) whereParts.push('COALESCE(pinned, 0) = 0');
     if (opts.watchedOnly) whereParts.push('last_viewed_at IS NOT NULL');
+    if (opts.clippedOnly) whereParts.push('message_id < 0');
     if (opts.dateFrom) {
         whereParts.push('date(created_at) >= ?');
         params.push(opts.dateFrom);
@@ -690,6 +697,13 @@ export function getAllDownloadsFederated(limit = 50, offset = 0, type = 'all', o
         localWherePartsD.push('d.last_viewed_at IS NOT NULL');
         peerWhereParts.push('0 = 1');
     }
+    if (opts.clippedOnly) {
+        // Clips are local-only (created by src/core/clip.js against this
+        // instance's own library) — peer files can never be clips.
+        localWhereParts.push('message_id < 0');
+        localWherePartsD.push('d.message_id < 0');
+        peerWhereParts.push('0 = 1');
+    }
     if (opts.dateFrom) {
         localWhereParts.push('date(created_at) >= ?');
         localWherePartsD.push('date(d.created_at) >= ?');
@@ -783,6 +797,12 @@ export function getDownloadsForGroupFederated(
     if (opts.watchedOnly) {
         localWhereParts.push('last_viewed_at IS NOT NULL');
         localWherePartsD.push('d.last_viewed_at IS NOT NULL');
+        peerWhereParts.push('0 = 1');
+    }
+    if (opts.clippedOnly) {
+        // Clips are local-only — peer files can never be clips.
+        localWhereParts.push('message_id < 0');
+        localWherePartsD.push('d.message_id < 0');
         peerWhereParts.push('0 = 1');
     }
     if (opts.dateFrom) {

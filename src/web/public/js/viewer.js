@@ -2261,6 +2261,18 @@ export function setupViewerEvents() {
             return;
         }
 
+        // Trim mode toggle — video-only, mirrors clicking the scissors
+        // button (`toggleTrimMode()` itself no-ops without a loaded video
+        // duration, so this is safe to fire unconditionally while a video
+        // is showing).
+        if ((e.key === 'x' || e.key === 'X') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+            if (videoActive) {
+                e.preventDefault();
+                document.getElementById('video-trim-btn')?.click();
+            }
+            return;
+        }
+
         if (e.key === 'p' && !e.metaKey && !e.ctrlKey && !e.altKey) {
             navigateMedia(-1);
             return;
