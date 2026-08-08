@@ -1,5 +1,5 @@
 import { state } from './store.js';
-import { formatDate, showToast, escapeHtml } from './utils.js';
+import { formatDate, formatBytes, showToast, escapeHtml } from './utils.js';
 import { attachSwipe, attachDragDismiss } from './gestures.js';
 import { tf as i18nTf, t as i18nT } from './i18n.js';
 import { getMediaUrl, getDownloadUrl } from './media-url.js';
@@ -1593,6 +1593,19 @@ class VideoPlayer {
                         { duration: durStr },
                         `Clip saved (${durStr}s).`,
                     ),
+                    'success',
+                    3000,
+                    {
+                        label: i18nT('viewer.video.view_clip', 'View clip'),
+                        onClick: () =>
+                            openMediaViewerSingle({
+                                id: d.id,
+                                name: d.fileName,
+                                type: 'videos',
+                                fullPath: d.filePath,
+                                sizeFormatted: formatBytes(d.fileSize),
+                            }),
+                    },
                 );
                 this._exitTrimMode();
             } else {
@@ -2223,7 +2236,19 @@ export function setupViewerEvents() {
     // Keyboard shortcuts. Only fire when the modal is open AND focus isn't
     // inside an input / textarea / contenteditable. Esc / arrow nav stay
     // global; everything video-specific is delegated to the player.
-    document.addEventListener('keydown', (e) => {
+    //
+    // setupViewerEvents() is only ever called once in production (app.js
+    // boot), but nothing enforced that — a second call would silently
+    // double-register this listener and double-fire every shortcut
+    // (surfaced by a test harness that reloads the module and re-calls
+    // setup per test, since jsdom's `document` outlives each module
+    // instance). Stash the handler on `document` itself — not a
+    // module-level variable — so it survives across module reloads and a
+    // stray re-registration replaces the old listener instead of stacking.
+    if (document._tgdlViewerKeydownHandler) {
+        document.removeEventListener('keydown', document._tgdlViewerKeydownHandler);
+    }
+    const _viewerKeydownHandler = (e) => {
         if (document.getElementById('media-modal').classList.contains('hidden')) return;
         const tag = (e.target?.tagName || '').toLowerCase();
         if (
@@ -2255,6 +2280,34 @@ export function setupViewerEvents() {
             }
         }
 
+        // Review-mode action shortcuts take priority over every hardcoded
+        // single-letter binding below (t/x/p/n/d/a) — a user who rebinds a
+        // review action onto one of those letters expects their choice to
+        // win, not to have the built-in shortcut silently eat the
+        // keystroke first. Match by single-letter key (case-insensitive)
+        // so j/k/w/d feel native. Skip when modifiers are held so
+        // Cmd/Ctrl combos still bubble to the browser. No-ops instantly
+        // when `_reviewActions` is empty (i.e. outside review mode), so
+        // this doesn't change behavior for the normal viewer.
+        if (
+            _reviewActions?.length &&
+            !e.metaKey &&
+            !e.ctrlKey &&
+            !e.altKey &&
+            e.key &&
+            e.key.length === 1
+        ) {
+            const want = e.key.toLowerCase();
+            const action = _reviewActions.find(
+                (a) => typeof a.key === 'string' && a.key.toLowerCase() === want,
+            );
+            if (action) {
+                e.preventDefault();
+                _runReviewAction(action);
+                return;
+            }
+        }
+
         if ((e.key === 't' || e.key === 'T') && !e.metaKey && !e.ctrlKey && !e.altKey) {
             e.preventDefault();
             document.getElementById('modal-pin')?.click();
@@ -2281,28 +2334,6 @@ export function setupViewerEvents() {
         if (e.key === 'n' && !e.metaKey && !e.ctrlKey && !e.altKey) {
             navigateMedia(1);
             return;
-        }
-
-        // Review-mode action shortcuts — match by single-letter key
-        // (case-insensitive) so j/k/w/d feel native. Skip when modifiers
-        // are held so Cmd/Ctrl combos still bubble to the browser.
-        if (
-            _reviewActions?.length &&
-            !e.metaKey &&
-            !e.ctrlKey &&
-            !e.altKey &&
-            e.key &&
-            e.key.length === 1
-        ) {
-            const want = e.key.toLowerCase();
-            const action = _reviewActions.find(
-                (a) => typeof a.key === 'string' && a.key.toLowerCase() === want,
-            );
-            if (action) {
-                e.preventDefault();
-                _runReviewAction(action);
-                return;
-            }
         }
 
         if (e.key === 'd' && !e.metaKey && !e.ctrlKey && !e.altKey) {
@@ -2336,7 +2367,9 @@ export function setupViewerEvents() {
                 return;
             }
         }
-    });
+    };
+    document._tgdlViewerKeydownHandler = _viewerKeydownHandler;
+    document.addEventListener('keydown', _viewerKeydownHandler);
 
     // Touch / pen gestures: swipe left/right = prev/next, drag down on the
     // empty area below the controls = dismiss (Telegram-style).

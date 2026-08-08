@@ -579,6 +579,7 @@ export function createDownloadsRouter({
                     sizeFormatted: formatBytes(row.file_size),
                     type: typeFolder,
                     modified: row.created_at,
+                    messageId: row.message_id || null,
                     pendingUntil: row.pending_until || null,
                     rescuedAt: row.rescued_at || null,
                     peer_id: row.peer_id || 'self',
