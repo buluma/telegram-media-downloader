@@ -10,7 +10,7 @@
 # Pin a specific patch version. Floating tags drift; this image is reproducible.
 ARG RUNTIME_BASE_IMAGE=runtime-base
 
-FROM node:26.5.0-bookworm-slim AS deps
+FROM node:26.7.0-bookworm-slim AS deps
 WORKDIR /app
 RUN apt-get update \
     && apt-get install -y --no-install-recommends python3 make g++ \
@@ -25,7 +25,7 @@ RUN npm ci --omit=dev --no-audit --no-fund \
     && rm -f node_modules/better-sqlite3/prebuilds/linux-arm64.node \
     && npm_config_build_from_source=true npm rebuild better-sqlite3
 
-FROM node:26.5.0-bookworm-slim AS runtime-base
+FROM node:26.7.0-bookworm-slim AS runtime-base
 
 # tini    — proper PID 1 (signal handling + zombie reaping). Debian ships
 #           the binary at /usr/bin/tini.
