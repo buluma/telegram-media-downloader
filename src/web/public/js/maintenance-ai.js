@@ -1004,7 +1004,7 @@ async function _applyTagMerge(tag1, tag2) {
         const saveRes = { success: true }; // no-op: OCR-derived tags have no config vocabulary
         if (!saveRes.success) throw new Error(saveRes.error || 'save failed');
 
-        showToast(`Merged "${tag2}" into "${tag1}". Refresh suggestions to see the change.`);
+        showToast(`Merge noted for "${tag2}" → "${tag1}" — advisory only, no tags were changed.`);
         _renderTagSuggestions(true);
     } catch (e) {
         console.error('merge failed:', e);
@@ -2667,6 +2667,8 @@ function _bindOnce() {
     ws.on('ai_tags_done', (m) => _onScanDone('tags', m));
     ws.on('ai_ocr_progress', (m) => _onScanProgress('ocr', m));
     ws.on('ai_ocr_done', (m) => _onScanDone('ocr', m));
+    ws.on('ai_wd14_progress', (m) => _onScanProgress('wd14', m));
+    ws.on('ai_wd14_done', (m) => _onScanDone('wd14', m));
     ws.on('ai_index_progress', _onEmbedIndexProgress);
     ws.on('ai_index_done', _onEmbedIndexDone);
     ws.on('ai_faces_status', () => refreshStatus());
@@ -4548,6 +4550,7 @@ function _onScanDone(feature, msg) {
     refreshStatus();
     if (feature === 'faces') _loadPeople();
     if (feature === 'ocr') _renderTagBrowser();
+    if (feature === 'wd14') _renderWd14Browser();
 }
 
 /**

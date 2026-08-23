@@ -2304,7 +2304,16 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
     router.post('/ai/faces/install-deps', async (req, res) => {
         try {
             const spawnMod = await import('../../core/ai/faces-spawn.js');
-            const force = typeof req.body?.force === 'string' ? req.body.force : undefined;
+            const FORCE_VALUES = new Set(['cpu', 'gpu', 'directml', 'openvino']);
+            const rawForce = req.body?.force;
+            if (
+                rawForce !== undefined &&
+                !(typeof rawForce === 'string' && FORCE_VALUES.has(rawForce))
+            ) {
+                res.status(400).json({ error: 'invalid force value' });
+                return;
+            }
+            const force = rawForce;
             spawnMod.resetAutoInstallGuard();
             // Fire-and-forget — pip can take 1-5 min on first run while
             // downloading onnxruntime wheels. Progress flows over WS.

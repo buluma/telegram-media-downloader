@@ -30,7 +30,13 @@ import { toPosixPath } from '../util/paths.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..', '..');
-const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
+// `TGDL_DATA_DIR` overrides the on-disk data root — mirrors db.js / scan-runner.js /
+// faces-spawn.js / routes/ai.js. Must stay in sync: a hardcoded path here made
+// `_resolveAbs()` miss every download when the data dir was overridden, which
+// silently stamped rows as AI-indexed with no detection ever run.
+const DATA_DIR = process.env.TGDL_DATA_DIR
+    ? path.resolve(process.env.TGDL_DATA_DIR)
+    : path.resolve(PROJECT_ROOT, 'data');
 
 // Float32Array → Buffer. Used to be in vector-store.js (deleted); kept
 // inline because the only remaining caller is the face pre-generate hook.
