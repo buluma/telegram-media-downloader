@@ -1615,38 +1615,53 @@ export function getTagCooccurrenceSuggestions({
 
     if (tags.length < 2) return [];
 
-    // For each tag pair, calculate co-occurrence
+    // Single self-join computes every qualifying pair's co-occurrence count
+    // in one pass. This used to issue one query PER PAIR inside a nested JS
+    // loop (O(tags²) round-trips) — with a few hundred distinct tags that's
+    // tens of thousands of synchronous better-sqlite3 calls back-to-back
+    // with no yield in between, which froze the event loop for ~20s and
+    // tripped the watchdog restart on every page load of the AI maintenance
+    // page (the tag-suggestions card auto-fetches on mount).
+    // CTE re-derives the same qualifying-tag set instead of binding it as an
+    // IN (...) parameter list — a library with hundreds of distinct tags
+    // would otherwise risk SQLite's ~999-bound-variable ceiling (2 params
+    // per tag here).
+    const countByTag = new Map(tags.map((t) => [t.tag, t.count]));
+    const pairs = db
+        .prepare(`
+        WITH qualifying AS (
+            SELECT tag, COUNT(DISTINCT download_id) AS cnt
+              FROM image_tags
+             WHERE tag != '_scanned_'
+             GROUP BY tag
+            HAVING cnt >= ?
+        )
+        SELECT t1.tag AS tag1, t2.tag AS tag2, COUNT(DISTINCT t1.download_id) AS together
+          FROM image_tags t1
+          JOIN image_tags t2 ON t1.download_id = t2.download_id AND t1.tag < t2.tag
+          JOIN qualifying q1 ON q1.tag = t1.tag
+          JOIN qualifying q2 ON q2.tag = t2.tag
+         GROUP BY t1.tag, t2.tag
+    `)
+        .all(minImages);
+
     const suggestions = [];
-    for (let i = 0; i < tags.length; i++) {
-        for (let j = i + 1; j < tags.length; j++) {
-            const t1 = tags[i].tag;
-            const t2 = tags[j].tag;
-            const count1 = tags[i].count;
-            const count2 = tags[j].count;
+    for (const { tag1, tag2, together } of pairs) {
+        const count1 = countByTag.get(tag1);
+        const count2 = countByTag.get(tag2);
+        // Co-occurrence rate: how often they appear together vs apart
+        const union = count1 + count2 - together;
+        const rate = union > 0 ? together / union : 0;
 
-            const together = db
-                .prepare(`
-                SELECT COUNT(DISTINCT t1.download_id) AS n
-                  FROM image_tags t1
-                  JOIN image_tags t2 ON t1.download_id = t2.download_id
-                 WHERE t1.tag = ? AND t2.tag = ?
-            `)
-                .get(t1, t2).n;
-
-            // Co-occurrence rate: how often they appear together vs apart
-            const union = count1 + count2 - together;
-            const rate = union > 0 ? together / union : 0;
-
-            if (rate >= minRate && together >= minImages) {
-                suggestions.push({
-                    tag1: t1,
-                    tag2: t2,
-                    cooccurrence_rate: Math.round(rate * 100) / 100,
-                    images_together: together,
-                    images_tag1: count1,
-                    images_tag2: count2,
-                });
-            }
+        if (rate >= minRate && together >= minImages) {
+            suggestions.push({
+                tag1,
+                tag2,
+                cooccurrence_rate: Math.round(rate * 100) / 100,
+                images_together: together,
+                images_tag1: count1,
+                images_tag2: count2,
+            });
         }
     }
 
