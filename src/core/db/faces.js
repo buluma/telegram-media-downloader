@@ -1483,6 +1483,34 @@ export function setImageTags(downloadId, tags) {
     return tx();
 }
 
+/**
+ * Merge one tag into another across the whole library: every download
+ * tagged `fromTag` becomes tagged `intoTag` instead. A download that
+ * already carries both tags keeps its `intoTag` row and drops the
+ * `fromTag` row — PRIMARY KEY (download_id, tag) forbids two rows for
+ * the same tag on the same download, so the rename alone would collide.
+ */
+export function mergeTags(fromTag, intoTag) {
+    const db = getDb();
+    const from = String(fromTag || '')
+        .trim()
+        .slice(0, 80);
+    const into = String(intoTag || '')
+        .trim()
+        .slice(0, 80);
+    if (!from || !into) throw new Error('both tags are required');
+    if (from === into) throw new Error('tags must be different');
+    const tx = db.transaction(() => {
+        db.prepare(
+            `DELETE FROM image_tags
+              WHERE tag = ?
+                AND download_id IN (SELECT download_id FROM image_tags WHERE tag = ?)`,
+        ).run(from, into);
+        return db.prepare(`UPDATE image_tags SET tag = ? WHERE tag = ?`).run(into, from).changes;
+    });
+    return tx();
+}
+
 export function clearImageTagsForDownload(downloadId) {
     return getDb().prepare('DELETE FROM image_tags WHERE download_id = ?').run(Number(downloadId))
         .changes;

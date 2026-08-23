@@ -996,19 +996,26 @@ async function _renderTagSuggestions(forceReload = true) {
 }
 
 /**
- * Apply a tag merge (tag2 → tag1). Tags are OCR-derived; merging is advisory only —
- * it does not modify config but could be wired to a future rename endpoint.
+ * Apply a tag merge (tag2 → tag1). Renames every `tag2` row in `image_tags`
+ * to `tag1` across the whole library (server drops the `tag2` row instead
+ * on any download that already has `tag1`, to satisfy the PRIMARY KEY).
  */
 async function _applyTagMerge(tag1, tag2) {
+    const ok = await confirmSheet({
+        title: 'Merge tags?',
+        message: `Every photo tagged "${tag2}" will be retagged "${tag1}" instead. This can't be undone.`,
+        confirmText: 'Merge',
+        destructive: true,
+    });
+    if (!ok) return;
     try {
-        const saveRes = { success: true }; // no-op: OCR-derived tags have no config vocabulary
-        if (!saveRes.success) throw new Error(saveRes.error || 'save failed');
-
-        showToast(`Merge noted for "${tag2}" → "${tag1}" — advisory only, no tags were changed.`);
+        const r = await api.post('/api/ai/tags/merge', { from: tag2, into: tag1 });
+        if (!r.success) throw new Error(r.error || 'merge failed');
+        showToast(`Merged "${tag2}" into "${tag1}" — ${r.merged} photo(s) retagged.`, 'success');
         _renderTagSuggestions(true);
     } catch (e) {
         console.error('merge failed:', e);
-        showToast(`Error merging tags: ${e.message}`, 'error');
+        showToast(`Error merging tags: ${e?.data?.error || e.message}`, 'error');
     }
 }
 

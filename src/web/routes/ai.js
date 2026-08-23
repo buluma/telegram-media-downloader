@@ -877,6 +877,23 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
         }
     });
 
+    // Merge one tag into another across the whole library. Used by the
+    // "Merge → keep first" action on a co-occurrence suggestion.
+    router.post('/ai/tags/merge', async (req, res) => {
+        try {
+            const from = String(req.body?.from || '').trim();
+            const into = String(req.body?.into || '').trim();
+            if (!from || !into) {
+                return res.status(400).json({ error: 'from and into are required' });
+            }
+            const { mergeTags } = await import('../../core/db/faces.js');
+            const merged = mergeTags(from, into);
+            res.json({ success: true, merged });
+        } catch (e) {
+            res.status(400).json({ error: e?.message || String(e) });
+        }
+    });
+
     router.get('/ai/text/:downloadId', async (req, res) => {
         try {
             const { getImageText } = await import('../../core/db/faces.js');
@@ -1168,18 +1185,27 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             const llm = await import('../../core/llm/index.js');
             const facesMod = await import('../../core/db/faces.js');
 
-            // Fetch actual tags so the LLM uses real vocabulary
+            // Fetch actual tags so the LLM uses real vocabulary. Cached —
+            // every NL parse re-derived this from scratch, and the vocab
+            // doesn't change meaningfully between one operator's edits to
+            // a single album description a few seconds apart.
             let availableTags = [];
             let scoreMin = 0;
             let scoreMax = 1;
             try {
-                const rows = facesMod.listAllTags({ minCount: 1 });
-                if (rows.length) {
-                    availableTags = rows.slice(0, 60).map((r) => ({
-                        tag: r.tag,
-                        count: r.count,
-                        avgScore: Number(r.avg_score.toFixed(3)),
-                    }));
+                availableTags = await _cachedAiRoute(
+                    '/api/ai/smart-albums/parse:tags',
+                    30_000,
+                    () => {
+                        const rows = facesMod.listAllTags({ minCount: 1 });
+                        return rows.slice(0, 60).map((r) => ({
+                            tag: r.tag,
+                            count: r.count,
+                            avgScore: Number(r.avg_score.toFixed(3)),
+                        }));
+                    },
+                );
+                if (availableTags.length) {
                     const allAvg = availableTags.map((t) => t.avgScore);
                     scoreMin = allAvg.reduce((min, v) => (v < min ? v : min), allAvg[0]);
                     scoreMax = allAvg.reduce((max, v) => (v > max ? v : max), allAvg[0]);
