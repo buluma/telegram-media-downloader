@@ -362,6 +362,11 @@ export function initStatusBar() {
 //   2. View release notes — opens the GitHub release page in a new tab.
 
 export async function _openUpdateChooser(latest, releaseUrl) {
+    // `latest` is the raw GitHub release tag (e.g. "v2.26.0") — kept as-is
+    // for URLs below. The i18n templates below already supply their own
+    // literal "v" (`"Install v{version}"`), so interpolating the tag
+    // unstripped renders "Install vv2.26.0". Strip it once here for those.
+    const versionLabel = String(latest || '').replace(/^v/i, '');
     let status = { available: false };
     try {
         status = await api.get('/api/update/status');
@@ -373,8 +378,8 @@ export async function _openUpdateChooser(latest, releaseUrl) {
         ? `<button id="upd-install-btn" class="tg-btn w-full flex items-center justify-center gap-2">
               <i class="ri-download-cloud-2-line"></i><span>${i18nTf(
                   'update.install_now',
-                  { version: latest },
-                  `Install v${latest}`,
+                  { version: versionLabel },
+                  `Install v${versionLabel}`,
               )}</span>
            </button>`
         : `<button class="tg-btn-secondary w-full flex items-center justify-center gap-2 opacity-60 cursor-not-allowed" disabled
@@ -406,7 +411,11 @@ export async function _openUpdateChooser(latest, releaseUrl) {
         : '';
 
     const sheet = openSheet({
-        title: i18nTf('update.sheet_title', { version: latest }, `Update available — v${latest}`),
+        title: i18nTf(
+            'update.sheet_title',
+            { version: versionLabel },
+            `Update available — v${versionLabel}`,
+        ),
         size: 'sm',
         content: `
             <p class="text-xs text-tg-textSecondary mb-3">${i18nT(
@@ -446,8 +455,8 @@ export async function _openUpdateChooser(latest, releaseUrl) {
                 installBtn.disabled = false;
                 installBtn.innerHTML = `<i class="ri-download-cloud-2-line"></i><span>${i18nTf(
                     'update.install_now',
-                    { version: latest },
-                    `Install v${latest}`,
+                    { version: versionLabel },
+                    `Install v${versionLabel}`,
                 )}</span>`;
                 showToast(e?.data?.error || e.message || 'Update failed', 'error');
             }

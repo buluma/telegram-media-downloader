@@ -625,4 +625,21 @@ describe('_openUpdateChooser', () => {
         await vi.waitFor(() => expect(showToast).toHaveBeenCalledWith('busy', 'error'));
         expect(btn.disabled).toBe(false);
     });
+
+    // GitHub's release tag_name already carries a "v" prefix (e.g.
+    // "v2.26.0") — production always calls this with that raw tag, unlike
+    // every test above using a bare "3.0.0". The sheet title and install
+    // button both hardcode their own literal "v", so passing the tag
+    // through unstripped renders "vv2.26.0".
+    it('does not double the "v" when the version already has one (real GitHub tag shape)', async () => {
+        api.get.mockResolvedValue({ available: true, inDocker: true });
+        const { _openUpdateChooser } = await loadStatusbar();
+        await _openUpdateChooser('v2.26.0', 'https://github.com/x/releases/tag/v2.26.0');
+        const { body, opts } = openSheet.mock.results[0].value;
+
+        expect(opts.title).toBe('Update available — v2.26.0');
+        expect(opts.title).not.toContain('vv');
+        expect(body.querySelector('#upd-install-btn').textContent).toContain('Install v2.26.0');
+        expect(body.querySelector('#upd-install-btn').textContent).not.toContain('vv');
+    });
 });
