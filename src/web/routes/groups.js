@@ -842,7 +842,7 @@ export function createGroupsRouter({
                 if (req.body.enabled === true && !_activeBackfillsByGroup.has(String(group.id))) {
                     const histCfg = config.advanced?.history || {};
                     const autoOn = histCfg.autoFirstBackfill !== false; // default ON
-                    const autoLim = Number(histCfg.autoFirstLimit ?? 100); // default 100
+                    const autoLim = Number(histCfg.autoFirstLimit ?? 50); // default 50
                     if (autoOn && autoLim > 0) {
                         const { count } = (await import('../../core/db.js')).getMessageIdRange(
                             String(group.id),

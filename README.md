@@ -268,7 +268,7 @@ Runtime config lives in the `kv['config']` row of `data/db.sqlite` — self-heal
         "shareSecret":       "<lazy-generated 64-char hex — never commit>"
     },
     "advanced": {
-        "history":  { "autoFirstBackfill": true, "autoFirstLimit": 100,
+        "history":  { "autoFirstBackfill": true, "autoFirstLimit": 50,
                       "autoCatchUp": true, "autoCatchUpThreshold": 5,
                       "retentionDays": 30, "batchInsertSize": 50,
                       "backpressureCap": 500, "backpressureMaxWaitMs": 900000 },

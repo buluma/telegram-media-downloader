@@ -1157,7 +1157,7 @@ runtime.on('catch_up_needed', ({ groupId, gap }) => {
     // need ~10000s of messages, so cap at a sane ceiling. Falls back
     // to "unlimited" when autoFirstLimit is 0 (operator opt-in for
     // long catch-ups).
-    const ceiling = Number(histCfg.autoFirstLimit ?? 100);
+    const ceiling = Number(histCfg.autoFirstLimit ?? 50);
     const limit = ceiling > 0 ? Math.min(ceiling * 10, BACKFILL_MAX_LIMIT) : null;
     spawnBackfill({
         groupId,

@@ -1424,7 +1424,7 @@ describe('advanced tunables', () => {
         mod.loadAdvanced({});
         expect($('setting-adv-auto-first-backfill').classList.contains('active')).toBe(true);
         expect($('setting-adv-auto-catchup').classList.contains('active')).toBe(true);
-        expect($('setting-adv-auto-first-limit').value).toBe('100');
+        expect($('setting-adv-auto-first-limit').value).toBe('50');
         expect($('setting-adv-batch-insert').value).toBe('50');
     });
 

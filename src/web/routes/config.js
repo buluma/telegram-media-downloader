@@ -313,7 +313,7 @@ export function createConfigRouter({
                 h.retentionDays = clampInt(h.retentionDays, 1, 3650, 30);
                 // v2.3.34 — auto-backfill knobs
                 h.autoFirstBackfill = h.autoFirstBackfill !== false; // default ON
-                h.autoFirstLimit = clampInt(h.autoFirstLimit, 0, 10000, 100);
+                h.autoFirstLimit = clampInt(h.autoFirstLimit, 0, 10000, 50);
                 h.autoCatchUp = h.autoCatchUp !== false; // default ON
                 h.autoCatchUpThreshold = clampInt(h.autoCatchUpThreshold, 1, 100000, 5);
                 h.batchInsertSize = clampInt(h.batchInsertSize, 1, 500, 50);

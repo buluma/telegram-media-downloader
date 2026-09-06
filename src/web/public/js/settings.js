@@ -1001,7 +1001,7 @@ export function loadAdvanced(config) {
     set('setting-adv-backpressure-wait', h.backpressureMaxWaitMs);
     set('setting-adv-short-break', h.shortBreakEveryN);
     set('setting-adv-long-break', h.longBreakEveryN);
-    set('setting-adv-auto-first-limit', Number.isFinite(h.autoFirstLimit) ? h.autoFirstLimit : 100);
+    set('setting-adv-auto-first-limit', Number.isFinite(h.autoFirstLimit) ? h.autoFirstLimit : 50);
     set('setting-adv-batch-insert', Number.isFinite(h.batchInsertSize) ? h.batchInsertSize : 50);
     // Toggle widgets — flip on click, default to ON when undefined.
     const _wireToggle = (id, current) => {
@@ -1192,7 +1192,7 @@ function gatherAdvanced() {
                 document
                     .getElementById('setting-adv-auto-first-backfill')
                     ?.classList.contains('active') !== false,
-            autoFirstLimit: num('setting-adv-auto-first-limit', 100),
+            autoFirstLimit: num('setting-adv-auto-first-limit', 50),
             autoCatchUp:
                 document
                     .getElementById('setting-adv-auto-catchup')
