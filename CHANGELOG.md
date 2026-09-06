@@ -4,39 +4,39 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+## [2.26.0] — 2026-09-06
+
+Catch-up release — v2.25.3 was the last one actually tagged; everything below landed on `main` since then.
+
 ### Added
+- **File-size badge on video tiles** — bottom-left corner of the thumbnail, mirroring the existing bottom-right duration badge. List view keeps its own size column.
+- **"Last 500" backfill preset** — new middle ground between "Last 100" and "Last 1k" on the Backfill page and the group-settings quick-shortcuts; now the default limit everywhere one isn't explicitly chosen.
 - **"View clip" toast action** — saving a trim now offers a one-click jump straight to the new clip instead of leaving the operator to hunt for it in the gallery.
 - **Clip badge on gallery tiles** — a scissors chip (top-right corner) marks any tile whose file is a saved clip, visible in the default "All" view without needing the Clips filter.
-
-### Fixed
-- **Review-mode shortcut collision** — a custom review action bound to `t`/`x`/`p`/`n`/`d`/`a` would silently never fire; those hardcoded viewer bindings ate the keystroke first. Review actions now match before any hardcoded binding.
-- **`setupViewerEvents()` could double-register its keydown listener** if ever called twice, double-firing every viewer shortcut. Latent bug (production only calls it once at boot), surfaced by a test — now guarded.
-
-## [2.25.7] — 2026-08-09
-
-### Added
 - **`TGDL_API_TOKEN`** — optional bearer token for scripted API access (`Authorization: Bearer <token>`), bypassing the session-cookie login for cron jobs / scripts. Unset by default; grants admin role when present and matching. Mirrors the `TGDL_METRICS_TOKEN` pattern.
 - **"Clips" filter chip** — the All-Media / per-group gallery tabs gained a Clips toggle (next to Pinned/Watched) that narrows the view to videos saved via the trim tool (SHA-149). Backed by `?clipped=1` on `/api/downloads/all` and `/api/downloads/:groupId`; clips are identified by their synthetic negative `message_id`, the same marker `clip.js` already used to avoid colliding with real Telegram messages — no schema change.
 - **`x` keyboard shortcut** — toggles video trim/clip mode in the viewer (same action as clicking the scissors button), video-only.
-
-## [2.25.6] — 2026-08-06
-
-### Fixed
-- **Clip trim UI** — the trim controls' CSS classes were never compiled into `index.css`, so the scissors button / dual-handle seekbar / trim action bar from 2.25.5 rendered unstyled.
-
-## [2.25.5] — 2026-08-06
-
-### Added
 - **Trim a video and save it as a new download (SHA-149)** — scissors button in the video viewer's controls row opens trim mode: two draggable handles on the seekbar mark in/out points (0.2s minimum gap), a trim action bar shows the duration and Save/Cancel. Save stream-copies (`ffmpeg -c copy`, no re-encode) the range into a new `downloads` row in the same group — fast, but the cut lands on the nearest keyframe rather than being frame-exact. New route `POST /api/downloads/:id/clip { startSec, endSec }`.
-
-## [2.25.4] — 2026-08-06
+- **AI tag merge actually merges** — "Merge → keep first" in AI maintenance now calls a real `POST /ai/tags/merge` (renames the tag across `image_tags`, drops the source row) behind a confirm gate, instead of showing a toast and doing nothing.
 
 ### Fixed
+- **Cross-group download race** — a channel post and its auto-mirrored copy in a linked discussion/comments group share the same Telegram document id but arrive as two separate jobs; both could download in full before the existing hash-based dedup caught it. Added an in-flight guard so the second job waits on the first instead of racing it, and moved the dedup lookup ahead of the disk-quota check so a dedup hit is never rejected by quota.
+- **Malformed backfill limits** (negative, partially-numeric, non-numeric) no longer pass through to the backend unchanged — default to the "Last 500" preset instead.
+- **Review-mode shortcut collision** — a custom review action bound to `t`/`x`/`p`/`n`/`d`/`a` would silently never fire; those hardcoded viewer bindings ate the keystroke first. Review actions now match before any hardcoded binding.
+- **`setupViewerEvents()` could double-register its keydown listener** if ever called twice, double-firing every viewer shortcut. Latent bug (production only calls it once at boot), surfaced by a test — now guarded.
+- **O(n²) query storm in AI tag-suggestion queries** — one synchronous SQL query per tag pair in a nested loop froze the event loop for ~20s on every AI maintenance page load, tripping the watchdog restart. Replaced with a single self-join aggregate.
+- **AI data dir override** — `src/core/ai/index.js` ignored `TGDL_DATA_DIR`, silently skipping the AI index on any deploy with an overridden data dir.
+- **AI maintenance page** — WD14 scan progress is now WS-driven instead of REST-poll-only; 84 orphaned i18n keys and missing `data-i18n` attributes fixed across OCR/WD14/smart-albums/LLM-config; missing Thai translation for the unpinned-videos settings card added.
+- **Clip trim UI** — the trim controls' CSS classes were never compiled into `index.css`, so the scissors button / dual-handle seekbar / trim action bar from the trim feature rendered unstyled.
 - **arm64 Docker builds** — a stale prebuilt `better-sqlite3` binary could survive into the image; now deleted before the arm64 build forces a from-source compile.
 - **5 transitive CVEs patched** — `ip-address`, `adm-zip`, `protobufjs`, `body-parser`, and the `@huggingface/transformers`-nested copy of `sharp` (libvips CVEs); `npm audit` clean post-bump.
 
 ### Changed
 - Sidebar widened to 18rem.
+- Biome config schema bumped to 2.5.11 to match the installed CLI — no lint behavior change.
+
+### Dependencies
+- Routine dependabot bumps: `googleapis`, `better-sqlite3`, `jsdom`, `@biomejs/biome`, `ws`, `tailwindcss`, `lefthook`, and the seekbar-service Go/Docker base images.
 
 ## [2.25.3] — 2026-07-28
 
