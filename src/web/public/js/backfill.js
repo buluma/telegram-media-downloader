@@ -29,15 +29,30 @@ const PRESETS = [
     { value: 5, key: 'backfill.preset.last_5', fallback: 'Last 5' },
     { value: 10, key: 'backfill.preset.last_10', fallback: 'Last 10' },
     { value: 100, key: 'backfill.preset.last_100', fallback: 'Last 100' },
+    { value: 500, key: 'backfill.preset.last_500', fallback: 'Last 500' },
     { value: 1000, key: 'backfill.preset.last_1k', fallback: 'Last 1k' },
     { value: 10000, key: 'backfill.preset.last_10k', fallback: 'Last 10k' },
     { value: 0, key: 'backfill.preset.all', fallback: 'All' },
 ];
 
+// Normalizes a limit coming from outside user input (a deep-link query param,
+// or a recent job's stored `limit`) into either the "All" sentinel (0) or a
+// finite positive integer, defaulting anything else — invalid, negative,
+// zero, partially-numeric ("12abc"), or non-numeric — to the default preset.
+// `null` is also an "All" sentinel here — stored history jobs use it that
+// way elsewhere in this file (see the `job.limit === null` checks in
+// renderActive/renderRecent). `Number()` (not `parseInt()`) is deliberate:
+// parseInt would accept a trailing-garbage string like "12abc" as 12.
+function normalizeBackfillLimit(limit) {
+    if (limit === null || limit === 0 || limit === '0') return 0;
+    const n = typeof limit === 'number' ? limit : Number(limit);
+    return Number.isInteger(n) && n > 0 ? n : 500;
+}
+
 const activeJobs = new Map(); // jobId → { id, group, groupId, processed, downloaded, limit, startedAt, ... }
 let recentJobs = []; // server-provided list of finished jobs
 let selectedGroupId = null;
-let selectedLimit = 100;
+let selectedLimit = 500;
 let customLimitTouched = false;
 let initialised = false;
 let elapsedTimer = null;
@@ -100,7 +115,7 @@ export async function showBackfillPage(params = {}) {
  */
 export function deepLinkFromModal(groupId, limit) {
     selectedGroupId = String(groupId);
-    selectedLimit = limit === 0 || limit === '0' ? 0 : parseInt(limit, 10) || 100;
+    selectedLimit = normalizeBackfillLimit(limit);
     customLimitTouched = false;
     const customInput = document.getElementById('backfill-custom-limit');
     if (customInput) customInput.value = '';
@@ -906,7 +921,7 @@ async function rerunFromRecent(jobId) {
     const job = recentJobs.find((j) => String(j.id) === String(jobId));
     if (!job) return;
     selectedGroupId = String(job.groupId);
-    selectedLimit = job.limit === null || job.limit === 0 ? 0 : job.limit || 100;
+    selectedLimit = normalizeBackfillLimit(job.limit);
     customLimitTouched = false;
     const customInput = document.getElementById('backfill-custom-limit');
     if (customInput) customInput.value = '';

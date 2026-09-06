@@ -4078,7 +4078,7 @@ async function openGroupSettings(groupId, groupName) {
         btn.onclick = () => {
             const raw = btn.dataset.historyLimit;
             const parsed = parseInt(raw, 10);
-            const limit = Number.isFinite(parsed) ? parsed : 100;
+            const limit = Number.isFinite(parsed) ? parsed : 500;
             closeGroupSettings();
             backfillDeepLink(groupId, limit);
         };

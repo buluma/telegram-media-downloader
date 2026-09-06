@@ -401,6 +401,7 @@
     "backfill.preset.last_5": "Last 5",
     "backfill.preset.last_10": "Last 10",
     "backfill.preset.last_100": "Last 100",
+    "backfill.preset.last_500": "Last 500",
     "backfill.preset.last_1k": "Last 1k",
     "backfill.preset.last_10k": "Last 10k",
     "backfill.preset.all": "All",

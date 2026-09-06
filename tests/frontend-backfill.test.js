@@ -286,7 +286,7 @@ describe('start', () => {
 
         expect(api.post).toHaveBeenCalledWith('/api/history', {
             groupId: '-100123',
-            limit: 100,
+            limit: 500,
         });
         expect(showToast).toHaveBeenCalledWith('Backfill started', 'success');
     });
@@ -510,6 +510,36 @@ describe('recent jobs card', () => {
     });
 });
 
+// ---- rerun from recent ---------------------------------------------------
+
+describe('rerunFromRecent', () => {
+    it('still treats a stored null limit as "All", not the 500 default', async () => {
+        await boot({ recent: [RECENT({ id: 'r1', groupId: '-100555', limit: null })] });
+        api.post.mockResolvedValue({ jobId: 'j1' });
+
+        $('backfill-recent-list').querySelector('[data-rerun="r1"]').click();
+        await flush();
+
+        expect(api.post).toHaveBeenCalledWith('/api/history', {
+            groupId: '-100555',
+            limit: 0,
+        });
+    });
+
+    it('defaults a corrupt stored limit to 500 instead of passing it through', async () => {
+        await boot({ recent: [RECENT({ id: 'r1', groupId: '-100555', limit: -5 })] });
+        api.post.mockResolvedValue({ jobId: 'j1' });
+
+        $('backfill-recent-list').querySelector('[data-rerun="r1"]').click();
+        await flush();
+
+        expect(api.post).toHaveBeenCalledWith('/api/history', {
+            groupId: '-100555',
+            limit: 500,
+        });
+    });
+});
+
 // ---- deep link ----------------------------------------------------------
 
 describe('deepLinkFromModal', () => {
@@ -548,5 +578,32 @@ describe('deepLinkFromModal', () => {
         $('backfill-custom-limit').value = '999';
         mod.deepLinkFromModal('-100777', 100);
         expect($('backfill-custom-limit').value).toBe('');
+    });
+
+    // `parseInt('-5') || 500` would let a negative limit through unchanged
+    // (parseInt('-5') is -5, which is truthy). Same family of bug for a
+    // partially-numeric string, which parseInt happily truncates instead
+    // of rejecting.
+    it.each([
+        ['a negative number', -5],
+        ['a negative numeric string', '-5'],
+        ['zero as a float', -0.5],
+        ['a partially-numeric string', '12abc'],
+        ['a non-numeric string', 'abc'],
+        ['undefined', undefined],
+    ])('defaults %s to the 500 preset instead of passing it through', async (_label, bad) => {
+        const mod = await boot();
+        mod.deepLinkFromModal('-100777', bad);
+        await mod.showBackfillPage({ groupId: '-100777' });
+        await flush();
+        api.post.mockResolvedValue({ jobId: 'j1' });
+
+        $('backfill-start-btn').click();
+        await flush();
+
+        expect(api.post).toHaveBeenCalledWith('/api/history', {
+            groupId: '-100777',
+            limit: 500,
+        });
     });
 });

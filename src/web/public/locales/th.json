@@ -401,6 +401,7 @@
     "backfill.preset.last_5": "5 รายการล่าสุด",
     "backfill.preset.last_10": "10 รายการล่าสุด",
     "backfill.preset.last_100": "100 รายการล่าสุด",
+    "backfill.preset.last_500": "500 รายการล่าสุด",
     "backfill.preset.last_1k": "1k รายการล่าสุด",
     "backfill.preset.last_10k": "10k รายการล่าสุด",
     "backfill.preset.all": "ทั้งหมด",
