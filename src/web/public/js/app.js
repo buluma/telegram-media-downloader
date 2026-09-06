@@ -2517,6 +2517,12 @@ function renderMediaGrid(opts = {}) {
                     // Inner thumb content — the visual changes per file type (img,
                     // video w/ play overlay, doc icon). Wrapped in `.tile-thumb`
                     // so list-mode CSS can size it as a 56 px square cell.
+                    const tileSizeLine =
+                        file.sizeFormatted || (file.size != null ? formatBytes(file.size) : '');
+                    const sizeBadge =
+                        file.type === 'videos' && tileSizeLine
+                            ? `<span class="tile-size-badge">${escapeHtml(tileSizeLine)}</span>`
+                            : '';
                     const durationBadge =
                         file.type === 'videos' && file.duration_sec != null
                             ? (() => {
@@ -2541,6 +2547,7 @@ function renderMediaGrid(opts = {}) {
                                 <i class="ri-play-fill text-white text-xl ml-0.5"></i>
                             </div>
                         </div>
+                        ${sizeBadge}
                         ${durationBadge}
                        </div>`
                               : docFallback;
@@ -2581,7 +2588,7 @@ function renderMediaGrid(opts = {}) {
                             : '';
                     const groupLine = file.groupName || file.groupId || '';
                     const sizeLine =
-                        file.sizeFormatted || (file.size ? formatBytes(file.size) : '');
+                        file.sizeFormatted || (file.size != null ? formatBytes(file.size) : '');
                     const dateLine = file.modified ? formatRelativeTime(file.modified) : '';
                     // NSFW score overlay — top-left red badge when score ≥ 0.7.
                     // Only renders when nsfw_score is present (admin-only feature).
