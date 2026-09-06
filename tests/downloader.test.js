@@ -585,6 +585,121 @@ describe('worker pool', () => {
         expect(dm.workerCount).toBeLessThan(10);
         expect(dm.workerCount).toBeGreaterThanOrEqual(2);
     });
+
+    // Same Telegram document, two different jobs — e.g. a channel post and
+    // its auto-mirrored copy in the linked discussion/comments group. Both
+    // land in the queue with different keys (different groupId/messageId),
+    // so the belt-and-braces job.key guard doesn't see them as duplicates.
+    it('does not download the same tgFileId twice concurrently', async () => {
+        vi.useFakeTimers();
+        const dm = mk({ download: { path: path.join(DATA_DIR, 'downloads'), concurrent: 2 } });
+
+        const callOrder = [];
+        let resolveFirst;
+        dm.download = vi.fn((job) => {
+            callOrder.push(job.key);
+            if (job.key === 'a') {
+                return new Promise((resolve) => {
+                    resolveFirst = resolve;
+                });
+            }
+            return Promise.resolve('/tmp/second');
+        });
+
+        const sameDoc = { id: 'shared-doc' };
+        dm._high.push({
+            key: 'a',
+            groupId: '-100001',
+            message: docMsg({ id: 10, document: sameDoc }),
+        });
+        dm._high.push({
+            key: 'b',
+            groupId: '-100002',
+            message: docMsg({ id: 20, document: sameDoc }),
+        });
+
+        dm.start();
+
+        // Let both workers pick from _high. Only the leader should call
+        // download() — the follower must see its tgFileId already active
+        // and requeue itself instead of racing the leader.
+        await vi.advanceTimersByTimeAsync(10);
+        expect(dm.download).toHaveBeenCalledTimes(1);
+        expect(callOrder).toEqual(['a']);
+
+        // The follower must be requeued into _high, not demoted to the
+        // backfill lane — it's realtime work that lost a race, not backfill.
+        expect(dm._high.some((j) => j.key === 'b')).toBe(true);
+        expect(dm.queue.some((j) => j.key === 'b')).toBe(false);
+
+        // Follower keeps re-checking every 100ms and finding the guard
+        // still held while the leader is in flight.
+        await vi.advanceTimersByTimeAsync(300);
+        expect(dm.download).toHaveBeenCalledTimes(1);
+
+        // Leader finishes — its tgFileId is released, so the follower's
+        // next poll picks the job up and calls download() itself (which
+        // is where the existing DB-hash dedup would then short-circuit it).
+        resolveFirst('/tmp/first');
+        await vi.advanceTimersByTimeAsync(150);
+        expect(dm.download).toHaveBeenCalledTimes(2);
+        expect(callOrder).toEqual(['a', 'b']);
+    });
+});
+
+// The real download() pipeline (streaming, thumbs, nsfw, faststart) is
+// deliberately not exercised in this file (see header comment) — but the
+// pre-download dedup short-circuit returns before any of that, so it's
+// cheap and safe to exercise directly here rather than through the SQL-only
+// harness in tests/dedup-predownload.test.js.
+describe('download() dedup vs quota ordering', () => {
+    it('lets a tgFileId dedup hit through even when the disk quota is already exceeded', async () => {
+        const dm = mk({
+            download: { path: path.join(DATA_DIR, 'downloads'), concurrent: 1 },
+            diskManagement: { maxTotalSize: '1B' },
+        });
+        vi.spyOn(dm, 'getDiskUsage').mockResolvedValue(999_999);
+
+        const groupDir = path.join(DATA_DIR, 'downloads', 'group-x', 'videos');
+        fs.mkdirSync(groupDir, { recursive: true });
+        const relPath = 'group-x/videos/existing.mp4';
+        fs.writeFileSync(path.join(DATA_DIR, 'downloads', relPath), 'content');
+
+        dbApi
+            .getDb()
+            .prepare(`
+                INSERT INTO downloads
+                    (group_id, group_name, message_id, file_name, file_size, file_type, file_path, file_hash, tg_file_id, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `)
+            .run(
+                '-100777',
+                'group-x',
+                1,
+                'existing.mp4',
+                7,
+                'video',
+                relPath,
+                'dedup-hash',
+                'shared-doc-2',
+                'completed',
+            );
+
+        const complete = vi.fn();
+        dm.on('download_complete', complete);
+
+        const job = {
+            key: 'c',
+            groupId: '-100888',
+            groupName: 'mirror-group',
+            message: docMsg({ id: 99, document: { id: 'shared-doc-2' } }),
+        };
+
+        // Would throw "Disk Quota Exceeded" if the quota check ran first —
+        // the dedup hit must be checked, and win, before that.
+        await expect(dm.download(job)).resolves.toBeUndefined();
+        expect(complete).toHaveBeenCalledWith(expect.objectContaining({ deduped: true }));
+    });
 });
 
 // ---- retry / snapshot / status ------------------------------------------

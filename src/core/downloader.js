@@ -262,6 +262,12 @@ export class DownloadManager extends EventEmitter {
         this.rehydrateFromDisk = async () => this.queueManager.rehydrateFromDisk();
 
         this.active = new Map(); // Key -> Promise/Status
+        // Telegram document/photo IDs currently mid-download. Guards the race
+        // where the same file (e.g. a channel post + its auto-mirrored
+        // discussion-group copy) is queued as two distinct jobs and both
+        // start before either has a file_hash for the DB-based dedup check
+        // in download() to catch. See tgFileId comment there.
+        this._activeTgFileIds = new Set();
         // Absolute paths of files currently being written (.part + final
         // candidates). The disk-rotator consults this Set before unlinking
         // anything to avoid yanking a file out from under an active write.
@@ -491,13 +497,17 @@ export class DownloadManager extends EventEmitter {
             }
 
             // 1. Drain high-priority (realtime) lane first, then history.
-            let job = this._high.shift() || this.queue.shift();
+            let job = this._high.shift();
+            let fromHigh = !!job;
+            if (!job) job = this.queue.shift();
 
             // 2. If RAM empty, check Disk Backlog
             if (!job) {
                 const hasMore = await this.rehydrateFromDisk();
                 if (hasMore) {
-                    job = this._high.shift() || this.queue.shift();
+                    job = this._high.shift();
+                    fromHigh = !!job;
+                    if (!job) job = this.queue.shift();
                 }
             }
 
@@ -513,7 +523,7 @@ export class DownloadManager extends EventEmitter {
             //    so other queued work keeps draining. Snapshot still shows
             //    it as 'paused' (see snapshot()).
             if (this._paused.has(job.key)) {
-                this.queue.push(job);
+                (fromHigh ? this._high : this.queue).push(job);
                 await this.sleep(150);
                 continue;
             }
@@ -521,12 +531,31 @@ export class DownloadManager extends EventEmitter {
             // Belt-and-braces dedupe: if another worker already picked the
             // same key, put this copy back and let the first one finish.
             if (this.active.has(job.key)) {
-                this.queue.push(job);
+                (fromHigh ? this._high : this.queue).push(job);
+                await this.sleep(100);
+                continue;
+            }
+
+            // Cross-group race guard: the same Telegram document (e.g. a
+            // channel post mirrored into its linked discussion group) can
+            // arrive as two different jobs — different groupId/messageId,
+            // so job.key differs — within the same tick. If a job for the
+            // same tgFileId is already downloading, requeue this one so the
+            // leader finishes, hashes, and lets the DB dedup check in
+            // download() short-circuit this copy instead of both fetching
+            // the full file over the wire.
+            const tgFileId = this._getTgFileId(job.message);
+            if (tgFileId && this._activeTgFileIds.has(tgFileId)) {
+                // Requeue into the lane it came from — a realtime job must
+                // not get demoted behind backfill just because it lost this
+                // race; it'll win the next time it's drawn.
+                (fromHigh ? this._high : this.queue).push(job);
                 await this.sleep(100);
                 continue;
             }
 
             this.active.set(job.key, { ...job, workerId: id, progress: 0, startedAt: Date.now() });
+            if (tgFileId) this._activeTgFileIds.add(tgFileId);
             this._jobs.delete(job.key);
             this.emit('start', job);
 
@@ -534,6 +563,7 @@ export class DownloadManager extends EventEmitter {
                 // Final Check DB before start (minimize race)
                 if (this.isDownloaded(job.groupId, job.message.id)) {
                     this.active.delete(job.key);
+                    if (tgFileId) this._activeTgFileIds.delete(tgFileId);
                     continue;
                 }
 
@@ -545,6 +575,7 @@ export class DownloadManager extends EventEmitter {
             }
 
             this.active.delete(job.key);
+            if (tgFileId) this._activeTgFileIds.delete(tgFileId);
         }
     }
 
@@ -574,48 +605,23 @@ export class DownloadManager extends EventEmitter {
                 err.nonRetryable = true;
                 throw err;
             }
-            // 1. Check Disk Quota
-            if (this.config.diskManagement?.maxTotalSize) {
-                const usage = await this.getDiskUsage();
-                const limit = this.parseSize(this.config.diskManagement.maxTotalSize);
-                if (usage > limit) {
-                    throw new Error(`Disk Quota Exceeded: ${usage} / ${limit} bytes`);
-                }
-            }
-
-            // 2. Prepare File Info & Check Limits
-            const fileSize = this.getFileSize(job.message);
-            const fileType = this.getFileTypeCategory(job.message);
-
-            if (fileSize > 0 && fileType) {
-                const typeName = fileType.charAt(0).toUpperCase() + fileType.slice(1); // 'Video', 'Image'
-                const limitStr = this.config.diskManagement?.[`max${typeName}Size`];
-                if (limitStr) {
-                    const maxBytes = this.parseSize(limitStr);
-                    if (fileSize > maxBytes) {
-                        throw new Error(
-                            `File too large (${this.formatBytes(fileSize)} > ${limitStr})`,
-                        );
-                    }
-                }
-            }
-
-            const mediaInfo = this.describeDownloadableMedia(job.message);
-            if (!mediaInfo.downloadable) {
-                const err = new Error(
-                    `Message has no downloadable media (${mediaInfo.description})`,
-                );
-                err.nonRetryable = true;
-                throw err;
-            }
-
-            // 2b. Pre-download dedup: if a hash-verified file with the same
+            // 1. Pre-download dedup: if a hash-verified file with the same
             // Telegram document/photo ID already exists, skip the download and
             // register a DB row pointing at the existing file. Telegram assigns
             // a stable document.id to each unique file — the same ID across
             // groups guarantees identical content (e.g. cross-posts, comment
             // threads mirroring the parent channel). Extension/size heuristics
             // are intentionally omitted: only the Telegram file identity counts.
+            //
+            // Runs BEFORE the quota/size checks below on purpose: a dedup hit
+            // costs zero new disk bytes (it only inserts a DB row pointing at
+            // a file that already exists), so it must never be rejected by a
+            // quota that new bytes would actually violate. This matters most
+            // right after the cross-group race guard in runWorker() releases
+            // a follower job — the leader's just-finished write can leave
+            // disk usage sitting at/over the configured quota, and a
+            // dedup-eligible follower must still be able to register its
+            // mapping instead of failing outright.
             if (attempt === 1) {
                 const tgFileId = this._getTgFileId(job.message);
                 if (tgFileId) {
@@ -664,6 +670,41 @@ export class DownloadManager extends EventEmitter {
                         // Non-fatal — fall through to normal download.
                     }
                 }
+            }
+
+            // 2. Check Disk Quota
+            if (this.config.diskManagement?.maxTotalSize) {
+                const usage = await this.getDiskUsage();
+                const limit = this.parseSize(this.config.diskManagement.maxTotalSize);
+                if (usage > limit) {
+                    throw new Error(`Disk Quota Exceeded: ${usage} / ${limit} bytes`);
+                }
+            }
+
+            // 2b. Prepare File Info & Check Limits
+            const fileSize = this.getFileSize(job.message);
+            const fileType = this.getFileTypeCategory(job.message);
+
+            if (fileSize > 0 && fileType) {
+                const typeName = fileType.charAt(0).toUpperCase() + fileType.slice(1); // 'Video', 'Image'
+                const limitStr = this.config.diskManagement?.[`max${typeName}Size`];
+                if (limitStr) {
+                    const maxBytes = this.parseSize(limitStr);
+                    if (fileSize > maxBytes) {
+                        throw new Error(
+                            `File too large (${this.formatBytes(fileSize)} > ${limitStr})`,
+                        );
+                    }
+                }
+            }
+
+            const mediaInfo = this.describeDownloadableMedia(job.message);
+            if (!mediaInfo.downloadable) {
+                const err = new Error(
+                    `Message has no downloadable media (${mediaInfo.description})`,
+                );
+                err.nonRetryable = true;
+                throw err;
             }
 
             // 3. Rate Limit
