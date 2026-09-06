@@ -408,6 +408,7 @@ All endpoints are admin-only.
 | POST   | `/api/ai/people/:id/split`          | `{ faceIds, newLabel? }` — create a new cluster        |
 | POST   | `/api/ai/faces/:id/reassign`        | `{ personId }` — move a single face to another cluster |
 | GET    | `/api/ai/faces/by-download/:id`     | face boxes for the gallery viewer overlay              |
+| POST   | `/api/ai/tags/merge`                | `{ from, into }` — renames `from` to `into` across every tagged download, dropping the source tag. Backs the "Merge → keep first" action on a tag co-occurrence suggestion. |
 
 ## Sidecar wire format
 

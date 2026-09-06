@@ -13,6 +13,8 @@ The session cookie carries one of two roles:
 
 A few `/api/auth/*` routes are explicitly registered before the global auth middleware and enforce their own checks (login / setup / change-password / reset / guest-password). The public `/share/<id>` route also bypasses dashboard auth — it is gated by HMAC signature + DB row check instead.
 
+**Scripted access:** set `TGDL_API_TOKEN` in `.env` to allow `Authorization: Bearer <token>` in place of the session cookie — no browser login round-trip needed for cron jobs / scripts. Unset by default (cookie-only); a matching token grants the `admin` role. Mirrors the `TGDL_METRICS_TOKEN` pattern used for `/metrics`.
+
 ## Auth & setup
 
 | Method | Path | Notes |
@@ -65,12 +67,13 @@ A few `/api/auth/*` routes are explicitly registered before the global auth midd
 | Method | Path | Notes |
 |---|---|---|
 | `GET`    | `/api/downloads`                    | Aggregate per group. |
-| `GET`    | `/api/downloads/all`                | Cross-group All-Media list, paginated. `?page=&limit=&type=`. **`?include=local\|peers\|all`** (admin-only) UNIONs `peer_downloads` into the result; **`?peerId=<id>`** narrows to one peer. Each row carries `peer_id` (`'self'` or peer's id) + `peer_name`. Default `local` is backward-compatible. |
-| `GET`    | `/api/downloads/:groupId`           | Paginated rows for one group. `?type=images\|videos\|documents\|audio`. Same `?include=` / `?peerId=` federation params as `/all`. |
+| `GET`    | `/api/downloads/all`                | Cross-group All-Media list, paginated. `?page=&limit=&type=`. **`?include=local\|peers\|all`** (admin-only) UNIONs `peer_downloads` into the result; **`?peerId=<id>`** narrows to one peer. **`?clipped=1`** narrows to videos saved via the trim tool (identified by their synthetic negative `message_id`). Each row carries `peer_id` (`'self'` or peer's id) + `peer_name`. Default `local` is backward-compatible. |
+| `GET`    | `/api/downloads/:groupId`           | Paginated rows for one group. `?type=images\|videos\|documents\|audio`. Same `?include=` / `?peerId=` / `?clipped=1` params as `/all`. |
 | `GET`    | `/api/downloads/search`             | `?q=…&page=&limit=&groupId=`. Same `?include=` federation param. |
 | `POST`   | `/api/downloads/bulk-delete`        | `{ids?, paths?}`. Also purges thumbnail cache for every removed id. |
 | `DELETE` | `/api/file?path=…`                  | Single file. |
 | `DELETE` | `/api/purge/all`                    | Factory reset. |
+| `POST`   | `/api/downloads/:id/clip`           | `{startSec, endSec}` — stream-copies (`ffmpeg -c copy`, no re-encode) that range out of a video into a new `downloads` row in the same group; the source file is untouched. Cut lands on the nearest keyframe, not frame-exact. Broadcasts `download_clipped`. |
 
 ## Direct downloads
 
@@ -224,6 +227,7 @@ Opt-in face detection + clustering, backed by the Python sidecar in `faces-servi
 | `monitor_event`        | `{type, payload}` for download_start/_complete/_error, scale, queue_length, etc. |
 | `download_progress`    | `{key, groupId, fileName, progress, received, total, bps}` |
 | `download_complete`    | `{key, groupId, fileName, fileSize, deduped?}` |
+| `download_clipped`     | `{sourceId, id, fileName, filePath}` — fired by `POST /api/downloads/:id/clip`. No client listens yet (same as `download_pinned`/`download_transcoded`); broadcast for future consumers. |
 | `stats_push`           | Full `/api/stats` snapshot every 30 s. |
 | `file_deleted`         | `{path, id?}` |
 | `bulk_delete`          | `{unlinked, dbDeleted, ids?}` |
