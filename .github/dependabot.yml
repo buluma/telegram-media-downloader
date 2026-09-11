@@ -3,7 +3,7 @@ version: 2
 # Grouping policy
 #
 # Without `groups`, Dependabot opens one PR per package per ecosystem — five
-# npm PRs in a single week is routine, and each burns the full CI matrix
+# Dependency PRs in a single week are routine, and each burns the full CI matrix
 # (build + CodeQL + lint/test on Node 22/24 x ubuntu/macos) to move one
 # version digit.
 #

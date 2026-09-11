@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 #
 # Multi-stage build:
-#   - "deps" installs prod dependencies only (npm ci --omit=dev) so the runtime
+#   - "deps" installs prod dependencies only (bun install --production) so the runtime
 #     image stays small.
 #   - "runtime" copies node_modules from "deps" + the source, runs as the
 #     non-root `node` user, exposes 3000, and ships a healthcheck that hits
@@ -12,18 +12,23 @@ ARG RUNTIME_BASE_IMAGE=runtime-base
 
 FROM node:26.8.1-bookworm-slim AS deps
 WORKDIR /app
+COPY --from=oven/bun:1.4.0-slim /usr/local/bin/bun /usr/local/bin/bun
 RUN apt-get update \
     && apt-get install -y --no-install-recommends python3 make g++ \
     && rm -rf /var/lib/apt/lists/*
-COPY package.json package-lock.json ./
+COPY package.json bun.lock ./
 # better-sqlite3's prebuilt arm64 binary can require a newer glibc than this
 # bookworm-slim base ships (seen: prebuild wanting GLIBC_2.38 against 2.36 here).
 # Its loader prefers prebuilds/linux-arm64.node over a locally-built binary, so
 # node-gyp silently no-ops unless that stale prebuild is removed first — delete
 # it so the toolchain above actually compiles one against this base's glibc.
-RUN npm ci --omit=dev --no-audit --no-fund \
+# Bun's lifecycle runner can provision an ephemeral node-gyp without its
+# transitive tar dependency. Install node-gyp explicitly before the one
+# native rebuild that must target this image's Node/glibc combination.
+RUN bun install --frozen-lockfile --production --ignore-scripts --no-progress \
     && rm -f node_modules/better-sqlite3/prebuilds/linux-arm64.node \
-    && npm_config_build_from_source=true npm rebuild better-sqlite3
+    && npm install --global --no-audit --no-fund node-gyp@13.0.2 \
+    && npm_config_build_from_source=true npm_config_node_gyp=/usr/local/bin/node-gyp npm rebuild better-sqlite3
 
 FROM node:26.8.1-bookworm-slim AS runtime-base
 

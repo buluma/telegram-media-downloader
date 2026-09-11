@@ -1,21 +1,21 @@
 # Troubleshooting
 
-## First stop: `npm run doctor`
+## First stop: `bun run doctor`
 
 One-shot diagnostics — Node version + ABI, config load, `better-sqlite3` open + row count, `data/` writability, port availability (honours `PORT`), and `ffmpeg` on `PATH`. Cross-platform, non-interactive (safe to run inside CI / Docker / over SSH). Exits `1` on any blocking failure.
 
 ```bash
-npm run doctor
+bun run doctor
 ```
 
 If a check fails it prints what to do next. The most common hit is `SQLite (better-sqlite3): NODE_MODULE_VERSION ... was compiled against a different Node.js version` after a Node upgrade — `npm rebuild better-sqlite3` clears it.
 
-## "Web dashboard not initialised — run `npm run auth`"
+## "Web dashboard not initialised — run `bun run auth`"
 
 The dashboard fails closed when no password is configured. Either:
 
 - Open `http://localhost:3000` from the same machine — the setup wizard lets you set the password from the browser, or
-- Run `npm run auth` on the host, choose **Set / Change Password**, then reload the dashboard.
+- Run `bun run auth` on the host, choose **Set / Change Password**, then reload the dashboard.
 
 This was a deliberate change: earlier versions defaulted to **open access**, which exposed every download to anyone on the LAN.
 
@@ -30,9 +30,9 @@ A failed JSON→SQLite migration (or any other write that wiped `kv['config'].gr
 Run the recovery script instead:
 
 ```bash
-npm run recover                 # dry-run — print what would change
-npm run recover -- --apply      # commit to kv['config'] (still disabled by default)
-npm run recover -- --apply --enable   # commit AND flip enabled=true on every restored group
+bun run recover                 # dry-run — print what would change
+bun run recover -- --apply      # commit to kv['config'] (still disabled by default)
+bun run recover -- --apply --enable   # commit AND flip enabled=true on every restored group
 
 # Inside Docker:
 docker exec <container> node scripts/recover_groups.js
@@ -71,7 +71,7 @@ The downloader pauses for the duration Telegram requests automatically. If they 
 
 ## Missing files / errors after the upgrade to v2.0.0
 
-- Old `config.web.password` (plaintext) is auto-rehashed on first successful web login. If you can no longer log in, run `npm run auth` to reset.
+- Old `config.web.password` (plaintext) is auto-rehashed on first successful web login. If you can no longer log in, run `bun run auth` to reset.
 - Old AES session blobs (`v=1`) still decrypt — no manual migration needed.
 - The web server now refuses to open its own TelegramClient when the CLI is already running. Stop one and run only the other if you see "database is locked" or duplicate-event symptoms.
 
@@ -106,7 +106,7 @@ Use the official account-recovery flow at <https://telegram.org/support>. We can
 
 ## NSFW scan fails with "Failed to load @huggingface/transformers"
 
-The model classifier is an optional feature. Run `npm install @huggingface/transformers` (or rebuild the Docker image; it's already a dependency in the published image). The first scan downloads ~80 MB of model weights to `data/models/` — make sure that path is writable and the host can reach `huggingface.co`.
+The model classifier is an optional feature. Run `bun add @huggingface/transformers` (or rebuild the Docker image; it's already a dependency in the published image). The first scan downloads ~80 MB of model weights to `data/models/` — make sure that path is writable and the host can reach `huggingface.co`.
 
 ## "Install update" button is greyed out
 
@@ -179,7 +179,7 @@ The classifier's lazy loader couldn't `require('sharp')`. Common causes + fixes:
 
 - **Linux without libvips** — `apt-get install libvips42` (Debian/Ubuntu) or `apk add vips-dev` (Alpine; expect to set `npm config set sharp_libvips_local_prebuilds true` first).
 - **Node ABI mismatch after upgrade** — `npm rebuild sharp`.
-- **Alpine / musl** — sharp ships musl prebuilds; if you got the glibc tarball, rebuild explicitly via `npm install --include=optional sharp`.
+- **Alpine / musl** — sharp ships musl prebuilds; if you got the glibc tarball, rebuild explicitly via `bun install --force`.
 - **Apple Silicon under Rosetta** — install Node 20+ natively; Rosetta-emulated Node ships a binding that segfaults on first call.
 
 ## Re-auth modal didn't appear after my session expired

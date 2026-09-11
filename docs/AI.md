@@ -42,7 +42,7 @@ Releases). Cached forever.
 
 | Platform | Architecture | Mode | Notes |
 |---|---|---|---|
-| Windows 11 | x64 | Standalone `npm start` | Auto-downloads `tgdl-faces-win-x64.exe.tar.gz`, healthy in ≤60 s |
+| Windows 11 | x64 | Standalone `bun start` | Auto-downloads `tgdl-faces-win-x64.exe.tar.gz`, healthy in ≤60 s |
 | Windows 11 | ARM64 | Standalone | Auto-downloads `tgdl-faces-win-arm64.exe.tar.gz` (planned — until binary lands, drop a manual build at `data/faces-service/bin/`) |
 | macOS | Intel (x64) | Standalone | Auto-downloads `tgdl-faces-mac-x64.tar.gz` |
 | macOS | Apple Silicon (arm64) | Standalone | Auto-downloads `tgdl-faces-mac-arm64.tar.gz`; CoreML provider auto-picked when available |
@@ -336,7 +336,7 @@ For air-gapped / corporate-proxy environments:
 3. Tell the spawn module not to attempt a download:
    ```bash
    export TGDL_FACES_AUTO_DOWNLOAD=false
-   npm start
+   bun start
    ```
 
    Or, equivalent, pin the URL to a corporate mirror:
