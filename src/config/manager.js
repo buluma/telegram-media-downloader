@@ -733,18 +733,6 @@ const DEFAULT_CONFIG = {
  * @property {object} advanced
  */
 
-const DEFAULT_FILTERS = {
-    photos: true,
-    videos: false,
-    files: true,
-    links: true,
-    voice: true,
-    audio: false,
-    gifs: false,
-    stickers: false,
-    urls: true,
-};
-
 export const GROUP_DEFAULTS = Object.freeze({
     filters: Object.freeze({
         photos: true,
@@ -824,7 +812,13 @@ function mergeConfig(userConfig) {
         // double every monitor pass.
         groups: dedupeGroups(userConfig.groups || []).map((group) => ({
             ...group,
-            filters: { ...DEFAULT_FILTERS, ...(group.filters || {}) },
+            filters: { ...GROUP_DEFAULTS.filters, ...(group.filters || {}) },
+            trackComments: group.trackComments ?? GROUP_DEFAULTS.trackComments,
+            autoForward: {
+                ...GROUP_DEFAULTS.autoForward,
+                ...(group.autoForward || {}),
+            },
+            rescueMode: group.rescueMode ?? GROUP_DEFAULTS.rescueMode,
         })),
     };
 }

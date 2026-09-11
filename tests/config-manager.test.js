@@ -214,6 +214,18 @@ describe('config manager (kv-backed)', () => {
         expect(af.keepVideos).toBe(false);
     });
 
+    it('fills every group default from the canonical definition', () => {
+        dbApi.kvSet('config', {
+            groups: [{ id: '-100123', name: 'Partial group', enabled: false }],
+        });
+
+        const group = manager.loadConfig().groups[0];
+        expect(group.filters).toEqual(manager.GROUP_DEFAULTS.filters);
+        expect(group.trackComments).toBe(manager.GROUP_DEFAULTS.trackComments);
+        expect(group.autoForward).toEqual(manager.GROUP_DEFAULTS.autoForward);
+        expect(group.rescueMode).toBe(manager.GROUP_DEFAULTS.rescueMode);
+    });
+
     it('loadConfig dedupes groups that share the same id', () => {
         // Plant a stored tree with two entries for the same Telegram id but
         // different display names — what the dashboard sees when the same

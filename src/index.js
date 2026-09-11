@@ -13,7 +13,7 @@ import net from 'net';
 import os from 'os';
 import { fileURLToPath } from 'url';
 
-import { loadConfig, saveConfig } from './config/manager.js';
+import { loadConfig, saveConfig, GROUP_DEFAULTS } from './config/manager.js';
 import { resolveFfmpegBin, resolveFfprobeBin } from './core/thumbs.js';
 import { hashPassword } from './core/web-auth.js';
 import { logger, NATIVE_LOAD_FAIL, isNoise } from './core/logger.js';
@@ -784,12 +784,7 @@ async function configureGroups(accountManager, config) {
         type: group.isChannel ? '📢' : '👥',
         enabled: config.groups.some((g) => String(g.id) === String(group.id) && g.enabled),
         filters: config.groups.find((g) => String(g.id) === String(group.id))?.filters || {
-            photos: true,
-            videos: true,
-            files: true,
-            links: true,
-            voice: false,
-            gifs: false,
+            ...GROUP_DEFAULTS.filters,
         },
     }));
 
@@ -1412,14 +1407,7 @@ async function startHistory(accountManager, config, connManager) {
     console.log(colorize('Space to toggle, Enter to confirm', 'dim'));
 
     // Default filters
-    const filters = {
-        photos: true,
-        videos: true,
-        files: true,
-        links: true,
-        voice: false,
-        gifs: false,
-    };
+    const filters = { ...GROUP_DEFAULTS.filters };
 
     const filterKeys = [
         { key: 'photos', label: '📷 Photos' },
