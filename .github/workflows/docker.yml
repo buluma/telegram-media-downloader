@@ -74,7 +74,7 @@ jobs:
       # Steps run in order:
       #   1. Sanity: file permissions + readability
       #   2. Healthcheck: boot the container and verify it responds
-      #   3. Trivy vulnerability scan (best-effort — runner disk can be tight)
+      #   3. Trivy vulnerability scan (fixed HIGH/CRITICAL findings fail CI)
       - name: Smoke test — file permissions
         shell: bash
         run: |
@@ -148,9 +148,8 @@ jobs:
           docker stop smoke >/dev/null || true
           exit 1
 
-      - name: Container Scan (Trivy) — best-effort
+      - name: Container Scan (Trivy)
         if: always()
-        continue-on-error: true
         shell: bash
         run: |
           IMAGE=$(echo "${{ steps.meta.outputs.tags }}" | head -n 1)
