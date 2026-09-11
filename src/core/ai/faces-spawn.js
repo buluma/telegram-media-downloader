@@ -130,6 +130,7 @@ let _healthMonitorTimer = null;
 let _healthMonitorFailCount = 0;
 let _firstBoot = true;
 let _shutdownHooksWired = false;
+const SHUTDOWN_HOOKS_KEY = Symbol.for('tgdl.ai.faces.shutdown-hooks');
 // Guards repeated auto-install loops within one process. `_autoInstallTried`
 // is set the first time `_tryPythonFallback` invokes the installer; the
 // `/api/ai/faces/install-deps` endpoint resets it before re-running so an
@@ -1119,7 +1120,18 @@ function _killChild() {
 function _wireShutdownHooks() {
     if (_shutdownHooksWired) return;
     _shutdownHooksWired = true;
+
+    // Tests reload this module between specs. Remove hooks installed by the
+    // previous module instance so reloads do not accumulate process listeners.
+    const previous = globalThis[SHUTDOWN_HOOKS_KEY];
+    if (previous) {
+        process.removeListener('beforeExit', previous.stop);
+        process.removeListener('SIGTERM', previous.stop);
+        process.removeListener('SIGINT', previous.stop);
+    }
+
     const stop = () => stopSidecar();
+    globalThis[SHUTDOWN_HOOKS_KEY] = { stop };
     process.once('beforeExit', stop);
     process.once('SIGTERM', stop);
     process.once('SIGINT', stop);
