@@ -224,10 +224,10 @@ Pre-built image: `ghcr.io/buluma/telegram-media-downloader:latest`.
 ```bash
 git clone https://github.com/buluma/telegram-media-downloader.git
 cd telegram-media-downloader
-npm ci
-npm start          # opens the dashboard at http://localhost:3000
+bun install
+bun start          # opens the dashboard at http://localhost:3000
 # or
-npm run menu       # interactive CLI menu
+bun run menu       # interactive CLI menu
 ```
 
 Long-running monitor under a watchdog (Linux / macOS): `TGDL_RUN=monitor ./runner.sh`. Windows: `pwsh ./watchdog.ps1`.
@@ -238,13 +238,13 @@ The dashboard does almost everything. The CLI subcommands stay around for headle
 
 | Command | What it does |
 | --- | --- |
-| `npm start` | **Default.** Opens the dashboard at `http://localhost:3000`. |
-| `npm run prod` | Same dashboard but supervised by the watchdog (`runner.js`). |
-| `npm run monitor` | Headless real-time monitor for servers (no dashboard UI). |
-| `npm run history` | Bulk backfill an existing chat. |
-| `npm run auth` | Reset / change the dashboard password from the terminal. |
-| `npm run doctor` | Diagnostics: Node/ABI, config, SQLite, port, ffmpeg. |
-| `npm run menu` | Full list of subcommands. |
+| `bun start` | **Default.** Opens the dashboard at `http://localhost:3000`. |
+| `bun run prod` | Same dashboard but supervised by the watchdog (`runner.js`). |
+| `bun run monitor` | Headless real-time monitor for servers (no dashboard UI). |
+| `bun run history` | Bulk backfill an existing chat. |
+| `bun run auth` | Reset / change the dashboard password from the terminal. |
+| `bun run doctor` | Diagnostics: Node/ABI, config, SQLite, port, ffmpeg. |
+| `bun run menu` | Full list of subcommands. |
 
 ## Configuration
 
@@ -355,9 +355,9 @@ CPU only — no GPU dependency. Roughly 300-500 ms per thumbnail-sized image on 
 ## Contributing
 
 ```bash
-npm ci
-npm run lint
-npm test
+bun install
+bun run lint
+bun run test
 ```
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for branch / commit conventions.

@@ -122,7 +122,7 @@ will be auto-created.
 Wraps the optional `basic-ftp` package — install with:
 
 ```bash
-npm install basic-ftp
+bun add basic-ftp
 ```
 
 Wizard fields:
@@ -157,7 +157,7 @@ stop within a couple of seconds of clicking Pause / Cancel / Remove.
 Wraps the optional `googleapis` package — install with:
 
 ```bash
-npm install googleapis
+bun add googleapis
 ```
 
 Auth model: clientId + clientSecret + refreshToken. The dashboard
@@ -213,7 +213,7 @@ Caveats:
 Wraps the optional `dropbox` package — install with:
 
 ```bash
-npm install dropbox
+bun add dropbox
 ```
 
 Auth model: appKey + appSecret + refreshToken. Dropbox dropped

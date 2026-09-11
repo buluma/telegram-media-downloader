@@ -40,7 +40,7 @@ __pycache__/
 # Husky internal
 # IDEs / editors
 # Local-only assistant / agent state
-# Lockfiles from package managers we don't use (we use npm)
+# Lockfiles from package managers we don't use (we use Bun)
 # Logs / crash reports
 # OS junk
 # Python sidecar (faces-service/) build artefacts + caches
@@ -67,6 +67,7 @@ node_modules/
 npm-debug.log*
 out/
 pnpm-debug.log*
+package-lock.json
 pnpm-lock.yaml
 protection_log.txt
 seekbar-service/bin/

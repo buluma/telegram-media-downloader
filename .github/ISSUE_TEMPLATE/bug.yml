@@ -19,7 +19,7 @@ body:
     attributes:
       label: Steps to reproduce
       placeholder: |
-        1. Run `npm run web`
+        1. Run `bun start`
         2. Click "Add account"
         3. ...
     validations:

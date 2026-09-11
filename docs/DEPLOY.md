@@ -22,9 +22,9 @@ The image is published to GHCR on every release: `ghcr.io/buluma/telegram-media-
 After `docker compose up -d` (or any host install), run the diagnostics:
 
 ```bash
-docker compose exec app npm run doctor      # inside the container
+docker compose exec telegram-downloader node src/index.js doctor  # inside the container
 # or, for host installs:
-npm run doctor
+bun run doctor
 ```
 
 Reports Node + ABI, config load, SQLite open, `data/` writability, port availability, and `ffmpeg`. Exits non-zero on any blocking failure — wire it into your provisioning script or CI smoke-step.
@@ -35,23 +35,23 @@ For hosts that build from source regularly, use the included scripts:
 
 ```bash
 # 1) Publish apt-heavy runtime base once (or whenever Dockerfile runtime deps change)
-npm run build:runtime-base -- --repo ghcr.io/buluma/tgdl-runtime-base --tag bookworm-node26
+bun run build:runtime-base -- --repo ghcr.io/buluma/tgdl-runtime-base --tag bookworm-node26
 
 # 2) Point app rebuilds at that base image
 export RUNTIME_BASE_IMAGE=ghcr.io/buluma/tgdl-runtime-base:bookworm-node26
 
 # 3) Build with persistent local BuildKit cache + restart service
-npm run build:heimdal-cache
+bun run build:heimdal-cache
 ```
 
 The `build:heimdal-cache` script stores cache metadata under
 `/home/heimdal/.cache/tgdl-buildkit` by default (`BUILDKIT_CACHE_DIR`
-override supported). This keeps `npm`/layer cache warm across rebuilds.
+override supported). This keeps Bun/layer cache warm across rebuilds.
 On Heimdal, pass the override compose file so local-build mode is
 respected:
 
 ```bash
-COMPOSE_OVERRIDE_FILE=docker-compose.override.yml npm run build:heimdal-cache
+COMPOSE_OVERRIDE_FILE=docker-compose.override.yml bun run build:heimdal-cache
 ```
 
 The script also auto-selects/bootstraps a dedicated buildx builder
@@ -65,13 +65,13 @@ Use the scripted prune flow instead of ad-hoc `docker system prune`:
 
 ```bash
 # dry-run (default)
-npm run docker:prune:safe
+bun run docker:prune:safe
 
 # apply, but abort if free disk is under 20 GiB
-npm run docker:prune:safe -- --apply --min-free-gb 20
+bun run docker:prune:safe -- --apply --min-free-gb 20
 
 # include anonymous volumes
-npm run docker:prune:safe -- --apply --min-free-gb 20 --volumes
+bun run docker:prune:safe -- --apply --min-free-gb 20 --volumes
 ```
 
 ### Environment variables
@@ -135,7 +135,7 @@ git pull   # done — refresh the browser
 No rebuild, no container restart. Backend (`src/core`, `src/web/routes`,
 `src/web/server.js`) changes still need the normal image rebuild — the mount
 only covers the static tree. If you change the Tailwind source, run
-`npm run build:css` and commit the regenerated `index.css` as usual; the
+`bun run build:css` and commit the regenerated `index.css` as usual; the
 mount serves whatever the checkout contains.
 
 ## One-click in-dashboard auto-update (opt-in)
@@ -310,7 +310,7 @@ shared host without root, or any environment where editing `/etc/systemd`
 isn't an option — the repo ships an `ecosystem.config.cjs` at the root.
 
 ```bash
-npm install -g pm2
+bun add --global pm2
 pm2 start ecosystem.config.cjs               # production profile (PORT=3000)
 pm2 start ecosystem.config.cjs --env staging # staging profile  (PORT=3010)
 pm2 logs telegram-media-downloader
