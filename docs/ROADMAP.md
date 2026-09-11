@@ -1,11 +1,12 @@
 # Engineering Roadmap
 
-Eight improvements prioritised for implementation. Each is independent enough to ship
-as its own PR but they build on each other — the recommended order is top to bottom.
+This is a historical engineering roadmap. Status notes below reflect the current implementation; remaining work should be planned from the live code rather than the original ordering alone.
 
 ---
 
 ## 1. Normalize the group config
+
+**Status:** Implemented. Normalized group tables are canonical, with the legacy KV group blob retained as a read-only compatibility fallback.
 
 **Problem:** Groups are stored as a JSON blob inside a single KV row (`config` key).
 Every bulk update is a read-modify-write cycle with no row-level locking. There is no
@@ -69,6 +70,8 @@ CREATE TABLE group_settings (
 ---
 
 ## 2. Single source of group defaults
+
+**Status:** Implemented. `GROUP_DEFAULTS` is shared by config loading, group routes, dialog discovery, and runtime configuration.
 
 **Problem:** Default filter values and `autoForward` shapes are duplicated in at least
 three places: `src/config/manager.js` (`DEFAULT_FILTERS`), `src/web/routes/dialogs.js`,
@@ -134,11 +137,7 @@ Increase `deferDelete` delay from ~0ms to 60s. Gives the backup worker time to
 upload before the file disappears. Fragile under slow connections but zero
 architectural change.
 
-**Status:** Option C is shipped: `deferDelete()` waits 60 seconds. Option A is now
-also shipped: the runtime emits a synchronous `download_ready_for_backup` signal
-before invoking the forwarder, and the backup manager writes the mirror queue row
-from that signal. The legacy `download_complete` hook remains as an idempotent
-fallback for older in-process callers.
+**Status:** Option C is shipped: `deferDelete()` waits 60 seconds. Option A is also shipped: the runtime emits a synchronous `download_ready_for_backup` signal before invoking the forwarder, and the backup manager writes the mirror queue row from that signal. The legacy `download_complete` hook remains as an idempotent fallback for older in-process callers.
 
 **Files:** `src/core/forwarder.js`, `src/core/backup/manager.js`,
 `src/core/delete-queue.js`
@@ -146,6 +145,8 @@ fallback for older in-process callers.
 ---
 
 ## 4. Cloud-first storage model
+
+**Status:** Implemented through all three phases. Confirmed cloud copies guard eviction, evicted files can stream from their provider, and gallery rows retain `cache_evicted_at` state.
 
 **Problem:** Local disk is primary storage; cloud (GDrive) is a backup mirror. For a
 media archive this is inverted — local disk fills up, GDrive has everything, manual
@@ -179,6 +180,8 @@ cleanup is required constantly.
 
 ## 5. Deploy from source (development mode)
 
+**Status:** Operational support exists. Heimdal source-build/cache scripts and the deployment procedure are documented in `docs/DEPLOY.md`; the host-local compose override remains deployment state rather than a repository file.
+
 **Problem:** Heimdal runs `ghcr.io/buluma/telegram-media-downloader:latest` — a
 prebuilt image from GHCR. Every bug fix requires a full GitHub Actions release cycle
 (tag, build, push, pull, restart) before it runs on the server. Today that took
@@ -211,6 +214,8 @@ Add `.gitignore` entry: `docker-compose.override.yml`
 
 ## 7. TypeScript (or strict JSDoc)
 
+**Status:** Phases 1–2 implemented. The principal runtime and data shapes have JSDoc typedefs, and `jsconfig.json` enables `checkJs`; a TypeScript migration remains optional future work.
+
 **Problem:** The codebase has hundreds of `?.` null-guard chains because function
 return shapes are implicit. New contributors (and future-self) can't tell what
 `downloadInfo` contains, what `group` looks like, or whether `autoForward` is
@@ -239,6 +244,8 @@ DB layer and config manager where the type pain is worst.
 ---
 
 ## 8. Proper migration runner
+
+**Status:** Implemented. Numbered migrations run transactionally and record applied migrations in the database.
 
 **Problem:** Schema changes use `try { db.exec('ALTER TABLE ...') } catch {}` blocks
 scattered through `db.js`. There is no record of which migrations have run, no
@@ -292,6 +299,8 @@ become the first numbered migrations and are removed from `db.js`.
 
 ## 9. Universal stale job recovery
 
+**Status:** Implemented. Startup recovery resets stale maintenance/scanner state and the stale-scan API exposes rows needing operator attention.
+
 **Problem:** Stale lock recovery exists only for WD14 (`recoverStaleLocks()` called
 at WD14 scan start). Faces and OCR scans that crash mid-batch leave `processing`
 rows in `media_scan_state` and `running` rows in `maintenance_jobs` forever. These
@@ -335,18 +344,11 @@ operators can see them without waiting for the next restart.
 
 ---
 
-## Implementation order
+## Current follow-ups
 
-| # | Item | Depends on | Estimated scope |
-|---|---|---|---|
-| 8 | Migration runner | — | Small |
-| 2 | Single source of defaults | — | Small |
-| 9 | Universal stale job recovery | — | Small |
-| 3 | Backup/delete race fix (Options A + C) | — | Small |
-| 7 | JSDoc types | 2 | Medium |
-| 1 | Normalize group config | 2, 8 | Large |
-| 5 | Deploy from source | — | Small (ops only) |
-| 4 | Cloud-first storage | 1, 3 | Large |
+The original roadmap sequence is complete. The next work should be selected from a fresh audit rather than the historical ordering above.
 
-Ship 8 → 2 → 9 → 3 first (all small, independent). Then 7 and 1 together.
-Item 4 is the biggest architectural lift — tackle last once the foundation is solid.
+- Verify the host-local source-build override on Heimdal against the current `main` deployment procedure.
+- Remove the legacy group-config KV fallback after the compatibility window is confirmed complete.
+- Decide whether the optional TypeScript migration delivers enough value to justify its scope.
+- Track provider-specific cloud-backup and gallery polish as separate improvements instead of expanding this completed roadmap item.
