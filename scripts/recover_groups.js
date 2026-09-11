@@ -46,29 +46,13 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import { getDb } from '../src/core/db.js';
-import { loadConfig, saveConfig } from '../src/config/manager.js';
+import { GROUP_DEFAULTS, loadConfig, saveConfig } from '../src/config/manager.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 const DATA_DIR = process.env.TGDL_DATA_DIR
     ? path.resolve(process.env.TGDL_DATA_DIR)
     : path.join(PROJECT_ROOT, 'data');
-
-// Mirrors src/config/manager.js DEFAULT_FILTERS — kept inline so this
-// script stays runnable even on a checkout where someone changes the
-// upstream default (recovery output should not silently drift with the
-// active default-filter set).
-const DEFAULT_FILTERS = {
-    photos: true,
-    videos: true,
-    files: true,
-    links: true,
-    voice: false,
-    audio: false,
-    gifs: false,
-    stickers: false,
-    urls: true,
-};
 
 const args = new Set(process.argv.slice(2));
 const APPLY = args.has('--apply');
@@ -181,7 +165,7 @@ function summary(label, groups) {
                 id,
                 name: g.name || (evidence?.name ?? `(group ${id})`),
                 enabled: ENABLE ? g.enabled !== false : false,
-                filters: { ...DEFAULT_FILTERS, ...(g.filters || {}) },
+                filters: { ...GROUP_DEFAULTS.filters, ...(g.filters || {}) },
                 _files: evidence?.files ?? 0,
                 _last_seen: evidence?.last_seen ?? null,
             });
@@ -198,7 +182,7 @@ function summary(label, groups) {
                 id: e.id,
                 name: e.name,
                 enabled: ENABLE,
-                filters: { ...DEFAULT_FILTERS },
+                filters: { ...GROUP_DEFAULTS.filters },
                 _files: e.files,
                 _last_seen: e.last_seen,
             });

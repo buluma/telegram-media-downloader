@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import express from 'express';
-import { loadConfig } from '../../config/manager.js';
+import { loadConfig, GROUP_DEFAULTS } from '../../config/manager.js';
 import { runtime } from '../../core/runtime.js';
 import { getDb, kvSet } from '../../core/db.js';
 import { BACKFILL_MAX_LIMIT } from '../../core/constants.js';
@@ -84,22 +84,10 @@ export function createHistoryRouter({ getAccountManager, broadcast, log, invalid
                     id: idForConfig,
                     name: resolved || dbName || `Group ${groupId}`,
                     enabled: false,
-                    filters: {
-                        photos: true,
-                        videos: true,
-                        files: true,
-                        links: true,
-                        voice: false,
-                        gifs: false,
-                        stickers: false,
-                    },
-                    autoForward: {
-                        enabled: false,
-                        destination: null,
-                        deleteAfterForward: false,
-                        keepImages: false,
-                        keepVideos: false,
-                    },
+                    filters: { ...GROUP_DEFAULTS.filters },
+                    trackComments: GROUP_DEFAULTS.trackComments,
+                    autoForward: { ...GROUP_DEFAULTS.autoForward },
+                    rescueMode: GROUP_DEFAULTS.rescueMode,
                     trackUsers: { enabled: false, users: [] },
                     topics: { enabled: false, ids: [] },
                 };

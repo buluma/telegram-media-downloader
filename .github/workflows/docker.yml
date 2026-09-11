@@ -45,6 +45,10 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=sha,format=short
 
+      - name: Free runner disk before build
+        shell: bash
+        run: docker system prune -f --all 2>/dev/null || true
+
       - uses: docker/build-push-action@v7
         with:
           context: .
@@ -151,8 +155,6 @@ jobs:
         run: |
           IMAGE=$(echo "${{ steps.meta.outputs.tags }}" | head -n 1)
           echo "Trivy-scanning $IMAGE"
-          # Free up disk space before the scan — the runner often has < 100 MB
-          docker system prune -f --all 2>/dev/null || true
           # Restrict to vuln scanner only (skip secret scanning) to reduce I/O
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
             aquasec/trivy image --scanners vuln \
