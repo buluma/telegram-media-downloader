@@ -206,4 +206,23 @@ describe('Runtime._wireEvents — config hot-reload on configReloaded', () => {
         rt._wireEvents();
         expect(() => rt._monitor.emit('configReloaded', { rateLimits: {} })).not.toThrow();
     });
+
+    it('signals backup before starting the forwarder', async () => {
+        const rt = wireFakeRuntime();
+        const order = [];
+        rt.on('event', (event) => {
+            if (event.type === 'download_ready_for_backup') order.push('backup');
+        });
+        rt._forwarder.process = vi.fn().mockImplementation(async () => {
+            order.push('forward');
+        });
+
+        rt._downloader.emit('download_complete', {
+            filePath: 'group/videos/example.mp4',
+            deduped: false,
+        });
+        await Promise.resolve();
+
+        expect(order).toEqual(['backup', 'forward']);
+    });
 });

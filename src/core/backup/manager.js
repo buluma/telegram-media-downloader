@@ -110,8 +110,8 @@ const _snapshotInflight = new Set(); // destinationIds with a snapshot job in pr
  * @param {Function} deps.broadcast       broadcast({type,...})
  * @param {Function} deps.log             log({source,level,msg})
  * @param {Function} deps.getShareSecret  () => shareSecret hex string
- * @param {EventEmitter} [deps.runtime]   if provided, we hook
- *                                         download_complete onto its
+ * @param {EventEmitter} [deps.runtime]   if provided, we hook the
+ *                                         pre-forward backup signal onto its
  *                                         `event` channel for mirror mode
  */
 export function init(deps = {}) {
@@ -462,7 +462,11 @@ export function retryJob(jobId) {
 // ---- Mirror hook ----------------------------------------------------------
 
 function _onDownloadComplete(e) {
-    if (e?.type !== 'download_complete' || !e.payload) return;
+    // `download_ready_for_backup` is emitted synchronously immediately before
+    // the forwarder starts. Keep accepting `download_complete` as a fallback
+    // for older/in-process callers; the idempotency check below makes the two
+    // signals harmless when both are observed.
+    if (!['download_ready_for_backup', 'download_complete'].includes(e?.type) || !e.payload) return;
     // The downloader emits `download_complete` shaped as
     //   { filePath, fileName, size, groupId, message, mediaType, deduped }
     // — we need the `downloads.id` so the queue row can FK into it.

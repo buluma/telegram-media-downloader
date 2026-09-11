@@ -157,6 +157,11 @@ class Runtime extends EventEmitter {
             }
         });
         this._downloader.on('download_complete', async (info) => {
+            // Mirror destinations must enqueue before forwarding starts. The
+            // downloader emits `complete` only after this event returns, so
+            // waiting for that later event lets delete-after-forward race the
+            // backup worker and move the source file away first.
+            this.emit('event', { type: 'download_ready_for_backup', payload: info });
             try {
                 await this._forwarder.process(info);
             } catch (e) {

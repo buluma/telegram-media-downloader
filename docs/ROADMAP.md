@@ -134,8 +134,11 @@ Increase `deferDelete` delay from ~0ms to 60s. Gives the backup worker time to
 upload before the file disappears. Fragile under slow connections but zero
 architectural change.
 
-**Recommended:** Ship Option C immediately, then Option A in the same PR as item 1
-(when the backup queue is already being refactored).
+**Status:** Option C is shipped: `deferDelete()` waits 60 seconds. Option A is now
+also shipped: the runtime emits a synchronous `download_ready_for_backup` signal
+before invoking the forwarder, and the backup manager writes the mirror queue row
+from that signal. The legacy `download_complete` hook remains as an idempotent
+fallback for older in-process callers.
 
 **Files:** `src/core/forwarder.js`, `src/core/backup/manager.js`,
 `src/core/delete-queue.js`
@@ -339,7 +342,7 @@ operators can see them without waiting for the next restart.
 | 8 | Migration runner | — | Small |
 | 2 | Single source of defaults | — | Small |
 | 9 | Universal stale job recovery | — | Small |
-| 3 | Backup/delete race fix (Option C) | — | Tiny |
+| 3 | Backup/delete race fix (Options A + C) | — | Small |
 | 7 | JSDoc types | 2 | Medium |
 | 1 | Normalize group config | 2, 8 | Large |
 | 5 | Deploy from source | — | Small (ops only) |
