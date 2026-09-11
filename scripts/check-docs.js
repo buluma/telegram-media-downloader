@@ -6,7 +6,6 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const files = [
     'README.md',
     'CONTRIBUTING.md',
-    'CLAUDE.md',
     'docs/AI.md',
     'docs/BACKUP.md',
     'docs/DEPLOY.md',
