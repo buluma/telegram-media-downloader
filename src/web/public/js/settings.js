@@ -1393,6 +1393,46 @@ async function _notifyAutoSave(level, msg) {
     }
 }
 
+const SETTINGS_RANGE_FIELDS = [
+    { id: 'setting-concurrent', label: 'Concurrent downloads' },
+    { id: 'setting-retries', label: 'Retry attempts' },
+    { id: 'setting-rpm', label: 'Requests per minute' },
+    { id: 'setting-polling', label: 'Polling interval' },
+];
+
+function validateSettingsRanges() {
+    let valid = true;
+    for (const { id, label } of SETTINGS_RANGE_FIELDS) {
+        const input = document.getElementById(id);
+        if (!input) continue;
+
+        // Some isolated settings-page consumers/tests provide only the value
+        // field. Validation is meaningful for the actual range controls,
+        // which carry the min/max contract in the HTML.
+        if (input.type !== 'range' || !input.min || !input.max) continue;
+
+        const value = Number(input.value);
+        const min = Number(input.min);
+        const max = Number(input.max);
+        const fieldValid =
+            Number.isInteger(value) &&
+            (!Number.isFinite(min) || value >= min) &&
+            (!Number.isFinite(max) || value <= max);
+        const error = document.getElementById(`${id}-error`);
+
+        input.setAttribute('aria-invalid', fieldValid ? 'false' : 'true');
+        input.classList.toggle('settings-input-invalid', !fieldValid);
+        if (error) {
+            error.textContent = fieldValid
+                ? ''
+                : `${label} must be a whole number between ${min} and ${max}.`;
+            error.classList.toggle('hidden', fieldValid);
+        }
+        if (!fieldValid) valid = false;
+    }
+    return valid;
+}
+
 async function _autoSaveFlush() {
     if (_autoSaveInflight) {
         // Re-arm — the in-flight POST will re-trigger via finally() but
@@ -1404,6 +1444,11 @@ async function _autoSaveFlush() {
     if (_autoSaveTimer) {
         clearTimeout(_autoSaveTimer);
         _autoSaveTimer = null;
+    }
+
+    if (document.body?.dataset?.page === 'settings' && !validateSettingsRanges()) {
+        _setAutosaveStatus('error', 'Fix the highlighted settings before saving.');
+        return;
     }
 
     // _gatherSettingsPayload() reads every `setting-*` input in the DOM and
@@ -1656,10 +1701,12 @@ export function setupAutoSave() {
     // Native input/change events from <input> / <select> / <textarea>.
     root.addEventListener('input', (e) => {
         if (!isAutosaveInput(e.target)) return;
+        validateSettingsRanges();
         _scheduleAutoSave();
     });
     root.addEventListener('change', (e) => {
         if (!isAutosaveInput(e.target)) return;
+        validateSettingsRanges();
         _scheduleAutoSave();
     });
 

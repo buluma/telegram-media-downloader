@@ -3877,6 +3877,54 @@ function switchGroupsTab(tab) {
 
 // ============ Group Settings Modal ============
 let currentEditGroup = null;
+let groupModalReturnFocus = null;
+
+const GROUP_MODAL_FOCUSABLE_SELECTOR = [
+    'a[href]',
+    'button:not([disabled])',
+    'input:not([disabled]):not([type="hidden"])',
+    'select:not([disabled])',
+    'textarea:not([disabled])',
+    '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
+function setupGroupModalAccessibility(modal) {
+    if (!modal || modal.dataset.a11yBound === '1') return;
+    modal.dataset.a11yBound = '1';
+    modal.tabIndex = -1;
+
+    modal.addEventListener('click', (event) => {
+        if (event.target === modal) closeGroupSettings();
+    });
+
+    modal.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            closeGroupSettings();
+            return;
+        }
+        if (event.key !== 'Tab') return;
+
+        const focusables = Array.from(
+            modal.querySelectorAll(GROUP_MODAL_FOCUSABLE_SELECTOR),
+        ).filter((el) => !el.hasAttribute('inert'));
+        if (!focusables.length) {
+            event.preventDefault();
+            modal.focus();
+            return;
+        }
+
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first.focus();
+        }
+    });
+}
 
 async function openGroupSettings(groupId, groupName) {
     // Always resolve via the canonical store — callers may pass nothing
@@ -3893,6 +3941,10 @@ async function openGroupSettings(groupId, groupName) {
 
     const modal = document.getElementById('group-modal');
     if (!modal) return;
+    setupGroupModalAccessibility(modal);
+    if (modal.classList.contains('hidden')) {
+        groupModalReturnFocus = document.activeElement;
+    }
 
     // Load current config for this group
     const group = configGroup;
@@ -4116,6 +4168,10 @@ async function openGroupSettings(groupId, groupName) {
     // live inside the modal so re-binding on every open is harmless.
     _wireGroupDataActions(groupId);
     modal.classList.remove('hidden');
+    requestAnimationFrame(() => {
+        const first = modal.querySelector(GROUP_MODAL_FOCUSABLE_SELECTOR);
+        (first || modal).focus();
+    });
 }
 
 // Idempotent — replaces handlers via .onclick so re-opening the modal
@@ -4301,9 +4357,16 @@ function _wireGroupDataActions(groupId) {
 function closeGroupSettings() {
     const modal = document.getElementById('group-modal');
     if (modal) modal.classList.add('hidden');
+    const returnFocus = groupModalReturnFocus;
+    groupModalReturnFocus = null;
     currentEditGroup = null;
     clearTimeout(_dataTabSearchTimer);
     _dataTabSearchTimer = null;
+    requestAnimationFrame(() => {
+        try {
+            returnFocus?.focus?.();
+        } catch {}
+    });
 }
 
 async function saveGroupSettings() {

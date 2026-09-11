@@ -405,6 +405,7 @@
                                 <input type="range" id="setting-concurrent" class="w-full accent-tg-blue" min="1"
                                     max="20" value="3"
                                     oninput="document.getElementById('concurrent-value').textContent = this.value">
+                                <p id="setting-concurrent-error" class="hidden text-xs text-red-400 mt-1" role="alert"></p>
                                 <div class="flex justify-between text-xs text-tg-textSecondary mt-1">
                                     <span data-i18n="settings.download.concurrent_safe">1 (Safe)</span>
                                     <span>10</span>
@@ -420,6 +421,7 @@
                                 <input type="range" id="setting-retries" class="w-full accent-tg-blue" min="1" max="10"
                                     value="5"
                                     oninput="document.getElementById('retries-value').textContent = this.value">
+                                <p id="setting-retries-error" class="hidden text-xs text-red-400 mt-1" role="alert"></p>
                                 <p class="text-xs text-tg-textSecondary mt-1" data-i18n="settings.download.retries_help">How many times to retry a failed download before giving up.</p>
                             </div>
                             <!-- Download folder field retired in v2.9: it
@@ -483,6 +485,7 @@
                                 </div>
                                 <input type="range" id="setting-rpm" class="w-full accent-tg-orange" min="5" max="60"
                                     value="15" oninput="document.getElementById('rpm-value').textContent = this.value">
+                                <p id="setting-rpm-error" class="hidden text-xs text-red-400 mt-1" role="alert"></p>
                                 <div class="flex justify-between text-xs text-tg-textSecondary mt-1">
                                     <span data-i18n="settings.rate.rpm_safe">5 (Safe)</span>
                                     <span>30</span>
@@ -498,6 +501,7 @@
                                 <input type="range" id="setting-polling" class="w-full accent-tg-orange" min="5"
                                     max="60" value="10"
                                     oninput="document.getElementById('polling-value').textContent = this.value + 's'">
+                                <p id="setting-polling-error" class="hidden text-xs text-red-400 mt-1" role="alert"></p>
                                 <p class="text-xs text-tg-textSecondary mt-1" data-i18n="settings.rate.polling_help">How often to check for new messages</p>
                             </div>
                         </div>
