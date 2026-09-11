@@ -1,9 +1,9 @@
-# Project Audit — Telegram Media Downloader
+# Archived Project Audit — Telegram Media Downloader
 
-> **Last updated:** 2026-04-26 (audit frozen at the v1.x → v2.0 cut)
+> **Archived:** 2026-04-26 (audit frozen at the v1.x → v2.0 cut)
 > **Scope:** entire repo (CLI + core engine + web server + SPA + tooling)
 > **Method:** three parallel audit passes (CLI/core, web/SPA, OSS readiness) cross-checked by manual file reads.
-> **Status:** every Critical / High in the table below is **resolved in v2.0**. The findings list is preserved as a historical record so future audits can verify the regressions don't return.
+> **Status:** historical record only. The findings and resolution table below are not a current risk register; use `docs/AUDIT-2026-09.md` for the latest verified audit.
 
 ---
 
