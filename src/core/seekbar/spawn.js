@@ -67,6 +67,7 @@ let _broadcast = null;
 let _startingPromise = null;
 let _stopped = false;
 let _shutdownHooksWired = false;
+const SHUTDOWN_HOOKS_KEY = Symbol.for('tgdl.seekbar.shutdown-hooks');
 
 export function setBroadcast(fn) {
     _broadcast = typeof fn === 'function' ? fn : null;
@@ -563,7 +564,18 @@ export function stopSidecar() {
 function _wireShutdownHooks() {
     if (_shutdownHooksWired) return;
     _shutdownHooksWired = true;
+
+    // Test specs reload this module. Replace hooks from the previous module
+    // instance so repeated reloads do not leak process listeners.
+    const previous = globalThis[SHUTDOWN_HOOKS_KEY];
+    if (previous) {
+        process.removeListener('beforeExit', previous.stop);
+        process.removeListener('SIGTERM', previous.stop);
+        process.removeListener('SIGINT', previous.stop);
+    }
+
     const stop = () => stopSidecar();
+    globalThis[SHUTDOWN_HOOKS_KEY] = { stop };
     process.once('beforeExit', stop);
     process.once('SIGTERM', stop);
     process.once('SIGINT', stop);

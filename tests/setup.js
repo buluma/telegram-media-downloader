@@ -30,16 +30,23 @@ import path from 'path';
 // globalThis and outlives a single file's module registry, so a per-file
 // path would leave a connection pointing at a directory nothing else uses.
 if (!process.env.TGDL_DATA_DIR) {
-    const dir = path.join(os.tmpdir(), `tgdl-test-${process.pid}`);
-    fs.mkdirSync(dir, { recursive: true });
-    process.env.TGDL_DATA_DIR = dir;
-    process.on('exit', () => {
-        try {
-            fs.rmSync(dir, { recursive: true, force: true });
-        } catch {
-            // best-effort — a stray tmpdir is not worth failing a run over
-        }
-    });
+    const stateKey = Symbol.for('tgdl.test.data-dir');
+    let state = globalThis[stateKey];
+
+    if (!state) {
+        state = { dir: path.join(os.tmpdir(), `tgdl-test-${process.pid}`) };
+        fs.mkdirSync(state.dir, { recursive: true });
+        globalThis[stateKey] = state;
+        process.once('exit', () => {
+            try {
+                fs.rmSync(state.dir, { recursive: true, force: true });
+            } catch {
+                // best-effort — a stray tmpdir is not worth failing a run over
+            }
+        });
+    }
+
+    process.env.TGDL_DATA_DIR = state.dir;
 }
 
 // Node >= 25 ships a built-in `localStorage` that prints
