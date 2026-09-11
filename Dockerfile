@@ -22,9 +22,13 @@ COPY package.json bun.lock ./
 # Its loader prefers prebuilds/linux-arm64.node over a locally-built binary, so
 # node-gyp silently no-ops unless that stale prebuild is removed first — delete
 # it so the toolchain above actually compiles one against this base's glibc.
-RUN bun install --frozen-lockfile --production --no-progress \
+# Bun's lifecycle runner can provision an ephemeral node-gyp without its
+# transitive tar dependency. Install node-gyp explicitly before the one
+# native rebuild that must target this image's Node/glibc combination.
+RUN bun install --frozen-lockfile --production --ignore-scripts --no-progress \
     && rm -f node_modules/better-sqlite3/prebuilds/linux-arm64.node \
-    && npm_config_build_from_source=true npm rebuild better-sqlite3
+    && npm install --global --no-audit --no-fund node-gyp@13.0.2 \
+    && npm_config_build_from_source=true npm_config_node_gyp=/usr/local/bin/node-gyp npm rebuild better-sqlite3
 
 FROM node:26.8.1-bookworm-slim AS runtime-base
 
