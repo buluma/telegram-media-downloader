@@ -8,7 +8,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Legacy JSON path retained for the one-shot migration runner only. Once
 // migrate_json_state.js renames it to .migrated, this file is never read
-// again — kv['config'] is the single source of truth.
+// again. Group configuration is stored in normalized tables; kv['config']
+// remains the compatibility store for non-group settings and the temporary
+// read-only group fallback.
 const LEGACY_CONFIG_PATH = path.join(__dirname, '../../data/config.json');
 const KV_KEY = 'config';
 
@@ -984,8 +986,14 @@ export function loadConfig() {
         // reads skip the merge cost and the dashboard sees the up-to-date
         // shape. JSON-string compare is good enough for this — only fires
         // when keys / values genuinely differ.
-        if (JSON.stringify(config) !== JSON.stringify(stored)) {
-            kvSet(KV_KEY, config);
+        // Keep the legacy group array read-only while normalized tables are
+        // authoritative. This avoids rewriting the old blob on every read
+        // and preserves it as a one-release fallback for older tooling.
+        const legacyView = Object.prototype.hasOwnProperty.call(stored, 'groups')
+            ? { ...config, groups: stored.groups }
+            : config;
+        if (JSON.stringify(legacyView) !== JSON.stringify(stored)) {
+            kvSet(KV_KEY, legacyView);
         }
 
         return config;
@@ -1003,7 +1011,14 @@ export function saveConfig(config) {
     // SQLite transactions give us the same atomicity the old tmp+rename
     // pattern provided: a writer crash mid-statement rolls back, no reader
     // ever sees a half-written row.
-    kvSet(KV_KEY, config);
+    // Keep the legacy groups array untouched. The normalized tables below are
+    // the canonical write path; the old blob remains available as a
+    // read-only fallback during the compatibility window.
+    const stored = kvGet(KV_KEY);
+    const legacyView = Object.prototype.hasOwnProperty.call(stored || {}, 'groups')
+        ? { ...config, groups: stored.groups }
+        : config;
+    kvSet(KV_KEY, legacyView);
     // Keep normalized group tables in sync so subsequent loadConfig() reads
     // the latest group list from the relational tables (faster, queryable).
     if (Array.isArray(config.groups)) {

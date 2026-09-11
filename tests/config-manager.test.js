@@ -309,6 +309,27 @@ describe('config manager (kv-backed)', () => {
         expect(cfg.groups[0].id).toBe('db_group');
         expect(cfg.groups[0].name).toBe('From DB');
     });
+
+    it('keeps the legacy group blob read-only after normalized tables are populated', () => {
+        dbApi.kvSet('config', {
+            groups: [{ id: 'legacy_group', name: 'Legacy name', enabled: true }],
+        });
+        db.prepare(
+            `INSERT INTO groups (id, name, enabled, created_at, updated_at) VALUES ('db_group', 'From DB', 1, 1, 1)`,
+        ).run();
+        db.prepare(`INSERT INTO group_filters (group_id) VALUES ('db_group')`).run();
+        db.prepare(`INSERT INTO group_forward (group_id) VALUES ('db_group')`).run();
+        db.prepare(`INSERT INTO group_settings (group_id) VALUES ('db_group')`).run();
+
+        const cfg = manager.loadConfig();
+        cfg.groups[0].name = 'Updated in tables';
+        manager.saveConfig(cfg);
+
+        expect(dbApi.kvGet('config').groups).toEqual([
+            { id: 'legacy_group', name: 'Legacy name', enabled: true },
+        ]);
+        expect(manager.loadConfig().groups[0].name).toBe('Updated in tables');
+    });
 });
 
 // The catch path is the other place loadConfig() can hand back DEFAULT_CONFIG.
