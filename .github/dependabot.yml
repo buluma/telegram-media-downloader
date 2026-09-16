@@ -13,7 +13,7 @@ version: 2
 # 29 -> 30 and better-sqlite3 12 -> 13 both landed as majors, and both wanted a
 # local run against the full suite before merging.
 updates:
-  - package-ecosystem: "npm"
+  - package-ecosystem: "bun"
     directory: "/"
     schedule:
       interval: "weekly"
