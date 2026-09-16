@@ -99,7 +99,7 @@
         "@ffprobe-installer/ffprobe": "^2.1.2",
         "basic-ftp": "^6.2.1",
         "dropbox": "^10.46.0",
-        "googleapis": "^178.0.0"
+        "googleapis": "^180.0.0"
     },
     "overrides": {
         "qs": "6.15.2",
