@@ -360,6 +360,31 @@ export function getMessageIdRange(groupId) {
     };
 }
 
+// Sort orders beyond date/size/name, shared by the four list queries below.
+// The local queries LEFT JOIN seekbar_sprites as `ss`, so duration reads
+// COALESCE(ss, d); the federated queries sort an outer subquery that has
+// already collapsed it to `duration_sec`. Rows with no value (photos,
+// un-probed videos, unknown sizes, peer rows) always sink to the end so
+// they never crowd out real results. NULLs already sort last under DESC;
+// the explicit `IS NULL` terms are only for the ASC orders.
+const LOCAL_EXTRA_SORTS = {
+    duration_desc: 'COALESCE(ss.duration_sec, d.duration_sec, 0) DESC, id DESC',
+    duration_asc:
+        '(COALESCE(ss.duration_sec, d.duration_sec) IS NULL), COALESCE(ss.duration_sec, d.duration_sec) ASC, id DESC',
+    size_asc: '(file_size IS NULL), file_size ASC, id DESC',
+    name_desc: "LOWER(COALESCE(file_name, '')) DESC, id DESC",
+    viewed_desc: 'last_viewed_at DESC, id DESC',
+    crosspost_desc: 'crosspost_count DESC, id DESC',
+};
+const FED_EXTRA_SORTS = {
+    duration_desc: 'COALESCE(duration_sec, 0) DESC, id DESC',
+    duration_asc: '(duration_sec IS NULL), duration_sec ASC, id DESC',
+    size_asc: '(file_size IS NULL), file_size ASC, id DESC',
+    name_desc: "LOWER(COALESCE(file_name, '')) DESC, id DESC",
+    viewed_desc: 'last_viewed_at DESC, id DESC',
+    crosspost_desc: 'crosspost_count DESC, id DESC',
+};
+
 /**
  * All-Media query — same shape as getDownloads() but spans every group, with
  * the per-row group_id + group_name preserved so the gallery can paint the
@@ -409,7 +434,7 @@ export function getAllDownloads(limit = 50, offset = 0, type = 'all', opts = {})
         date_desc: 'created_at DESC, id DESC',
         date_asc: 'created_at ASC, id ASC',
         size_desc: 'COALESCE(file_size, 0) DESC, id DESC',
-        duration_desc: 'COALESCE(ss.duration_sec, d.duration_sec, 0) DESC, id DESC',
+        ...LOCAL_EXTRA_SORTS,
         name_asc: "LOWER(COALESCE(file_name, '')) ASC, id ASC",
     };
     const baseSort = sortMap[opts.sortBy] || 'created_at DESC, id DESC';
@@ -466,7 +491,7 @@ export function getDownloads(groupId, limit = 50, offset = 0, type = 'all', opts
         date_desc: 'created_at DESC, id DESC',
         date_asc: 'created_at ASC, id ASC',
         size_desc: 'COALESCE(file_size, 0) DESC, id DESC',
-        duration_desc: 'COALESCE(ss.duration_sec, d.duration_sec, 0) DESC, id DESC',
+        ...LOCAL_EXTRA_SORTS,
         name_asc: "LOWER(COALESCE(file_name, '')) ASC, id ASC",
     };
     const baseSort = sortMap[opts.sortBy] || 'created_at DESC, id DESC';
@@ -729,7 +754,7 @@ export function getAllDownloadsFederated(limit = 50, offset = 0, type = 'all', o
     const _fedSortMap = {
         date_asc: 'sort_ts ASC, id ASC',
         size_desc: 'COALESCE(file_size, 0) DESC, id DESC',
-        duration_desc: 'COALESCE(duration_sec, 0) DESC, id DESC',
+        ...FED_EXTRA_SORTS,
         name_asc: "LOWER(COALESCE(file_name, '')) ASC, id ASC",
     };
     const baseSort = _fedSortMap[opts.sortBy] || 'sort_ts DESC, id DESC';
@@ -837,7 +862,7 @@ export function getDownloadsForGroupFederated(
     const _fedSortMap = {
         date_asc: 'sort_ts ASC, id ASC',
         size_desc: 'COALESCE(file_size, 0) DESC, id DESC',
-        duration_desc: 'COALESCE(duration_sec, 0) DESC, id DESC',
+        ...FED_EXTRA_SORTS,
         name_asc: "LOWER(COALESCE(file_name, '')) ASC, id ASC",
     };
     const baseSort = _fedSortMap[opts.sortBy] || 'sort_ts DESC, id DESC';

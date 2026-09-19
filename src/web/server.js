@@ -1577,6 +1577,12 @@ const _jobTrackers = {
     // identical broadcast-before-flag-reset window. Prefix 'faststart'
     // preserved so the video page's WS listeners don't change.
     faststart: createJobTracker({ kind: 'faststart', broadcast, log, eventPrefix: 'faststart' }),
+    durationBackfill: createJobTracker({
+        kind: 'durationBackfill',
+        broadcast,
+        log,
+        eventPrefix: 'duration_backfill',
+    }),
     autoUpdate: createJobTracker({ kind: 'autoUpdate', broadcast, log, eventPrefix: 'update' }),
     groupsRefreshInfo: createJobTracker({
         kind: 'groupsRefreshInfo',

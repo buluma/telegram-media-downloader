@@ -189,6 +189,64 @@ async function _scanAll() {
     }
 }
 
+// ── Duration backfill ────────────────────────────────────────────────
+// Separate job from the faststart sweep (own tracker + `duration_backfill_*`
+// WS events); shares the page because both are per-video library upkeep.
+
+async function _refreshDurationStats() {
+    try {
+        const r = await api.get('/api/maintenance/duration/stats');
+        const pending = $('duration-stat-pending');
+        const known = $('duration-stat-known');
+        if (pending) pending.textContent = (r.pending ?? 0).toLocaleString();
+        if (known) known.textContent = (r.known ?? 0).toLocaleString();
+    } catch {
+        /* leave stale values */
+    }
+}
+
+function _setDurationUi(running) {
+    const btn = $('duration-backfill-btn');
+    const progress = $('duration-progress');
+    const bar = $('duration-progress-bar');
+    if (btn) {
+        btn.disabled = !!running;
+        const labelSpan = btn.querySelector('span[data-i18n]');
+        if (labelSpan) {
+            labelSpan.textContent = running
+                ? i18nT('maintenance.video.duration.running', 'Probing…')
+                : i18nT('maintenance.video.duration.run', 'Backfill durations');
+        }
+    }
+    if (progress) progress.classList.toggle('hidden', !running);
+    if (!running && bar) bar.style.width = '0%';
+}
+
+async function _backfillDurations() {
+    _setDurationUi(true);
+    try {
+        const r = await api.post('/api/maintenance/duration/backfill', {});
+        if (r?.error) {
+            showToast(r.error, 'error');
+            _setDurationUi(false);
+        }
+        // Completion toast comes from the `duration_backfill_done` handler.
+    } catch (e) {
+        if (e?.data?.code === 'ALREADY_RUNNING') {
+            showToast(
+                i18nT(
+                    'jobs.already_running',
+                    'Already running on another tab — waiting for it to finish.',
+                ),
+                'info',
+            );
+            return;
+        }
+        showToast(e?.data?.error || e.message || 'Failed', 'error');
+        _setDurationUi(false);
+    }
+}
+
 function _wireWs() {
     if (_wsWired) return;
     _wsWired = true;
@@ -241,6 +299,37 @@ function _wireWs() {
         _refreshStats().catch(() => {});
         _refreshAutoStats().catch(() => {});
     });
+    ws.on('duration_backfill_progress', (m) => {
+        $('duration-progress')?.classList.remove('hidden');
+        const total = Math.max(1, m.total || 1);
+        const pct = Math.min(100, Math.round(((m.processed || 0) / total) * 100));
+        const bar = $('duration-progress-bar');
+        if (bar) bar.style.width = pct + '%';
+        const status = $('duration-progress-status');
+        if (status) {
+            status.textContent = i18nTf(
+                'maintenance.video.duration.progress',
+                { processed: m.processed || 0, total: m.total || 0, updated: m.updated || 0 },
+                `${m.processed || 0} / ${m.total || 0} · ${m.updated || 0} updated`,
+            );
+        }
+    });
+    ws.on('duration_backfill_done', (m) => {
+        _setDurationUi(false);
+        if (m?.error) {
+            showToast(m.error, 'error');
+        } else if (!m?.cancelled) {
+            showToast(
+                i18nTf(
+                    'maintenance.video.duration.done',
+                    { updated: m?.updated || 0, missing: m?.missing || 0, failed: m?.failed || 0 },
+                    `Recorded ${m?.updated || 0} durations (${m?.missing || 0} missing on disk, ${m?.failed || 0} unreadable)`,
+                ),
+                'success',
+            );
+        }
+        _refreshDurationStats().catch(() => {});
+    });
     // Per-file auto-optimise broadcast — fires once per downloaded
     // MP4 / MOV / M4V row, regardless of whether the moov rewrite
     // actually ran (skipped/already files emit too so the counters
@@ -279,6 +368,12 @@ async function _recoverState() {
     } catch {
         /* status endpoint failures are non-fatal */
     }
+    try {
+        const r = await api.get('/api/maintenance/duration/status');
+        if (r?.running) _setDurationUi(true);
+    } catch {
+        /* status endpoint failures are non-fatal */
+    }
 }
 
 export function init() {
@@ -286,8 +381,10 @@ export function init() {
     if (!_pageWired) {
         _pageWired = true;
         $('video-scan-btn')?.addEventListener('click', _scanAll);
+        $('duration-backfill-btn')?.addEventListener('click', _backfillDurations);
     }
     _refreshStats();
     _refreshAutoStats();
+    _refreshDurationStats();
     _recoverState();
 }

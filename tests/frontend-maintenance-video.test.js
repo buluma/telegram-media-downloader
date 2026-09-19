@@ -430,3 +430,83 @@ describe('per-file auto-optimise WS events', () => {
         expect($('video-auto-stat-optimized').textContent).toBe('6');
     });
 });
+
+describe('duration backfill', () => {
+    const DURATION_DOM = `
+        <button id="duration-backfill-btn"><i class="ri-icon"></i><span data-i18n="maintenance.video.duration.run">Backfill durations</span></button>
+        <div id="duration-progress" class="hidden">
+            <div id="duration-progress-bar"></div>
+            <span id="duration-progress-status"></span>
+        </div>
+        <span id="duration-stat-pending"></span>
+        <span id="duration-stat-known"></span>
+    `;
+
+    async function loadDuration({
+        stats = { pending: 3, known: 7 },
+        status = { running: false },
+    } = {}) {
+        const mod = await loadModule();
+        document.body.insertAdjacentHTML('beforeend', DURATION_DOM);
+        api.get.mockImplementation((url) => {
+            if (url === '/api/maintenance/duration/stats') return Promise.resolve(stats);
+            if (url === '/api/maintenance/duration/status') return Promise.resolve(status);
+            return Promise.resolve({});
+        });
+        mod.init();
+        await flush();
+        return mod;
+    }
+
+    it('renders pending / known counters', async () => {
+        await loadDuration({ stats: { pending: 1234, known: 7 } });
+        expect($('duration-stat-pending').textContent).toBe((1234).toLocaleString());
+        expect($('duration-stat-known').textContent).toBe('7');
+    });
+
+    it('POSTs the backfill and disables the button while running', async () => {
+        await loadDuration();
+        $('duration-backfill-btn').click();
+        await flush();
+        expect(api.post).toHaveBeenCalledWith('/api/maintenance/duration/backfill', {});
+        expect($('duration-backfill-btn').disabled).toBe(true);
+        expect($('duration-progress').classList.contains('hidden')).toBe(false);
+    });
+
+    it('re-enables the button and toasts when the server rejects the start', async () => {
+        await loadDuration();
+        api.post.mockResolvedValue({ error: 'nope' });
+        $('duration-backfill-btn').click();
+        await flush();
+        expect(showToast).toHaveBeenCalledWith('nope', 'error');
+        expect($('duration-backfill-btn').disabled).toBe(false);
+    });
+
+    it('fills the bar from duration_backfill_progress', async () => {
+        await loadDuration();
+        await ws.emit('duration_backfill_progress', { processed: 5, total: 20, updated: 4 });
+        expect($('duration-progress-bar').style.width).toBe('25%');
+        expect($('duration-progress-status').textContent).toBe('5 / 20 · 4 updated');
+    });
+
+    it('resets the UI, toasts and refreshes counters on duration_backfill_done', async () => {
+        await loadDuration();
+        $('duration-backfill-btn').click();
+        await flush();
+        api.get.mockClear();
+        await ws.emit('duration_backfill_done', { updated: 2, missing: 1, failed: 0 });
+        await flush();
+        expect($('duration-backfill-btn').disabled).toBe(false);
+        expect($('duration-progress').classList.contains('hidden')).toBe(true);
+        expect(showToast).toHaveBeenCalledWith(
+            expect.stringContaining('Recorded 2 durations'),
+            'success',
+        );
+        expect(api.get).toHaveBeenCalledWith('/api/maintenance/duration/stats');
+    });
+
+    it('recovers an in-flight run on boot', async () => {
+        await loadDuration({ status: { running: true } });
+        expect($('duration-backfill-btn').disabled).toBe(true);
+    });
+});

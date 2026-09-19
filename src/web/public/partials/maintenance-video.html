@@ -104,4 +104,34 @@
                         </div>
                         <p class="text-[11px] text-tg-textSecondary mt-2 leading-relaxed" data-i18n="maintenance.video.stats_help">Library-wide totals. Pending = MP4s whose moov atom is still at the end of the file (eligible for the backfill action above). Skipped = files in containers that don't use moov (WebM, MKV) or that aren't on disk. Auto-optimise stats for new downloads are tracked separately at the top.</p>
                     </section>
+                    <section class="bg-tg-panel rounded-xl p-4 mt-3">
+                        <div class="flex items-start justify-between gap-3 flex-wrap">
+                            <div class="min-w-0">
+                                <h2 class="text-tg-text text-base font-semibold" data-i18n="maintenance.video.duration.title">Video durations</h2>
+                                <p class="text-xs text-tg-textSecondary mt-0.5" data-i18n="maintenance.video.duration.subtitle">Reads each video's length with ffprobe so "Longest first" can rank files downloaded before durations were recorded. New downloads are handled automatically.</p>
+                            </div>
+                            <button id="duration-backfill-btn" class="tg-btn text-xs px-3 py-1.5 inline-flex items-center gap-1.5 shrink-0">
+                                <i class="ri-time-line"></i><span data-i18n="maintenance.video.duration.run">Backfill durations</span>
+                            </button>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2 mt-3 text-center">
+                            <div class="bg-tg-bg/40 rounded-lg p-3">
+                                <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.video.duration.pending">Missing duration</div>
+                                <div id="duration-stat-pending" class="text-xl font-semibold text-tg-orange tabular-nums">—</div>
+                            </div>
+                            <div class="bg-tg-bg/40 rounded-lg p-3">
+                                <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.video.duration.known">Known</div>
+                                <div id="duration-stat-known" class="text-xl font-semibold text-tg-green tabular-nums">—</div>
+                            </div>
+                        </div>
+                        <div id="duration-progress" class="hidden mt-3" role="status" aria-live="polite">
+                            <div class="text-sm text-tg-text mb-1.5 flex items-center gap-1.5 font-medium">
+                                <i class="ri-loader-4-line animate-spin text-tg-blue"></i>
+                                <span id="duration-progress-status" data-i18n="maintenance.video.duration.running">Probing…</span>
+                            </div>
+                            <div class="h-2 bg-tg-bg/60 rounded overflow-hidden">
+                                <div id="duration-progress-bar" class="h-full bg-tg-blue transition-all" style="width:0%"></div>
+                            </div>
+                        </div>
+                    </section>
                 </div>
