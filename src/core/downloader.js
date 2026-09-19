@@ -195,6 +195,11 @@ const MAX_CONCURRENCY = 20;
 const DEFAULT_SCALER_INTERVAL_MS = 5000;
 const DEFAULT_IDLE_SLEEP_MS = 200;
 const DEFAULT_SPILLOVER_THRESHOLD = 2000;
+// gramJS downloadMedia() has no timeout of its own: a wedged media-DC sender
+// leaves the promise pending forever and pins the worker at 0 bytes. Abort an
+// attempt that goes this long without a progress tick so the retry path runs.
+// Must stay above gramJS's silent FloodWait sleep (floodSleepThreshold, 60s).
+const DEFAULT_STALL_TIMEOUT_MS = 120_000;
 
 export class DownloadManager extends EventEmitter {
     constructor(client, config, rateLimiter) {
@@ -745,52 +750,84 @@ export class DownloadManager extends EventEmitter {
                 // could read silently failed (or pulled from the wrong
                 // session) under multi-account setups.
                 const dlClient = job.client || this.client;
-                await dlClient.downloadMedia(job.message, {
-                    outputFile: partPath,
-                    progressCallback: (downloaded, total) => {
-                        // Mid-flight cancel hook — Queue page → cancelJob()
-                        // adds the key to `_cancelling`, throwing here makes
-                        // gramJS reject the downloadMedia promise with our
-                        // Cancelled error which the outer catch cleans up.
-                        if (this.isCancelling(job.key)) {
-                            const err = new Error('Cancelled');
-                            err.cancelled = true;
-                            throw err;
-                        }
-                        const downloadedN = BigInt(downloaded || 0);
-                        const totalN = total ? BigInt(total) : 0n;
-                        const pct = totalN ? Number((downloadedN * 100n) / totalN) : 0;
-                        const now = Date.now();
-                        const dtMs = Math.max(now - prevTs, 1);
-                        const dB = Number(downloadedN - prevBytes);
-                        const bps = dtMs > 50 ? Math.max(0, Math.round((dB * 1000) / dtMs)) : null;
-                        if (dtMs > 200) {
-                            prevTs = now;
-                            prevBytes = downloadedN;
-                        }
-
-                        const active = this.active.get(job.key);
-                        if (active) {
-                            active.progress = pct;
-                            active.received = Number(downloadedN);
-                            active.total = Number(totalN);
-                            if (bps !== null) active.bps = bps;
-                        }
-                        this.emit('progress', {
-                            key: job.key,
-                            groupId: job.groupId,
-                            groupName: job.groupName,
-                            mediaType: job.mediaType,
-                            messageId: job.message?.id,
-                            received: Number(downloadedN),
-                            total: Number(totalN),
-                            progress: pct,
-                            bps,
-                            accountId: job.accountId || null,
-                            accountName: job.accountName || null,
-                        });
-                    },
+                const stallMs =
+                    Number(this.config?.advanced?.downloader?.stallTimeoutMs) ||
+                    DEFAULT_STALL_TIMEOUT_MS;
+                let stallTimer;
+                let rejectStalled;
+                const stalled = new Promise((_, reject) => {
+                    rejectStalled = reject;
                 });
+                // Re-armed on every progress tick, so a slow-but-moving
+                // transfer never trips it; only a fetch that stops yielding
+                // bytes does.
+                const armStallTimer = () => {
+                    clearTimeout(stallTimer);
+                    stallTimer = setTimeout(
+                        () =>
+                            rejectStalled(
+                                new Error(
+                                    `Download stalled: no bytes received for ${Math.round(stallMs / 1000)}s`,
+                                ),
+                            ),
+                        stallMs,
+                    );
+                };
+                armStallTimer();
+                // On a stall we abandon the gramJS promise rather than cancel
+                // it (gramJS offers no cancel). Promise.race keeps a handler
+                // attached to it, so a late rejection isn't unhandled.
+                await Promise.race([
+                    dlClient.downloadMedia(job.message, {
+                        outputFile: partPath,
+                        progressCallback: (downloaded, total) => {
+                            armStallTimer();
+                            // Mid-flight cancel hook — Queue page → cancelJob()
+                            // adds the key to `_cancelling`, throwing here makes
+                            // gramJS reject the downloadMedia promise with our
+                            // Cancelled error which the outer catch cleans up.
+                            if (this.isCancelling(job.key)) {
+                                const err = new Error('Cancelled');
+                                err.cancelled = true;
+                                throw err;
+                            }
+                            const downloadedN = BigInt(downloaded || 0);
+                            const totalN = total ? BigInt(total) : 0n;
+                            const pct = totalN ? Number((downloadedN * 100n) / totalN) : 0;
+                            const now = Date.now();
+                            const dtMs = Math.max(now - prevTs, 1);
+                            const dB = Number(downloadedN - prevBytes);
+                            const bps =
+                                dtMs > 50 ? Math.max(0, Math.round((dB * 1000) / dtMs)) : null;
+                            if (dtMs > 200) {
+                                prevTs = now;
+                                prevBytes = downloadedN;
+                            }
+
+                            const active = this.active.get(job.key);
+                            if (active) {
+                                active.progress = pct;
+                                active.received = Number(downloadedN);
+                                active.total = Number(totalN);
+                                if (bps !== null) active.bps = bps;
+                            }
+                            this.emit('progress', {
+                                key: job.key,
+                                groupId: job.groupId,
+                                groupName: job.groupName,
+                                mediaType: job.mediaType,
+                                messageId: job.message?.id,
+                                received: Number(downloadedN),
+                                total: Number(totalN),
+                                progress: pct,
+                                bps,
+                                accountId: job.accountId || null,
+                                accountName: job.accountName || null,
+                            });
+                        },
+                    }),
+                    stalled,
+                ]).finally(() => clearTimeout(stallTimer));
                 // Belt-and-braces: gramJS may finish a tiny clip before any
                 // progress tick fires, so check once more here. If cancel
                 // was requested between dequeue and now, drop the .part.
