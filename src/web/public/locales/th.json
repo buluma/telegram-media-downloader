@@ -1907,6 +1907,7 @@
     "filter.saved.label": "ตัวกรองที่บันทึกไว้",
     "header.sort.date_asc": "เก่าสุดก่อน",
     "header.sort.date_desc": "ใหม่สุด",
+    "header.sort.duration_desc": "นานสุดก่อน",
     "header.sort.label": "ลำดับการจัดเรียง",
     "header.sort.name_asc": "ชื่อ ก→ฮ",
     "header.sort.size_desc": "ใหญ่สุดก่อน",

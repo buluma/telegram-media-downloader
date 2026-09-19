@@ -659,11 +659,12 @@ async function init() {
     const sortChip = document.getElementById('sort-chip');
     const sortMenu = document.getElementById('sort-menu');
     if (sortChip && sortMenu) {
-        const VALID_SORTS = ['date_desc', 'date_asc', 'size_desc', 'name_asc'];
+        const VALID_SORTS = ['date_desc', 'date_asc', 'size_desc', 'duration_desc', 'name_asc'];
         const SORT_LABELS = {
             date_desc: 'Newest',
             date_asc: 'Oldest',
             size_desc: 'Largest',
+            duration_desc: 'Longest',
             name_asc: 'Name A→Z',
         };
         const storedSort = (() => {
@@ -2165,6 +2166,7 @@ function _renderSavedFiltersMenu() {
                     date_desc: 'Newest',
                     date_asc: 'Oldest',
                     size_desc: 'Largest',
+                    duration_desc: 'Longest',
                     name_asc: 'Name A→Z',
                 };
                 if (sortLabel) sortLabel.textContent = SORT_LABELS[f.sortBy] ?? 'Sort';

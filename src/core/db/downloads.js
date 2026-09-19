@@ -409,6 +409,7 @@ export function getAllDownloads(limit = 50, offset = 0, type = 'all', opts = {})
         date_desc: 'created_at DESC, id DESC',
         date_asc: 'created_at ASC, id ASC',
         size_desc: 'COALESCE(file_size, 0) DESC, id DESC',
+        duration_desc: 'COALESCE(ss.duration_sec, d.duration_sec, 0) DESC, id DESC',
         name_asc: "LOWER(COALESCE(file_name, '')) ASC, id ASC",
     };
     const baseSort = sortMap[opts.sortBy] || 'created_at DESC, id DESC';
@@ -465,6 +466,7 @@ export function getDownloads(groupId, limit = 50, offset = 0, type = 'all', opts
         date_desc: 'created_at DESC, id DESC',
         date_asc: 'created_at ASC, id ASC',
         size_desc: 'COALESCE(file_size, 0) DESC, id DESC',
+        duration_desc: 'COALESCE(ss.duration_sec, d.duration_sec, 0) DESC, id DESC',
         name_asc: "LOWER(COALESCE(file_name, '')) ASC, id ASC",
     };
     const baseSort = sortMap[opts.sortBy] || 'created_at DESC, id DESC';
@@ -727,6 +729,7 @@ export function getAllDownloadsFederated(limit = 50, offset = 0, type = 'all', o
     const _fedSortMap = {
         date_asc: 'sort_ts ASC, id ASC',
         size_desc: 'COALESCE(file_size, 0) DESC, id DESC',
+        duration_desc: 'COALESCE(duration_sec, 0) DESC, id DESC',
         name_asc: "LOWER(COALESCE(file_name, '')) ASC, id ASC",
     };
     const baseSort = _fedSortMap[opts.sortBy] || 'sort_ts DESC, id DESC';
@@ -834,6 +837,7 @@ export function getDownloadsForGroupFederated(
     const _fedSortMap = {
         date_asc: 'sort_ts ASC, id ASC',
         size_desc: 'COALESCE(file_size, 0) DESC, id DESC',
+        duration_desc: 'COALESCE(duration_sec, 0) DESC, id DESC',
         name_asc: "LOWER(COALESCE(file_name, '')) ASC, id ASC",
     };
     const baseSort = _fedSortMap[opts.sortBy] || 'sort_ts DESC, id DESC';

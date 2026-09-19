@@ -1907,6 +1907,7 @@
     "filter.saved.label": "Saved filters",
     "header.sort.date_asc": "Oldest first",
     "header.sort.date_desc": "Newest",
+    "header.sort.duration_desc": "Longest first",
     "header.sort.label": "Sort order",
     "header.sort.name_asc": "Name A→Z",
     "header.sort.size_desc": "Largest first",
