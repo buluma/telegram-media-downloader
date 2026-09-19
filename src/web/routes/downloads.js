@@ -247,7 +247,13 @@ export function createDownloadsRouter({
             const pinnedFirst = req.query.pinnedFirst === '1' || req.query.pinnedFirst === 'true';
             const watchedOnly = req.query.watched === '1';
             const clippedOnly = req.query.clipped === '1' || req.query.clipped === 'true';
-            const VALID_SORTS = new Set(['date_desc', 'date_asc', 'size_desc', 'name_asc']);
+            const VALID_SORTS = new Set([
+                'date_desc',
+                'date_asc',
+                'size_desc',
+                'duration_desc',
+                'name_asc',
+            ]);
             const sortBy = VALID_SORTS.has(req.query.sort) ? req.query.sort : 'date_desc';
             const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
             const dateFrom = DATE_RE.test(req.query.from) ? req.query.from : null;
@@ -400,7 +406,13 @@ export function createDownloadsRouter({
             const pinnedFirst = req.query.pinnedFirst === '1' || req.query.pinnedFirst === 'true';
             const watchedOnly = req.query.watched === '1';
             const clippedOnly = req.query.clipped === '1' || req.query.clipped === 'true';
-            const VALID_SORTS = new Set(['date_desc', 'date_asc', 'size_desc', 'name_asc']);
+            const VALID_SORTS = new Set([
+                'date_desc',
+                'date_asc',
+                'size_desc',
+                'duration_desc',
+                'name_asc',
+            ]);
             const sortBy = VALID_SORTS.has(req.query.sort) ? req.query.sort : 'date_desc';
             const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
             const dateFrom = DATE_RE.test(req.query.from) ? req.query.from : null;
