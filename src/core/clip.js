@@ -77,7 +77,7 @@ function _runFfmpeg(args) {
     });
 }
 
-function _probeDuration(absPath) {
+export function probeDuration(absPath) {
     return new Promise((resolve) => {
         const p = spawn(
             resolveFfprobeBin(),
@@ -147,7 +147,7 @@ export async function createClip(id, startSec, endSec) {
     const abs = sr.real;
     if (!hasFfmpeg()) return { status: 'error', error: 'ffmpeg not available' };
 
-    const duration = await _probeDuration(abs);
+    const duration = await probeDuration(abs);
     if (duration !== null && end > duration + 0.25) {
         // +0.25s slack for float/container rounding — a genuine
         // beyond-the-end request should still be rejected.
@@ -202,7 +202,7 @@ export async function createClip(id, startSec, endSec) {
     }
 
     if (!existsSync(tmpAbs)) return { status: 'error', error: 'ffmpeg produced no output' };
-    const clipDuration = await _probeDuration(tmpAbs);
+    const clipDuration = await probeDuration(tmpAbs);
     if (clipDuration === null || clipDuration < 0.05) {
         try {
             await fs.unlink(tmpAbs);

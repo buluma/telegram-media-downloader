@@ -106,6 +106,22 @@ import { wireChangelogTrigger } from './changelog-viewer.js';
 import * as WakeLock from './wake-lock.js';
 import { registerAction } from './ui-events.js';
 
+// Short sort-chip labels, keyed by the `?sort=` value. The keys are the
+// source of truth for which sorts the client will send/restore; the menu
+// items in index.html and the whitelist in routes/downloads.js must match.
+const SORT_LABELS = {
+    date_desc: 'Newest',
+    date_asc: 'Oldest',
+    size_desc: 'Largest',
+    size_asc: 'Smallest',
+    duration_desc: 'Longest',
+    duration_asc: 'Shortest',
+    name_asc: 'Name A→Z',
+    name_desc: 'Name Z→A',
+    viewed_desc: 'Viewed',
+    crosspost_desc: 'Cross-posted',
+};
+
 // ============ Render coalescing ============
 //
 // WebSocket events arrive in bursts — a single backfill run can fire
@@ -659,14 +675,7 @@ async function init() {
     const sortChip = document.getElementById('sort-chip');
     const sortMenu = document.getElementById('sort-menu');
     if (sortChip && sortMenu) {
-        const VALID_SORTS = ['date_desc', 'date_asc', 'size_desc', 'duration_desc', 'name_asc'];
-        const SORT_LABELS = {
-            date_desc: 'Newest',
-            date_asc: 'Oldest',
-            size_desc: 'Largest',
-            duration_desc: 'Longest',
-            name_asc: 'Name A→Z',
-        };
+        const VALID_SORTS = Object.keys(SORT_LABELS);
         const storedSort = (() => {
             try {
                 return localStorage.getItem('tgdl-sort-by');
@@ -2109,7 +2118,7 @@ function _renderSavedFiltersMenu() {
     filters.forEach((f, i) => {
         const parts = [];
         if (f.type && f.type !== 'all') parts.push(f.type);
-        if (f.sortBy && f.sortBy !== 'date_desc') parts.push(f.sortBy.replace('_', ' '));
+        if (f.sortBy && f.sortBy !== 'date_desc') parts.push(SORT_LABELS[f.sortBy] ?? f.sortBy);
         if (f.dateFrom || f.dateTo) {
             parts.push([f.dateFrom, f.dateTo].filter(Boolean).join(' – '));
         }
@@ -2162,13 +2171,6 @@ function _renderSavedFiltersMenu() {
                     b.setAttribute('aria-checked', b.dataset.sort === f.sortBy ? 'true' : 'false');
                 });
                 const sortLabel = document.getElementById('sort-chip-label');
-                const SORT_LABELS = {
-                    date_desc: 'Newest',
-                    date_asc: 'Oldest',
-                    size_desc: 'Largest',
-                    duration_desc: 'Longest',
-                    name_asc: 'Name A→Z',
-                };
                 if (sortLabel) sortLabel.textContent = SORT_LABELS[f.sortBy] ?? 'Sort';
             }
             // Apply date range

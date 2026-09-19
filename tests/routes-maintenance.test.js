@@ -151,6 +151,12 @@ const faststartApi = {
 };
 vi.mock('../src/core/faststart.js', () => faststartApi);
 
+const durationApi = {
+    backfillDurations: vi.fn(async () => ({ total: 0, processed: 0, updated: 0 })),
+    getDurationStats: vi.fn(() => ({ total: 0, pending: 0, known: 0, ffmpegAvailable: true })),
+};
+vi.mock('../src/core/duration-backfill.js', () => durationApi);
+
 const runtimeApi = {
     runtime: {
         state: 'stopped',
@@ -241,6 +247,7 @@ beforeAll(async () => {
         'seekbarBuild',
         'seekbarRebuild',
         'faststart',
+        'durationBackfill',
         'nsfwBulk',
         'recoveryBulk',
     ];
@@ -703,6 +710,37 @@ describe('faststart maintenance', () => {
         const { status, body } = await get('/api/maintenance/faststart/auto-stats');
         expect(status).toBe(200);
         expect(body.optimized).toBe(5);
+    });
+});
+
+describe('duration backfill maintenance', () => {
+    it('runs the backfill and exposes its result through status', async () => {
+        durationApi.backfillDurations.mockResolvedValue({ total: 3, processed: 3, updated: 2 });
+        const { status, body } = await post('/api/maintenance/duration/backfill');
+        expect(status).toBe(200);
+        expect(body.started).toBe(true);
+        const final = await waitIdle('/api/maintenance/duration/status');
+        expect(final.result).toMatchObject({ total: 3, updated: 2 });
+    });
+
+    it('409s while a run is already in flight', async () => {
+        let release;
+        durationApi.backfillDurations.mockImplementationOnce(
+            () => new Promise((r) => (release = () => r({ total: 0 }))),
+        );
+        expect((await post('/api/maintenance/duration/backfill')).status).toBe(200);
+        const second = await post('/api/maintenance/duration/backfill');
+        expect(second.status).toBe(409);
+        expect(second.body.code).toBe('ALREADY_RUNNING');
+        release();
+        await waitIdle('/api/maintenance/duration/status');
+    });
+
+    it('reports pending counts', async () => {
+        durationApi.getDurationStats.mockReturnValue({ total: 10, pending: 4, known: 6 });
+        const { status, body } = await get('/api/maintenance/duration/stats');
+        expect(status).toBe(200);
+        expect(body).toMatchObject({ pending: 4, known: 6 });
     });
 });
 

@@ -67,7 +67,7 @@ A few `/api/auth/*` routes are explicitly registered before the global auth midd
 | Method | Path | Notes |
 |---|---|---|
 | `GET`    | `/api/downloads`                    | Aggregate per group. |
-| `GET`    | `/api/downloads/all`                | Cross-group All-Media list, paginated. `?page=&limit=&type=`. **`?include=local\|peers\|all`** (admin-only) UNIONs `peer_downloads` into the result; **`?peerId=<id>`** narrows to one peer. **`?clipped=1`** narrows to videos saved via the trim tool (identified by their synthetic negative `message_id`). Each row carries `peer_id` (`'self'` or peer's id) + `peer_name`. Default `local` is backward-compatible. |
+| `GET`    | `/api/downloads/all`                | Cross-group All-Media list, paginated. `?page=&limit=&type=`. **`?include=local\|peers\|all`** (admin-only) UNIONs `peer_downloads` into the result; **`?peerId=<id>`** narrows to one peer. **`?clipped=1`** narrows to videos saved via the trim tool (identified by their synthetic negative `message_id`). **`?sort=`** one of `date_desc` (default), `date_asc`, `size_desc`, `size_asc`, `duration_desc`, `duration_asc`, `name_asc`, `name_desc`, `viewed_desc`, `crosspost_desc`; rows with no value for the key sort last. Also accepted by the per-group list. Each row carries `peer_id` (`'self'` or peer's id) + `peer_name`. Default `local` is backward-compatible. |
 | `GET`    | `/api/downloads/:groupId`           | Paginated rows for one group. `?type=images\|videos\|documents\|audio`. Same `?include=` / `?peerId=` / `?clipped=1` params as `/all`. |
 | `GET`    | `/api/downloads/search`             | `?q=…&page=&limit=&groupId=`. Same `?include=` federation param. |
 | `POST`   | `/api/downloads/bulk-delete`        | `{ids?, paths?}`. Also purges thumbnail cache for every removed id. |
@@ -133,6 +133,9 @@ A few `/api/auth/*` routes are explicitly registered before the global auth midd
 | `POST` | `/api/maintenance/faststart/scan`| Sweep MP4s and rewrite ones whose moov atom isn't at the head. Broadcasts `faststart_progress`. |
 | `GET`  | `/api/maintenance/faststart/status` | JobTracker snapshot. |
 | `GET`  | `/api/maintenance/faststart/stats`  | `{total, optimized, pending, missing, unknown, ext_skip, ffmpegAvailable, lastRun}`. |
+| `POST` | `/api/maintenance/duration/backfill` | Probe every video with no recorded duration (ffprobe) and store it in `downloads.duration_sec`. Broadcasts `duration_backfill_progress` / `duration_backfill_done`. |
+| `GET`  | `/api/maintenance/duration/status` | JobTracker snapshot. |
+| `GET`  | `/api/maintenance/duration/stats`  | `{total, pending, known, ffmpegAvailable}`. |
 | `GET`  | `/api/maintenance/nsfw/status`   | `{enabled, running, scanned, total, candidates, keep, whitelisted, model, threshold, fileTypes}`. |
 | `POST` | `/api/maintenance/nsfw/scan`     | Start a background scan (returns 503 when feature is disabled, 409 when one is already running). |
 | `POST` | `/api/maintenance/nsfw/scan/cancel` | Abort the active scan; partial results kept. |

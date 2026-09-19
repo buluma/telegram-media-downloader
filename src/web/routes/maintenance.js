@@ -192,6 +192,7 @@ export function createMaintenanceRouter({
         ['POST /maintenance/seekbar/rebuild', { windowMs: 60_000, max: 3 }],
         ['POST /maintenance/seekbar/build-all', { windowMs: 60_000, max: 3 }],
         ['POST /maintenance/faststart/scan', { windowMs: 60_000, max: 3 }],
+        ['POST /maintenance/duration/backfill', { windowMs: 60_000, max: 3 }],
         ['POST /maintenance/nsfw/scan', { windowMs: 60_000, max: 3 }],
         ['POST /maintenance/files/verify', { windowMs: 60_000, max: 3 }],
         ['POST /maintenance/reindex', { windowMs: 60_000, max: 3 }],
@@ -1430,6 +1431,39 @@ export function createMaintenanceRouter({
                 swallow(e, 'maintenance:GET /maintenance/faststart/stats');
             }
             res.json({ success: true, ffmpegAvailable: hasFfmpeg(), ...r, lastRun });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    // ====== Video duration backfill ==========================================
+    // Fills downloads.duration_sec for videos that predate migration 027 so
+    // the "Longest first" sort can rank them. Same fire-and-forget contract
+    // as the faststart sweep; prefix 'duration_backfill'.
+    router.post('/maintenance/duration/backfill', async (req, res) => {
+        const tracker = jobTrackers.durationBackfill;
+        const r = tracker.tryStart(async ({ onProgress, signal }) => {
+            const { backfillDurations } = await import('../../core/duration-backfill.js');
+            return backfillDurations({ onProgress: (p) => onProgress(p), signal });
+        });
+        if (!r.started) {
+            return res.status(409).json({
+                error: 'A duration backfill is already running',
+                code: r.code || 'ALREADY_RUNNING',
+            });
+        }
+        res.json({ success: true, started: true });
+    });
+
+    router.get('/maintenance/duration/status', async (req, res) => {
+        const snap = jobTrackers.durationBackfill.getStatus();
+        res.json({ ...snap, ...(snap.progress || {}) });
+    });
+
+    router.get('/maintenance/duration/stats', async (req, res) => {
+        try {
+            const { getDurationStats } = await import('../../core/duration-backfill.js');
+            res.json({ success: true, ...getDurationStats() });
         } catch (e) {
             res.status(500).json({ error: e.message });
         }
