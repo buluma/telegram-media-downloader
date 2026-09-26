@@ -1386,6 +1386,20 @@ class VideoPlayer {
                 v.muted = !v.muted;
                 if (!v.muted && v.volume === 0) this._setVolume(0.5);
                 return true;
+            case 'r':
+            case 'R': {
+                v.loop = !v.loop;
+                try {
+                    localStorage.setItem('viewer-loop', v.loop ? '1' : '0');
+                } catch {}
+                document.getElementById('setting-viewer-loop')?.classList.toggle('active', v.loop);
+                showToast(
+                    v.loop
+                        ? i18nT('toast.viewer_loop_on', 'Loop enabled.')
+                        : i18nT('toast.viewer_loop_off', 'Loop disabled.'),
+                );
+                return true;
+            }
             case 'f':
             case 'F':
                 this.toggleFullscreen();

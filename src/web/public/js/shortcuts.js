@@ -107,6 +107,12 @@ const SHORTCUTS = [
         k: 'shortcuts.toggle_trim',
         def: '(in viewer) toggle video trim/clip mode',
     },
+    {
+        id: 'toggle_loop',
+        keys: 'r',
+        k: 'shortcuts.toggle_loop',
+        def: '(in viewer) toggle loop for the current video',
+    },
 ];
 
 /**
