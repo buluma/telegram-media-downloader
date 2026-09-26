@@ -1956,6 +1956,19 @@ describe('VideoPlayer', () => {
             expect(video.volume).toBe(0.5);
         });
 
+        it('toggles loop with r and persists the preference', async () => {
+            const video = await openPlaying();
+            expect(video.loop).toBe(false);
+            key({ key: 'r' });
+            expect(video.loop).toBe(true);
+            expect(localStorage.getItem('viewer-loop')).toBe('1');
+            expect(showToast).toHaveBeenCalledWith('Loop enabled.');
+            key({ key: 'R' });
+            expect(video.loop).toBe(false);
+            expect(localStorage.getItem('viewer-loop')).toBe('0');
+            expect(showToast).toHaveBeenCalledWith('Loop disabled.');
+        });
+
         it('steps the speed with the comma and period keys', async () => {
             const video = await openPlaying();
             key({ key: '.' });
