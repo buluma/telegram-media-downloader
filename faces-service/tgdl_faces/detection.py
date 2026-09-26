@@ -1,11 +1,14 @@
 """Object detection module using YOLOv8-nano ONNX model."""
 
 import logging
+import os
 from pathlib import Path
 
 import cv2
 import numpy as np
 from PIL import Image
+
+from .insight import _resolve_providers
 
 _LOG = logging.getLogger(__name__)
 
@@ -64,7 +67,10 @@ def _init_model():
                 _MODEL_AVAILABLE = False
                 return False
 
-        _SESSION = ort.InferenceSession(str(model_path), providers=["CoreMLExecutionProvider", "CPUExecutionProvider"])
+        _SESSION = ort.InferenceSession(
+            str(model_path),
+            providers=_resolve_providers(os.environ.get("TGDL_FACES_PROVIDERS", "auto")),
+        )
         _LABELS = COCO_LABELS
         _MODEL_AVAILABLE = True
         _LOG.info("YOLOv8n ONNX model loaded successfully")

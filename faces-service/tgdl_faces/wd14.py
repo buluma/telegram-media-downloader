@@ -20,6 +20,8 @@ import cv2
 import numpy as np
 from PIL import Image
 
+from .insight import _resolve_providers
+
 _LOG = logging.getLogger(__name__)
 
 _MODEL_AVAILABLE = None
@@ -108,7 +110,7 @@ def _init_model() -> bool:
             return False
 
         try:
-            providers = ["CoreMLExecutionProvider", "CPUExecutionProvider"]
+            providers = _resolve_providers(os.environ.get("TGDL_FACES_PROVIDERS", "auto"))
             _SESSION = ort.InferenceSession(str(model_path), providers=providers)
             _INPUT_NAME, _OUTPUT_NAME = _probe_io(_SESSION)
             _LABELS = _load_tags(tags_path)
