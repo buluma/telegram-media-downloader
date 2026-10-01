@@ -4,11 +4,18 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+## [2.27.0] — 2026-10-01
+
 ### Added
 - **Gallery search box** — searches file names and captions, keeps the active type/chip filters and group scope. `/api/downloads/search` now takes the same filters as `/all` and returns captions, pin and duration fields.
 
+### Fixed
+- **Gallery filter races** — a slow reply from an earlier filter no longer overwrites the current results, and find-similar results no longer get the next feed page appended on scroll.
+- **Saved filters** now keep and restore the pinned, watched and clipped chips.
+
 ### Changed
 - `downloads_fts` now indexes `caption`; existing databases rebuild the index once on first start.
+- Docker base image `node:26.10.0-bookworm-slim`; `huggingface-hub` range widened to `<3` in `tgdl-ml` and `faces-service`.
 
 ## [2.26.0] — 2026-09-06
 
