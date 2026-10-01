@@ -20,13 +20,13 @@ function ensureDataDir() {
 export function getOrGenerateSecret() {
     ensureDataDir();
 
-    if (fs.existsSync(SECRET_PATH)) {
-        try {
-            const secret = fs.readFileSync(SECRET_PATH, 'utf8').trim();
-            if (secret.length > 0) return secret;
-        } catch (e) {
-            console.error('Error reading secret file:', e);
-        }
+    // Read directly instead of existsSync-then-read: a missing file is the
+    // normal first-run case, and checking first leaves a window for it to change.
+    try {
+        const secret = fs.readFileSync(SECRET_PATH, 'utf8').trim();
+        if (secret.length > 0) return secret;
+    } catch (e) {
+        if (e.code !== 'ENOENT') console.error('Error reading secret file:', e);
     }
 
     // Generate new secret
