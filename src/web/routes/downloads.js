@@ -531,6 +531,19 @@ export function createDownloadsRouter({
             const page = Math.max(1, parseInt(req.query.page, 10) || 1);
             const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
             const groupId = req.query.groupId ? String(req.query.groupId) : undefined;
+            // Same filter contract as /downloads/all. Relevance order replaces
+            // ?sort=, and filters only narrow the local index — peer rows are
+            // matched by name alone (peer_downloads has no caption/pin state).
+            const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+            const filters = {
+                type: req.query.type || 'all',
+                pinnedOnly: req.query.pinned === '1' || req.query.pinned === 'true',
+                unpinnedOnly: req.query.pinned === '0',
+                watchedOnly: req.query.watched === '1',
+                clippedOnly: req.query.clipped === '1' || req.query.clipped === 'true',
+                dateFrom: DATE_RE.test(req.query.from) ? req.query.from : null,
+                dateTo: DATE_RE.test(req.query.to) ? req.query.to : null,
+            };
             const reqInclude =
                 req.query.include === 'peers' || req.query.include === 'all'
                     ? req.query.include
@@ -542,6 +555,7 @@ export function createDownloadsRouter({
                 offset: (page - 1) * limit,
                 groupId,
                 include,
+                ...filters,
             });
 
             const config = loadConfig();
@@ -587,14 +601,21 @@ export function createDownloadsRouter({
                     groupId: row.group_id,
                     groupName: row.group_name,
                     name: row.file_name,
+                    path: row.file_path,
                     fullPath,
                     size: row.file_size,
                     sizeFormatted: formatBytes(row.file_size),
                     type: typeFolder,
+                    extension: path.extname(row.file_name || ''),
                     modified: row.created_at,
                     messageId: row.message_id || null,
+                    caption: row.caption || null,
+                    lastViewedAt: row.last_viewed_at || null,
                     pendingUntil: row.pending_until || null,
                     rescuedAt: row.rescued_at || null,
+                    pinned: !!row.pinned,
+                    duration_sec: row.duration_sec ?? null,
+                    nsfw_score: row.nsfw_score ?? null,
                     peer_id: row.peer_id || 'self',
                     peer_name: isPeerRow ? peerNameMap.get(String(row.peer_id)) || null : null,
                 };

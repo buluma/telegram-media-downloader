@@ -309,6 +309,78 @@ describe('GET /api/downloads/search', () => {
         const { body } = await get('/api/downloads/search?q=unique-name');
         expect(body.files).toHaveLength(1);
     });
+
+    it('matches by caption and returns it on the tile payload', async () => {
+        downloadsApi.insertDownload({
+            groupId: '-100555',
+            groupName: 'Grp',
+            messageId: 20,
+            fileName: '2026-09-28T14-34-01_20.jpg',
+            fileType: 'photo',
+            fileSize: 5,
+            caption: 'golden hour at the pier',
+        });
+        const { body } = await get('/api/downloads/search?q=pier');
+        expect(body.files).toHaveLength(1);
+        expect(body.files[0].caption).toBe('golden hour at the pier');
+    });
+
+    it('carries the fields the gallery tile renders (pinned, duration, viewed)', async () => {
+        const r = downloadsApi.insertDownload({
+            groupId: '-100555',
+            groupName: 'Grp',
+            messageId: 21,
+            fileName: 'tile-fields.mp4',
+            fileType: 'video',
+            fileSize: 5,
+        });
+        downloadsApi.setDownloadPinned(Number(r.lastInsertRowid), 1);
+        const { body } = await get('/api/downloads/search?q=tile-fields');
+        expect(body.files[0]).toMatchObject({
+            pinned: true,
+            lastViewedAt: null,
+            extension: '.mp4',
+        });
+        expect('duration_sec' in body.files[0]).toBe(true);
+    });
+
+    it('applies the gallery filters (type, pinned, watched, clipped, date)', async () => {
+        const add = (messageId, fileType, name) =>
+            Number(
+                downloadsApi.insertDownload({
+                    groupId: '-100556',
+                    groupName: 'Filt',
+                    messageId,
+                    fileName: name,
+                    fileType,
+                    fileSize: 5,
+                    caption: 'filterword',
+                }).lastInsertRowid,
+            );
+        const vid = add(31, 'video', 'fv.mp4');
+        add(32, 'photo', 'fp.jpg');
+        const clip = add(-7, 'video', 'fc.mp4');
+        downloadsApi.setDownloadPinned(vid, 1);
+        const ids = async (qs) =>
+            (await get(`/api/downloads/search?q=filterword${qs}`)).body.files
+                .map((f) => f.id)
+                .sort();
+
+        expect(await ids('&type=videos')).toEqual([vid, clip].sort());
+        expect(await ids('&pinned=1')).toEqual([vid]);
+        expect(await ids('&pinned=0')).toHaveLength(2);
+        expect(await ids('&clipped=1')).toEqual([clip]);
+        expect(await ids('&watched=1')).toEqual([]);
+        expect(await ids('&from=2999-01-01')).toEqual([]);
+        expect(await ids('&to=2000-01-01')).toEqual([]);
+    });
+
+    it('ignores malformed filter values instead of erroring', async () => {
+        const { status } = await get(
+            '/api/downloads/search?q=filterword&from=nope&sort=x&type=zzz',
+        );
+        expect(status).toBe(200);
+    });
 });
 
 describe('POST /api/downloads/bulk-delete', () => {

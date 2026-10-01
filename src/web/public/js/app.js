@@ -2252,6 +2252,29 @@ function _setLoadMoreIndicator(visible) {
     document.getElementById('load-more-indicator')?.classList.toggle('hidden', !visible);
 }
 
+// Search request for the current query, carrying the same type/chip/date
+// filters as the plain feed. Results are relevance-ranked, so the sort chip
+// doesn't apply, and the endpoint searches this instance only (no peer scope).
+function _gallerySearchUrl(groupId) {
+    const type = state.currentFilter && state.currentFilter !== 'all' ? state.currentFilter : 'all';
+    const pinQs =
+        state.pinnedFilter === 'pinned'
+            ? '&pinned=1'
+            : state.pinnedFilter === 'unpinned'
+              ? '&pinned=0'
+              : '';
+    return (
+        `/api/downloads/search?q=${encodeURIComponent(state.searchQuery)}` +
+        `&page=${state.page}&limit=${FILES_PER_PAGE}&type=${encodeURIComponent(type)}` +
+        pinQs +
+        (state.watchedFilter ? '&watched=1' : '') +
+        (state.clippedFilter ? '&clipped=1' : '') +
+        (state.dateFrom ? `&from=${encodeURIComponent(state.dateFrom)}` : '') +
+        (state.dateTo ? `&to=${encodeURIComponent(state.dateTo)}` : '') +
+        (groupId ? `&groupId=${encodeURIComponent(groupId)}` : '')
+    );
+}
+
 // Bumped by every gallery load and by search-result takeovers. A load that
 // finds the counter moved on while it was awaiting the network is stale (the
 // filter changed, or search results replaced the grid) and must not touch
@@ -2288,7 +2311,9 @@ async function loadAllFiles() {
         ].join('');
         const scopeQs = _galleryScopeQs();
         const res = await api.get(
-            `/api/downloads/all?page=${state.page}&limit=${FILES_PER_PAGE}&type=${encodeURIComponent(type)}${pinQs}${watchedQs}${clippedQs}${pinFirstQs}${sortQs}${dateQs}${scopeQs}`,
+            state.searchQuery
+                ? _gallerySearchUrl(null)
+                : `/api/downloads/all?page=${state.page}&limit=${FILES_PER_PAGE}&type=${encodeURIComponent(type)}${pinQs}${watchedQs}${clippedQs}${pinFirstQs}${sortQs}${dateQs}${scopeQs}`,
         );
         if (seq !== _galleryLoadSeq) return;
         const newFiles = res?.files || [];
@@ -2367,7 +2392,9 @@ async function loadGroupFiles(groupId) {
         ].join('');
         const scopeQs = _galleryScopeQs();
         const res = await api.get(
-            `/api/downloads/${encodeURIComponent(groupId)}?page=${state.page}&limit=${FILES_PER_PAGE}&type=${encodeURIComponent(type)}${pinQs}${watchedQs}${clippedQs}${pinFirstQs}${sortQs}${dateQs}${scopeQs}`,
+            state.searchQuery
+                ? _gallerySearchUrl(groupId)
+                : `/api/downloads/${encodeURIComponent(groupId)}?page=${state.page}&limit=${FILES_PER_PAGE}&type=${encodeURIComponent(type)}${pinQs}${watchedQs}${clippedQs}${pinFirstQs}${sortQs}${dateQs}${scopeQs}`,
         );
         if (seq !== _galleryLoadSeq) return;
         const newFiles = res.files || [];
@@ -4889,6 +4916,9 @@ function resetGalleryFilter() {
     state.watchedFilter = false;
     state.clippedFilter = false;
     state.pinnedFilter = null;
+    state.searchQuery = '';
+    const searchBox = document.getElementById('gallery-search');
+    if (searchBox) searchBox.value = '';
     document.querySelectorAll('#media-tabs .tab-item').forEach((t) => {
         t.classList.toggle('active', (t.dataset.type || 'all') === 'all');
         if (t.dataset.watchedToggle !== undefined) t.setAttribute('aria-pressed', 'false');
@@ -5061,6 +5091,42 @@ function setupEventListeners() {
 
     // Media tabs
     setupMediaTabs();
+    setupGallerySearch();
+}
+
+// Name + caption search over the gallery. Debounced; Enter runs it now and
+// Escape clears it. The loaders pick the search endpoint whenever
+// state.searchQuery is set, so every filter/scroll path keeps working as-is.
+function setupGallerySearch() {
+    const input = document.getElementById('gallery-search');
+    if (!input) return;
+    let timer = null;
+    _teardowns.push(() => clearTimeout(timer));
+    const run = () => {
+        clearTimeout(timer);
+        const q = input.value.trim();
+        if (q === state.searchQuery) return;
+        state.searchQuery = q;
+        state.page = 1;
+        state.hasMore = true;
+        state.files = [];
+        if (state.currentPage !== 'viewer') return;
+        if (state.currentGroupId) loadGroupFiles(state.currentGroupId);
+        else loadAllFiles();
+    };
+    input.addEventListener('input', () => {
+        clearTimeout(timer);
+        timer = setTimeout(run, 300);
+    });
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            run();
+        } else if (e.key === 'Escape' && input.value) {
+            input.value = '';
+            run();
+        }
+    });
 }
 
 // Search results replace the grid wholesale and have no next page, so retire

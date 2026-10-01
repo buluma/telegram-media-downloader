@@ -436,7 +436,7 @@
     "viewer.empty.action.reindex": "Re-index จากดิสก์",
     "viewer.empty.action.add_account": "เพิ่มบัญชี",
     "viewer.empty.action.groups": "จัดการกลุ่ม",
-    "viewer.search.placeholder": "ค้นหาไฟล์…",
+    "viewer.search.placeholder": "ค้นหาชื่อไฟล์และคำบรรยาย…",
     "viewer.select_mode": "สลับโหมดการเลือก",
     "viewer.all_media.title": "มีเดียทั้งหมด",
     "viewer.all_media.subtitle": "ไฟล์ที่ดาวน์โหลดทั้งหมด",

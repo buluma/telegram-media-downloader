@@ -794,6 +794,168 @@ describe('gallery filters', () => {
     });
 });
 
+// ---- gallery search ------------------------------------------------------
+
+describe('gallery search', () => {
+    const tab = (sel) => document.querySelector(`#media-tabs ${sel}`);
+    const tilePaths = () => $$('#media-grid .media-item[data-path]').map((t) => t.dataset.path);
+    const searchUrls = () =>
+        api.get.mock.calls
+            .map((c) => String(c[0]))
+            .filter((u) => u.includes('/api/downloads/search'));
+    const allUrls = () =>
+        api.get.mock.calls.map((c) => String(c[0])).filter((u) => u.includes('/api/downloads/all'));
+    const hit = (name) =>
+        FILE({ id: 7, name, fullPath: `m/${name}`, path: `m/${name}`, caption: 'golden hour' });
+
+    // stubApi() matches the first substring hit, and '/api/downloads/' (the
+    // per-group feed) would swallow the search route, so route search by hand.
+    function stubSearch(res) {
+        const base = api.get.getMockImplementation();
+        api.get.mockImplementation(async (url) =>
+            String(url).includes('/api/downloads/search')
+                ? typeof res === 'function'
+                    ? res(url)
+                    : res
+                : base(url),
+        );
+    }
+
+    async function openAll(search = { files: [hit('pier.jpg')], total: 1 }) {
+        await boot({ '/api/groups': [GROUP()] });
+        stubSearch(search);
+        act('showAllMedia');
+        await flush();
+    }
+
+    // Typing arms a debounce timer, so fake timers go in before the keystroke.
+    async function type(value) {
+        vi.useFakeTimers();
+        const input = $('gallery-search');
+        input.value = value;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        // Past the debounce, plus room for the grid's coalesced render timer —
+        // timers still pending when the real clock comes back are dropped.
+        await vi.advanceTimersByTimeAsync(2000);
+        vi.useRealTimers();
+        await flush();
+    }
+
+    it('has a search box in the gallery', async () => {
+        await openAll();
+        expect($('gallery-search')).not.toBeNull();
+    });
+
+    it('searches after a pause and renders the hits', async () => {
+        await openAll();
+        await type('golden');
+        expect(searchUrls()).toHaveLength(1);
+        expect(searchUrls()[0]).toContain('q=golden');
+        expect(tilePaths()).toEqual(['m/pier.jpg']);
+    });
+
+    it('debounces keystrokes into one request', async () => {
+        await openAll();
+        vi.useFakeTimers();
+        const input = $('gallery-search');
+        for (const v of ['g', 'go', 'gol']) {
+            input.value = v;
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            await vi.advanceTimersByTimeAsync(100);
+        }
+        await vi.advanceTimersByTimeAsync(2000);
+        vi.useRealTimers();
+        await flush();
+        expect(searchUrls()).toHaveLength(1);
+        expect(searchUrls()[0]).toContain('q=gol');
+    });
+
+    it('carries the active type and chip filters', async () => {
+        await openAll();
+        tab('[data-type="videos"]').click();
+        tab('[data-pinned-toggle]').click();
+        tab('[data-watched-toggle]').click();
+        await flush();
+        await type('golden');
+        const url = searchUrls().at(-1);
+        expect(url).toContain('type=videos');
+        expect(url).toContain('pinned=1');
+        expect(url).toContain('watched=1');
+    });
+
+    it('re-runs the search when a filter changes while searching', async () => {
+        await openAll();
+        await type('golden');
+        api.get.mockClear();
+        tab('[data-type="images"]').click();
+        await flush();
+        expect(searchUrls()).toHaveLength(1);
+        expect(searchUrls()[0]).toContain('q=golden');
+        expect(searchUrls()[0]).toContain('type=images');
+        expect(allUrls()).toHaveLength(0);
+    });
+
+    it('scopes the search to the open group', async () => {
+        await boot({ '/api/groups': [GROUP()] });
+        stubSearch({ files: [hit('pier.jpg')], total: 1 });
+        window.openGroup('-100111', 'Alpha Channel');
+        await flush();
+        await type('golden');
+        expect(searchUrls().at(-1)).toContain('groupId=-100111');
+    });
+
+    it('pages the search results on scroll', async () => {
+        const full = (url) => {
+            const limit = Number(/limit=(\d+)/.exec(url)?.[1]) || 50;
+            return {
+                files: Array.from({ length: limit }, (_, i) =>
+                    FILE({
+                        id: i + 1,
+                        name: `s${i}.jpg`,
+                        fullPath: `m/s${i}.jpg`,
+                        path: `m/s${i}.jpg`,
+                    }),
+                ),
+                total: limit * 5,
+            };
+        };
+        await openAll(full);
+        await type('golden');
+        observers.find((o) => o.opts?.rootMargin?.includes('1200px'))?.trigger();
+        await flush();
+        expect(searchUrls().at(-1)).toContain('page=2');
+        expect(searchUrls().at(-1)).toContain('q=golden');
+    });
+
+    it('goes back to the normal feed when the box is cleared', async () => {
+        await openAll();
+        await type('golden');
+        api.get.mockClear();
+        await type('');
+        expect(searchUrls()).toHaveLength(0);
+        expect(allUrls()).toHaveLength(1);
+    });
+
+    it('clears the box when a fresh gallery view is opened', async () => {
+        await openAll();
+        await type('golden');
+        expect($('gallery-search').value).toBe('golden');
+        api.get.mockClear();
+        window.openGroup('-100111', 'Alpha Channel');
+        await flush();
+        expect($('gallery-search').value).toBe('');
+        expect(searchUrls()).toHaveLength(0);
+    });
+
+    it('treats a whitespace-only query as no search and does not reload', async () => {
+        await openAll();
+        api.get.mockClear();
+        await type('   ');
+        expect(searchUrls()).toHaveLength(0);
+        expect(allUrls()).toHaveLength(0);
+    });
+});
+
 // ---- delete file ---------------------------------------------------------
 
 describe('delete current file', () => {
