@@ -3373,6 +3373,23 @@ body[data-page="queue"] {
 .queue-search-wrap .queue-search-input {
     padding-left: 2.25rem;
 }
+/* Viewer gallery search (names + captions). Same explicit positioning as the
+   queue search: `.tg-input` sets its own `padding`, which beats a `pl-10`
+   utility, so without this the magnifier sat on top of the text. */
+.gallery-search-wrap {
+    position: relative;
+}
+.gallery-search-wrap .gallery-search-icon {
+    position: absolute;
+    left: 0.75rem;
+    top: 50%;
+    transform: translateY(-50%);
+    pointer-events: none;
+    z-index: 2;
+}
+.gallery-search-wrap .gallery-search-input {
+    padding-left: 2.25rem;
+}
 /* Backfill "Start new" group picker search — pin icon alignment. */
 .backfill-search-wrap {
     position: relative;

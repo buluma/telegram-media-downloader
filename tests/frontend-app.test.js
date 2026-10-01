@@ -539,6 +539,22 @@ describe('navigation', () => {
         expect(viewer.classList.contains('hidden')).toBe(true);
     });
 
+    it('shows the gallery search row only on the viewer page', async () => {
+        await boot();
+        const row = $('gallery-search-row');
+        expect(row, '#gallery-search-row').not.toBeNull();
+        // The row sits in the shared header area, so it has to be switched
+        // per page like #media-tabs or it renders above every page.
+        for (const route of ['/settings', '/queue', '/groups']) {
+            routes.get(route)?.({ params: {}, query: {} });
+            await flush();
+            expect(row.style.display, route).toBe('none');
+        }
+        routes.get('/viewer')({ params: {}, query: {} });
+        await flush();
+        expect(row.style.display).toBe('');
+    });
+
     it('hands the queue page to its own module', async () => {
         await boot();
         routes.get('/queue')?.({ params: {}, query: {} });
@@ -844,6 +860,26 @@ describe('gallery search', () => {
     it('has a search box in the gallery', async () => {
         await openAll();
         expect($('gallery-search')).not.toBeNull();
+    });
+
+    // jsdom can't evaluate the stylesheet, and `.tg-input` sets
+    // `padding: 11px 16px`, which beats the `pl-10` utility — so the magnifier
+    // sat on top of the placeholder. The sidebar, queue and backfill searches
+    // avoid that with explicit `*-search-wrap` rules; this one has to as well.
+    it('styles the gallery search like the other searches, with the icon clear of the text', async () => {
+        await openAll();
+        const input = $('gallery-search');
+        const wrap = input.closest('.gallery-search-wrap');
+        expect(wrap, '.gallery-search-wrap around the input').not.toBeNull();
+        expect(input.classList.contains('gallery-search-input')).toBe(true);
+        expect(wrap.querySelector('.gallery-search-icon'), 'icon inside the wrap').not.toBeNull();
+        const css = readFileSync(join(PUBLIC_DIR, 'css/main.css'), 'utf8');
+        expect(css).toMatch(
+            /\.gallery-search-wrap\s+\.gallery-search-input\s*\{[^}]*padding-left:\s*2\.25rem/,
+        );
+        expect(css).toMatch(
+            /\.gallery-search-wrap\s+\.gallery-search-icon\s*\{[^}]*pointer-events:\s*none/,
+        );
     });
 
     it('searches after a pause and renders the hits', async () => {
