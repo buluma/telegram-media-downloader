@@ -47,7 +47,20 @@ jobs:
 
       - name: Free runner disk before build
         shell: bash
-        run: docker system prune -f --all 2>/dev/null || true
+        run: |
+          df -h / | tail -1
+          docker system prune -f --all 2>/dev/null || true
+          # Trivy exports the whole image to /tmp, and the build already
+          # fills most of the runner disk, so that export hit "no space left
+          # on device". Drop toolchains this job never uses.
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h / | tail -1
+
+      # Expires the cached apt layer in the Dockerfile once a week, so Debian
+      # security updates reach the CI image instead of the first-built copy.
+      - id: apt
+        shell: bash
+        run: echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
 
       - uses: docker/build-push-action@v7
         with:
@@ -62,6 +75,7 @@ jobs:
           build-args: |
             GIT_SHA=${{ github.sha }}
             BUILT_AT=${{ github.event.head_commit.timestamp || github.event.pull_request.updated_at }}
+            APT_REFRESH=${{ steps.apt.outputs.week }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -157,5 +171,5 @@ jobs:
           # Restrict to vuln scanner only (skip secret scanning) to reduce I/O
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
             aquasec/trivy image --scanners vuln \
-            --severity HIGH,CRITICAL --ignore-unfixed "$IMAGE"
+            --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "$IMAGE"
           echo "Trivy scan complete"

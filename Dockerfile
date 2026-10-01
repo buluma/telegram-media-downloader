@@ -59,7 +59,12 @@ FROM node:26.10.0-bookworm-slim AS runtime-base
 # crashes the whole process at boot with "ld-linux-x86-64.so.2: No such
 # file or directory". libstdc++ is part of the base image, no install needed.
 ARG TARGETARCH
-RUN apt-get update \
+# CI passes the ISO week here so a cached copy of this layer expires weekly.
+# Without it the layer sits in the build cache and keeps whatever Debian
+# security fixes (libexpat1, ffmpeg's deps) existed when it was first built.
+ARG APT_REFRESH=
+RUN : "apt layer refresh: ${APT_REFRESH}" \
+    && apt-get update \
     && apt-get install -y --no-install-recommends \
         tini gosu ffmpeg procps vainfo \
     && if [ "$TARGETARCH" = "amd64" ]; then \
