@@ -776,6 +776,8 @@
     "settings.advanced.auto_first_limit_help": "Messages to pull on first add. 0 disables.",
     "settings.advanced.auto_catchup": "Auto Catch-Up After Restart",
     "settings.advanced.auto_catchup_help": "After a container restart, auto-spawn a backfill for the gap between the last stored message and Telegram's current top.",
+    "settings.advanced.auto_catchup_limit": "Catch-Up Limit",
+    "settings.advanced.auto_catchup_limit_help": "Max messages per group to pull after a restart. 0 = automatic (10x the first-add limit).",
     "settings.advanced.batch_insert": "Batch Insert Size",
     "settings.advanced.batch_insert_help": "DB rows buffered before commit during backfill. Higher = faster on small files; uses a tiny bit more RAM.",
     "backfill.already_running": "A backfill is already running for this group",

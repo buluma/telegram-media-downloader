@@ -9,7 +9,7 @@ import { applyShareLimits } from '../../core/share.js';
 import { getDiskRotator } from '../../core/disk-rotator.js';
 import * as integrity from '../../core/integrity.js';
 import { refreshSidecar as refreshSeekbarSidecar } from '../../core/seekbar/spawn.js';
-import { BACKPRESSURE_CAP_DEFAULT } from '../../core/constants.js';
+import { BACKFILL_MAX_LIMIT, BACKPRESSURE_CAP_DEFAULT } from '../../core/constants.js';
 import { NSFW_DEFAULTS } from '../../core/nsfw.js';
 import { swallow } from '../../core/util/swallow.js';
 
@@ -316,6 +316,8 @@ export function createConfigRouter({
                 h.autoFirstLimit = clampInt(h.autoFirstLimit, 0, 10000, 50);
                 h.autoCatchUp = h.autoCatchUp !== false; // default ON
                 h.autoCatchUpThreshold = clampInt(h.autoCatchUpThreshold, 1, 100000, 5);
+                // 0 = automatic (10x autoFirstLimit, the original behaviour).
+                h.autoCatchUpLimit = clampInt(h.autoCatchUpLimit, 0, BACKFILL_MAX_LIMIT, 0);
                 h.batchInsertSize = clampInt(h.batchInsertSize, 1, 500, 50);
                 h.batchInsertMaxAgeMs = clampInt(h.batchInsertMaxAgeMs, 100, 60000, 1000);
 

@@ -378,6 +378,17 @@ describe('POST /api/config — advanced.* clamping', () => {
         expect(reloaded.advanced.downloader.minConcurrency).toBe(3);
     });
 
+    it('clamps advanced.history.autoCatchUpLimit and defaults it to 0 (automatic)', async () => {
+        await post('/api/config', { advanced: { history: { autoCatchUpLimit: 100 } } });
+        expect(manager.loadConfig().advanced.history.autoCatchUpLimit).toBe(100);
+        await post('/api/config', { advanced: { history: { autoCatchUpLimit: -5 } } });
+        expect(manager.loadConfig().advanced.history.autoCatchUpLimit).toBe(0);
+        await post('/api/config', { advanced: { history: { autoCatchUpLimit: 99999999 } } });
+        expect(manager.loadConfig().advanced.history.autoCatchUpLimit).toBe(50000);
+        await post('/api/config', { advanced: { history: { autoCatchUpLimit: 'many' } } });
+        expect(manager.loadConfig().advanced.history.autoCatchUpLimit).toBe(0);
+    });
+
     it('deep-merges advanced.ai.faces so a partial patch keeps sibling fields', async () => {
         await post('/api/config', {
             advanced: { ai: { faces: { providers: 'cuda', epsilon: 1.2 } } },
