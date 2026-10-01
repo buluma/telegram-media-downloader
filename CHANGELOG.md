@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+### Added
+- **Gallery search box** — searches file names and captions, keeps the active type/chip filters and group scope. `/api/downloads/search` now takes the same filters as `/all` and returns captions, pin and duration fields.
+
+### Changed
+- `downloads_fts` now indexes `caption`; existing databases rebuild the index once on first start.
+
 ## [2.26.0] — 2026-09-06
 
 Catch-up release — v2.25.3 was the last one actually tagged; everything below landed on `main` since then.

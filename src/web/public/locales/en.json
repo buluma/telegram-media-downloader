@@ -436,7 +436,7 @@
     "viewer.empty.action.reindex": "Re-index from disk",
     "viewer.empty.action.add_account": "Add account",
     "viewer.empty.action.groups": "Manage groups",
-    "viewer.search.placeholder": "Search files…",
+    "viewer.search.placeholder": "Search names and captions…",
     "viewer.select_mode": "Toggle Selection Mode",
     "viewer.all_media.title": "All Media",
     "viewer.all_media.subtitle": "All downloaded files",

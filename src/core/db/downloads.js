@@ -517,14 +517,54 @@ export function getDownloads(groupId, limit = 50, offset = 0, type = 'all', opts
 }
 
 /**
- * Full-text-ish search over downloaded files. LIKE-based; cheap on the
- * sub-100k row counts we expect.
+ * Gallery filter clauses for the search queries, aliased to `d`. Same filter
+ * semantics as getAllDownloads()/getDownloads() so a search narrows exactly
+ * like the unsearched gallery does.
+ */
+function _searchFilterClauses(opts) {
+    const clauses = [];
+    const params = [];
+    const typeMap = { images: 'photo', videos: 'video', documents: 'document', audio: 'audio' };
+    if (opts.groupId) {
+        clauses.push('d.group_id = ?');
+        params.push(String(opts.groupId));
+    }
+    if (opts.type && typeMap[opts.type]) {
+        clauses.push('d.file_type = ?');
+        params.push(typeMap[opts.type]);
+    }
+    if (opts.pinnedOnly) clauses.push('COALESCE(d.pinned, 0) = 1');
+    if (opts.unpinnedOnly) clauses.push('COALESCE(d.pinned, 0) = 0');
+    if (opts.watchedOnly) clauses.push('d.last_viewed_at IS NOT NULL');
+    if (opts.clippedOnly) clauses.push('d.message_id < 0');
+    if (opts.dateFrom) {
+        clauses.push('date(d.created_at) >= ?');
+        params.push(opts.dateFrom);
+    }
+    if (opts.dateTo) {
+        clauses.push('date(d.created_at) <= ?');
+        params.push(opts.dateTo);
+    }
+    return { clauses, params };
+}
+
+/**
+ * Search downloads by file name, group name and caption. FTS5 prefix match
+ * (every term must hit, ranked by relevance), falling back to LIKE when FTS is
+ * unavailable. Accepts the same gallery filters as the unsearched gallery.
  *
  * @param {string} query  user input
  * @param {object} [opts]
  * @param {number} [opts.limit=50]
  * @param {number} [opts.offset=0]
  * @param {string} [opts.groupId]  optional restrict to one group
+ * @param {string} [opts.type]  images | videos | documents | audio
+ * @param {boolean} [opts.pinnedOnly]
+ * @param {boolean} [opts.unpinnedOnly]
+ * @param {boolean} [opts.watchedOnly]
+ * @param {boolean} [opts.clippedOnly]
+ * @param {string} [opts.dateFrom]  YYYY-MM-DD
+ * @param {string} [opts.dateTo]  YYYY-MM-DD
  */
 export function searchDownloads(query, opts = {}) {
     const limit = Math.max(1, Math.min(500, parseInt(opts.limit, 10) || 50));
@@ -533,6 +573,7 @@ export function searchDownloads(query, opts = {}) {
     if (!raw) return { files: [], total: 0 };
 
     const db = getDb();
+    const filters = _searchFilterClauses(opts);
     const ftsQuery = raw
         .replace(/['"]/g, '')
         .split(/\s+/)
@@ -542,15 +583,15 @@ export function searchDownloads(query, opts = {}) {
 
     if (ftsQuery) {
         try {
-            const groupFilter = opts.groupId ? ' AND d.group_id = ?' : '';
-            const params = [ftsQuery, ...(opts.groupId ? [String(opts.groupId)] : [])];
+            const extra = filters.clauses.map((c) => ` AND ${c}`).join('');
+            const params = [ftsQuery, ...filters.params];
             const rows = db
                 .prepare(
                     `SELECT d.*, COALESCE(ss.duration_sec, d.duration_sec) AS duration_sec
                        FROM downloads d
                        LEFT JOIN seekbar_sprites ss ON ss.download_id = d.id
                        INNER JOIN downloads_fts fts ON fts.rowid = d.id
-                      WHERE downloads_fts MATCH ?${groupFilter}
+                      WHERE downloads_fts MATCH ?${extra}
                       ORDER BY fts.rank
                       LIMIT ? OFFSET ?`,
                 )
@@ -560,7 +601,7 @@ export function searchDownloads(query, opts = {}) {
                     `SELECT COUNT(*) AS c
                        FROM downloads d
                        INNER JOIN downloads_fts fts ON fts.rowid = d.id
-                      WHERE downloads_fts MATCH ?${groupFilter}`,
+                      WHERE downloads_fts MATCH ?${extra}`,
                 )
                 .get(...params).c;
             return { files: rows, total };
@@ -570,12 +611,11 @@ export function searchDownloads(query, opts = {}) {
     }
 
     const q = `%${raw}%`;
-    const params = [q, q];
-    let where = '(d.file_name LIKE ? OR d.group_name LIKE ?)';
-    if (opts.groupId) {
-        where += ' AND d.group_id = ?';
-        params.push(String(opts.groupId));
-    }
+    const where = [
+        '(d.file_name LIKE ? OR d.group_name LIKE ? OR d.caption LIKE ?)',
+        ...filters.clauses,
+    ].join(' AND ');
+    const params = [q, q, q, ...filters.params];
     const rows = db
         .prepare(
             `SELECT d.*, ss.duration_sec

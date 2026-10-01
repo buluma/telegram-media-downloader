@@ -915,13 +915,34 @@ function initSchema() {
     `);
 
     try {
+        // External-content FTS5 tables can't be ALTERed. Indexes built before
+        // captions were searchable cover (file_name, group_name) only, so drop
+        // them (triggers first — they name the old columns) and let the block
+        // below recreate and repopulate against the current shape.
+        const ftsCols = db
+            .prepare('PRAGMA table_info(downloads_fts)')
+            .all()
+            .map((c) => c.name);
+        const needsRebuild = ftsCols.length > 0 && !ftsCols.includes('caption');
+        if (needsRebuild) {
+            db.exec(`
+                DROP TRIGGER IF EXISTS downloads_fts_insert;
+                DROP TRIGGER IF EXISTS downloads_fts_delete;
+                DROP TRIGGER IF EXISTS downloads_fts_update;
+                DROP TABLE downloads_fts;
+            `);
+        }
         db.exec(`
             CREATE VIRTUAL TABLE IF NOT EXISTS downloads_fts USING fts5(
-                file_name, group_name,
+                file_name, group_name, caption,
                 content='downloads',
                 content_rowid='id'
             );
         `);
+        // COUNT(*) on an external-content table reads the content table, so the
+        // empty-index check below can't see a freshly dropped index. 'rebuild'
+        // repopulates straight from downloads.
+        if (needsRebuild) db.exec(`INSERT INTO downloads_fts(downloads_fts) VALUES ('rebuild')`);
         const ftsCount = Number(
             db.prepare('SELECT COUNT(*) AS n FROM downloads_fts').get()?.n || 0,
         );
@@ -929,25 +950,26 @@ function initSchema() {
             const dlCount = Number(db.prepare('SELECT COUNT(*) AS n FROM downloads').get()?.n || 0);
             if (dlCount > 0) {
                 db.exec(`
-                    INSERT INTO downloads_fts(rowid, file_name, group_name)
-                    SELECT id, COALESCE(file_name, ''), COALESCE(group_name, '') FROM downloads;
+                    INSERT INTO downloads_fts(rowid, file_name, group_name, caption)
+                    SELECT id, COALESCE(file_name, ''), COALESCE(group_name, ''), COALESCE(caption, '')
+                      FROM downloads;
                 `);
             }
         }
         db.exec(`
             CREATE TRIGGER IF NOT EXISTS downloads_fts_insert AFTER INSERT ON downloads BEGIN
-                INSERT INTO downloads_fts(rowid, file_name, group_name)
-                VALUES (new.id, COALESCE(new.file_name, ''), COALESCE(new.group_name, ''));
+                INSERT INTO downloads_fts(rowid, file_name, group_name, caption)
+                VALUES (new.id, COALESCE(new.file_name, ''), COALESCE(new.group_name, ''), COALESCE(new.caption, ''));
             END;
             CREATE TRIGGER IF NOT EXISTS downloads_fts_delete AFTER DELETE ON downloads BEGIN
-                INSERT INTO downloads_fts(downloads_fts, rowid, file_name, group_name)
-                VALUES ('delete', old.id, COALESCE(old.file_name, ''), COALESCE(old.group_name, ''));
+                INSERT INTO downloads_fts(downloads_fts, rowid, file_name, group_name, caption)
+                VALUES ('delete', old.id, COALESCE(old.file_name, ''), COALESCE(old.group_name, ''), COALESCE(old.caption, ''));
             END;
-            CREATE TRIGGER IF NOT EXISTS downloads_fts_update AFTER UPDATE OF file_name, group_name ON downloads BEGIN
-                INSERT INTO downloads_fts(downloads_fts, rowid, file_name, group_name)
-                VALUES ('delete', old.id, COALESCE(old.file_name, ''), COALESCE(old.group_name, ''));
-                INSERT INTO downloads_fts(rowid, file_name, group_name)
-                VALUES (new.id, COALESCE(new.file_name, ''), COALESCE(new.group_name, ''));
+            CREATE TRIGGER IF NOT EXISTS downloads_fts_update AFTER UPDATE OF file_name, group_name, caption ON downloads BEGIN
+                INSERT INTO downloads_fts(downloads_fts, rowid, file_name, group_name, caption)
+                VALUES ('delete', old.id, COALESCE(old.file_name, ''), COALESCE(old.group_name, ''), COALESCE(old.caption, ''));
+                INSERT INTO downloads_fts(rowid, file_name, group_name, caption)
+                VALUES (new.id, COALESCE(new.file_name, ''), COALESCE(new.group_name, ''), COALESCE(new.caption, ''));
             END;
         `);
     } catch (e) {
