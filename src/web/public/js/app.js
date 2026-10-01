@@ -875,6 +875,11 @@ function renderPage(page, params = {}) {
     const mediaTabs = document.getElementById('media-tabs');
     if (mediaTabs) mediaTabs.style.display = page === 'viewer' ? '' : 'none';
 
+    // Gallery search only filters the viewer; elsewhere it would sit above
+    // pages it can't affect.
+    const gallerySearchRow = document.getElementById('gallery-search-row');
+    if (gallerySearchRow) gallerySearchRow.style.display = page === 'viewer' ? '' : 'none';
+
     const viewModeBtn = document.getElementById('view-mode-btn');
     if (viewModeBtn) viewModeBtn.style.display = page === 'viewer' ? '' : 'none';
 

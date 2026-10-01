@@ -493,14 +493,14 @@
             <!-- Gallery search: names + captions. Debounced; keeps the active
                  type/chip filters and group scope (see setupGallerySearch). -->
             <div id="gallery-search-row" class="px-3 py-2 border-b border-tg-border bg-tg-bg">
-                <div class="relative">
+                <div class="relative gallery-search-wrap">
                     <input type="search" id="gallery-search" name="gallery-q" role="searchbox"
                         autocomplete="off" spellcheck="false"
                         data-form-type="other"
                         data-lpignore="true" data-1p-ignore="true" data-bwignore="true"
                         data-i18n-placeholder="viewer.search.placeholder" placeholder="Search names and captions…"
-                        class="tg-input pl-10 py-2 text-sm w-full">
-                    <i class="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-tg-textSecondary" aria-hidden="true"></i>
+                        class="tg-input w-full text-sm gallery-search-input">
+                    <i class="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-tg-textSecondary gallery-search-icon" aria-hidden="true"></i>
                 </div>
             </div>
 
