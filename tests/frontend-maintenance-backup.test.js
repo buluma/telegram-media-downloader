@@ -134,14 +134,36 @@ function cardAction(destId, act) {
     btn.click();
 }
 
+// Timers the module under test leaves pending (the wizard defers its wiring by
+// 60ms). On a slow runner one can outlive the test file's jsdom and fire as an
+// unhandled `document is not defined`, so clear whatever is still pending.
+const pendingTimers = new Set();
+let setTimeoutSpy;
+
 beforeEach(() => {
     vi.clearAllMocks();
     openedSheets.length = 0;
     confirmAnswer = true;
     i18nDict = {};
+    const realSetTimeout = globalThis.setTimeout;
+    setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation((fn, ms, ...args) => {
+        const id = realSetTimeout(
+            (...a) => {
+                pendingTimers.delete(id);
+                return fn(...a);
+            },
+            ms,
+            ...args,
+        );
+        pendingTimers.add(id);
+        return id;
+    });
 });
 
 afterEach(() => {
+    setTimeoutSpy.mockRestore();
+    for (const id of pendingTimers) clearTimeout(id);
+    pendingTimers.clear();
     document.body.innerHTML = '';
 });
 
