@@ -2,13 +2,15 @@
 
 import logging
 import os
+import tempfile
+import threading
 from pathlib import Path
 
 import cv2
 import numpy as np
 from PIL import Image
 
-from .insight import _resolve_providers
+from .insight import _resolve_models_dir, _resolve_providers
 
 _LOG = logging.getLogger(__name__)
 
@@ -16,6 +18,7 @@ _MODEL_AVAILABLE = None
 _MODEL_ERROR = None
 _SESSION = None
 _LABELS = None
+_INIT_LOCK = threading.Lock()
 
 # COCO dataset class names (80 classes)
 COCO_LABELS = [
@@ -33,53 +36,79 @@ COCO_LABELS = [
 ]
 
 
+def _model_path() -> Path:
+    """Where the YOLOv8n ONNX file lives (inside the shared models dir)."""
+    return _resolve_models_dir() / "yolov8n.onnx"
+
+
+def _download_model(model_path: Path, url: str) -> None:
+    """Download to a unique temp file, then atomically move into place.
+
+    A fixed ``.tmp`` name let concurrent first requests clobber each other
+    (ENOENT on rename, or a half-written file loaded as INVALID_PROTOBUF).
+    """
+    import urllib.request
+
+    model_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        dir=model_path.parent, prefix=model_path.name + ".", suffix=".tmp"
+    )
+    os.close(fd)
+    try:
+        urllib.request.urlretrieve(url, tmp_name)
+        os.replace(tmp_name, model_path)
+    except BaseException:
+        Path(tmp_name).unlink(missing_ok=True)
+        raise
+
+
 def _init_model():
     """Lazy-load YOLO model on first use."""
     global _MODEL_AVAILABLE, _MODEL_ERROR, _SESSION, _LABELS
     if _MODEL_AVAILABLE is not None:
         return _MODEL_AVAILABLE
 
-    try:
-        import onnxruntime as ort
-    except ImportError:
-        _MODEL_ERROR = "onnxruntime not installed"
-        _MODEL_AVAILABLE = False
-        return False
+    with _INIT_LOCK:
+        if _MODEL_AVAILABLE is not None:
+            return _MODEL_AVAILABLE
 
-    try:
-        # Try to load YOLOv8n model from Ultralytics
-        # Model path: ~/.cache/yolov8n.onnx or download on-demand
-        model_path = Path.home() / ".cache" / "yolov8n.onnx"
+        try:
+            import onnxruntime as ort
+        except ImportError:
+            _MODEL_ERROR = "onnxruntime not installed"
+            _MODEL_AVAILABLE = False
+            return False
 
-        if not model_path.exists():
-            _LOG.info(f"YOLOv8n model not found at {model_path} — downloading…")
-            url = "https://github.com/ultralytics/assets/releases/latest/download/yolov8n.onnx"
-            try:
-                import urllib.request
-                model_path.parent.mkdir(parents=True, exist_ok=True)
-                tmp = model_path.with_suffix(".onnx.tmp")
-                urllib.request.urlretrieve(url, tmp)
-                tmp.rename(model_path)
-                _LOG.info(f"YOLOv8n model downloaded to {model_path}")
-            except Exception as dl_err:
-                _LOG.warning(f"Failed to download YOLOv8n model: {dl_err}")
-                _MODEL_ERROR = f"Model not found at {model_path} and auto-download failed: {dl_err}"
-                _MODEL_AVAILABLE = False
-                return False
+        try:
+            # Try to load YOLOv8n model from Ultralytics
+            # Model path: <models dir>/yolov8n.onnx or download on-demand
+            model_path = _model_path()
 
-        _SESSION = ort.InferenceSession(
-            str(model_path),
-            providers=_resolve_providers(os.environ.get("TGDL_FACES_PROVIDERS", "auto")),
-        )
-        _LABELS = COCO_LABELS
-        _MODEL_AVAILABLE = True
-        _LOG.info("YOLOv8n ONNX model loaded successfully")
-        return True
-    except Exception as e:
-        _MODEL_ERROR = str(e)
-        _LOG.warning(f"Failed to load YOLO model: {e}")
-        _MODEL_AVAILABLE = False
-        return False
+            if not model_path.exists():
+                _LOG.info(f"YOLOv8n model not found at {model_path} — downloading…")
+                url = "https://github.com/ultralytics/assets/releases/latest/download/yolov8n.onnx"
+                try:
+                    _download_model(model_path, url)
+                    _LOG.info(f"YOLOv8n model downloaded to {model_path}")
+                except Exception as dl_err:
+                    _LOG.warning(f"Failed to download YOLOv8n model: {dl_err}")
+                    _MODEL_ERROR = f"Model not found at {model_path} and auto-download failed: {dl_err}"
+                    _MODEL_AVAILABLE = False
+                    return False
+
+            _SESSION = ort.InferenceSession(
+                str(model_path),
+                providers=_resolve_providers(os.environ.get("TGDL_FACES_PROVIDERS", "auto")),
+            )
+            _LABELS = COCO_LABELS
+            _MODEL_AVAILABLE = True
+            _LOG.info("YOLOv8n ONNX model loaded successfully")
+            return True
+        except Exception as e:
+            _MODEL_ERROR = str(e)
+            _LOG.warning(f"Failed to load YOLO model: {e}")
+            _MODEL_AVAILABLE = False
+            return False
 
 
 def is_ready() -> bool:
