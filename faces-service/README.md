@@ -73,7 +73,7 @@ flood is noisier than a `{ ok: false, error: ... }` payload. Consumers must insp
 |---|---|---|
 | `TGDL_FACES_HOST` | `127.0.0.1` | Bind address. Docker compose flips this to `0.0.0.0`. |
 | `TGDL_FACES_PORT` | `8011` | TCP port. The Node auto-spawn path overrides this with a random high port. |
-| `TGDL_FACES_MODELS_DIR` | `~/.cache/tgdl-faces/models` | Where insightface caches the buffalo_l weights. |
+| `TGDL_FACES_MODELS_DIR` | `~/.cache/tgdl-faces/models` | Where the sidecar keeps its downloaded models: insightface `buffalo_l`, CLIP, the WD14 tagger (`wd14/`) and YOLO (`yolov8n.onnx`). Point it outside `~/.cache` if something cleans that directory. |
 | `TGDL_FACES_ALLOW_ROOTS` | _empty_ | Comma-separated absolute paths the sidecar may read from. If empty, path-mode requests are rejected with 403; only base64 requests work. |
 | `TGDL_FACES_LOG_LEVEL` | `INFO` | Standard Python `logging` level. |
 
@@ -156,20 +156,20 @@ curl -X POST http://127.0.0.1:8011/ocr \
 
 ### Optional: Object detection
 
-Download the YOLOv8-nano ONNX model (~6 MB) to `~/.cache/yolov8n.onnx`:
+Download the YOLOv8-nano ONNX model (~6 MB) to `yolov8n.onnx` inside the models dir (`$TGDL_FACES_MODELS_DIR`, default `~/.cache/tgdl-faces/models`). The sidecar also fetches it on first use if it is missing:
 
 ```bash
 # macOS / Linux
-mkdir -p ~/.cache
+mkdir -p "${TGDL_FACES_MODELS_DIR:-$HOME/.cache/tgdl-faces/models}"
 python3 << 'EOF'
 from ultralytics import YOLO
 import shutil
 model = YOLO('yolov8n')
 model.export(format='onnx')
-shutil.copy('yolov8n.onnx', os.path.expanduser('~/.cache/yolov8n.onnx'))
+shutil.copy('yolov8n.onnx', os.path.join(os.environ.get('TGDL_FACES_MODELS_DIR') or os.path.expanduser('~/.cache/tgdl-faces/models'), 'yolov8n.onnx'))
 EOF
 
-# Or download manually to ~/.cache/yolov8n.onnx
+# Or download manually to $TGDL_FACES_MODELS_DIR/yolov8n.onnx
 ```
 
 Verify:
