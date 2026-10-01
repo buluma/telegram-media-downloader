@@ -19,7 +19,7 @@ import { TelegramClient } from 'telegram';
 import { StringSession } from 'telegram/sessions/index.js';
 
 import { getOrGenerateSecret } from '../core/secret.js';
-import { BACKFILL_MAX_LIMIT } from '../core/constants.js';
+import { resolveCatchUpLimit } from '../core/catch-up-limit.js';
 import {
     getDb,
     backfillGroupNames,
@@ -1154,11 +1154,9 @@ _alerter.startSilentGroupTimer();
 runtime.on('catch_up_needed', ({ groupId, gap }) => {
     const histCfg = loadConfig().advanced?.history || {};
     // Bound the catch-up size — a group that fell weeks behind could
-    // need ~10000s of messages, so cap at a sane ceiling. Falls back
-    // to "unlimited" when autoFirstLimit is 0 (operator opt-in for
-    // long catch-ups).
-    const ceiling = Number(histCfg.autoFirstLimit ?? 50);
-    const limit = ceiling > 0 ? Math.min(ceiling * 10, BACKFILL_MAX_LIMIT) : null;
+    // need ~10000s of messages, so cap at a sane ceiling. See
+    // resolveCatchUpLimit for how autoCatchUpLimit / autoFirstLimit combine.
+    const limit = resolveCatchUpLimit(histCfg);
     spawnBackfill({
         groupId,
         limit,

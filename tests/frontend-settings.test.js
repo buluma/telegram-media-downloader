@@ -129,6 +129,7 @@ const ADV_INPUTS = [
     'setting-adv-short-break',
     'setting-adv-long-break',
     'setting-adv-auto-first-limit',
+    'setting-adv-auto-catchup-limit',
     'setting-adv-batch-insert',
     'setting-adv-sweep-batch',
     'setting-adv-max-deletes',
@@ -1425,7 +1426,17 @@ describe('advanced tunables', () => {
         expect($('setting-adv-auto-first-backfill').classList.contains('active')).toBe(true);
         expect($('setting-adv-auto-catchup').classList.contains('active')).toBe(true);
         expect($('setting-adv-auto-first-limit').value).toBe('50');
+        expect($('setting-adv-auto-catchup-limit').value).toBe('0');
         expect($('setting-adv-batch-insert').value).toBe('50');
+    });
+
+    it('loads and saves the catch-up limit', async () => {
+        const mod = await boot();
+        mod.loadAdvanced({ advanced: { history: { autoCatchUpLimit: 100 } } });
+        expect($('setting-adv-auto-catchup-limit').value).toBe('100');
+        $('setting-adv-auto-catchup-limit').value = '250';
+        await mod.saveSettings();
+        expect(api.post.mock.calls.at(-1)[1].advanced.history.autoCatchUpLimit).toBe(250);
     });
 
     it('defaults the NSFW toggles off and seeds the model fields', async () => {

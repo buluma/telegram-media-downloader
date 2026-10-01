@@ -776,6 +776,8 @@
     "settings.advanced.auto_first_limit_help": "จำนวน message ที่ดึงตอน add กลุ่มใหม่ ค่า 0 = ปิด",
     "settings.advanced.auto_catchup": "Catch-Up อัตโนมัติหลัง Restart",
     "settings.advanced.auto_catchup_help": "หลัง container restart ระบบจะ spawn backfill อัตโนมัติเพื่อเก็บ message ที่หายไปช่วงที่ down อยู่",
+    "settings.advanced.auto_catchup_limit": "จำนวน Catch-Up",
+    "settings.advanced.auto_catchup_limit_help": "จำนวน message สูงสุดต่อกลุ่มที่ดึงหลัง restart ค่า 0 = อัตโนมัติ (10 เท่าของจำนวนตอน add กลุ่ม)",
     "settings.advanced.batch_insert": "ขนาด Batch Insert",
     "settings.advanced.batch_insert_help": "จำนวน row ที่เก็บไว้ก่อน commit ตอน backfill ค่ายิ่งสูง = ไวขึ้นกับไฟล์เล็ก ใช้ RAM เพิ่มเล็กน้อย",
     "backfill.already_running": "มีการ backfill กลุ่มนี้ทำงานอยู่แล้ว",

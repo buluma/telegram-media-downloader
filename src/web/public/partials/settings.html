@@ -232,6 +232,11 @@
                                         <div id="setting-adv-auto-catchup" class="tg-toggle shrink-0 mt-0.5"></div>
                                     </div>
                                     <div>
+                                        <label for="setting-adv-auto-catchup-limit" class="text-tg-text text-xs block mb-1" data-i18n="settings.advanced.auto_catchup_limit">Catch-up limit</label>
+                                        <input id="setting-adv-auto-catchup-limit" type="number" min="0" max="50000" class="tg-input w-full text-sm" placeholder="0">
+                                        <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.advanced.auto_catchup_limit_help">Max messages per group to pull after a restart. 0 = automatic (10x the first-add limit).</p>
+                                    </div>
+                                    <div>
                                         <label for="setting-adv-batch-insert" class="text-tg-text text-xs block mb-1" data-i18n="settings.advanced.batch_insert">Batch insert size</label>
                                         <input id="setting-adv-batch-insert" type="number" min="1" max="500" class="tg-input w-full text-sm" placeholder="50">
                                         <p class="text-[10px] text-tg-textSecondary mt-1" data-i18n="settings.advanced.batch_insert_help">DB rows buffered before commit during backfill. Higher = faster on small files; uses a tiny bit more RAM.</p>
