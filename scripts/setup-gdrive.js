@@ -28,6 +28,15 @@ function ask(rl, q) {
  * promise that resolves with the authorization code from Google's
  * redirect, plus the port the server is listening on.
  */
+// `error` comes straight from the redirect's query string, so it must not
+// reach the page as markup.
+function escapeHtml(value) {
+    return String(value).replace(
+        /[&<>"']/g,
+        (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c],
+    );
+}
+
 function startCallbackServer() {
     return new Promise((resolve, reject) => {
         let settled = false;
@@ -43,7 +52,7 @@ function startCallbackServer() {
             if (error) {
                 res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
                 res.end(
-                    `<h2>Authorization denied</h2><p>${error}</p><p>You can close this tab.</p>`,
+                    `<h2>Authorization denied</h2><p>${escapeHtml(error)}</p><p>You can close this tab.</p>`,
                 );
                 settled = true;
                 server.close();
@@ -120,7 +129,7 @@ async function main() {
             if (error) {
                 res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
                 res.end(
-                    `<h2>Authorization denied</h2><p>${error}</p><p>You can close this tab.</p>`,
+                    `<h2>Authorization denied</h2><p>${escapeHtml(error)}</p><p>You can close this tab.</p>`,
                 );
                 settled = true;
                 server.close();

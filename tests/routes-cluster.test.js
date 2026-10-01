@@ -825,6 +825,13 @@ describe('federated search', () => {
         expect(body.rows).toEqual([{ id: 1, file_name: 'cat.jpg' }]);
     });
 
+    it('GET /cluster/search escapes backslashes and wildcards in the LIKE pattern', async () => {
+        const all = vi.fn(() => []);
+        fakeDb.prepare.mockReturnValue({ all });
+        await fetch(apiUrl(`/api/cluster/search?q=${encodeURIComponent('a\\b%_')}`));
+        expect(all.mock.calls[0][0]).toBe('%a\\\\b\\%\\_%');
+    });
+
     it('GET /cluster/search returns an empty array for an empty query', async () => {
         const res = await fetch(apiUrl('/api/cluster/search?q='));
         expect(await res.json()).toEqual({ rows: [] });
