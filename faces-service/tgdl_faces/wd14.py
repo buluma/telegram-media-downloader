@@ -20,7 +20,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from .insight import _resolve_providers
+from .insight import _resolve_models_dir, _resolve_providers
 
 _LOG = logging.getLogger(__name__)
 
@@ -48,6 +48,11 @@ _STD = np.array([0.5, 0.5, 0.5], dtype=np.float32)
 # ViT tagger v3 uses the standard WD convention.
 _INPUT_NAME = "input"  # will be probed at load time
 _OUTPUT_NAME = "sigmoid"
+
+
+def _cache_dir() -> Path:
+    """WD14 files live inside the shared models dir, next to buffalo_l/CLIP."""
+    return _resolve_models_dir() / "wd14"
 
 
 def _download(repo: str, filename: str, cache_dir: Path) -> Path:
@@ -98,7 +103,7 @@ def _init_model() -> bool:
             _MODEL_AVAILABLE = False
             return False
 
-        cache_dir = Path.home() / ".cache" / "tgdl-faces" / "wd14"
+        cache_dir = _cache_dir()
 
         try:
             model_path = _download(_REPO, _MODEL_FILE, cache_dir)
