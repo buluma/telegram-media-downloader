@@ -166,10 +166,11 @@ function _sweepCodes(map) {
     return dirty;
 }
 
-function _generateCode() {
+export function _generateCode() {
     let s = '';
-    const buf = crypto.randomBytes(8);
-    for (const b of buf) s += CODE_ALPHABET[b % CODE_ALPHABET.length];
+    // randomInt rejects out-of-range draws, so every character is equally
+    // likely (`byte % 34` would favour the first 18 alphabet characters).
+    for (let i = 0; i < 8; i++) s += CODE_ALPHABET[crypto.randomInt(CODE_ALPHABET.length)];
     return s;
 }
 
