@@ -4,6 +4,9 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+### Added
+- **Per-group max video size** — Group settings → Filters has a "Max video size" override. Unset follows the system `diskManagement.maxVideoSize`; "No limit" lifts it for that group. Comment groups inherit their channel's value.
+
 ## [2.27.1] — 2026-10-01
 
 ### Added

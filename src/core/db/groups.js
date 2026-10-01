@@ -112,6 +112,7 @@ function _upsertGroupTx(db, group) {
         'rescueRetentionHours',
         'backfillSchedule',
         'backfillLimit',
+        'maxVideoSize',
         '_resolveFailedAt',
         '_resolveFailedReason',
     ];

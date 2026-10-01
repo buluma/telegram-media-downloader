@@ -4223,6 +4223,23 @@ async function openGroupSettings(groupId, groupName) {
     const rescueHoursEl = document.getElementById('setting-rescue-hours');
     if (rescueHoursEl) rescueHoursEl.value = group?.rescueRetentionHours || '';
 
+    // Per-group video size cap ('' = follow the system default). A value set
+    // through the API that isn't one of the presets gets its own option so
+    // saving the modal doesn't silently drop it.
+    const maxVideoEl = document.getElementById('setting-group-max-video');
+    if (maxVideoEl) {
+        maxVideoEl.querySelectorAll('option[data-custom]').forEach((o) => o.remove());
+        const cur = group?.maxVideoSize || '';
+        if (cur && ![...maxVideoEl.options].some((o) => o.value === cur)) {
+            const opt = document.createElement('option');
+            opt.value = cur;
+            opt.textContent = cur;
+            opt.dataset.custom = '1';
+            maxVideoEl.appendChild(opt);
+        }
+        maxVideoEl.value = cur;
+    }
+
     // Auto-backfill schedule
     const scheduleEl = document.getElementById('setting-backfill-schedule');
     if (scheduleEl) scheduleEl.value = group?.backfillSchedule || 'off';
@@ -4503,6 +4520,8 @@ async function saveGroupSettings() {
     const rescueRetentionHours =
         Number.isFinite(rescueHoursParsed) && rescueHoursParsed > 0 ? rescueHoursParsed : null;
 
+    const maxVideoEl = document.getElementById('setting-group-max-video');
+
     // Auto-backfill schedule read-back.
     const backfillSchedule = document.getElementById('setting-backfill-schedule')?.value || 'off';
     const backfillLimitRaw = document.getElementById('setting-backfill-limit')?.value;
@@ -4538,6 +4557,9 @@ async function saveGroupSettings() {
         rescueRetentionHours,
         backfillSchedule,
         backfillLimit,
+        // Omitted (not blanked) when the field isn't in the DOM, so a missing
+        // control can't clear a stored limit.
+        ...(maxVideoEl ? { maxVideoSize: maxVideoEl.value } : {}),
     };
 
     // Cluster routing fields are only included in the payload when the

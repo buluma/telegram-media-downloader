@@ -98,6 +98,14 @@ describe('upsertGroupConfig', () => {
         expect(g.trackUsers).toEqual({ enabled: true, users: ['alice', 'bob'] });
     });
 
+    it('round-trips the per-group maxVideoSize through meta_json', async () => {
+        const { groups } = await getModules();
+        groups.upsertGroupConfig({ ...SAMPLE_GROUP, maxVideoSize: '500MB' });
+        expect(groups.getAllGroupConfigs()[0].maxVideoSize).toBe('500MB');
+        groups.upsertGroupConfig({ ...SAMPLE_GROUP, maxVideoSize: undefined });
+        expect(groups.getAllGroupConfigs()[0].maxVideoSize).toBeUndefined();
+    });
+
     it('updates an existing group on re-upsert', async () => {
         const { groups } = await getModules();
         groups.upsertGroupConfig(SAMPLE_GROUP);

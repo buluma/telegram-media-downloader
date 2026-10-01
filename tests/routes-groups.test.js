@@ -235,6 +235,30 @@ describe('PUT /api/groups/:id', () => {
         expect(r.body.group.rescueRetentionHours).toBe(720);
     });
 
+    it('sets, normalises and clears the per-group maxVideoSize', async () => {
+        await put('/api/groups/-101010', { name: 'X' });
+        let r = await put('/api/groups/-101010', { maxVideoSize: ' 500 mb ' });
+        expect(r.body.group.maxVideoSize).toBe('500MB');
+        r = await put('/api/groups/-101010', { maxVideoSize: 'none' });
+        expect(r.body.group.maxVideoSize).toBe('none');
+        r = await put('/api/groups/-101010', { maxVideoSize: '' });
+        expect(r.body.group.maxVideoSize).toBeUndefined();
+    });
+
+    it('leaves maxVideoSize alone when the field is not sent', async () => {
+        await put('/api/groups/-101011', { name: 'X', maxVideoSize: '2GB' });
+        const r = await put('/api/groups/-101011', { rescueMode: 'on' });
+        expect(r.body.group.maxVideoSize).toBe('2GB');
+    });
+
+    it('rejects an unparseable maxVideoSize without changing the stored one', async () => {
+        await put('/api/groups/-101012', { name: 'X', maxVideoSize: '1GB' });
+        const bad = await put('/api/groups/-101012', { maxVideoSize: 'lots' });
+        expect(bad.status).toBe(400);
+        const ok = await put('/api/groups/-101012', { rescueMode: 'on' });
+        expect(ok.body.group.maxVideoSize).toBe('1GB');
+    });
+
     it('sets backfillSchedule only for recognised non-off values', async () => {
         await put('/api/groups/-101000', { name: 'X' });
         let r = await put('/api/groups/-101000', { backfillSchedule: 'daily' });
