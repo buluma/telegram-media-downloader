@@ -2418,23 +2418,38 @@ export function createMaintenanceRouter({
             // filter can't catch (e.g. logs/foo.log -> /etc/passwd). Resolve
             // both sides so a case-insensitive FS or a symlinked LOGS_DIR still
             // compares cleanly.
-            // Read the resolved path below, not `filePath`, so a symlink swapped in
-            // after this check can't redirect the read.
-            let realFile;
+            // Open the resolved path once (O_NOFOLLOW where supported) and read from
+            // that handle, so a symlink swapped in after this check can't redirect
+            // the read.
+            let handle;
             try {
-                realFile = await fs.realpath(filePath);
+                const realFile = await fs.realpath(filePath);
                 const realLogs = await fs.realpath(LOGS_DIR);
                 if (realFile !== realLogs && !realFile.startsWith(realLogs + path.sep)) {
                     return res.status(400).json({ error: 'Path escape detected' });
                 }
+                handle = await fs.open(
+                    realFile,
+                    fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0),
+                );
+                if (!(await handle.stat()).isFile()) {
+                    await handle.close();
+                    return res.status(400).json({ error: 'Invalid log name' });
+                }
             } catch {
+                await handle?.close().catch(() => {});
                 return res.status(400).json({ error: 'Invalid log name' });
             }
 
             // Naive tail — read whole file (logs are bounded), keep last N lines.
             // Acceptable up to a few hundred MB; if logs ever grow bigger we'd
             // switch to a stream-with-ring-buffer reader.
-            const raw = await fs.readFile(realFile, 'utf8');
+            let raw;
+            try {
+                raw = await handle.readFile('utf8');
+            } finally {
+                await handle.close();
+            }
             const all = raw.split(/\r?\n/);
             const tail = all.slice(Math.max(0, all.length - lines)).join('\n');
             res.setHeader('Content-Type', 'text/plain; charset=utf-8');

@@ -40,8 +40,16 @@ export function getOrGenerateSecret() {
         if (e.code === 'EEXIST') {
             const existing = fs.readFileSync(SECRET_PATH, 'utf8').trim();
             if (existing.length > 0) return existing;
-            // Empty leftover file: nothing to protect, replace it.
-            fs.writeFileSync(SECRET_PATH, newSecret, { mode: 0o600 });
+            // Empty leftover file: replace it. `mode` only applies on creation,
+            // so tighten the existing file's permissions through the open fd.
+            const fd = fs.openSync(SECRET_PATH, 'r+');
+            try {
+                fs.fchmodSync(fd, 0o600);
+                fs.ftruncateSync(fd);
+                fs.writeSync(fd, newSecret);
+            } finally {
+                fs.closeSync(fd);
+            }
             return newSecret;
         }
         console.error('Error writing secret file:', e);
