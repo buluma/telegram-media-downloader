@@ -86,6 +86,11 @@ ENV NODE_ENV=production \
     GIT_SHA=${GIT_SHA} \
     BUILT_AT=${BUILT_AT}
 
+# npm is only used in the deps stage. Nothing here runs it, and the copies of
+# undici and brace-expansion bundled inside npm are what Trivy flags in the
+# runtime image (the app's own node_modules are clean), so drop it.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
+
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 
