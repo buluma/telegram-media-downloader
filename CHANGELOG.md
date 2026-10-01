@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+## [2.28.1] — 2026-10-01
+
+### Security
+- Pairing codes are drawn with `crypto.randomInt` (no modulo bias); `secret.key` is created exclusively and tightened to 0600 on recovery; the log download reads from one validated file handle; Drive `q` strings and the cluster search `LIKE` pattern escape backslashes; the Google Drive setup callback HTML-escapes the OAuth `error` parameter.
+
+### Changed
+- Cleared every open CodeQL alert: unused imports, variables and dead assignments removed (no behaviour change), plus the dead `startCallbackServer` helper.
+
+### Fixed
+- Test-only: the backup wizard tests no longer leave a 60ms timer that could fail a slow CI run.
+
 ## [2.28.0] — 2026-10-01
 
 ### Added
