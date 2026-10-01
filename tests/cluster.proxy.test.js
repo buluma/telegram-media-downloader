@@ -1,11 +1,10 @@
 // Streaming bridge — Range header forwarding + signed request to peer
 // + reference-count guard. The actual fetch is mocked.
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
-import { Readable } from 'stream';
 
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'tgdl-cluster-proxy-'));
 

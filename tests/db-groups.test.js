@@ -1,7 +1,6 @@
 // Tests for normalized group config tables + CRUD (src/core/db/groups.js).
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import Database from 'better-sqlite3';
 import os from 'os';
 import path from 'path';
 import fs from 'fs';

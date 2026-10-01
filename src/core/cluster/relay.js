@@ -36,7 +36,6 @@
  * abuse is rare).
  */
 
-import crypto from 'crypto';
 import { getSharedSecret, getPeer, listPeers } from './peers.js';
 import { getSelfPeerId } from './identity.js';
 import { signRequest } from './hmac.js';

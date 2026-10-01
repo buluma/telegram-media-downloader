@@ -13,7 +13,6 @@
 // — never a leading `/` (which AWS treats as a separate empty top-level
 // folder).
 
-import fs from 'fs';
 import { Transform } from 'stream';
 import path from 'path';
 import {

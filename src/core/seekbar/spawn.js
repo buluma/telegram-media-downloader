@@ -31,7 +31,7 @@ import net from 'net';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-import { _hashFile, _parseChecksumFile, _verifyChecksum } from '../ai/faces-download.js';
+import { _verifyChecksum } from '../ai/faces-download.js';
 import { loadConfig } from '../../config/manager.js';
 import { resolveFfmpegBin, resolveFfprobeBin } from '../thumbs.js';
 import { health, setSidecarUrl } from './client.js';

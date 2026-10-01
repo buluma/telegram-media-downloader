@@ -905,7 +905,6 @@ describe('LLM Facade (index.js)', () => {
     it('generate() returns structured code from probe failure', async () => {
         vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('ECONNREFUSED'));
         // Force ollama provider to trigger a probe
-        const { resolveAllLlm } = await import('../../src/core/llm/llm-config.js');
         // Directly reset and re-configure via env
         process.env.TGDL_LLM_PROVIDER = 'ollama';
         llm.resetLlmProvider();

@@ -23,7 +23,6 @@
 // queue retry-with-backoff handle it, the same as transient network
 // errors.
 
-import fs from 'fs';
 import path from 'path';
 import { Transform } from 'stream';
 import { BackupProvider, optionalDepError, openReadStream } from './base.js';

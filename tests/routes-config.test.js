@@ -7,7 +7,6 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
-import http from 'http';
 
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'tgdl-routes-config-'));
 

@@ -114,6 +114,6 @@ const NOISE_PATTERNS = [
 
 export function isNoise(msg) {
     if (!msg) return false;
-    const text = typeof msg === 'string' ? msg : (msg && msg.message) || String(msg);
+    const text = typeof msg === 'string' ? msg : msg.message || String(msg);
     return NOISE_PATTERNS.some((re) => re.test(text));
 }

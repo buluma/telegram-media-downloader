@@ -12,7 +12,6 @@
  * src/core/disk-rotator.js so the boot block can register both side-by-side.
  */
 import path from 'path';
-import fs from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { getExpiredPending, deleteDownloadsBy, setRescueLastSweep } from './db.js';
 import { logger } from './logger.js';

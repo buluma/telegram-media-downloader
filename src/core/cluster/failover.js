@@ -15,7 +15,7 @@
  * The watcher is started by server.js once `runtime` is up.
  */
 
-import { listPeers, getPeer } from './peers.js';
+import { getPeer } from './peers.js';
 import { getSelfPeerId } from './identity.js';
 import { broadcastClusterEvent } from './ws-channel.js';
 import { recordFailover, recordClusterAudit } from '../db.js';

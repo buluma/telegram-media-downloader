@@ -60,7 +60,7 @@ import { metrics } from '../core/metrics.js';
 import { isAuthConfigured, validateSession, startSessionGc } from '../core/web-auth.js';
 import { logger } from '../core/logger.js';
 import { resilience } from '../core/resilience.js';
-import { suppressNoise, wrapConsoleMethod, NATIVE_LOAD_FAIL } from '../core/logger.js';
+import { wrapConsoleMethod } from '../core/logger.js';
 import { createJobTracker } from '../core/job-tracker.js';
 import { getSelfPeerId, getClusterToken } from '../core/cluster/identity.js';
 import * as clusterWs from '../core/cluster/ws-channel.js';

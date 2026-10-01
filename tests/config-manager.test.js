@@ -295,7 +295,6 @@ describe('config manager (kv-backed)', () => {
             groups: [{ id: 'kv_group', name: 'From KV', enabled: true }],
         });
         // Also put data in normalized tables — should win over KV
-        dbApi.getAllGroupConfigs; // ensure tables exist
         db.prepare(
             `INSERT INTO groups (id, name, enabled, created_at, updated_at) VALUES ('db_group', 'From DB', 1, 1, 1)`,
         ).run();

@@ -9,7 +9,7 @@
 // where they paste one peer's token into the other via "Use cluster's
 // token" before pairing.
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, afterAll } from 'vitest';
 import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';

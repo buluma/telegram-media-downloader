@@ -30,7 +30,6 @@ import {
     ffmpegHasLibwebp,
     hasFfmpeg,
     hwaccelUploadPipeline,
-    resolveFfmpegBin,
     resolveFfprobeBin,
     runFfmpegArgs,
 } from '../thumbs.js';

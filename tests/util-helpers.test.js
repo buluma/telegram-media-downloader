@@ -1,6 +1,6 @@
 // Tests for shared utility helpers: toPosixPath and swallow.
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 
 // toPosixPath is a pure function — no setup needed.
 let toPosixPath;

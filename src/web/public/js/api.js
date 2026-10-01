@@ -85,7 +85,7 @@ async function request(method, url, body, opts = {}) {
             // hard redirect so the user always has a way out.
             const handler = typeof window !== 'undefined' ? window.__tgdlReauth : null;
             if (typeof handler === 'function') {
-                let outcome = 'cancel';
+                let outcome;
                 try {
                     outcome = await handler({ method, url });
                 } catch {

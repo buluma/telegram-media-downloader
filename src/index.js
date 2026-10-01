@@ -4,8 +4,6 @@
  */
 
 import './core/telemetry.js';
-import { TelegramClient } from 'telegram';
-import { StringSession } from 'telegram/sessions/index.js';
 import readline from 'readline';
 import fs from 'fs';
 import path from 'path';
@@ -16,13 +14,11 @@ import { fileURLToPath } from 'url';
 import { loadConfig, saveConfig, GROUP_DEFAULTS } from './config/manager.js';
 import { resolveFfmpegBin, resolveFfprobeBin } from './core/thumbs.js';
 import { hashPassword } from './core/web-auth.js';
-import { logger, NATIVE_LOAD_FAIL, isNoise } from './core/logger.js';
-import { RateLimiter, SecureSession } from './core/security.js';
+import { NATIVE_LOAD_FAIL } from './core/logger.js';
 import { ConnectionManager } from './core/connection.js';
 import { AccountManager } from './core/accounts.js';
 import { colorize, clearScreen, formatBytes } from './cli/colors.js';
 import { resilience } from './core/resilience.js';
-import { getOrGenerateSecret } from './core/secret.js';
 import {
     getDb,
     getStats as getDbStats,
@@ -1317,7 +1313,6 @@ async function startHistory(accountManager, config, connManager) {
     const { DownloadManager } = await import('./core/downloader.js');
     const { HistoryDownloader } = await import('./core/history.js');
     const { RateLimiter } = await import('./core/security.js');
-    const { AutoForwarder } = await import('./core/forwarder.js');
 
     // Migrate old folder names (space → underscore) before downloading
     await migrateFolders(config.download?.path);
@@ -1489,7 +1484,6 @@ async function startHistory(accountManager, config, connManager) {
     const choice = choiceStr.trim();
 
     let limit = 100;
-    let offsetId = 0;
     let offsetDate = 0;
 
     // Setup Downloader (Early init for scanning)

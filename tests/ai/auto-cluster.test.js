@@ -62,8 +62,9 @@ vi.mock('../../src/core/ai/faces-client.js', () => ({
 }));
 
 // Import subject AFTER mocks are registered
-const { startAutoCluster, stopAutoCluster, _resetForTests, _bgQueueDepths, pregenerateAi } =
-    await import('../../src/core/ai/index.js');
+const { startAutoCluster, stopAutoCluster, _resetForTests, _bgQueueDepths } = await import(
+    '../../src/core/ai/index.js'
+);
 
 const { startFacesScan, isScanRunning } = await import('../../src/core/ai/scan-runner.js');
 

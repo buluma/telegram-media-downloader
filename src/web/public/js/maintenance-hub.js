@@ -13,7 +13,7 @@
 
 import { ws } from './ws.js';
 import { api } from './api.js';
-import { t as i18nT, tf as i18nTf } from './i18n.js';
+import { t as i18nT } from './i18n.js';
 import { escapeHtml } from './utils.js';
 
 let _wired = false;

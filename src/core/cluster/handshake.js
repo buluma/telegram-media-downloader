@@ -13,7 +13,6 @@
  * rotation refreshes the fingerprint and bumps last_seen_at.
  */
 
-import crypto from 'crypto';
 import {
     getSelfIdentity,
     getClusterToken,
@@ -22,7 +21,7 @@ import {
     deriveSecretFromPairingCode,
 } from './identity.js';
 import { signRequest } from './hmac.js';
-import { upsertPeer, getPeer, generateSharedSecret, setSharedSecret } from './peers.js';
+import { upsertPeer, generateSharedSecret, setSharedSecret } from './peers.js';
 import { recordClusterAudit } from '../db.js';
 
 const HANDSHAKE_PATH = '/api/cluster/handshake';

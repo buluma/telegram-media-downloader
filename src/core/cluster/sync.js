@@ -16,13 +16,7 @@
  * the dashboard still serves what it has, with a "stale" timestamp pill.
  */
 
-import {
-    kvGet,
-    kvSet,
-    upsertPeerDownloadsBatch,
-    setPeerCatalogBlob,
-    recordClusterAudit,
-} from '../db.js';
+import { kvGet, kvSet, upsertPeerDownloadsBatch, recordClusterAudit } from '../db.js';
 import { listPeers, markOnline, markOffline } from './peers.js';
 import { signRequest } from './hmac.js';
 

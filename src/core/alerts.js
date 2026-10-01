@@ -115,7 +115,7 @@ export function createAlerter({ getConfig }) {
         const enabledGroups = (cfg.groups || []).filter((g) => g.enabled);
         if (enabledGroups.length === 0) return [];
 
-        let lastByGroup = new Map();
+        let lastByGroup;
         try {
             const rows = getDb()
                 .prepare(

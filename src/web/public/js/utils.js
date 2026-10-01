@@ -134,7 +134,7 @@ export function createAvatar(idOrOpts, name, type) {
     const gradient = getAvatarClass(id);
     const initial = (name || '?').charAt(0).toUpperCase();
 
-    let typeIcon = 'question-line';
+    let typeIcon;
     // Derive a numeric peer ID from any known synthetic prefix so the
     // type-icon fallback works for comment:, unknown:, and similar IDs.
     const numericId = String(id).replace(/^(comment|unknown):/, '');

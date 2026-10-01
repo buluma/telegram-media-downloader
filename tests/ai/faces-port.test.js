@@ -1,5 +1,5 @@
 import net from 'net';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { isPortFree, pickAvailablePort } from '../../src/core/ai/faces-port.js';
 
 // ---------------------------------------------------------------------------

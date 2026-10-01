@@ -1,5 +1,4 @@
 import fs from 'fs';
-import path from 'path';
 
 const dirs = [
     'src/web/public/index.html',
