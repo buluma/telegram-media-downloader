@@ -4,6 +4,11 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+## [2.27.1] — 2026-10-01
+
+### Added
+- **Catch-up limit** — `advanced.history.autoCatchUpLimit` (Settings → Advanced) caps the backfill spawned after a restart independently of the first-add limit. `0` keeps the previous 10× first-add behaviour.
+
 ## [2.27.0] — 2026-10-01
 
 ### Added
