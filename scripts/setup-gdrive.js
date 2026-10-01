@@ -23,11 +23,6 @@ function ask(rl, q) {
     return new Promise((res) => rl.question(q, (a) => res(a.trim())));
 }
 
-/**
- * Start a one-shot HTTP listener on a random available port. Returns a
- * promise that resolves with the authorization code from Google's
- * redirect, plus the port the server is listening on.
- */
 // `error` comes straight from the redirect's query string, so it must not
 // reach the page as markup.
 function escapeHtml(value) {
@@ -35,58 +30,6 @@ function escapeHtml(value) {
         /[&<>"']/g,
         (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c],
     );
-}
-
-function startCallbackServer() {
-    return new Promise((resolve, reject) => {
-        let settled = false;
-        const server = http.createServer((req, res) => {
-            if (settled) {
-                res.writeHead(200, { 'Content-Type': 'text/plain' });
-                res.end('Already processed — you can close this tab.');
-                return;
-            }
-            const url = new URL(req.url, `http://127.0.0.1`);
-            const code = url.searchParams.get('code');
-            const error = url.searchParams.get('error');
-            if (error) {
-                res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-                res.end(
-                    `<h2>Authorization denied</h2><p>${escapeHtml(error)}</p><p>You can close this tab.</p>`,
-                );
-                settled = true;
-                server.close();
-                reject(new Error(`Authorization denied: ${error}`));
-                return;
-            }
-            if (!code) {
-                res.writeHead(400, { 'Content-Type': 'text/plain' });
-                res.end('Missing authorization code in callback.');
-                return;
-            }
-            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-            res.end(
-                '<h2>Authorization received</h2>' +
-                    '<p>You can close this tab and return to the terminal.</p>',
-            );
-            settled = true;
-            server.close();
-            resolve(code);
-        });
-        server.listen(0, '127.0.0.1', () => {
-            const { port } = server.address();
-            // Attach port so the caller can build the redirect URI.
-            server._boundPort = port;
-        });
-        // Surface listen errors (port conflict, etc.)
-        server.once('error', (e) => {
-            if (!settled) reject(e);
-        });
-        // Resolve immediately with the server so the caller can read the port.
-        // The code comes back later via the promise above.
-        // We use a two-step approach: return server synchronously for the port,
-        // return a separate promise for the code.
-    });
 }
 
 async function main() {
