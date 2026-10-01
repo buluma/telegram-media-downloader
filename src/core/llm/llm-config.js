@@ -26,12 +26,6 @@
  *   TGDL_LLM_MAX_TOKENS
  */
 
-// Keys that map to a nested sub-object.
-const NESTED_KEYS = new Set(['ollama', 'openai']);
-
-// Keys under `defaults`.
-const DEFAULTS_KEYS = new Set(['temperature', 'maxTokens']);
-
 // Map each env var to a `[section, key]` pair so we can write generic
 // resolver code instead of per-key branches.
 const ENV_MAP = Object.freeze({
@@ -87,7 +81,6 @@ export function resolveLlmKey(section, key, llmCfg = {}) {
     }
 
     // Find matching env var
-    const keyInMap = key.endsWith('Url') ? key : key;
     for (const [envName, [envSection, envKey]] of Object.entries(ENV_MAP)) {
         if (envSection === section && envKey === key) {
             const raw = process.env[envName];

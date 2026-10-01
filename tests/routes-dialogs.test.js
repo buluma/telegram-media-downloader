@@ -222,7 +222,6 @@ describe('GET /api/dialogs — no connected clients', () => {
 
 describe('GET /api/dialogs — DM gating', () => {
     it('excludes a DM (isUser) dialog when allowDmDownloads is not set', async () => {
-        const { manager } = globalThis.__dialogsTestDeps;
         const client = makeFakeClient({
             active: [makeDialog('u1', { isGroup: false, isUser: true, entity: {} })],
         });

@@ -25,7 +25,6 @@ import { loadConfig, saveConfig } from '../../config/manager.js';
 import { getSelfPeerId } from './identity.js';
 
 const KV_LAST_TS = 'cluster_config_last_ts';
-const RECEIVER_TS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 function _policyFor(key) {
     try {

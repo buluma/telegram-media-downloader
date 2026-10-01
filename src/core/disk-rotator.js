@@ -18,14 +18,8 @@
  */
 
 import path from 'path';
-import fs from 'fs/promises';
 import { fileURLToPath } from 'url';
-import {
-    getTotalSizeBytes,
-    getOldestDownloads,
-    deleteDownloadsBy,
-    setDownloadEvicted,
-} from './db.js';
+import { getTotalSizeBytes, getOldestDownloads, setDownloadEvicted } from './db.js';
 import { hasMirrorDestinations } from './backup/queue.js';
 import { isRescueProtected } from './rescue.js';
 import { deferDelete } from './delete-queue.js';

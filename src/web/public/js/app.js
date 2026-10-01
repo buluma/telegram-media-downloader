@@ -5,8 +5,8 @@
 
 import { state, getGroupName, updateGroupNameCache, isUnresolvedName } from './store.js';
 import { api } from './api.js';
-import { createAvatar, escapeHtml, getFileIcon, showToast, formatBytes } from './utils.js';
-import { getThumbUrl, getMediaUrl, getDownloadUrl, isPeerRow } from './media-url.js';
+import { escapeHtml, getFileIcon, showToast, formatBytes } from './utils.js';
+import { getThumbUrl, isPeerRow } from './media-url.js';
 import * as Settings from './settings.js';
 import * as Viewer from './viewer.js';
 import { initEngine, handleEngineWsMessage } from './engine.js';
@@ -84,14 +84,7 @@ import {
     repaintSelection,
     selectAllVisible,
 } from './gallery-select.js';
-import {
-    initI18n,
-    setLang,
-    getLang,
-    applyToDOM as applyI18n,
-    t as i18nT,
-    tf as i18nTf,
-} from './i18n.js';
+import { initI18n, setLang, getLang, t as i18nT, tf as i18nTf } from './i18n.js';
 import {
     showBackfillPage,
     deepLinkFromModal as backfillDeepLink,
@@ -1622,12 +1615,6 @@ function _groupSidebarRowsByType(rows) {
     return Array.from(buckets.entries())
         .sort(([a], [b]) => _sidebarTypeRank(a) - _sidebarTypeRank(b))
         .map(([type, rows]) => ({ type, rows }));
-}
-
-function normalize(str) {
-    return String(str || '')
-        .toLowerCase()
-        .replace(/[^a-z0-9]/g, '');
 }
 
 // ============ Open Group / Show All ============
@@ -4004,8 +3991,6 @@ async function openGroupSettings(groupId, groupName) {
         name: canonical,
         type: configGroup?.type || dialog?.type || null,
     };
-    groupName = canonical;
-
     const modal = document.getElementById('group-modal');
     if (!modal) return;
     setupGroupModalAccessibility(modal);

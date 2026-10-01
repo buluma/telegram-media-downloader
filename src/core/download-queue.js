@@ -1,5 +1,4 @@
 import { EventEmitter } from 'events';
-import { logger } from './logger.js';
 import { pushQueueBacklog, queueBacklogSize, popQueueBacklog } from './db.js';
 
 const DEFAULT_SPILLOVER_THRESHOLD = 2000;

@@ -40,14 +40,14 @@ beforeEach(() => {
 
 describe('monitor reloadConfig', () => {
     it('does not crash when constructed with empty config and saveConfig fires', () => {
-        const monitor = new RealtimeMonitor(null, null, {});
+        new RealtimeMonitor(null, null, {});
         const cfg = manager.loadConfig();
         cfg.telegram.apiId = 'trigger-bus';
         expect(() => manager.saveConfig(cfg)).not.toThrow();
     });
 
     it('does not crash when config has no groups and saveConfig fires', () => {
-        const monitor = new RealtimeMonitor(null, null, { telegram: {} });
+        new RealtimeMonitor(null, null, { telegram: {} });
         const cfg = manager.loadConfig();
         cfg.accounts = [{ id: 'test' }];
         expect(() => manager.saveConfig(cfg)).not.toThrow();

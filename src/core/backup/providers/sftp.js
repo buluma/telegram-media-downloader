@@ -10,7 +10,6 @@
 // "first-class" providers and a NAS over SFTP is the second-most-common
 // home setup after S3.
 
-import fs from 'fs';
 import path from 'path';
 import { Transform } from 'stream';
 import SftpClient from 'ssh2-sftp-client';

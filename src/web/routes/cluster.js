@@ -1,5 +1,4 @@
 import express from 'express';
-import fs from 'fs/promises';
 import { deferDelete } from '../../core/delete-queue.js';
 import WebSocketLib from 'ws';
 import { getDb } from '../../core/db.js';

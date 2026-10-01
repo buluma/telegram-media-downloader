@@ -25,7 +25,7 @@
  */
 
 import crypto from 'crypto';
-import { listPeers, getPeer, markOnline, markOffline } from './peers.js';
+import { listPeers, markOnline, markOffline } from './peers.js';
 import { getSelfPeerId } from './identity.js';
 import {
     getPeerSharedSecret,

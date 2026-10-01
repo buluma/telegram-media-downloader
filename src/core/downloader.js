@@ -15,9 +15,6 @@ import {
     isDownloaded as dbIsDownloaded,
     kvSet,
     getTotalSizeBytes,
-    pushQueueBacklog,
-    popQueueBacklog,
-    queueBacklogSize,
 } from './db.js';
 import { sha256OfFile, sha256OfFileViaPool } from './checksum.js';
 import { pregenerateThumb } from './thumbs.js';
@@ -195,7 +192,6 @@ const MIN_CONCURRENCY = 3;
 const MAX_CONCURRENCY = 20;
 const DEFAULT_SCALER_INTERVAL_MS = 5000;
 const DEFAULT_IDLE_SLEEP_MS = 200;
-const DEFAULT_SPILLOVER_THRESHOLD = 2000;
 // gramJS downloadMedia() has no timeout of its own: a wedged media-DC sender
 // leaves the promise pending forever and pins the worker at 0 bytes. Abort an
 // attempt that goes this long without a progress tick so the retry path runs.
@@ -1499,7 +1495,7 @@ export class DownloadManager extends EventEmitter {
         const basePath = this.config.download?.path || './data/downloads';
         const groupDir = this.sanitize(job.groupName || 'Unknown');
 
-        let typeFolder = 'others';
+        let typeFolder;
         const type = job.mediaType || this.getFileTypeCategory(job.message);
 
         if (type === 'photos' || type === 'image') typeFolder = 'images';

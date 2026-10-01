@@ -167,7 +167,7 @@ describe('searchTextEmbeddings', () => {
 
     it('respects topK', () => {
         const dim = 4;
-        const ids = Array.from({ length: 5 }, () => {
+        Array.from({ length: 5 }, () => {
             const dlId = _newDownload();
             setTextEmbedding(dlId, _f32Blob(_unitVec(dim, 3)), 'test-model');
             return dlId;

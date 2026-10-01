@@ -4,7 +4,7 @@ import { promises as fs } from 'fs';
 import https from 'https';
 import http from 'http';
 import path from 'path';
-import { spawn as _spawn, spawnSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import { swallow } from '../util/swallow.js';
 
 export const SIDECAR_VERSION = '0.3.2';

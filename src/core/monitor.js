@@ -9,7 +9,6 @@ import { EventEmitter } from 'events';
 import { logger } from './logger.js';
 import { sanitizeName } from './downloader.js';
 import { markRescued } from './db.js';
-import { isRescueProtected } from './rescue.js';
 import { loadConfig, saveConfig, watchConfig } from '../config/manager.js';
 import { SpamGuard } from './monitor-spam.js';
 import fs from 'fs/promises';

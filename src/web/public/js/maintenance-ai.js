@@ -2951,7 +2951,6 @@ function _renderQuickOps(status) {
     const cfg = status?.config || {};
     const models = status?.models || {};
     const sidecar = status?.sidecar || {};
-    const mlSidecar = status?.mlSidecar || {};
     const scans = status?.scans || {};
 
     if (grid) {
@@ -3703,7 +3702,6 @@ function _renderStatus(status) {
     }
 
     // Image tagging card — toggle, model line, scan state, labels.
-    const tagsToggle = $('#ai-tags-toggle');
     // OCR card — toggle, scan state, sidecar readiness hint.
     const ocrToggle = $('#ai-ocr-toggle');
     if (ocrToggle) {
@@ -4949,7 +4947,7 @@ function _wirePeopleGridKeyboard() {
                 1,
                 tiles.filter((t) => t.getBoundingClientRect().top === firstY).length,
             );
-            let next = idx;
+            let next;
             if (e.key === 'ArrowRight') next = Math.min(idx + 1, tiles.length - 1);
             else if (e.key === 'ArrowLeft') next = Math.max(idx - 1, 0);
             else if (e.key === 'ArrowDown') next = Math.min(idx + cols, tiles.length - 1);

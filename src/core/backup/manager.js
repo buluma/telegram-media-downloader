@@ -697,7 +697,7 @@ class Worker {
                 ctx,
             );
             queue.markDone(job.id, { bytes: result.bytes, remotePath: result.remotePath });
-            _bumpDestStats(this.destinationId, result.bytes, 1, true);
+            _bumpDestStats(this.destinationId, result.bytes, 1);
             _broadcast({
                 type: 'backup_done',
                 destinationId: this.destinationId,

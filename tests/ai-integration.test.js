@@ -1,5 +1,4 @@
 import { describe, it, expect, vi } from 'vitest';
-import * as facesClient from '../src/core/ai/faces-client.js';
 import { detectFaces } from '../src/core/ai/faces.js';
 
 // Mock the faces-client

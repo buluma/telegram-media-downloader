@@ -4,7 +4,7 @@
 // Phase 2: on-demand stream proxy (GET /api/files/:id/stream)
 // Phase 3: cache_evicted_at → gallery badge
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';

@@ -28,7 +28,7 @@ import { fileURLToPath } from 'url';
 
 import { setSidecarUrl, getSidecarUrl, applyFacesCfg } from './faces-client.js';
 import { resolveAllFaces } from './faces-config.js';
-import { inferPyLevel, isAccessNoise, wirePipeLogging } from './faces-log-filter.js';
+import { wirePipeLogging } from './faces-log-filter.js';
 import { pickAvailablePort } from './faces-port.js';
 import {
     SIDECAR_VERSION,
@@ -37,10 +37,6 @@ import {
     isBinaryUsable as _isBinaryUsable,
     verifyBinary as _verifyBinary,
     downloadAndExtract,
-    _parseChecksumFile,
-    _hashFile,
-    _verifyChecksum,
-    computeBinaryTarget as _computeBinaryTarget,
 } from './faces-download.js';
 import { swallow } from '../util/swallow.js';
 
@@ -71,7 +67,6 @@ const PORT_RANGE_MIN_DEFAULT = 41000;
 const PORT_RANGE_MAX_DEFAULT = 49999;
 const PORT_BIND_MAX_ATTEMPTS_DEFAULT = 10;
 const DOWNLOAD_REDIRECT_LIMIT_DEFAULT = 5;
-const DOWNLOAD_CONNECT_TIMEOUT_MS = 30_000;
 
 // Resolved faces config for the current process boot — populated by
 // `_doStart()` after reading `loadConfig()` + env. All spawn-path helpers
