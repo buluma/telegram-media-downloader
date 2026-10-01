@@ -1047,6 +1047,69 @@ describe('group settings modal', () => {
         }
     });
 
+    describe('per-group video size limit', () => {
+        const saved = () =>
+            [...api.post.mock.calls, ...api.put.mock.calls]
+                .filter((c) => String(c[0]).includes('-100111'))
+                .at(-1)?.[1];
+
+        it('defaults to the system limit when the group sets none', async () => {
+            await openModal();
+            expect($('setting-group-max-video').value).toBe('');
+        });
+
+        it('shows the group limit', async () => {
+            await openModal(GROUP({ maxVideoSize: '500MB' }));
+            expect($('setting-group-max-video').value).toBe('500MB');
+        });
+
+        it('shows an explicit no-limit override', async () => {
+            await openModal(GROUP({ maxVideoSize: 'none' }));
+            expect($('setting-group-max-video').value).toBe('none');
+        });
+
+        it('keeps a stored limit that is not one of the presets', async () => {
+            await openModal(GROUP({ maxVideoSize: '750MB' }));
+            expect($('setting-group-max-video').value).toBe('750MB');
+            await act('saveGroupSettings');
+            await flush();
+            expect(saved().maxVideoSize).toBe('750MB');
+        });
+
+        it('saves the chosen limit', async () => {
+            await openModal();
+            $('setting-group-max-video').value = '2GB';
+            await act('saveGroupSettings');
+            await flush();
+            expect(saved().maxVideoSize).toBe('2GB');
+        });
+
+        it('saves an empty value to fall back to the system default', async () => {
+            await openModal(GROUP({ maxVideoSize: '500MB' }));
+            $('setting-group-max-video').value = '';
+            await act('saveGroupSettings');
+            await flush();
+            expect(saved().maxVideoSize).toBe('');
+        });
+
+        it("does not carry one group's limit into the next one opened", async () => {
+            const a = GROUP({ id: '-100111', maxVideoSize: '750MB' });
+            const b = GROUP({ id: '-100222', name: 'Beta' });
+            await boot({
+                '/api/groups': [a, b],
+                '/api/groups/-100111': a,
+                '/api/groups/-100222': b,
+            });
+            await act('openGroupSettings', a.id, a.name);
+            await flush();
+            expect($('setting-group-max-video').value).toBe('750MB');
+            await act('openGroupSettings', b.id, b.name);
+            await flush();
+            expect($('setting-group-max-video').value).toBe('');
+            expect($('setting-group-max-video').querySelector('option[data-custom]')).toBeNull();
+        });
+    });
+
     it('saves the edited group', async () => {
         await openModal();
         await act('saveGroupSettings');

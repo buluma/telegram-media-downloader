@@ -21,6 +21,7 @@ import {
 import { BACKFILL_MAX_LIMIT } from '../../core/constants.js';
 import crypto from 'crypto';
 import { swallow } from '../../core/util/swallow.js';
+import { normalizeSizeLimit } from '../../core/size-limit.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -822,6 +823,19 @@ export function createGroupsRouter({
                 } else {
                     delete group.backfillLimit;
                 }
+            }
+
+            // Per-group video size cap. Empty/null clears it (back to the
+            // system default), "none" lifts the system limit for this group.
+            if (req.body.maxVideoSize !== undefined) {
+                const v = normalizeSizeLimit(req.body.maxVideoSize);
+                if (v === false) {
+                    return res.status(400).json({
+                        error: 'Invalid maxVideoSize — use a size like 500MB or 2GB, or "none"',
+                    });
+                }
+                if (v === null) delete group.maxVideoSize;
+                else group.maxVideoSize = v;
             }
 
             await writeConfigAtomic(config);

@@ -471,6 +471,22 @@
                             </div>
                         </div>
 
+                        <!-- Per-group video size cap. Empty = follow the system
+                             limit (Settings → Size Limits); "none" lifts it. -->
+                        <div class="p-3 bg-tg-panel rounded-lg border border-tg-border/40">
+                            <label for="setting-group-max-video" class="text-white text-sm font-medium block mb-1" data-i18n="group.size.title">Max video size</label>
+                            <select id="setting-group-max-video" class="tg-input w-full text-sm">
+                                <option value="" data-i18n="group.size.default">Use system default</option>
+                                <option value="100MB">100 MB</option>
+                                <option value="500MB">500 MB</option>
+                                <option value="1GB">1 GB</option>
+                                <option value="2GB">2 GB</option>
+                                <option value="4GB">4 GB</option>
+                                <option value="none" data-i18n="group.size.none">No limit</option>
+                            </select>
+                            <p class="text-[11px] text-tg-textSecondary mt-1 leading-snug" data-i18n="group.size.help">Skip videos larger than this in this group. "Use system default" follows Settings → Size Limits.</p>
+                        </div>
+
                         <!-- Forum-topic filter (folded in from the old
                              "Topics" tab — same fields/IDs). -->
                         <div class="p-3 bg-tg-panel rounded-lg border border-tg-border/40">

@@ -56,7 +56,7 @@ A few `/api/auth/*` routes are explicitly registered before the global auth midd
 | `GET`  | `/api/stats`                  | `{totalFiles, totalSize, diskUsage, telegramConnected, peerStats:[{peerId, peerName, online, totalFiles, totalSize, totalSizeFormatted}], …}`. Also broadcast over WS as `stats_push` every 30 s. `peerStats` is `[]` for non-cluster installs and for guest sessions. |
 | `GET`  | `/api/dialogs`                | Active + archived chats; DMs gated by `config.allowDmDownloads`. |
 | `GET`  | `/api/groups`                 | Configured groups with photo URLs. |
-| `PUT`  | `/api/groups/:id`             | Update group config (filters, autoForward, topics, accounts, **cluster routing** — `ownerPeerId` / `backupPeerId`). Auto-spawns a first-add backfill when the group is newly enabled and has no rows yet. |
+| `PUT`  | `/api/groups/:id`             | Update group config (filters, autoForward, topics, accounts, **cluster routing** — `ownerPeerId` / `backupPeerId`, **`maxVideoSize`** — per-group video cap such as `"500MB"`; `"none"` lifts the system limit, empty falls back to `diskManagement.maxVideoSize`; unparseable → 400). Auto-spawns a first-add backfill when the group is newly enabled and has no rows yet. |
 | `DELETE` | `/api/groups/:id/purge`     | Drop files + DB rows + config + photo. |
 | `GET`  | `/api/groups/:id/photo`       | Cached profile photo. |
 | `POST` | `/api/groups/refresh-photos`  | Re-fetch profile photos for every configured group. |

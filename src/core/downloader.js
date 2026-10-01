@@ -28,6 +28,7 @@ import { pregenerateSeekbar } from './seekbar/index.js';
 import { fileTypeFromExtension, sniffMediaFile } from './media-sniff.js';
 import { QueueManager } from './download-queue.js';
 import { swallow } from './util/swallow.js';
+import { resolveSizeLimit } from './size-limit.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // `TGDL_DATA_DIR` overrides the on-disk data root — mirrors core/db.js so
@@ -692,7 +693,7 @@ export class DownloadManager extends EventEmitter {
 
             if (fileSize > 0 && fileType) {
                 const typeName = fileType.charAt(0).toUpperCase() + fileType.slice(1); // 'Video', 'Image'
-                const limitStr = this.config.diskManagement?.[`max${typeName}Size`];
+                const limitStr = resolveSizeLimit(this.config, job.groupId, typeName);
                 if (limitStr) {
                     const maxBytes = this.parseSize(limitStr);
                     if (fileSize > maxBytes) {
