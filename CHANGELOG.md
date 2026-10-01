@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+## [2.28.2] — 2026-10-01
+
+### Fixed
+- The gallery search box shows only on the viewer page instead of every page, and its icon no longer overlaps the text (styled like the group search).
+- faces-service: the YOLO and WD14 models now live in `TGDL_FACES_MODELS_DIR` with the other models, and concurrent first-use downloads of the YOLO model no longer race.
+
+### Changed
+- CI: CodeQL analysis is skipped while the repository is private, since uploads need GitHub Advanced Security.
+
 ## [2.28.1] — 2026-10-01
 
 ### Security
