@@ -1666,7 +1666,9 @@ export function createAiRouter({ broadcast, log, jobTrackers }) {
             const scanner = req.query.scanner ? String(req.query.scanner).trim() : null;
             const limit = Math.max(1, Math.min(500, Number(req.query.limit) || 100));
             const scanners = scanner ? [scanner] : ['wd14', 'ocr', 'faces', 'embed'];
-            const byScanner = {};
+            // Null prototype: `scanner` is caller-supplied, so a key like `__proto__`
+            // must stay a plain property instead of swapping the object's prototype.
+            const byScanner = Object.create(null);
             for (const sc of scanners) {
                 byScanner[sc] = {
                     counts: getScanStateCounts(sc),

@@ -101,3 +101,21 @@ describe('fingerprintFor', () => {
         expect(identity.fingerprintFor('peer-x')).not.toBe(before);
     });
 });
+
+describe('pairing code generation', () => {
+    it('draws every alphabet character with equal probability', () => {
+        // A `byte % 34` mapping makes the first 18 characters ~14% likelier
+        // than the rest; an unbiased draw keeps the two groups within noise.
+        const counts = new Map();
+        for (let i = 0; i < 20000; i++) {
+            for (const ch of identity._generateCode()) counts.set(ch, (counts.get(ch) || 0) + 1);
+        }
+        const alphabet = '0123456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+        expect([...counts.keys()].sort().join('')).toBe([...alphabet].sort().join(''));
+        const mean = (chars) =>
+            [...chars].reduce((sum, ch) => sum + counts.get(ch), 0) / chars.length;
+        const ratio = mean(alphabet.slice(0, 18)) / mean(alphabet.slice(18));
+        expect(ratio).toBeLessThan(1.05);
+        expect(ratio).toBeGreaterThan(0.95);
+    });
+});

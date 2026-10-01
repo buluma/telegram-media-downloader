@@ -2418,8 +2418,11 @@ export function createMaintenanceRouter({
             // filter can't catch (e.g. logs/foo.log -> /etc/passwd). Resolve
             // both sides so a case-insensitive FS or a symlinked LOGS_DIR still
             // compares cleanly.
+            // Read the resolved path below, not `filePath`, so a symlink swapped in
+            // after this check can't redirect the read.
+            let realFile;
             try {
-                const realFile = await fs.realpath(filePath);
+                realFile = await fs.realpath(filePath);
                 const realLogs = await fs.realpath(LOGS_DIR);
                 if (realFile !== realLogs && !realFile.startsWith(realLogs + path.sep)) {
                     return res.status(400).json({ error: 'Path escape detected' });
@@ -2431,7 +2434,7 @@ export function createMaintenanceRouter({
             // Naive tail — read whole file (logs are bounded), keep last N lines.
             // Acceptable up to a few hundred MB; if logs ever grow bigger we'd
             // switch to a stream-with-ring-buffer reader.
-            const raw = await fs.readFile(filePath, 'utf8');
+            const raw = await fs.readFile(realFile, 'utf8');
             const all = raw.split(/\r?\n/);
             const tail = all.slice(Math.max(0, all.length - lines)).join('\n');
             res.setHeader('Content-Type', 'text/plain; charset=utf-8');

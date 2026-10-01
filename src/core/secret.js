@@ -32,9 +32,18 @@ export function getOrGenerateSecret() {
     // Generate new secret
     const newSecret = crypto.randomBytes(32).toString('hex');
     try {
-        fs.writeFileSync(SECRET_PATH, newSecret, { mode: 0o600 }); // Restrict permissions
+        // 'wx' so a concurrent first run can't overwrite a secret another
+        // process just created (and already handed out).
+        fs.writeFileSync(SECRET_PATH, newSecret, { mode: 0o600, flag: 'wx' }); // Restrict permissions
         console.log('🔐 New security secret generated and saved.');
     } catch (e) {
+        if (e.code === 'EEXIST') {
+            const existing = fs.readFileSync(SECRET_PATH, 'utf8').trim();
+            if (existing.length > 0) return existing;
+            // Empty leftover file: nothing to protect, replace it.
+            fs.writeFileSync(SECRET_PATH, newSecret, { mode: 0o600 });
+            return newSecret;
+        }
         console.error('Error writing secret file:', e);
     }
 

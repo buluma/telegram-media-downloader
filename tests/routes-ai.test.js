@@ -573,6 +573,12 @@ describe('durable jobs + scan-state', () => {
         expect(body.byScanner.faces).toBeDefined();
     });
 
+    it('keeps a prototype-named scanner as a plain key', async () => {
+        const { status, body } = await get('/api/ai/scan/failures?scanner=__proto__');
+        expect(status).toBe(200);
+        expect(Object.keys(body.byScanner)).toEqual(['__proto__']);
+    });
+
     it('400s retry-failed without a scanner', async () => {
         expect((await post('/api/ai/scan/retry-failed', {})).status).toBe(400);
     });
