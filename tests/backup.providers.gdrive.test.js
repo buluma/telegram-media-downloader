@@ -219,6 +219,25 @@ describe('backup/providers/gdrive (mocked)', () => {
         expect(st).toBeNull();
     });
 
+    it('escapes backslashes as well as quotes in Drive folder-name queries', async () => {
+        const p = new GoogleDriveProvider();
+        state.log.length = 0;
+        // folderName is the one raw name that reaches a Drive query; file
+        // paths have their backslashes turned into separators first.
+        await p.init(
+            {
+                clientId: 'cid',
+                clientSecret: 'sec',
+                refreshToken: 'rt',
+                folderName: "it's\\",
+            },
+            ctx,
+        );
+        const qs = state.log.filter((e) => e[0] === 'files.list').map((e) => e[1].q);
+        // A lone `\'` would let a trailing backslash escape the closing quote.
+        expect(qs.some((q) => q.includes(String.raw`name='it\'s\\'`))).toBe(true);
+    });
+
     it('delete is idempotent — missing file is a no-op', async () => {
         const p = new GoogleDriveProvider();
         await p.init(

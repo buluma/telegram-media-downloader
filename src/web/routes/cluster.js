@@ -763,7 +763,7 @@ export function createClusterRouter({ broadcast, log }) {
         const limit = Math.max(1, Math.min(200, Number(req.query.limit) || 50));
         if (!q) return res.json({ rows: [] });
         try {
-            const like = `%${q.replace(/[%_]/g, '\\$&')}%`;
+            const like = `%${q.replace(/\\/g, '\\\\').replace(/[%_]/g, '\\$&')}%`;
             const ownPid = getSelfPeerId();
             const local = getDb()
                 .prepare(

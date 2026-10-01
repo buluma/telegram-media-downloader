@@ -34,6 +34,14 @@ const APP_PROPERTY_KEY = 'tgdl-backup';
 const APP_PROPERTY_VALUE = '1';
 const DEFAULT_PAGE_SIZE = 200;
 
+/**
+ * Escape a value for a single-quoted Drive `q` string. Backslashes go first:
+ * escaping only the quote lets a trailing `\` swallow the closing quote.
+ */
+function _driveQuote(value) {
+    return String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
 export class GoogleDriveProvider extends BackupProvider {
     static get name() {
         return 'gdrive';
@@ -153,7 +161,7 @@ export class GoogleDriveProvider extends BackupProvider {
 
     /** Find OR create a folder with the given name under `parentId`. */
     async _ensureFolder(name, parentId) {
-        const escaped = String(name).replace(/'/g, "\\'");
+        const escaped = _driveQuote(name);
         // Search for an existing non-trashed folder with the exact name.
         const r = await this._drive.files.list({
             q:
@@ -217,7 +225,7 @@ export class GoogleDriveProvider extends BackupProvider {
             return null;
         }
         if (!parentId) return null;
-        const escapedName = name.replace(/'/g, "\\'");
+        const escapedName = _driveQuote(name);
         const r = await this._drive.files.list({
             q:
                 `name='${escapedName}' and '${parentId}' in parents and trashed=false ` +
@@ -243,7 +251,7 @@ export class GoogleDriveProvider extends BackupProvider {
                 parentId = this._folderCache.get(acc);
                 continue;
             }
-            const escaped = seg.replace(/'/g, "\\'");
+            const escaped = _driveQuote(seg);
             const r = await this._drive.files.list({
                 q:
                     `name='${escaped}' and '${parentId}' in parents and ` +
