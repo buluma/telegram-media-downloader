@@ -4,8 +4,13 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+## [2.28.0] — 2026-10-01
+
 ### Added
 - **Per-group max video size** — Group settings → Filters has a "Max video size" override. Unset follows the system `diskManagement.maxVideoSize`; "No limit" lifts it for that group. Comment groups inherit their channel's value.
+
+### Security
+- Patched `@grpc/grpc-js` (1.14.5) and `qs` (>=6.16.0) advisories; `bun audit` is clean.
 
 ## [2.27.1] — 2026-10-01
 
