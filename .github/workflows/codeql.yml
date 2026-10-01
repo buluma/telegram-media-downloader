@@ -22,6 +22,11 @@ permissions:
 
 jobs:
   analyze:
+    # Uploading results needs code scanning, which a private repo only has with
+    # GitHub Advanced Security. Without it the scan runs and then fails at the
+    # upload step on every PR, so skip it while the repo is private. A skipped
+    # job counts as passing for required checks.
+    if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
