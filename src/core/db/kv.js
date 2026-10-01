@@ -145,7 +145,6 @@ export function clearQueueBacklog() {
 // promotes 'triggered' rows to 'success' when it observes either a
 // version change OR an instance_id change.
 
-const UPDATE_STATUS_PENDING = 'pending'; // reserved — not used by the active flow
 const UPDATE_STATUS_TRIGGERED = 'triggered';
 const UPDATE_STATUS_SUCCESS = 'success';
 const UPDATE_STATUS_FAILED = 'failed';
