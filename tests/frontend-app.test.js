@@ -638,6 +638,162 @@ describe('gallery', () => {
     });
 });
 
+// ---- gallery filters -----------------------------------------------------
+
+describe('gallery filters', () => {
+    const tab = (sel) => document.querySelector(`#media-tabs ${sel}`);
+    const tilePaths = () => $$('#media-grid .media-item[data-path]').map((t) => t.dataset.path);
+    const allUrls = () =>
+        api.get.mock.calls.map((c) => String(c[0])).filter((u) => u.includes('/api/downloads/all'));
+
+    // Holds every /api/downloads/all call open until the test resolves it, so a
+    // test decides the order replies arrive in.
+    function deferredAll() {
+        const pending = [];
+        const respond = (url) => new Promise((res) => pending.push({ url, res }));
+        return { pending, respond };
+    }
+
+    async function openAll(extra = {}) {
+        await boot({ '/api/groups': [GROUP()], ...extra });
+        act('showAllMedia');
+        await flush();
+    }
+
+    it('keeps the newest filter result when an older request replies last', async () => {
+        const { pending, respond } = deferredAll();
+        await openAll({ '/api/downloads/all': respond });
+        for (const p of pending.splice(0)) p.res({ files: [], total: 0 });
+        await flush();
+
+        tab('[data-type="videos"]').click();
+        tab('[data-type="images"]').click();
+        await flush();
+        const videos = pending.find((p) => p.url.includes('type=videos'));
+        const images = pending.find((p) => p.url.includes('type=images'));
+        expect(videos && images, 'both tab requests in flight').toBeTruthy();
+
+        images.res({
+            files: [
+                FILE({ id: 1, name: 'photo.jpg', fullPath: 'm/photo.jpg', path: 'm/photo.jpg' }),
+            ],
+            total: 1,
+        });
+        await flush();
+        videos.res({
+            files: [FILE({ id: 2, name: 'clip.mp4', fullPath: 'm/clip.mp4', path: 'm/clip.mp4' })],
+            total: 1,
+        });
+        await flush();
+
+        expect(tilePaths()).toEqual(['m/photo.jpg']);
+    });
+
+    it('does not page the old feed onto find-similar results', async () => {
+        // A full page + a large total keeps state.hasMore true after the load.
+        const full = (url) => {
+            const limit = Number(/limit=(\d+)/.exec(url)?.[1]) || 50;
+            return {
+                files: Array.from({ length: limit }, (_, i) =>
+                    FILE({
+                        id: i + 1,
+                        name: `f${i}.jpg`,
+                        fullPath: `m/f${i}.jpg`,
+                        path: `m/f${i}.jpg`,
+                    }),
+                ),
+                total: limit * 10,
+            };
+        };
+        await openAll({
+            '/api/downloads/all': full,
+            '/api/ai/search/similar': {
+                success: true,
+                results: [
+                    {
+                        download_id: 900,
+                        group_id: '-100111',
+                        file_name: 'ai-hit.jpg',
+                        file_path: 'm/ai-hit.jpg',
+                        file_type: 'photo',
+                        created_at: '2026-07-01T10:00:00Z',
+                    },
+                ],
+            },
+        });
+
+        // Similar is a list-view tile action.
+        document.querySelector('#view-mode-menu [data-vm="list"]')?.click();
+        await flush();
+        document.querySelector('[data-tile-similar]').click();
+        await flush();
+        expect(tilePaths()).toEqual(['m/ai-hit.jpg']);
+
+        const before = allUrls().length;
+        observers.find((o) => o.opts?.rootMargin?.includes('1200px'))?.trigger();
+        await flush();
+
+        expect(allUrls().length).toBe(before);
+        expect(tilePaths()).toEqual(['m/ai-hit.jpg']);
+    });
+
+    it('offers to save a watched-only filter', async () => {
+        await openAll();
+        tab('[data-watched-toggle]').click();
+        await flush();
+        $('saved-filters-chip').click();
+        expect($('save-filter-btn')).not.toBeNull();
+    });
+
+    it('restores pinned and watched when a saved filter is applied', async () => {
+        await openAll();
+        tab('[data-pinned-toggle]').click();
+        tab('[data-watched-toggle]').click();
+        await flush();
+
+        $('saved-filters-chip').click();
+        vi.spyOn(window, 'prompt').mockReturnValue('mine');
+        $('save-filter-btn').click();
+
+        // Back to defaults: pinned cycles pinned → unpinned → off.
+        tab('[data-pinned-toggle]').click();
+        tab('[data-pinned-toggle]').click();
+        tab('[data-watched-toggle]').click();
+        await flush();
+        api.get.mockClear();
+
+        document.querySelector('[data-apply-filter="0"]').click();
+        await flush();
+
+        const last = allUrls().at(-1);
+        expect(last).toContain('pinned=1');
+        expect(last).toContain('watched=1');
+    });
+
+    it('clears filters a saved filter does not carry', async () => {
+        localStorage.setItem(
+            'tgdl-saved-filters',
+            JSON.stringify([{ name: 'big', type: 'all', sortBy: 'size_desc' }]),
+        );
+        await openAll();
+        tab('[data-pinned-toggle]').click();
+        tab('[data-watched-toggle]').click();
+        await flush();
+        $('saved-filters-chip').click();
+        api.get.mockClear();
+
+        document.querySelector('[data-apply-filter="0"]').click();
+        await flush();
+
+        const last = allUrls().at(-1);
+        expect(last).toContain('sort=size_desc');
+        expect(last).not.toContain('pinned=');
+        expect(last).not.toContain('watched=');
+        expect(tab('[data-pinned-toggle]').getAttribute('aria-pressed')).toBe('false');
+        expect(tab('[data-watched-toggle]').getAttribute('aria-pressed')).toBe('false');
+    });
+});
+
 // ---- delete file ---------------------------------------------------------
 
 describe('delete current file', () => {

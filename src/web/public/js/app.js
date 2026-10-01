@@ -2074,7 +2074,9 @@ function _currentFilterIsNonDefault() {
         state.dateTo ||
         (state.sortBy && state.sortBy !== 'date_desc') ||
         (state.currentFilter && state.currentFilter !== 'all') ||
-        state.pinnedFilter
+        state.pinnedFilter ||
+        state.watchedFilter ||
+        state.clippedFilter
     );
 }
 
@@ -2097,6 +2099,16 @@ function _updatePinnedPill(el, pinnedState) {
         if (icon) icon.className = 'ri-pushpin-2-line mr-1';
         if (label) label.textContent = i18nT('favorites.filter', 'Pinned');
     }
+}
+
+function _syncFilterToggles() {
+    document.querySelectorAll('#media-tabs .tab-item').forEach((t) => {
+        if (t.dataset.pinnedToggle !== undefined) _updatePinnedPill(t, state.pinnedFilter || null);
+        if (t.dataset.watchedToggle !== undefined)
+            t.setAttribute('aria-pressed', state.watchedFilter ? 'true' : 'false');
+        if (t.dataset.clippedToggle !== undefined)
+            t.setAttribute('aria-pressed', state.clippedFilter ? 'true' : 'false');
+    });
 }
 
 function _renderSavedFiltersMenu() {
@@ -2145,6 +2157,8 @@ function _renderSavedFiltersMenu() {
             dateFrom: state.dateFrom || null,
             dateTo: state.dateTo || null,
             pinnedFilter: state.pinnedFilter || null,
+            watchedFilter: !!state.watchedFilter,
+            clippedFilter: !!state.clippedFilter,
         });
         _setSavedFilters(filters2);
         _renderSavedFiltersMenu();
@@ -2173,6 +2187,12 @@ function _renderSavedFiltersMenu() {
                 const sortLabel = document.getElementById('sort-chip-label');
                 if (sortLabel) sortLabel.textContent = SORT_LABELS[f.sortBy] ?? 'Sort';
             }
+            // Apply the pinned/watched/clipped chips. Replace semantics, same as
+            // type/sort/date above: a saved filter without them clears them.
+            state.pinnedFilter = f.pinnedFilter || null;
+            state.watchedFilter = !!f.watchedFilter;
+            state.clippedFilter = !!f.clippedFilter;
+            _syncFilterToggles();
             // Apply date range
             _applyDateFilter(f.dateFrom || null, f.dateTo || null);
             const fromInput = document.getElementById('date-filter-from');
@@ -2232,7 +2252,14 @@ function _setLoadMoreIndicator(visible) {
     document.getElementById('load-more-indicator')?.classList.toggle('hidden', !visible);
 }
 
+// Bumped by every gallery load and by search-result takeovers. A load that
+// finds the counter moved on while it was awaiting the network is stale (the
+// filter changed, or search results replaced the grid) and must not touch
+// state or the DOM.
+let _galleryLoadSeq = 0;
+
 async function loadAllFiles() {
+    const seq = ++_galleryLoadSeq;
     state.loading = true;
     const grid = document.getElementById('media-grid');
     if (state.page === 1 && grid) grid.innerHTML = renderGallerySkeletons(12);
@@ -2263,6 +2290,7 @@ async function loadAllFiles() {
         const res = await api.get(
             `/api/downloads/all?page=${state.page}&limit=${FILES_PER_PAGE}&type=${encodeURIComponent(type)}${pinQs}${watchedQs}${clippedQs}${pinFirstQs}${sortQs}${dateQs}${scopeQs}`,
         );
+        if (seq !== _galleryLoadSeq) return;
         const newFiles = res?.files || [];
 
         let appendFromIndex = 0;
@@ -2290,15 +2318,19 @@ async function loadAllFiles() {
             `${total} files`,
         );
     } catch (e) {
+        if (seq !== _galleryLoadSeq) return;
         showToast(i18nT('viewer.error.load', 'Error loading files'), 'error');
     } finally {
-        state.loading = false;
-        _setLoadMoreIndicator(false);
+        if (seq === _galleryLoadSeq) {
+            state.loading = false;
+            _setLoadMoreIndicator(false);
+        }
     }
 }
 
 // ============ Media Loading ============
 async function loadGroupFiles(groupId) {
+    const seq = ++_galleryLoadSeq;
     state.loading = true;
 
     // Show 12 skeleton tiles for the very first page so users don't stare
@@ -2337,6 +2369,7 @@ async function loadGroupFiles(groupId) {
         const res = await api.get(
             `/api/downloads/${encodeURIComponent(groupId)}?page=${state.page}&limit=${FILES_PER_PAGE}&type=${encodeURIComponent(type)}${pinQs}${watchedQs}${clippedQs}${pinFirstQs}${sortQs}${dateQs}${scopeQs}`,
         );
+        if (seq !== _galleryLoadSeq) return;
         const newFiles = res.files || [];
 
         let appendFromIndex = 0;
@@ -2359,10 +2392,13 @@ async function loadGroupFiles(groupId) {
             `${total} files`,
         );
     } catch (e) {
+        if (seq !== _galleryLoadSeq) return;
         showToast(i18nT('viewer.error.load', 'Error loading files'), 'error');
     } finally {
-        state.loading = false;
-        _setLoadMoreIndicator(false);
+        if (seq === _galleryLoadSeq) {
+            state.loading = false;
+            _setLoadMoreIndicator(false);
+        }
     }
 }
 
@@ -5027,6 +5063,17 @@ function setupEventListeners() {
     setupMediaTabs();
 }
 
+// Search results replace the grid wholesale and have no next page, so retire
+// any in-flight load and disarm the infinite-scroll sentinel — otherwise it
+// appends the old feed's next page onto the results.
+function _takeOverGalleryWithResults(rows) {
+    _galleryLoadSeq++;
+    state.loading = false;
+    state.hasMore = false;
+    state.page = 1;
+    state.files = rows;
+}
+
 // v2.16 — "Find similar" from a single tile. Routes via
 // `/api/ai/search/similar` with the seed download id; results replace
 // the gallery the same way the text-search path does.
@@ -5070,7 +5117,7 @@ async function _runSimilarSearch(downloadId) {
             _aiScore: typeof row.score === 'number' ? row.score : null,
             fullPath: row.file_path,
         }));
-        state.files = mapped;
+        _takeOverGalleryWithResults(mapped);
         try {
             renderMediaGrid();
         } catch (e) {
@@ -5140,7 +5187,7 @@ async function _runSemanticSearch(q) {
             // — copy from file_path so click-to-open works.
             fullPath: row.file_path,
         }));
-        state.files = mapped;
+        _takeOverGalleryWithResults(mapped);
         try {
             renderMediaGrid();
         } catch (e) {
