@@ -10,7 +10,7 @@
 # Pin a specific patch version. Floating tags drift; this image is reproducible.
 ARG RUNTIME_BASE_IMAGE=runtime-base
 
-FROM node:26.9.0-bookworm-slim AS deps
+FROM node:26.10.0-bookworm-slim AS deps
 WORKDIR /app
 COPY --from=oven/bun:1.4.0-slim /usr/local/bin/bun /usr/local/bin/bun
 RUN apt-get update \
@@ -34,7 +34,7 @@ RUN bun install --frozen-lockfile --production --ignore-scripts --no-progress \
     && npm install --global --no-audit --no-fund node-gyp@13.0.2 \
     && (cd node_modules/better-sqlite3 && node-gyp rebuild)
 
-FROM node:26.9.0-bookworm-slim AS runtime-base
+FROM node:26.10.0-bookworm-slim AS runtime-base
 
 # tini    — proper PID 1 (signal handling + zombie reaping). Debian ships
 #           the binary at /usr/bin/tini.
