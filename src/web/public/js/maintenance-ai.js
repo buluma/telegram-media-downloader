@@ -3519,6 +3519,8 @@ async function _renderRecentJobs() {
             </div>`;
             })
             .join('');
+        const countEl = $('#ai-recent-jobs-count');
+        if (countEl) countEl.textContent = `· ${jobs.length}`;
         card.classList.remove('hidden');
     } catch {
         card.classList.add('hidden');

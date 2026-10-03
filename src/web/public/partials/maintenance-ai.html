@@ -135,12 +135,17 @@
                             </div>
                             <div id="ai-issues-list" class="space-y-1 text-[11px]"></div>
                         </div>
-                        <div id="ai-recent-jobs-card" class="hidden mt-2 bg-tg-bg/30 rounded-lg p-3 border border-tg-border/30">
-                            <div class="text-xs font-medium text-tg-text inline-flex items-center gap-1.5 mb-2">
-                                <i class="ri-history-line text-tg-textSecondary"></i><span data-i18n="maintenance.ai.recent_jobs_heading">Recent jobs</span>
-                            </div>
-                            <div id="ai-recent-jobs-list" class="space-y-1"></div>
-                        </div>
+                        <!-- Recent jobs — collapsed by default, same
+                             pattern as the System health card. -->
+                        <details id="ai-recent-jobs-card" class="hidden mt-2 bg-tg-bg/30 rounded-lg px-3 py-2 border border-tg-border/30 group">
+                            <summary class="cursor-pointer list-none flex items-center gap-1.5">
+                                <i class="ri-arrow-right-s-line text-tg-textSecondary text-xs transition-transform group-open:rotate-90"></i>
+                                <i class="ri-history-line text-tg-textSecondary text-xs"></i>
+                                <span class="text-xs font-medium text-tg-text" data-i18n="maintenance.ai.recent_jobs_heading">Recent jobs</span>
+                                <span id="ai-recent-jobs-count" class="text-[10.5px] text-tg-textSecondary"></span>
+                            </summary>
+                            <div id="ai-recent-jobs-list" class="space-y-1 mt-2"></div>
+                        </details>
                         <!-- Auto-cluster cadence hint — populated by JS when
                              autoCluster is enabled; hidden otherwise. -->
                         <div id="ai-auto-cluster-info" class="hidden text-[10.5px] text-tg-textSecondary mt-2 flex items-center gap-1">
@@ -160,7 +165,7 @@
                          coverage, readiness, and quick actions for every
                          AI scanner (Faces, CLIP Tags, WD14, OCR).
                          Rendered by _renderScannerCards() in JS. -->
-                    <section id="ai-scanner-cards" class="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
+                    <section id="ai-scanner-cards" class="grid grid-cols-1 md:grid-cols-3 gap-2 mb-3">
                         <!-- each card is a <div class="ai-scanner-card"> rendered by JS -->
                     </section>
 
