@@ -24,6 +24,7 @@ const $ = (sel) => document.querySelector(sel);
 let _initOnce = false;
 let _batchStarting = false;
 const _batchRunning = { faces: false, ocr: false };
+const _scanProgress = {};
 
 function _syncBatchScanButton() {
     const btn = $('#ai-scan-all-btn');
@@ -2320,6 +2321,8 @@ function _bindOnce() {
     // The header owns the batch action and cancellation of active face work.
     $('#ai-scan-btn')?.addEventListener('click', () => _startScan('faces'));
     $('#ai-cancel-btn')?.addEventListener('click', () => _cancelScan('faces'));
+    $('#ai-progress-cancel-faces')?.addEventListener('click', () => _cancelScan('faces'));
+    $('#ai-progress-cancel-ocr')?.addEventListener('click', () => _cancelScan('ocr'));
     $('#ai-reindex-btn')?.addEventListener('click', _reindexFromScratch);
     $('#ai-backfill-quality-btn')?.addEventListener('click', _backfillFaceQuality);
     // Re-cluster button — runs Phase B only (DBSCAN over existing
@@ -2915,12 +2918,12 @@ async function _onIncludeVideosToggle() {
 function _featurePill(label, state, detail = '') {
     const tone =
         state === 'ready'
-            ? 'border-green-500/30 bg-green-500/10 text-green-200'
+            ? 'ai-status-ready'
             : state === 'disabled'
               ? 'border-tg-border/30 bg-tg-bg/30 text-tg-textSecondary'
               : state === 'warn'
-                ? 'border-yellow-500/30 bg-yellow-500/10 text-yellow-200'
-                : 'border-red-500/30 bg-red-500/10 text-red-200';
+                ? 'ai-status-warning'
+                : 'ai-status-error';
     const icon =
         state === 'ready'
             ? 'ri-checkbox-circle-line'
@@ -2930,8 +2933,8 @@ function _featurePill(label, state, detail = '') {
                 ? 'ri-error-warning-line'
                 : 'ri-close-circle-line';
     return `<div class="rounded-md border ${tone} px-2 py-1.5 min-w-0 flex items-center justify-between gap-2 flex-wrap mb-2">
-        <div class="flex items-center gap-1.5 text-[11px] font-medium"><i class="${icon}"></i><span>${escapeHtml(label)}</span></div>
-        <div class="text-[10px] opacity-80 truncate" title="${escapeHtml(detail)}">${escapeHtml(detail || (state === 'ready' ? 'Ready' : state))}</div>
+        <div class="flex items-center gap-1.5 text-xs font-medium"><i class="${icon}"></i><span>${escapeHtml(label)}</span></div>
+        <div class="text-xs" title="${escapeHtml(detail)}">${escapeHtml(detail || (state === 'ready' ? 'Ready' : state))}</div>
     </div>`;
 }
 
@@ -3322,11 +3325,11 @@ function _onScannerCardClick(e) {
 /** Small pill for one of: ready, offline, disabled, missing, unready */
 function _readinessPill(state) {
     const map = {
-        ready: 'border-green-500/30 bg-green-500/10 text-green-200',
-        offline: 'border-red-500/30 bg-red-500/10 text-red-200',
+        ready: 'ai-status-ready',
+        offline: 'ai-status-error',
         disabled: 'border-tg-border/30 bg-tg-bg/30 text-tg-textSecondary',
-        missing: 'border-yellow-500/30 bg-yellow-500/10 text-yellow-200',
-        unready: 'border-yellow-500/30 bg-yellow-500/10 text-yellow-200',
+        missing: 'ai-status-warning',
+        unready: 'ai-status-warning',
     };
     const cls = map[state] || map.disabled;
     const label =
@@ -3337,7 +3340,7 @@ function _readinessPill(state) {
             missing: 'No endpoint',
             unready: 'Not ready',
         }[state] || state;
-    return `<span class="inline-block rounded px-1.5 py-0.5 border text-[9px] font-medium leading-none ${cls}">${label}</span>`;
+    return `<span class="inline-block rounded px-1.5 py-1 border text-xs font-medium ${cls}">${label}</span>`;
 }
 
 /** Human-friendly relative time */
@@ -3489,7 +3492,7 @@ async function _renderRecentJobs() {
             done: 'text-green-300',
             failed: 'text-red-300',
             cancelled: 'text-yellow-200',
-            running: 'text-tg-blue',
+            running: 'ai-status-running-text',
         };
         list.innerHTML = jobs
             .map((job) => {
@@ -3553,23 +3556,9 @@ function _renderStatus(status) {
     if (reindexBtn) reindexBtn.disabled = running || !_doctorScanReady;
     const reclusterBtn = $('#ai-recluster-btn');
     if (reclusterBtn) reclusterBtn.disabled = running || !_doctorScanReady;
-    const prog = $('#ai-progress');
-    if (prog) prog.classList.toggle('hidden', !running);
-    if (running) {
-        const scanned = Number(facesScan.scanned) || 0;
-        const total = Number(facesScan.total) || 0;
-        const pct = total > 0 ? Math.min(100, Math.round((scanned / total) * 100)) : 0;
-        const bar = $('#ai-progress-bar');
-        const pctEl = $('#ai-progress-pct');
-        const statusEl = $('#ai-progress-status');
-        if (bar) bar.style.width = `${pct}%`;
-        if (pctEl)
-            pctEl.textContent = total
-                ? `${scanned.toLocaleString()} / ${total.toLocaleString()} (${pct}%)`
-                : `${scanned.toLocaleString()} processed`;
-        if (statusEl) statusEl.textContent = i18nT('maintenance.ai.scanning', 'Scanning…');
-    }
-
+    for (const feature of Object.keys(_scanProgress)) delete _scanProgress[feature];
+    Object.assign(_scanProgress, scans);
+    _renderScanProgress();
     // KPI tiles. peopleCount is the canonical "how many clusters"
     // metric; withFaces (distinct downloads that have at least one
     // face) gives a different shape and was confusing operators.
@@ -4551,29 +4540,45 @@ function _onScanProgress(feature, msg) {
         }
     }
 
-    // Shared progress bar — shows whichever scan is currently running.
-    const progressWrap = $('#ai-progress');
-    const progressBar = $('#ai-progress-bar');
-    const progressPct = $('#ai-progress-pct');
-    const progressStatus = $('#ai-progress-status');
+    _scanProgress[feature] = msg;
+    _renderScanProgress();
+}
 
-    if (progressWrap) progressWrap.classList.toggle('hidden', !running);
-    if (progressBar) progressBar.style.width = `${pct}%`;
-    if (progressPct) {
-        progressPct.textContent = running
-            ? total
-                ? `${scanned.toLocaleString()} / ${total.toLocaleString()} (${pct}%)`
-                : `${scanned.toLocaleString()} processed`
-            : '';
+function _renderScanProgress() {
+    const active = Object.entries(_scanProgress).find(([, scan]) => scan?.running);
+    const wrap = $('#ai-progress');
+    if (wrap) wrap.classList.toggle('hidden', !active);
+    for (const feature of ['faces', 'ocr']) {
+        const btn = $(`#ai-progress-cancel-${feature}`);
+        if (btn) btn.classList.toggle('hidden', !_scanProgress[feature]?.running);
     }
-    if (progressStatus && running) {
-        let label;
-        if (feature === 'faces') {
-            label = i18nT('maintenance.ai.scanning', 'Scanning…');
-        } else if (feature === 'ocr') {
-            label = i18nT('maintenance.ai.scanning_ocr', 'Extracting text…');
-        }
-        if (label) progressStatus.textContent = label;
+    if (!active) return;
+    const [feature, scan] = active;
+    const scanned = Math.max(0, Number(scan.scanned) || 0);
+    const total = Math.max(0, Number(scan.total) || 0);
+    const pct = total > 0 ? Math.min(100, Math.round((scanned / total) * 100)) : null;
+    const labels = {
+        faces: i18nT('maintenance.ai.scanning', 'Scanning…'),
+        ocr: i18nT('maintenance.ai.scanning_ocr', 'Extracting text…'),
+        tags: i18nT('maintenance.ai.scanning_tags', 'Tagging images…'),
+        wd14: i18nT('maintenance.ai.scanning_tags', 'Tagging images…'),
+    };
+    const label = labels[feature] || i18nT('maintenance.ai.scanning', 'Scanning…');
+    const status = $('#ai-progress-status');
+    if (status) status.textContent = label;
+    const detail = total > 0
+        ? `${scanned.toLocaleString()} / ${total.toLocaleString()} (${pct}%)`
+        : i18nTf('maintenance.ai.processed_count', { n: scanned.toLocaleString() }, `${scanned.toLocaleString()} processed`);
+    const text = $('#ai-progress-pct');
+    if (text) text.textContent = detail;
+    const bar = $('#ai-progress-bar');
+    if (bar) bar.style.width = pct === null ? '35%' : `${pct}%`;
+    const meter = $('#ai-progress-meter');
+    if (meter) {
+        if (pct === null) meter.removeAttribute('aria-valuenow');
+        else meter.setAttribute('aria-valuenow', String(pct));
+        meter.setAttribute('aria-valuetext', `${label} ${detail}`);
+        meter.classList.toggle('ai-progress-indeterminate', pct === null);
     }
 }
 
