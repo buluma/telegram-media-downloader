@@ -434,14 +434,22 @@ describe('scan controls', () => {
     it('preserves progress received while a rejected start is pending', async () => {
         await boot();
         let rejectStart;
-        api.post.mockImplementationOnce(() => new Promise((_, reject) => { rejectStart = reject; }));
+        api.post.mockImplementationOnce(
+            () =>
+                new Promise((_, reject) => {
+                    rejectStart = reject;
+                }),
+        );
         api.post.mockResolvedValue({ success: false });
         const btn = $id('ai-scan-all-btn');
         btn.click();
         for (const fn of wsHandlers.get('ai_people_progress') || []) fn({ running: true });
-        rejectStart(Object.assign(new Error('busy'), {
-            status: 409, data: { code: 'RESOURCE_BUSY' },
-        }));
+        rejectStart(
+            Object.assign(new Error('busy'), {
+                status: 409,
+                data: { code: 'RESOURCE_BUSY' },
+            }),
+        );
         await flush();
         expect($id('ai-scan-all-status').textContent).toBe('0 scans started');
         expect(btn.disabled).toBe(true);
@@ -470,9 +478,11 @@ describe('scan controls', () => {
 
 describe('websocket events', () => {
     it('hydrates OCR progress and exposes an accessible meter and cancel action', async () => {
-        await boot({ '/api/ai/status': STATUS({
-            scans: { ocr: { running: true, scanned: 3, total: 10 } },
-        }) });
+        await boot({
+            '/api/ai/status': STATUS({
+                scans: { ocr: { running: true, scanned: 3, total: 10 } },
+            }),
+        });
         expect($id('ai-progress').classList.contains('hidden')).toBe(false);
         expect($id('ai-progress-meter').getAttribute('aria-valuenow')).toBe('30');
         expect($id('ai-progress-pct').textContent).toBe('3 / 10 (30%)');
@@ -483,7 +493,8 @@ describe('websocket events', () => {
 
     it('keeps other active progress visible and does not invent unknown percentages', async () => {
         await boot();
-        for (const fn of wsHandlers.get('ai_people_progress') || []) fn({ running: true, scanned: 2, total: 10 });
+        for (const fn of wsHandlers.get('ai_people_progress') || [])
+            fn({ running: true, scanned: 2, total: 10 });
         for (const fn of wsHandlers.get('ai_ocr_progress') || []) fn({ running: true, scanned: 4 });
         for (const fn of wsHandlers.get('ai_people_progress') || []) fn({ running: false });
         expect($id('ai-progress').classList.contains('hidden')).toBe(false);

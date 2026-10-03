@@ -4566,9 +4566,14 @@ function _renderScanProgress() {
     const label = labels[feature] || i18nT('maintenance.ai.scanning', 'Scanning…');
     const status = $('#ai-progress-status');
     if (status) status.textContent = label;
-    const detail = total > 0
-        ? `${scanned.toLocaleString()} / ${total.toLocaleString()} (${pct}%)`
-        : i18nTf('maintenance.ai.processed_count', { n: scanned.toLocaleString() }, `${scanned.toLocaleString()} processed`);
+    const detail =
+        total > 0
+            ? `${scanned.toLocaleString()} / ${total.toLocaleString()} (${pct}%)`
+            : i18nTf(
+                  'maintenance.ai.processed_count',
+                  { n: scanned.toLocaleString() },
+                  `${scanned.toLocaleString()} processed`,
+              );
     const text = $('#ai-progress-pct');
     if (text) text.textContent = detail;
     const bar = $('#ai-progress-bar');

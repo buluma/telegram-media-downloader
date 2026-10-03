@@ -2406,8 +2406,12 @@ html.theme-light .notify-menu .notify-row:hover {
     animation: ai-progress-pulse 1.5s ease-in-out infinite alternate;
 }
 @keyframes ai-progress-pulse {
-    from { opacity: 0.4; }
-    to { opacity: 1; }
+    from {
+        opacity: 0.4;
+    }
+    to {
+        opacity: 1;
+    }
 }
 @media (prefers-reduced-motion: reduce) {
     .ai-progress-indeterminate #ai-progress-bar {
@@ -2455,7 +2459,9 @@ html.theme-light #page-maintenance-ai {
     flex-wrap: wrap;
     font-size: 13px;
 }
-html.theme-light #page-maintenance-ai :is(.text-red-100, .text-red-200, .text-red-300, .text-red-400) {
+html.theme-light
+    #page-maintenance-ai
+    :is(.text-red-100, .text-red-200, .text-red-300, .text-red-400) {
     color: var(--ai-error);
 }
 html.theme-light #page-maintenance-ai :is(.text-yellow-100, .text-yellow-200, .text-yellow-300) {
