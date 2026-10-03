@@ -889,6 +889,11 @@ function renderPage(page, params = {}) {
     const viewModeBtn = document.getElementById('view-mode-btn');
     if (viewModeBtn) viewModeBtn.style.display = page === 'viewer' ? '' : 'none';
 
+    // Refresh currently reloads viewer data; keep it alongside the view-mode
+    // control instead of showing an ineffective action on other pages.
+    const refreshBtn = document.getElementById('refresh-btn');
+    if (refreshBtn) refreshBtn.style.display = page === 'viewer' ? '' : 'none';
+
     closeSidebar();
 
     // Reset the header avatar before each non-viewer render so a previously-
