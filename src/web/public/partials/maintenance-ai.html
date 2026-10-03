@@ -70,15 +70,19 @@
                              active. Status text + spinner + bar +
                              percentage match the thumbs page exactly so
                              muscle memory transfers. -->
-                        <div id="ai-progress" class="hidden mt-3" role="status" aria-live="polite">
+                        <div id="ai-progress" class="ai-progress-card hidden mt-3" role="status" aria-live="polite" aria-atomic="true">
                             <div class="text-sm text-tg-text mb-1.5 flex items-center gap-1.5 font-medium">
                                 <i class="ri-loader-4-line animate-spin text-tg-blue"></i>
                                 <span id="ai-progress-status" data-i18n="maintenance.ai.scanning">Scanning…</span>
                             </div>
-                            <div class="h-2 bg-tg-bg/60 rounded overflow-hidden">
+                            <div id="ai-progress-meter" class="h-2 bg-tg-bg/60 rounded overflow-hidden" role="progressbar" aria-labelledby="ai-progress-status" aria-valuemin="0" aria-valuemax="100">
                                 <div id="ai-progress-bar" class="h-full bg-tg-blue transition-all" style="width:0%"></div>
                             </div>
-                            <div id="ai-progress-pct" class="text-[11px] text-tg-textSecondary mt-1 tabular-nums text-right"></div>
+                            <div id="ai-progress-pct" class="text-sm text-tg-text mt-2 tabular-nums"></div>
+                            <div class="ai-progress-actions">
+                                <button id="ai-progress-cancel-faces" type="button" class="hidden tg-btn-secondary" data-i18n="maintenance.ai.cancel_faces">Cancel face scan</button>
+                                <button id="ai-progress-cancel-ocr" type="button" class="hidden tg-btn-secondary" data-i18n="maintenance.ai.cancel_text">Cancel text scan</button>
+                            </div>
                         </div>
 
                         <!-- Three consistent count metrics; last-scan time
