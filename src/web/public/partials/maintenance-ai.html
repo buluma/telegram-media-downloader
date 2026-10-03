@@ -26,14 +26,14 @@
                                  details menu so the header reads at a
                                  glance instead of overwhelming. -->
                             <div class="flex items-center gap-2 shrink-0 flex-wrap justify-end">
-                                <button id="ai-cancel-btn" type="button" class="tg-btn-secondary text-xs px-3 py-1.5 inline-flex items-center gap-1.5" disabled
+                                <button id="ai-cancel-btn" type="button" class="hidden tg-btn-secondary text-xs px-3 py-1.5 inline-flex items-center gap-1.5" disabled
                                         title="Cancel the running scan">
-                                    <i class="ri-stop-circle-line"></i><span data-i18n="maintenance.ai.cancel">Cancel</span>
+                                    <i class="ri-stop-circle-line"></i><span data-i18n="maintenance.ai.cancel_faces">Cancel face scan</span>
                                 </button>
-                                <button id="ai-scan-btn" type="button" class="tg-btn text-xs px-3 py-1.5 inline-flex items-center gap-1.5"
-                                        data-i18n-title="maintenance.ai.scan_tooltip"
-                                        title="Detect faces on every photo missing an index pass, then re-cluster.">
-                                    <i class="ri-play-fill"></i><span data-i18n="maintenance.ai.scan_now">Scan now</span>
+                                <button id="ai-scan-all-btn" type="button" class="tg-btn text-xs px-3 py-1.5 inline-flex items-center gap-1.5"
+                                        data-i18n-title="maintenance.ai.scan_all_scope"
+                                        title="Start face detection and text extraction scans.">
+                                    <i class="ri-play-fill"></i><span data-i18n="maintenance.ai.scan_faces_text">Scan faces &amp; text</span>
                                 </button>
                                 <details id="ai-more-menu" class="relative">
                                     <summary class="tg-btn-secondary text-xs px-2 py-1.5 inline-flex items-center gap-1 cursor-pointer list-none"
@@ -49,7 +49,7 @@
                                         <button id="ai-reindex-btn" type="button" class="w-full text-left px-3 py-2 text-xs text-tg-text hover:bg-tg-bg/40 inline-flex items-center gap-2"
                                                 data-i18n-title="maintenance.ai.reindex_tooltip"
                                                 title="Wipes every face detection and every cluster, then re-scans every photo.">
-                                            <i class="ri-restart-line text-yellow-300"></i><span data-i18n="maintenance.ai.reindex">Reindex from scratch</span>
+                                            <i class="ri-restart-line text-red-400"></i><span class="text-red-400" data-i18n="maintenance.ai.reindex">Reindex from scratch</span>
                                         </button>
                                         <button id="ai-backfill-quality-btn" type="button" class="w-full text-left px-3 py-2 text-xs text-tg-text hover:bg-tg-bg/40 inline-flex items-center gap-2"
                                                 data-i18n-title="maintenance.ai.backfill_quality_tooltip"
@@ -142,13 +142,13 @@
                         <div id="ai-auto-cluster-info" class="hidden text-[10.5px] text-tg-textSecondary mt-2 flex items-center gap-1">
                             <i class="ri-time-line"></i><span id="ai-auto-cluster-info-text"></span>
                         </div>
-                        <div class="mt-3 pt-3 border-t border-tg-border/30 flex items-center gap-2 flex-wrap">
-                            <button id="ai-scan-all-btn" type="button" class="tg-btn-secondary text-xs px-3 py-1.5 inline-flex items-center gap-1.5"
-                                    title="Queue all AI scans: faces, tags, and OCR">
+                        <span id="ai-scan-all-status" class="text-[11px] text-tg-textSecondary hidden"></span>
+                        <div id="ai-face-scan-actions" class="mt-3 pt-3 border-t border-tg-border/30 flex items-center gap-2 flex-wrap">
+                            <button id="ai-scan-btn" type="button" class="tg-btn-secondary text-xs px-3 py-1.5 inline-flex items-center gap-1.5"
+                                    data-i18n-title="maintenance.ai.scan_tooltip" title="Detect faces and re-cluster recurring people.">
                                 <i class="ri-sparkling-line"></i>
-                                <span data-i18n="maintenance.ai.scan_all">Scan everything</span>
+                                <span data-i18n="maintenance.ai.scan_faces">Scan faces</span>
                             </button>
-                            <span id="ai-scan-all-status" class="text-[11px] text-tg-textSecondary hidden"></span>
                         </div>
                     </section>
 
@@ -159,6 +159,25 @@
                     <section id="ai-scanner-cards" class="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
                         <!-- each card is a <div class="ai-scanner-card"> rendered by JS -->
                     </section>
+
+                    <div id="ai-workspace-tabs" class="ai-workspace-tabs" role="tablist" aria-label="AI workspace" data-i18n-aria-label="maintenance.ai.page_title">
+                        <button id="ai-tab-search" type="button" role="tab" data-ai-section="search" aria-controls="ai-workspace-search" aria-selected="true" data-i18n="maintenance.ai.workspace.search">Search</button>
+                        <button id="ai-tab-people" type="button" role="tab" data-ai-section="people" aria-controls="ai-workspace-people" aria-selected="false" tabindex="-1" data-i18n="maintenance.ai.workspace.people">People</button>
+                        <button id="ai-tab-tags" type="button" role="tab" data-ai-section="tags" aria-controls="ai-workspace-tags" aria-selected="false" tabindex="-1" data-i18n="maintenance.ai.workspace.tags">Tags</button>
+                        <button id="ai-tab-ocr" type="button" role="tab" data-ai-section="ocr" aria-controls="ai-workspace-ocr" aria-selected="false" tabindex="-1" data-i18n="maintenance.ai.workspace.ocr">Text</button>
+                        <button id="ai-tab-configuration" type="button" role="tab" data-ai-section="configuration" aria-controls="ai-workspace-configuration" aria-selected="false" tabindex="-1" data-i18n="maintenance.ai.workspace.configuration">Configuration</button>
+                        <button id="ai-tab-diagnostics" type="button" role="tab" data-ai-section="diagnostics" aria-controls="ai-workspace-diagnostics" aria-selected="false" tabindex="-1" data-i18n="maintenance.ai.workspace.diagnostics">Diagnostics</button>
+                    </div>
+                    <div id="ai-workspace-search" data-ai-panel="search" role="tabpanel" aria-labelledby="ai-tab-search" tabindex="0"></div>
+                    <div id="ai-workspace-people" data-ai-panel="people" role="tabpanel" aria-labelledby="ai-tab-people" tabindex="0" hidden></div>
+                    <div id="ai-workspace-tags" data-ai-panel="tags" role="tabpanel" aria-labelledby="ai-tab-tags" tabindex="0" hidden>
+                        <p class="text-sm text-tg-textSecondary mb-3" data-i18n="maintenance.ai.workspace.tags_hint">Browse detected tags below. Enable tagging in Configuration to populate your library.</p>
+                    </div>
+                    <div id="ai-workspace-ocr" data-ai-panel="ocr" role="tabpanel" aria-labelledby="ai-tab-ocr" tabindex="0" hidden>
+                        <p class="text-sm text-tg-textSecondary mb-3" data-i18n="maintenance.ai.workspace.ocr_hint">Browse extracted words below. Enable text extraction in Configuration to find text in your images.</p>
+                    </div>
+                    <div id="ai-workspace-configuration" data-ai-panel="configuration" role="tabpanel" aria-labelledby="ai-tab-configuration" tabindex="0" hidden></div>
+                    <div id="ai-workspace-diagnostics" data-ai-panel="diagnostics" role="tabpanel" aria-labelledby="ai-tab-diagnostics" tabindex="0" hidden></div>
 
                     <!-- System health — collapsed by default. Summary
                          line in the <summary> reflects the worst-state
@@ -413,7 +432,8 @@
                             <pre id="ai-embeddings-reindex-log" class="bg-tg-bg/60 rounded p-2 mt-2 text-[10px] font-mono whitespace-pre-wrap leading-snug max-h-32 overflow-auto hidden"></pre>
 
                             <!-- Search test (quick sanity) -->
-                            <div class="mt-3 pt-3 border-t border-white/10">
+                            <details class="mt-3 pt-3 border-t border-white/10">
+                                <summary class="text-xs text-tg-textSecondary cursor-pointer mb-2" data-i18n="maintenance.ai.workspace.test_search">Advanced: test semantic search</summary>
                                 <label class="text-xs text-tg-text block mb-1" for="ai-embeddings-search-query" data-i18n="maintenance.ai.embeddings.search_label">Test search</label>
                                 <div class="flex gap-2">
                                     <input id="ai-embeddings-search-query" class="tg-input flex-1 text-xs py-1.5 px-2" type="text" placeholder="dog in a park" data-i18n-placeholder="maintenance.ai.embeddings.search_placeholder" autocomplete="off">
@@ -427,7 +447,7 @@
                                 <div id="ai-embeddings-search-grid" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-1.5 mt-1.5 hidden"></div>
                                 <!-- Fallback text output for the old pre block -->
                                 <pre id="ai-embeddings-search-output" class="bg-tg-bg/60 rounded p-2 mt-1.5 text-[10.5px] font-mono whitespace-pre-wrap leading-snug max-h-48 overflow-auto hidden"></pre>
-                            </div>
+                            </details>
                         </div>
                     </details>
 

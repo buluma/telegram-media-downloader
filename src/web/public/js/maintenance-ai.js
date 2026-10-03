@@ -16,6 +16,7 @@ import { ws } from './ws.js';
 import { confirmSheet, openSheet, promptSheet } from './sheet.js';
 import { openMediaViewerForReview } from './viewer.js';
 import { createStore } from './store.js';
+import { initAIWorkspace, revealAISection } from './ai-workspace.js';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -2269,6 +2270,7 @@ async function _createAlbumFromUnifiedQuery() {
 export async function init() {
     if (!_initOnce) {
         _bindOnce();
+        initAIWorkspace();
         _initOnce = true;
     }
     await refreshStatus();
@@ -2307,12 +2309,8 @@ export async function refreshStatus() {
 // ---- Wire-once listeners --------------------------------------------------
 
 function _bindOnce() {
-    // Header action buttons. All three follow the maintenance/thumbs
-    // pattern: a primary `Scan now`, an always-rendered `Cancel`
-    // (disabled while idle), and a secondary destructive `Reindex from
-    // scratch`. The legacy `#ai-master-badge` + `#ai-recluster-btn`
-    // hosts live as hidden no-op spans so old bookmarks / extensions
-    // don't crash on missing nodes.
+    // Feature actions retain their existing IDs after workspace grouping.
+    // The header owns the batch action and cancellation of active face work.
     $('#ai-scan-btn')?.addEventListener('click', () => _startScan('faces'));
     $('#ai-cancel-btn')?.addEventListener('click', () => _cancelScan('faces'));
     $('#ai-reindex-btn')?.addEventListener('click', _reindexFromScratch);
@@ -2394,9 +2392,8 @@ function _bindOnce() {
     $('#ai-faces-provider-probe-btn')?.addEventListener('click', _runFacesProviderProbe);
     $('#ai-faces-provider')?.addEventListener('change', _onFacesProviderChange);
 
-    // "Scan everything" — fires all scan features sequentially.
-    // Each _startScan is independent (own tracker/endpoint), but we
-    // fire them one after the other to avoid hammering the sidecar.
+    // Batch action starts the existing face and OCR jobs. Each endpoint
+    // queues independently; the label describes this exact scope.
     $('#ai-scan-all-btn')?.addEventListener('click', async () => {
         const btn = $('#ai-scan-all-btn');
         const statusEl = $('#ai-scan-all-status');
@@ -2696,6 +2693,7 @@ function _bindOnce() {
         const card = document.getElementById('ai-install-card');
         if (card) {
             card.classList.remove('hidden');
+            revealAISection(card);
             card.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
         const menu = document.getElementById('ai-more-menu');
@@ -3226,7 +3224,7 @@ function _renderScannerCards(status) {
                     readiness === 'missing' ||
                     readiness === 'disabled';
                 actionsHtml.push(
-                    `<button type="button" class="tg-btn text-[10px] px-2 py-1 inline-flex items-center gap-1 ai-scanner-action"` +
+                    `<button type="button" class="tg-btn-secondary text-[10px] px-2 py-1 inline-flex items-center gap-1 ai-scanner-action"` +
                         ` data-feature="${def.feature}" data-action="scan"` +
                         (scanDisabled ? ' disabled' : '') +
                         ` title="${scanDisabled ? 'Cannot scan — ' + readiness : 'Scan ' + def.label.toLowerCase()}">` +
@@ -3406,6 +3404,7 @@ function _scrollToSettings(feature) {
     if (!def?.settingsPaneId) return;
     const el = $(def.settingsPaneId);
     if (el) {
+        revealAISection(el);
         el.open = true; // open the <details> accordion
         el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
@@ -3530,15 +3529,18 @@ function _renderStatus(status) {
     _renderScannerCards(status);
     _renderRecentJobs();
 
-    // Progress + scan buttons. Cancel is always rendered and just
-    // toggles its disabled state; the thumbs page uses the same
-    // contract so the controls feel consistent across the app.
+    // Progress + scan buttons. Cancellation appears only for active work.
     const facesScan = scans?.faces || {};
     const running = !!facesScan.running;
+    const batchScanBtn = $('#ai-scan-all-btn');
+    if (batchScanBtn) batchScanBtn.disabled = running || !!scans?.ocr?.running;
     const scanBtn = $('#ai-scan-btn');
     const cancelBtn = $('#ai-cancel-btn');
     if (scanBtn) scanBtn.disabled = running || !_doctorScanReady;
-    if (cancelBtn) cancelBtn.disabled = !running;
+    if (cancelBtn) {
+        cancelBtn.disabled = !running;
+        cancelBtn.classList.toggle('hidden', !running);
+    }
     const reindexBtn = $('#ai-reindex-btn');
     if (reindexBtn) reindexBtn.disabled = running || !_doctorScanReady;
     const reclusterBtn = $('#ai-recluster-btn');
@@ -3717,7 +3719,10 @@ function _renderStatus(status) {
         ocrScanBtn.disabled = ocrRunning || !ocrModel.ready;
         ocrScanBtn.title = ocrModel.ready ? 'Run OCR scan' : 'OCR is not ready on the sidecar';
     }
-    if (ocrCancelBtn) ocrCancelBtn.disabled = !ocrRunning;
+    if (ocrCancelBtn) {
+        ocrCancelBtn.disabled = !ocrRunning;
+        ocrCancelBtn.classList.toggle('hidden', !ocrRunning);
+    }
     const ocrStatusEl = $('#ai-ocr-status-line');
     if (ocrStatusEl) {
         if (ocrModel.ready) {
@@ -4503,6 +4508,10 @@ async function _cancelScan(feature) {
 
 function _onScanProgress(feature, msg) {
     const running = !!msg.running;
+    if (running && (feature === 'faces' || feature === 'ocr')) {
+        const batchScanBtn = $('#ai-scan-all-btn');
+        if (batchScanBtn) batchScanBtn.disabled = true;
+    }
     const scanned = Number(msg.scanned) || 0;
     const total = Number(msg.total) || 0;
     const pct = total > 0 ? Math.min(100, Math.round((scanned / total) * 100)) : 0;
@@ -4511,12 +4520,18 @@ function _onScanProgress(feature, msg) {
         const scanBtn = $('#ai-scan-btn');
         const cancelBtn = $('#ai-cancel-btn');
         if (scanBtn) scanBtn.disabled = running;
-        if (cancelBtn) cancelBtn.disabled = !running;
+        if (cancelBtn) {
+            cancelBtn.disabled = !running;
+            cancelBtn.classList.toggle('hidden', !running);
+        }
     } else if (feature === 'ocr') {
         const scanBtn = $('#ai-ocr-scan-btn');
         const cancelBtn = $('#ai-ocr-cancel-btn');
         if (scanBtn) scanBtn.disabled = running;
-        if (cancelBtn) cancelBtn.disabled = !running;
+        if (cancelBtn) {
+            cancelBtn.disabled = !running;
+            cancelBtn.classList.toggle('hidden', !running);
+        }
     }
 
     // Shared progress bar — shows whichever scan is currently running.

@@ -2376,6 +2376,33 @@ html.theme-light .notify-menu .notify-row:hover {
         border-color 0.15s,
         background-color 0.15s;
 }
+.ai-workspace-tabs {
+    display: flex;
+    gap: 4px;
+    overflow-x: auto;
+    padding: 4px;
+    margin-bottom: 12px;
+    border-radius: 10px;
+    background: var(--tg-panel, #242f3d);
+}
+.ai-workspace-tabs button {
+    flex-shrink: 0;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    color: var(--tg-textSecondary, #8b9baa);
+}
+.ai-workspace-tabs button[aria-selected="true"] {
+    color: white;
+    background: var(--tg-blue, #2aabee);
+}
+.ai-workspace-tabs button:focus-visible {
+    outline: 2px solid var(--tg-blue, #2aabee);
+    outline-offset: -2px;
+}
+[data-ai-panel][hidden] {
+    display: none !important;
+}
 .ai-capability-card:hover {
     border-color: rgba(42, 171, 238, 0.35);
 }
