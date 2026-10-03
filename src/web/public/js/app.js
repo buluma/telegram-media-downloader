@@ -1722,6 +1722,9 @@ function setActiveMaintenanceTab(page) {
 
     if (!scroller.dataset.overflowCueWired) {
         scroller.dataset.overflowCueWired = '1';
+        _teardowns.push(() => {
+            delete scroller.dataset.overflowCueWired;
+        });
         _onGlobal(scroller, 'scroll', updateOverflowCue, { passive: true });
         _onGlobal(window, 'resize', updateOverflowCue, { passive: true });
     }
