@@ -1699,12 +1699,52 @@ function setActiveMaintenanceTab(page) {
     const root = document.getElementById('maintenance-tabs');
     if (!root) return;
     const tabs = root.querySelectorAll('.maintenance-tab[data-mt-page]');
+    let activeTab = null;
     tabs.forEach((t) => {
         const isActive = t.dataset.mtPage === page;
         t.dataset.active = isActive ? '1' : '0';
-        if (isActive) t.setAttribute('aria-selected', 'true');
-        else t.removeAttribute('aria-selected');
+        if (isActive) {
+            t.setAttribute('aria-selected', 'true');
+            activeTab = t;
+        } else {
+            t.removeAttribute('aria-selected');
+        }
     });
+
+    const scroller = root.querySelector('.maintenance-tabs-scroll');
+    if (!scroller) return;
+
+    const updateOverflowCue = () => {
+        const maxScroll = Math.max(0, scroller.scrollWidth - scroller.clientWidth);
+        root.classList.toggle('has-overflow', maxScroll > 2);
+        root.classList.toggle('at-end', scroller.scrollLeft >= maxScroll - 2);
+    };
+
+    if (!scroller.dataset.overflowCueWired) {
+        scroller.dataset.overflowCueWired = '1';
+        _teardowns.push(() => {
+            delete scroller.dataset.overflowCueWired;
+        });
+        _onGlobal(scroller, 'scroll', updateOverflowCue, { passive: true });
+        _onGlobal(window, 'resize', updateOverflowCue, { passive: true });
+    }
+
+    if (activeTab) {
+        const viewport = scroller.getBoundingClientRect();
+        const active = activeTab.getBoundingClientRect();
+        let shift = 0;
+        if (active.left < viewport.left) shift = active.left - viewport.left;
+        else if (active.right > viewport.right) shift = active.right - viewport.right;
+        if (shift) {
+            scroller.scrollBy({
+                left: shift,
+                behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches
+                    ? 'auto'
+                    : 'smooth',
+            });
+        }
+    }
+    updateOverflowCue();
 }
 
 function setHeaderPageIcon(page) {

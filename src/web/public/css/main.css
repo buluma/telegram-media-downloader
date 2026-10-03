@@ -3446,6 +3446,22 @@ body[data-page="settings"] {
     z-index: 5;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
 }
+.maintenance-tabs::after {
+    content: "";
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    bottom: 4px;
+    width: 2rem;
+    border-radius: 8px;
+    background: linear-gradient(90deg, transparent, var(--tg-panel, #242f3d));
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 120ms ease;
+}
+.maintenance-tabs.has-overflow:not(.at-end)::after {
+    opacity: 1;
+}
 .maintenance-tab-back {
     flex-shrink: 0;
     width: 36px;
@@ -3506,6 +3522,11 @@ body[data-page="settings"] {
 .maintenance-tab[data-active="1"]:hover {
     background: var(--tg-darkBlue, #229ed9);
     color: #ffffff;
+}
+.maintenance-tab:focus-visible,
+.maintenance-tab-back:focus-visible {
+    outline: 2px solid var(--tg-blue, #2aabee);
+    outline-offset: 2px;
 }
 /* Show only when on a per-feature maintenance page. The hub itself
    (`maintenance`) keeps the card-grid as the discovery surface, so we

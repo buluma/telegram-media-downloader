@@ -9,8 +9,8 @@
                     <section class="bg-tg-panel rounded-xl p-4 mb-3">
                         <div class="flex items-start justify-between gap-3 flex-wrap">
                             <div class="min-w-0">
-                                <h2 class="text-tg-text text-base font-semibold" data-i18n="maintenance.ai.page_title">AI</h2>
-                                <p class="text-xs text-tg-textSecondary mt-0.5" data-i18n="maintenance.ai.subtitle">Face clustering — recognise people across your library using a local Python service.</p>
+                                <h2 class="text-tg-text text-base font-semibold" data-i18n="maintenance.ai.scan_heading">Library scan</h2>
+                                <p class="text-xs text-tg-textSecondary mt-0.5" data-i18n="maintenance.ai.scan_description">Index faces and organise images with local AI processing.</p>
                                 <!-- Sidecar status pill — always visible
                                      so operators can see whether the
                                      Python service is reachable. Hydrated
@@ -81,26 +81,27 @@
                             <div id="ai-progress-pct" class="text-[11px] text-tg-textSecondary mt-1 tabular-nums text-right"></div>
                         </div>
 
-                        <!-- KPI strip — three tiles. Indexed photos
-                             (faces walked / eligible photos), people
-                             clusters surfaced, last scan timestamp. -->
-                        <div class="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
-                            <div class="bg-tg-bg/40 rounded-lg p-3">
+                        <!-- Three consistent count metrics; last-scan time
+                             sits below as supporting status metadata. -->
+                        <div class="mt-3 grid grid-cols-3 gap-2 text-center">
+                            <div class="min-w-0 min-h-[76px] bg-tg-bg/40 rounded-lg p-2 sm:p-3 flex flex-col justify-center">
                                 <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.ai.stat_indexed">Indexed photos</div>
                                 <div id="ai-stat-indexed" class="text-xl font-semibold text-tg-text tabular-nums">—</div>
                             </div>
-                            <div class="bg-tg-bg/40 rounded-lg p-3">
+                            <div class="min-w-0 min-h-[76px] bg-tg-bg/40 rounded-lg p-2 sm:p-3 flex flex-col justify-center">
                                 <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.ai.stat_tagged">Tagged photos</div>
                                 <div id="ai-stat-tagged" class="text-xl font-semibold text-tg-orange tabular-nums">—</div>
                             </div>
-                            <div class="bg-tg-bg/40 rounded-lg p-3">
+                            <div class="min-w-0 min-h-[76px] bg-tg-bg/40 rounded-lg p-2 sm:p-3 flex flex-col justify-center">
                                 <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.ai.stat_people">People clusters</div>
                                 <div id="ai-stat-people" class="text-xl font-semibold text-tg-blue tabular-nums">—</div>
                             </div>
-                            <div class="bg-tg-bg/40 rounded-lg p-3">
-                                <div class="text-[10px] uppercase tracking-wide text-tg-textSecondary" data-i18n="maintenance.ai.stat_last">Last scan</div>
-                                <div id="ai-stat-last" class="text-xs text-tg-text tabular-nums leading-tight pt-1">—</div>
-                            </div>
+                        </div>
+                        <div class="mt-2 flex items-center gap-1.5 flex-wrap text-[11px] text-tg-textSecondary">
+                            <i class="ri-time-line" aria-hidden="true"></i>
+                            <span data-i18n="maintenance.ai.stat_last">Last scan</span>
+                            <span aria-hidden="true">·</span>
+                            <span id="ai-stat-last" class="text-tg-text tabular-nums">—</span>
                         </div>
                         <!-- Quick-win AI ops panels: readiness, active jobs,
                              and recent issues. These are intentionally compact
