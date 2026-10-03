@@ -3390,6 +3390,26 @@ body[data-page="queue"] {
 .gallery-search-wrap .gallery-search-input {
     padding-left: 2.25rem;
 }
+/* Give the gallery more vertical room while the user scrolls through media.
+   The row stays in layout while animating so the content viewport does not
+   jump when the search control disappears. */
+#gallery-search-row {
+    max-height: 5rem;
+    overflow: hidden;
+    opacity: 1;
+    transition:
+        max-height 180ms ease,
+        padding 180ms ease,
+        opacity 140ms ease;
+}
+#gallery-search-row.gallery-search-row--hidden {
+    max-height: 0;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+    border-bottom-width: 0;
+    opacity: 0;
+    pointer-events: none;
+}
 /* Backfill "Start new" group picker search — pin icon alignment. */
 .backfill-search-wrap {
     position: relative;

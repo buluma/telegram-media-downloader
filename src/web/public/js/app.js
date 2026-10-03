@@ -878,10 +878,21 @@ function renderPage(page, params = {}) {
     // Gallery search only filters the viewer; elsewhere it would sit above
     // pages it can't affect.
     const gallerySearchRow = document.getElementById('gallery-search-row');
-    if (gallerySearchRow) gallerySearchRow.style.display = page === 'viewer' ? '' : 'none';
+    if (gallerySearchRow) {
+        gallerySearchRow.style.display = page === 'viewer' ? '' : 'none';
+        // A route change should always start with the search control visible;
+        // otherwise returning to the viewer after scrolling another page can
+        // leave the row collapsed until the next scroll event.
+        gallerySearchRow.classList.remove('gallery-search-row--hidden');
+    }
 
     const viewModeBtn = document.getElementById('view-mode-btn');
     if (viewModeBtn) viewModeBtn.style.display = page === 'viewer' ? '' : 'none';
+
+    // Refresh currently reloads viewer data; keep it alongside the view-mode
+    // control instead of showing an ineffective action on other pages.
+    const refreshBtn = document.getElementById('refresh-btn');
+    if (refreshBtn) refreshBtn.style.display = page === 'viewer' ? '' : 'none';
 
     closeSidebar();
 
@@ -5883,6 +5894,35 @@ async function deleteUnpinnedVideos() {
     fab.addEventListener('click', () => {
         scroller.scrollTo({ top: 0, behavior: 'smooth' });
     });
+})();
+
+// Collapse the gallery search while browsing down through a large library.
+// The gallery itself scrolls inside #content-area, so listening there keeps
+// the header/search controls outside the scrollport and avoids document-level
+// scroll noise from modals and nested panels.
+(function _initGallerySearchAutoHide() {
+    const row = document.getElementById('gallery-search-row');
+    const scroller = document.getElementById('content-area');
+    if (!row || !scroller) return;
+
+    let lastScrollTop = scroller.scrollTop;
+    _onGlobal(
+        scroller,
+        'scroll',
+        () => {
+            const current = Math.max(0, scroller.scrollTop);
+            const delta = current - lastScrollTop;
+            lastScrollTop = current;
+
+            if (state.currentPage !== 'viewer' || current <= 8) {
+                row.classList.remove('gallery-search-row--hidden');
+                return;
+            }
+            if (delta > 4) row.classList.add('gallery-search-row--hidden');
+            else if (delta < -4) row.classList.remove('gallery-search-row--hidden');
+        },
+        { passive: true },
+    );
 })();
 
 // Start
