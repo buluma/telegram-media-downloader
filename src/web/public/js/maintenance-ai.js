@@ -22,6 +22,13 @@ const $ = (sel) => document.querySelector(sel);
 
 // Module state.
 let _initOnce = false;
+let _batchStarting = false;
+const _batchRunning = { faces: false, ocr: false };
+
+function _syncBatchScanButton() {
+    const btn = $('#ai-scan-all-btn');
+    if (btn) btn.disabled = _batchStarting || _batchRunning.faces || _batchRunning.ocr;
+}
 
 const aiStore = createStore({
     status: null,
@@ -2395,15 +2402,14 @@ function _bindOnce() {
     // Batch action starts the existing face and OCR jobs. Each endpoint
     // queues independently; the label describes this exact scope.
     $('#ai-scan-all-btn')?.addEventListener('click', async () => {
-        const btn = $('#ai-scan-all-btn');
         const statusEl = $('#ai-scan-all-status');
-        if (btn) btn.disabled = true;
+        _batchStarting = true;
+        _syncBatchScanButton();
         const features = ['faces', 'ocr'];
         let started = 0;
         for (const f of features) {
             try {
-                await _startScan(f);
-                started++;
+                if (await _startScan(f)) started++;
             } catch {
                 /* individual scan errors are toasted inside _startScan */
             }
@@ -2417,7 +2423,8 @@ function _bindOnce() {
             statusEl.classList.remove('hidden');
             setTimeout(() => statusEl.classList.add('hidden'), 4000);
         }
-        if (btn) btn.disabled = false;
+        _batchStarting = false;
+        _syncBatchScanButton();
     });
 
     // OCR — toggle + scan/cancel buttons.
@@ -3532,8 +3539,9 @@ function _renderStatus(status) {
     // Progress + scan buttons. Cancellation appears only for active work.
     const facesScan = scans?.faces || {};
     const running = !!facesScan.running;
-    const batchScanBtn = $('#ai-scan-all-btn');
-    if (batchScanBtn) batchScanBtn.disabled = running || !!scans?.ocr?.running;
+    _batchRunning.faces = running;
+    _batchRunning.ocr = !!scans?.ocr?.running;
+    _syncBatchScanButton();
     const scanBtn = $('#ai-scan-btn');
     const cancelBtn = $('#ai-cancel-btn');
     if (scanBtn) scanBtn.disabled = running || !_doctorScanReady;
@@ -4463,16 +4471,19 @@ async function _startScan(feature) {
     // pause auto-index on new downloads.
     if (!aiStore.get('status')?.config?.enabled) {
         try {
-            await api.post('/api/config', {
+            const enabled = await api.post('/api/config', {
                 advanced: { ai: { enabled: true } },
             });
+            if (enabled.success === false || enabled.error) {
+                throw new Error(enabled.error || 'save failed');
+            }
             await refreshStatus();
         } catch (e) {
             showToast(
                 `${i18nT('common.save_failed', 'Save failed')}: ${e?.data?.error || e?.message || 'unknown'}`,
                 'error',
             );
-            return;
+            return false;
         }
     }
     try {
@@ -4482,11 +4493,16 @@ async function _startScan(feature) {
             if (langSelect?.value) payload.language = langSelect.value;
         }
         const r = await api.post('/api/ai/scan/start', payload);
-        if (r.error) {
-            showToast(r.error, 'error');
-            return;
+        if (r.success === false || r.error) {
+            showToast(r.error || 'Scan failed to start', 'error');
+            return false;
+        }
+        if (feature in _batchRunning) {
+            _batchRunning[feature] = true;
+            _syncBatchScanButton();
         }
         showToast(i18nT('maintenance.ai.scan_started', 'Scan started'), 'success');
+        return true;
     } catch (e) {
         if (e.status === 409 && e.data?.code === 'RESOURCE_BUSY') {
             const conflicting = e.data.conflictingJob || 'another job';
@@ -4494,6 +4510,7 @@ async function _startScan(feature) {
         } else {
             showToast(`${i18nT('common.error', 'Error')}: ${e.message}`, 'error');
         }
+        return false;
     }
 }
 
@@ -4508,9 +4525,9 @@ async function _cancelScan(feature) {
 
 function _onScanProgress(feature, msg) {
     const running = !!msg.running;
-    if (running && (feature === 'faces' || feature === 'ocr')) {
-        const batchScanBtn = $('#ai-scan-all-btn');
-        if (batchScanBtn) batchScanBtn.disabled = true;
+    if (feature in _batchRunning) {
+        _batchRunning[feature] = running;
+        _syncBatchScanButton();
     }
     const scanned = Number(msg.scanned) || 0;
     const total = Number(msg.total) || 0;

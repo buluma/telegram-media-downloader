@@ -407,6 +407,46 @@ describe('people panel', () => {
 // ---- scan controls -------------------------------------------------------
 
 describe('scan controls', () => {
+    it('counts only accepted starts and stays disabled until both jobs finish', async () => {
+        await boot();
+        api.post.mockImplementation(async (_url, payload) =>
+            payload.feature === 'faces' ? { success: true } : { error: 'OCR unavailable' },
+        );
+        const btn = $id('ai-scan-all-btn');
+        btn.click();
+        await flush();
+        expect($id('ai-scan-all-status').textContent).toBe('1 scan started');
+        expect(btn.disabled).toBe(true);
+        for (const fn of wsHandlers.get('ai_people_progress') || []) fn({ running: false });
+        expect(btn.disabled).toBe(false);
+    });
+
+    it('does not report failed configuration or rejected starts as successful', async () => {
+        await boot({ '/api/ai/status': STATUS({ config: { enabled: false } }) });
+        api.post.mockResolvedValue({ success: false, error: 'save failed' });
+        $id('ai-scan-all-btn').click();
+        await flush();
+        expect($id('ai-scan-all-status').textContent).toBe('0 scans started');
+        expect(api.post.mock.calls.some(([url]) => url === '/api/ai/scan/start')).toBe(false);
+        expect($id('ai-scan-all-btn').disabled).toBe(false);
+    });
+
+    it('preserves progress received while a rejected start is pending', async () => {
+        await boot();
+        let rejectStart;
+        api.post.mockImplementationOnce(() => new Promise((_, reject) => { rejectStart = reject; }));
+        api.post.mockResolvedValue({ success: false });
+        const btn = $id('ai-scan-all-btn');
+        btn.click();
+        for (const fn of wsHandlers.get('ai_people_progress') || []) fn({ running: true });
+        rejectStart(Object.assign(new Error('busy'), {
+            status: 409, data: { code: 'RESOURCE_BUSY' },
+        }));
+        await flush();
+        expect($id('ai-scan-all-status').textContent).toBe('0 scans started');
+        expect(btn.disabled).toBe(true);
+    });
+
     it('starts a scan', async () => {
         await boot();
         const btn = document.querySelector('[id*="scan-start"], #ai-scan-start');
